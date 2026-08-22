@@ -1,0 +1,65 @@
+name: TestFlight
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "mobile/**"
+      - ".github/workflows/testflight.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Require TestFlight configuration
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
+          ASC_APP_ID: ${{ vars.ASC_APP_ID }}
+        run: node scripts/require-testflight-config.mjs
+
+      - name: Set up EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          packager: npm
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Select the App Store Connect app
+        env:
+          ASC_APP_ID: ${{ vars.ASC_APP_ID }}
+        run: node scripts/prepare-eas-submit.mjs
+
+      - name: Build and submit
+        env:
+          EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
+        run: eas build --platform ios --profile testflight --auto-submit --non-interactive --no-wait

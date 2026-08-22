@@ -1,4 +1,42 @@
-# Releasing a Mac build
+# Releasing builds
+
+## TestFlight
+
+The `TestFlight` workflow queues a store-signed iOS build whenever a merge to
+`main` changes `mobile/`, then hands the finished build to TestFlight. You can
+also run it by hand from the Actions tab. EAS keeps the iOS build number and
+increments it for every build, so the repository version stays unchanged.
+
+The upload goes to TestFlight only. It does not submit the app for App Review.
+
+### One-time setup
+
+1. From `mobile/`, run `npx eas-cli@latest init` and create or link the Remy EAS
+   project. Copy its project ID.
+2. In App Store Connect, create the Remy app with bundle identifier
+   `me.padamchopra.remy` if it does not already exist. Copy the numeric Apple ID
+   from App Information.
+3. Create an Expo access token at <https://expo.dev/settings/access-tokens>.
+4. Add this GitHub Actions secret to `padamchopra/remy`:
+
+   | Secret | Value |
+   |---|---|
+   | `EXPO_TOKEN` | Expo access token for the account that owns the EAS project |
+
+5. Add these GitHub Actions repository variables:
+
+   | Variable | Value |
+   |---|---|
+   | `EAS_PROJECT_ID` | EAS project UUID copied in step 1 |
+   | `ASC_APP_ID` | Numeric Apple ID copied in step 2 |
+
+6. Run `npx eas-cli@latest credentials --platform ios` from `mobile/` with the
+   `testflight` profile. Configure the iOS distribution credentials and an App
+   Store Connect API key for EAS Submit.
+7. Run the `TestFlight` workflow from the Actions tab. Once that succeeds,
+   merges that touch `mobile/` ship automatically.
+
+## Mac builds
 
 macOS will not open a downloaded app unless Apple has notarized it, so the
 `Mac` workflow signs with a Developer ID and notarizes before publishing a
