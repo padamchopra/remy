@@ -46,10 +46,16 @@ Do not turn terminal output, test results, configuration diffs, or API responses
 Create the draft PR first. When media is required, preserve its existing description, add a short `## Evidence` caption that says what the artifact demonstrates, then upload the inspected files:
 
 ```sh
-github https://github.com/padamchopra/remy/pull/123 /tmp/remy-pr-artifacts/branch/change.png
+agent-cli upload /tmp/remy-pr-artifacts/branch/change.png
 ```
 
-Use `--headed` only when the saved GitHub session requires sign-in. After upload, read the PR description back and confirm that the `user-attachments` media is present under the right caption.
+If `agent-cli` is unavailable, install it globally, then run the upload again:
+
+```sh
+npm -g i @choprapadam/agent-cli
+```
+
+Add the returned URLs under the evidence caption. Append `?w=640` to raster image URLs for inline embeds, then read the PR description back and confirm that every URL is present and resolves successfully.
 
 When media is not required, omit `## Evidence`; `## Testing` carries the reviewer-visible verification.
 
