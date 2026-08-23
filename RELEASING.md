@@ -9,6 +9,9 @@ TestFlight is `0.1.<run>`, where `run` is that TestFlight workflow's run number.
 For example, TestFlight workflow run 12 publishes version `0.1.12`.
 
 The upload goes to TestFlight only. It does not submit the app for App Review.
+Remy declares that it uses only standard or exempt encryption in its Expo iOS
+configuration, so each uploaded build arrives without the manual export
+compliance questionnaire.
 
 ### One-time setup
 
