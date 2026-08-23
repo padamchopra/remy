@@ -2,10 +2,10 @@
 
 ## TestFlight
 
-The `TestFlight` workflow queues a store-signed iOS build whenever a merge to
-`main` changes `mobile/`, then hands the finished build to TestFlight. You can
-also run it by hand from the Actions tab. EAS keeps the iOS build number and
-increments it for every build, so the repository version stays unchanged.
+The `TestFlight` workflow queues a store-signed iOS build only when you run it
+from the Actions tab, then hands the finished build to TestFlight. EAS keeps the
+iOS build number and increments it for every build, so the repository version
+stays unchanged.
 
 The upload goes to TestFlight only. It does not submit the app for App Review.
 
@@ -33,8 +33,8 @@ The upload goes to TestFlight only. It does not submit the app for App Review.
 6. Run `npx eas-cli@latest credentials --platform ios` from `mobile/` with the
    `testflight` profile. Configure the iOS distribution credentials and an App
    Store Connect API key for EAS Submit.
-7. Run the `TestFlight` workflow from the Actions tab. Once that succeeds,
-   merges that touch `mobile/` ship automatically.
+7. Open Actions → TestFlight → Run workflow, choose `main`, and run it whenever
+   you want a new TestFlight build.
 
 ## Mac builds
 

@@ -1,12 +1,6 @@
 name: TestFlight
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "mobile/**"
-      - ".github/workflows/testflight.yml"
   workflow_dispatch:
 
 permissions:
