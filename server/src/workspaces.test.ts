@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,7 +11,12 @@ const stateDir = mkdtempSync(join(tmpdir(), "remy-workspaces-test-"));
 process.env.MC_CONFIG_DIR = stateDir;
 process.env.HOME = stateDir;
 
-const { addWorkspace, updateWorkspace } = await import("./workspaces.js");
+const {
+  addWorkspace,
+  checkoutTicketWorktree,
+  listWorkspaces,
+  updateWorkspace,
+} = await import("./workspaces.js");
 
 /// A folder is all a workspace needs to be; the git metadata is attached when
 /// there is any, and these tests are about the choice stored beside it.
@@ -64,4 +70,29 @@ test("leaves the choice alone when a patch does not mention it", async () => {
   assert.equal(saved.name, "Renamed");
   assert.equal(saved.provider, "claude");
   assert.equal(saved.model, "haiku");
+});
+
+test("gives a ticket a stable detached worktree", async () => {
+  const path = mkdtempSync(join(tmpdir(), "remy-ticket-worktree-"));
+  execFileSync("git", ["init", "-b", "main", path]);
+  execFileSync("git", ["-C", path, "config", "user.name", "Remy Test"]);
+  execFileSync("git", ["-C", path, "config", "user.email", "remy@example.test"]);
+  writeFileSync(join(path, "README.md"), "ticket worktree\n");
+  execFileSync("git", ["-C", path, "add", "README.md"]);
+  execFileSync("git", ["-C", path, "commit", "-m", "Initial commit"]);
+
+  const added = await addWorkspace("tickets", path);
+  const first = await checkoutTicketWorktree(added, "REMY-42");
+  assert.equal(first, join(realpathSync(path), ".remy", "tickets", "remy-42"));
+  assert.equal(existsSync(first), true);
+  assert.equal(execFileSync("git", ["-C", first, "rev-parse", "--abbrev-ref", "HEAD"], { encoding: "utf8" }).trim(), "HEAD");
+
+  const refreshed = (await listWorkspaces()).find((entry) => entry.id === added.id)!;
+  assert.equal(await checkoutTicketWorktree(refreshed, "REMY-42"), first);
+  assert.equal(refreshed.worktrees.filter((entry) => entry.path === first).length, 1);
+});
+
+test("keeps tickets in place when a folder is not a Git checkout", async () => {
+  const added = await workspace("non-git-ticket");
+  assert.equal(await checkoutTicketWorktree(added, "PLAIN-1"), added.path);
 });
