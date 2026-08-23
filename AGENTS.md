@@ -10,9 +10,9 @@ Remy is a remote for [Claude Code](https://claude.com/claude-code) on your own m
 
 Once: `npm run install:all` — server, web, desktop, mobile.
 
-Then `npm run dev:web`, and open `http://127.0.0.1:5173`.
+For a UI-only change, run `npm run dev:web`, and open `http://127.0.0.1:5173`. It uses the packaged Remy daemon and your real state. If someone asks for the desktop app by name, leave that dev server running and start `npm run dev` in a second terminal.
 
-That is the way to run Remy. Offer it, and nothing else, unless someone asks for the desktop app by name; then leave the dev server running and start `npm run dev` in a second terminal.
+For a server change, run `npm run qa:web` instead. It builds the current checkout, starts its daemon and Vite on unused loopback ports, and prints the URL. Its database and sample workspace are temporary and removed when the command stops. Use `npm run qa:web -- --empty` when the empty state is what you need to inspect, or `npm run qa:web -- --check` for a non-interactive startup and proxy check.
 
 The iPhone app is `cd mobile && npx expo run:ios`. It talks to the same daemon over Tailscale after you pair it from Settings → Devices.
 
@@ -22,7 +22,7 @@ The page does not live-reload. Refresh it to see a change: editing Remy while wa
 
 **UI changes** — Remy.app can stay open; the page is your local `web/` either way.
 
-**Server changes** — quit Remy.app first, then `npm run dev:web`, so the clone's daemon gets port 8420.
+**Server changes** — keep Remy.app open and use the isolated QA sidecar. Never stop the packaged daemon on port 8420 from a thread it is hosting. Stop only the `qa:web` command you started.
 
 Skip `VITE_MC_FIXTURE=1`; that is fake data, not your real state.
 
@@ -47,7 +47,7 @@ Skip `VITE_MC_FIXTURE=1`; that is fake data, not your real state.
 
 - **`ui`** — layout and keyboard. Every control comes from a shadcn primitive; a custom `div` is the last resort.
 - **`content`** — every user-facing string. Second person, present tense, one short sentence.
-- **`qa`** — after a visual or interaction change, drive the running app before calling it done.
+- **`qa`** — after an interaction or server behavior change, drive the current code in the running app before calling it done.
 - **`pr-author`** — every PR carries proportional reviewer evidence; screenshots or recordings are required only for behavior a reviewer can exercise or judge in the running app.
 - **`shadcn`** and **`migrate-radix-to-base`** — vendored from `shadcn/ui` and tracked in `skills-lock.json`. Do not hand-edit them.
 
@@ -80,6 +80,7 @@ anyone using worktrees already has.
 ```sh
 npm run typecheck    # web + desktop + mobile
 npm test             # server: tsc, then node --test on dist/*.test.js
+npm run qa:web -- --check  # current server + UI, temporary state, alternate ports
 npm run shots        # Playwright PNGs of the window
 npm run live-check   # assert the window is showing threads
 npm run perf         # what each pane costs to open, and how much of it waits on another device
