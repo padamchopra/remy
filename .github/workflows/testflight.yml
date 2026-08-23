@@ -1,12 +1,6 @@
 name: TestFlight
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "mobile/**"
-      - ".github/workflows/testflight.yml"
   workflow_dispatch:
 
 permissions:
@@ -58,6 +52,11 @@ jobs:
         env:
           ASC_APP_ID: ${{ vars.ASC_APP_ID }}
         run: node scripts/prepare-eas-submit.mjs
+
+      - name: Stamp TestFlight version
+        env:
+          TESTFLIGHT_RUN_NUMBER: ${{ github.run_number }}
+        run: node scripts/prepare-testflight-version.mjs
 
       - name: Build and submit
         env:
