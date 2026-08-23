@@ -4,8 +4,9 @@
 
 The `TestFlight` workflow queues a store-signed iOS build only when you run it
 from the Actions tab, then hands the finished build to TestFlight. EAS keeps the
-iOS build number and increments it for every build, so the repository version
-stays unchanged.
+iOS build number and increments it for every build. The version shown in
+TestFlight is `0.1.<run>`, where `run` is that TestFlight workflow's run number.
+For example, TestFlight workflow run 12 publishes version `0.1.12`.
 
 The upload goes to TestFlight only. It does not submit the app for App Review.
 
