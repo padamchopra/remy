@@ -60,7 +60,11 @@ interface Board {
 }
 
 const apiUrl = process.env.REMY_API_URL ?? "http://127.0.0.1:8420";
-const token = process.env.REMY_API_TOKEN ?? "";
+const token = process.env.REMY_API_TOKEN
+  ?? (process.env.REMY_MCP_PROVIDER
+    ? (await import("./external-mcp-auth.js")).externalMcpToken(process.env.REMY_MCP_PROVIDER)
+    : undefined)
+  ?? "";
 const chatId = process.env.REMY_CHAT_ID ?? "";
 const threadDeviceId = process.env.REMY_DEVICE_ID ?? "";
 const agentId = process.env.REMY_AGENT_ID ?? "";

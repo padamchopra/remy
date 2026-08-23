@@ -56,6 +56,8 @@ import {
 import { findProjectFiles, findSkills } from "./discovery.js";
 import { discoveredProviders } from "./provider-discovery.js";
 import { setProviderEnabled } from "./provider-settings.js";
+import { externalMcpProvider } from "./external-mcp-auth.js";
+import { installProviderMcp, providerMcpStatuses, removeProviderMcp } from "./provider-mcp.js";
 import {
   archiveCursorCloudChat,
   connectCursorCloud,
@@ -324,14 +326,17 @@ const server = createServer(async (req, res) => {
 
     const fullAccess = authorized(req);
     const scopedChatId = fullAccess ? undefined : remyToolChatId(req.headers.authorization);
-    if (!fullAccess && !scopedChatId) return json(res, 401, { error: "unauthorized" });
+    const externalProvider = fullAccess || scopedChatId
+      ? undefined
+      : externalMcpProvider(req.headers.authorization);
+    if (!fullAccess && !scopedChatId && !externalProvider) return json(res, 401, { error: "unauthorized" });
     const scopedChat = scopedChatId ? getChat(scopedChatId) : undefined;
     if (scopedChatId && !scopedChat) return json(res, 401, { error: "unauthorized" });
-    if (scopedChatId && !isRemyToolRoute(req.method, url.pathname)) {
+    if ((scopedChatId || externalProvider) && !isRemyToolRoute(req.method, url.pathname)) {
       return json(res, 403, { error: "that operation is not available to agents" });
     }
     const scopedAgentId = scopedChat?.agentId;
-    const ticketActor = (asked: unknown): string => scopedChatId
+    const ticketActor = (asked: unknown): string => scopedChatId || externalProvider
       ? (scopedAgentId ? getAgent(scopedAgentId)?.handle : undefined) ?? "remy"
       : typeof asked === "string" ? getAgent(asked)?.handle ?? "you" : "you";
 
@@ -393,6 +398,18 @@ const server = createServer(async (req, res) => {
           enabled: config.enabledProviders.includes(entry.id),
         })),
       });
+    }
+    if (url.pathname === "/server/mcp" && req.method === "GET") {
+      return json(res, 200, { providers: await providerMcpStatuses() });
+    }
+    if (parts[0] === "server" && parts[1] === "mcp" && parts[2] && parts.length === 3) {
+      const selected = decodeURIComponent(parts[2]);
+      try {
+        if (req.method === "POST") return json(res, 200, await installProviderMcp(selected));
+        if (req.method === "DELETE") return json(res, 200, await removeProviderMcp(selected));
+      } catch (error) {
+        return json(res, 400, { error: (error as Error).message || "could not change Remy MCP" });
+      }
     }
     if (parts[0] === "server" && parts[1] === "providers" && parts[2] && parts.length === 3 && req.method === "PATCH") {
       const body = await readJson(req);
@@ -1098,6 +1115,9 @@ const server = createServer(async (req, res) => {
       // Attaching an existing thread. Deliberately does not start or resume it:
       // linking is bookkeeping, and the runner tells the two apart by `linkedBy`.
       if (req.method === "POST" && parts[2] === "threads") {
+        if (externalProvider) {
+          return json(res, 403, { error: "that operation is available only inside a thread" });
+        }
         const body = await readJson(req);
         try {
           const linkedChatId = scopedChatId ?? String(body.chatId ?? "");
@@ -1188,6 +1208,8 @@ const server = createServer(async (req, res) => {
           if (!current || (cwd !== current.cwd && !holder)) {
             return json(res, 403, { error: "register that workspace before starting a thread there" });
           }
+        } else if (externalProvider && !holder) {
+          return json(res, 403, { error: "register that workspace before starting a thread there" });
         }
         return json(res, 200, { chat: createChat({
           cwd: String(body.cwd ?? ""),
@@ -1196,7 +1218,7 @@ const server = createServer(async (req, res) => {
           // An empty model is a choice — that provider's own default — so it is
           // passed through rather than collapsed into "nothing was asked".
           model: typeof body.model === "string" ? body.model : undefined,
-          permissionMode: scopedChatId ? undefined : body.permissionMode,
+          permissionMode: scopedChatId || externalProvider ? undefined : body.permissionMode,
           agentId: typeof body.agentId === "string" && body.agentId ? body.agentId : undefined,
           ...(holder?.provider ? { workspaceDefault: { provider: holder.provider, model: holder.model } } : {}),
         }) });

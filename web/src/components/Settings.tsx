@@ -83,7 +83,7 @@ import {
 import { IDENTITIES } from "@/components/AgentSettings";
 import { useAppUpdate, type AppUpdatePhase } from "@/hooks/use-app-update";
 import { useStore } from "@/state/store";
-import type { Chat, Server, TailnetDevice, ToolStatus } from "@/state/types";
+import type { Chat, ProviderMcpStatus, Server, TailnetDevice, ToolStatus } from "@/state/types";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 export type SettingsTab = "general" | "version-control" | "providers" | "devices" | "archive";
@@ -1033,11 +1033,16 @@ function ProvidersPane() {
   const providers = useStore((s) => s.providers);
   const loadProviders = useStore((s) => s.loadProviders);
   const setProviderEnabled = useStore((s) => s.setProviderEnabled);
+  const mcpProviders = useStore((s) => s.mcpProviders);
+  const loadMcpProviders = useStore((s) => s.loadMcpProviders);
+  const installProviderMcp = useStore((s) => s.installProviderMcp);
+  const removeProviderMcp = useStore((s) => s.removeProviderMcp);
+  const [mcpBusy, setMcpBusy] = useState<string>();
   const enabledCount = providers?.filter((provider) => provider.enabled !== false).length ?? 3;
 
   useEffect(() => {
-    if (online) void Promise.all([loadTooling(), loadProviders()]).catch(() => {});
-  }, [online, loadTooling, loadProviders]);
+    if (online) void Promise.all([loadTooling(), loadProviders(), loadMcpProviders()]).catch(() => {});
+  }, [online, loadTooling, loadProviders, loadMcpProviders]);
 
   const toggle = async (provider: string, enabled: boolean) => {
     try {
@@ -1048,6 +1053,23 @@ function ProvidersPane() {
   };
 
   const providerOn = (id: string) => providers?.find((provider) => provider.id === id)?.enabled !== false;
+
+  const changeMcp = async (provider: string, label: string, install: boolean) => {
+    setMcpBusy(provider);
+    try {
+      if (install) {
+        await installProviderMcp(provider);
+        toast.success(`Remy MCP was added to ${label}.`);
+      } else {
+        await removeProviderMcp(provider);
+        toast.success(`Remy MCP was removed from ${label}.`);
+      }
+    } catch (caught) {
+      toast.error(`Couldn't ${install ? "add" : "remove"} Remy MCP`, { description: apiError(caught) });
+    } finally {
+      setMcpBusy(undefined);
+    }
+  };
 
   if (!online) return <Unreachable />;
 
@@ -1062,6 +1084,9 @@ function ProvidersPane() {
           enabled={providerOn("claude")}
           disableToggle={enabledCount === 1 && providerOn("claude")}
           onEnabledChange={(enabled) => void toggle("claude", enabled)}
+          mcp={mcpProviders?.claude}
+          mcpBusy={mcpBusy === "claude"}
+          onMcpChange={(install) => void changeMcp("claude", "Claude Code", install)}
           detail={
             tooling?.claude.available
               ? "Threads run through the copy of Claude Code on this machine."
@@ -1076,6 +1101,9 @@ function ProvidersPane() {
           enabled={providerOn("codex")}
           disableToggle={enabledCount === 1 && providerOn("codex")}
           onEnabledChange={(enabled) => void toggle("codex", enabled)}
+          mcp={mcpProviders?.codex}
+          mcpBusy={mcpBusy === "codex"}
+          onMcpChange={(install) => void changeMcp("codex", "Codex", install)}
           detail={
             tooling?.codex?.available
               ? "Threads run through Codex on this machine."
@@ -1090,6 +1118,9 @@ function ProvidersPane() {
           enabled={providerOn("cursor")}
           disableToggle={enabledCount === 1 && providerOn("cursor")}
           onEnabledChange={(enabled) => void toggle("cursor", enabled)}
+          mcp={mcpProviders?.cursor}
+          mcpBusy={mcpBusy === "cursor"}
+          onMcpChange={(install) => void changeMcp("cursor", "Cursor", install)}
           detail={
             tooling?.cursor?.available
               ? "Threads run through Cursor on this machine."
@@ -1110,6 +1141,9 @@ function ToolRow({
   enabled,
   disableToggle,
   onEnabledChange,
+  mcp,
+  mcpBusy,
+  onMcpChange,
 }: {
   name: string;
   label: string;
@@ -1120,6 +1154,9 @@ function ToolRow({
   enabled?: boolean;
   disableToggle?: boolean;
   onEnabledChange?: (enabled: boolean) => void;
+  mcp?: ProviderMcpStatus;
+  mcpBusy?: boolean;
+  onMcpChange?: (install: boolean) => void;
 }) {
   const ok = status?.available && status.authenticated !== false;
   return (
@@ -1150,6 +1187,16 @@ function ToolRow({
         {status !== undefined && !ok && <Badge variant="secondary">Not ready</Badge>}
         {status?.version && (
           <span className="font-mono text-xs text-muted-foreground tabular-nums">{status.version}</span>
+        )}
+        {onMcpChange && status?.available && mcp && (
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={mcpBusy}
+            onClick={() => onMcpChange(!mcp.installed)}
+          >
+            {mcpBusy ? "Working…" : mcp.installed ? "Remove MCP" : mcp.configured ? "Repair MCP" : "Add MCP"}
+          </Button>
         )}
         {onEnabledChange && (
           <Switch

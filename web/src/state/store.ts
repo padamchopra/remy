@@ -20,6 +20,7 @@ import type {
   PairRequest,
   PathSuggestion,
   Project,
+  ProviderMcpStatus,
   Recurrence,
   Server,
   ServerSettings,
@@ -91,6 +92,8 @@ interface State {
   /// What this machine can run a thread on, as it reports it. Absent until a
   /// picker asks, and the built-in catalogue stands in until it answers.
   providers?: Provider[];
+  /// Which ordinary provider sessions can use Remy's separately scoped MCP.
+  mcpProviders?: Record<string, ProviderMcpStatus>;
   repoRun?: UpdateRun;
   agents: Agent[];
   projects: Project[];
@@ -141,6 +144,9 @@ interface State {
   loadTooling(): Promise<void>;
   loadProviders(): Promise<void>;
   setProviderEnabled(provider: string, enabled: boolean): Promise<void>;
+  loadMcpProviders(): Promise<void>;
+  installProviderMcp(provider: string): Promise<void>;
+  removeProviderMcp(provider: string): Promise<void>;
   useGithubAvatar(): Promise<void>;
   loadRepoRun(): Promise<void>;
   updateRepos(): Promise<void>;
@@ -641,6 +647,41 @@ export const useStore = create<State>((set, get) => ({
     await get().loadProviders();
     await get().refresh();
     await get().loadBoard();
+  },
+
+  async loadMcpProviders() {
+    const server = localServer(get().servers);
+    if (!server) return;
+    const body = await transport.request<{ providers?: ProviderMcpStatus[] }>(server.id, "/server/mcp");
+    set({
+      mcpProviders: Object.fromEntries((body.providers ?? []).map((entry) => [entry.provider, entry])),
+    });
+  },
+
+  async installProviderMcp(provider) {
+    const server = localServer(get().servers);
+    if (!server) throw new Error("This machine isn't connected.");
+    const status = await transport.request<ProviderMcpStatus>(
+      server.id,
+      `/server/mcp/${encodeURIComponent(provider)}`,
+      { method: "POST", body: {} },
+    );
+    set((current) => ({
+      mcpProviders: { ...current.mcpProviders, [provider]: status },
+    }));
+  },
+
+  async removeProviderMcp(provider) {
+    const server = localServer(get().servers);
+    if (!server) throw new Error("This machine isn't connected.");
+    const status = await transport.request<ProviderMcpStatus>(
+      server.id,
+      `/server/mcp/${encodeURIComponent(provider)}`,
+      { method: "DELETE", body: {} },
+    );
+    set((current) => ({
+      mcpProviders: { ...current.mcpProviders, [provider]: status },
+    }));
   },
 
   async useGithubAvatar() {

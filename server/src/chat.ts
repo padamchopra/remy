@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   query,
   type Options,
@@ -57,6 +56,7 @@ import {
 } from "./chat-storage.js";
 import { config } from "./config.js";
 import { suggestName } from "./namer.js";
+import { remyMcpProcess } from "./mcp-process.js";
 import { broadcast, sendNotification } from "./notify.js";
 import { syncSleepAssertion } from "./sleep.js";
 import {
@@ -111,8 +111,6 @@ const PERMISSION_MODES: ChatPermissionMode[] = [
   "plan",
   "bypassPermissions",
 ];
-
-const ticketMcpPath = fileURLToPath(new URL("./ticket-mcp.js", import.meta.url));
 
 /// A tool call Claude is blocked on. Mirrors the shape of a tool entry so the
 /// client can render the pending card with the same vocabulary as the feed.
@@ -1048,17 +1046,13 @@ class Chat {
           ...(this.record.cursorSessionId ? { sessionId: this.record.cursorSessionId } : {}),
           additionalDirectories: [uploadRoot],
           ...(agent?.instructions.trim() ? { developerInstructions: agent.instructions.trim() } : {}),
-          mcpServer: {
-            command: process.execPath,
-            args: [ticketMcpPath],
-            env: {
-              REMY_API_URL: `http://127.0.0.1:${config.port}`,
-              REMY_API_TOKEN: remyToolToken(this.record.id),
-              REMY_CHAT_ID: this.record.id,
-              REMY_DEVICE_ID: deviceId,
-              ...(this.record.agentId ? { REMY_AGENT_ID: this.record.agentId } : {}),
-            },
-          },
+          mcpServer: remyMcpProcess({
+            apiUrl: `http://127.0.0.1:${config.port}`,
+            token: remyToolToken(this.record.id),
+            chatId: this.record.id,
+            deviceId,
+            agentId: this.record.agentId,
+          }),
           env: agentEnvironment(agent),
         },
         (event) => {
@@ -1190,17 +1184,13 @@ class Chat {
           ...(this.record.codexThreadId ? { threadId: this.record.codexThreadId } : {}),
           additionalDirectories: [uploadRoot],
           ...(agent?.instructions.trim() ? { developerInstructions: agent.instructions.trim() } : {}),
-          mcpServer: {
-            command: process.execPath,
-            args: [ticketMcpPath],
-            env: {
-              REMY_API_URL: `http://127.0.0.1:${config.port}`,
-              REMY_API_TOKEN: remyToolToken(this.record.id),
-              REMY_CHAT_ID: this.record.id,
-              REMY_DEVICE_ID: deviceId,
-              ...(this.record.agentId ? { REMY_AGENT_ID: this.record.agentId } : {}),
-            },
-          },
+          mcpServer: remyMcpProcess({
+            apiUrl: `http://127.0.0.1:${config.port}`,
+            token: remyToolToken(this.record.id),
+            chatId: this.record.id,
+            deviceId,
+            agentId: this.record.agentId,
+          }),
           env: agentEnvironment(agent),
         },
         (event) => {

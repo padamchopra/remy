@@ -295,6 +295,12 @@ export interface Tooling {
   cursor: ToolStatus;
 }
 
+export interface ProviderMcpStatus {
+  provider: string;
+  installed: boolean;
+  configured: boolean;
+}
+
 /// A named persona a thread can run as. Mirrors `Agent` in `server/src/agents.ts`.
 export interface Agent {
   id: string;
