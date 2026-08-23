@@ -57,7 +57,16 @@ npm -g i @choprapadam/agent-cli
 
 Add the returned URLs under the evidence caption. Append `?w=640` to raster image URLs for inline embeds.
 
-Put a video URL on its own line and pair it with an inline still image. Do not wrap an external `agent-cli` URL in a `<video>` tag because GitHub strips the tag from PR Markdown.
+Convert video evidence to an optimized GIF before upload so it plays inline in the PR description:
+
+```sh
+ffmpeg -y -i /tmp/remy-pr-artifacts/branch/change.mp4 -vf "fps=10,scale=960:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128:stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=3:diff_mode=rectangle" /tmp/remy-pr-artifacts/branch/change.gif
+agent-cli upload /tmp/remy-pr-artifacts/branch/change.gif
+```
+
+Inspect the GIF, then embed its returned URL with Markdown image syntax. If audio is part of the evidence, also upload the original video and add its direct URL because GIF has no audio.
+
+Do not wrap an external `agent-cli` URL in a `<video>` tag because GitHub strips the tag from PR Markdown.
 
 Read the PR description back and confirm that every URL is present and resolves successfully.
 
