@@ -11,6 +11,12 @@
 
 export type ProviderId = "claude" | "codex" | "cursor";
 
+export interface ProviderEffort {
+  value: string;
+  label: string;
+  detail?: string;
+}
+
 export interface ProviderModel {
   /// What the CLI is handed. Empty means "say nothing", which leaves the choice
   /// to whatever that tool is already configured with.
@@ -22,6 +28,10 @@ export interface ProviderModel {
   resolvedLabel?: string;
   /// One short line about when to reach for it, where that is not obvious.
   detail?: string;
+  /// Effort levels this exact model accepts. Discovered CLIs replace the
+  /// provider fallback when models differ from one another.
+  efforts?: ProviderEffort[];
+  defaultEffort?: string;
 }
 
 export interface Provider {
@@ -31,6 +41,8 @@ export interface Provider {
   /// its status arrives under in `/server/tooling`.
   command: string;
   models: ProviderModel[];
+  /// Used when a provider cannot report effort per model itself.
+  efforts: ProviderEffort[];
   /// Whether a thread on this provider can stop and ask you to allow a tool
   /// call through its bidirectional integration.
   approvals: boolean;
@@ -52,6 +64,13 @@ export const PROVIDERS: Provider[] = [
       { value: "haiku", label: "Haiku 4.5", context: "200K" },
       { value: "claude-opus-4-8", label: "Opus 4.8", context: "1M" },
     ],
+    efforts: [
+      { value: "low", label: "Low", detail: "Answers faster with less reasoning." },
+      { value: "medium", label: "Medium", detail: "Balances speed and reasoning." },
+      { value: "high", label: "High", detail: "Reasons deeply before answering." },
+      { value: "xhigh", label: "Extra high", detail: "Spends longer on difficult work." },
+      { value: "max", label: "Max", detail: "Uses the most supported reasoning." },
+    ],
   },
   {
     id: "codex",
@@ -68,6 +87,14 @@ export const PROVIDERS: Provider[] = [
       { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
       { value: "gpt-5.3-codex-spark", label: "GPT-5.3 Codex Spark" },
     ],
+    efforts: [
+      { value: "low", label: "Low", detail: "Answers faster with less reasoning." },
+      { value: "medium", label: "Medium", detail: "Balances speed and reasoning." },
+      { value: "high", label: "High", detail: "Reasons deeply before answering." },
+      { value: "xhigh", label: "Extra high", detail: "Spends longer on difficult work." },
+      { value: "max", label: "Max", detail: "Uses the most supported reasoning." },
+      { value: "ultra", label: "Ultra", detail: "Uses extended reasoning when the model supports it." },
+    ],
   },
   {
     id: "cursor",
@@ -78,15 +105,22 @@ export const PROVIDERS: Provider[] = [
       { value: "", label: "Default", detail: "Whatever Cursor is set to." },
       { value: "auto", label: "Auto", detail: "Cursor chooses the model." },
     ],
+    efforts: [
+      { value: "low", label: "Low", detail: "Answers faster with less reasoning." },
+      { value: "medium", label: "Medium", detail: "Balances speed and reasoning." },
+      { value: "high", label: "High", detail: "Reasons deeply before answering." },
+      { value: "xhigh", label: "Extra high", detail: "Spends longer on difficult work." },
+      { value: "max", label: "Max", detail: "Uses the most supported reasoning." },
+    ],
   },
 ];
 
-const discoveredModels = new Map<ProviderId, Set<string>>();
+const discoveredModels = new Map<ProviderId, Map<string, ProviderModel>>();
 
 /// Remembers models reported by an installed runtime so a picker choice from a
 /// newer CLI remains valid even before Remy's fallback catalogue catches up.
 export function rememberProviderModels(id: ProviderId, models: ProviderModel[]): void {
-  discoveredModels.set(id, new Set(models.map((model) => model.value)));
+  discoveredModels.set(id, new Map(models.map((model) => [model.value, model])));
 }
 
 export const DEFAULT_PROVIDER: ProviderId = "claude";
@@ -125,6 +159,25 @@ export function knowsModel(id: unknown, value: unknown): boolean {
   return (provider(resolved)?.models ?? []).some((model) => model.value === value)
     || discoveredModels.get(resolved)?.has(String(value ?? "")) === true
     || (resolved === "cursor" && typeof value === "string" && /^[A-Za-z0-9._:[\],=-]{1,160}$/.test(value));
+}
+
+function modelEfforts(id: unknown, model: unknown): ProviderEffort[] {
+  const resolved = providerId(id);
+  const entry = provider(resolved);
+  const discovered = discoveredModels.get(resolved)?.get(String(model ?? ""));
+  if (discovered?.efforts) return discovered.efforts;
+  return entry?.models.find((candidate) => candidate.value === (model ?? ""))?.efforts ?? entry?.efforts ?? [];
+}
+
+/// The effort this exact provider/model accepts. Empty means Remy leaves the
+/// provider's configured value alone.
+export function providerEffort(id: unknown, model: unknown, value: unknown): string {
+  if (value === "" || value === undefined || value === null) return "";
+  return modelEfforts(id, model).some((effort) => effort.value === value) ? String(value) : "";
+}
+
+export function knowsEffort(id: unknown, model: unknown, value: unknown): boolean {
+  return value === "" || modelEfforts(id, model).some((effort) => effort.value === value);
 }
 
 export function modelLabel(id: unknown, value: unknown): string {

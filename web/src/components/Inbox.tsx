@@ -272,6 +272,7 @@ function Conversation({
               defaultGitIdentity={settings?.defaultGitIdentity ?? "author"}
               defaultProvider={settings?.defaultProvider ?? "claude"}
               defaultModel={settings?.defaultModel ?? ""}
+              defaultEffort={settings?.defaultEffort ?? ""}
               onDeleted={() => {
                 setEditing(false);
                 onDeleted();

@@ -12,6 +12,14 @@ export interface ProviderModel {
   context?: string;
   resolvedLabel?: string;
   detail?: string;
+  efforts?: ProviderEffort[];
+  defaultEffort?: string;
+}
+
+export interface ProviderEffort {
+  value: string;
+  label: string;
+  detail?: string;
 }
 
 export interface Provider {
@@ -20,6 +28,7 @@ export interface Provider {
   /// The executable it needs on the machine.
   command: string;
   models: ProviderModel[];
+  efforts: ProviderEffort[];
   /// Whether a thread on it can stop and ask you to allow a tool call.
   approvals: boolean;
   /// Whether the machine that answered has it. Absent means nobody has said.
@@ -42,6 +51,13 @@ export const PROVIDERS: Provider[] = [
       { value: "haiku", label: "Haiku 4.5", context: "200K" },
       { value: "claude-opus-4-8", label: "Opus 4.8", context: "1M" },
     ],
+    efforts: [
+      { value: "low", label: "Low", detail: "Answers faster with less reasoning." },
+      { value: "medium", label: "Medium", detail: "Balances speed and reasoning." },
+      { value: "high", label: "High", detail: "Reasons deeply before answering." },
+      { value: "xhigh", label: "Extra high", detail: "Spends longer on difficult work." },
+      { value: "max", label: "Max", detail: "Uses the most supported reasoning." },
+    ],
   },
   {
     id: "codex",
@@ -54,6 +70,14 @@ export const PROVIDERS: Provider[] = [
       { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
       { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
     ],
+    efforts: [
+      { value: "low", label: "Low", detail: "Answers faster with less reasoning." },
+      { value: "medium", label: "Medium", detail: "Balances speed and reasoning." },
+      { value: "high", label: "High", detail: "Reasons deeply before answering." },
+      { value: "xhigh", label: "Extra high", detail: "Spends longer on difficult work." },
+      { value: "max", label: "Max", detail: "Uses the most supported reasoning." },
+      { value: "ultra", label: "Ultra", detail: "Uses extended reasoning when the model supports it." },
+    ],
   },
   {
     id: "cursor",
@@ -64,6 +88,13 @@ export const PROVIDERS: Provider[] = [
       { value: "", label: "Default", detail: "Whatever Cursor is set to." },
       { value: "auto", label: "Auto", detail: "Cursor chooses the model." },
     ],
+    efforts: [
+      { value: "low", label: "Low", detail: "Answers faster with less reasoning." },
+      { value: "medium", label: "Medium", detail: "Balances speed and reasoning." },
+      { value: "high", label: "High", detail: "Reasons deeply before answering." },
+      { value: "xhigh", label: "Extra high", detail: "Spends longer on difficult work." },
+      { value: "max", label: "Max", detail: "Uses the most supported reasoning." },
+    ],
   },
 ];
 
@@ -72,6 +103,7 @@ export const PROVIDERS: Provider[] = [
 export interface ModelChoice {
   provider: string;
   model: string;
+  effort?: string;
 }
 
 export function providerOf(providers: Provider[], id?: string): Provider | undefined {
@@ -97,4 +129,20 @@ export function resolvedModelLabel(providers: Provider[], choice: ModelChoice): 
   const model = provider?.models.find((entry) => entry.value === (choice.model ?? ""));
   if (model?.value) return model.context ? `${model.label} (${model.context})` : model.label;
   return model?.resolvedLabel ?? modelLabel(providers, choice);
+}
+
+export function effortsFor(providers: Provider[], choice: ModelChoice): ProviderEffort[] {
+  const provider = providerOf(providers, choice.provider);
+  const model = provider?.models.find((entry) => entry.value === (choice.model ?? ""));
+  return model?.efforts ?? provider?.efforts ?? [];
+}
+
+export function effortLabel(providers: Provider[], choice: ModelChoice): string {
+  const efforts = effortsFor(providers, choice);
+  if (!choice.effort) {
+    const model = providerOf(providers, choice.provider)?.models.find((entry) => entry.value === (choice.model ?? ""));
+    const defaultLabel = efforts.find((entry) => entry.value === model?.defaultEffort)?.label;
+    return defaultLabel ? `Default - ${defaultLabel}` : "Default effort";
+  }
+  return efforts.find((entry) => entry.value === choice.effort)?.label ?? choice.effort;
 }

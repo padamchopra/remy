@@ -15,6 +15,9 @@ test("Cursor uses ACP and maps Remy's broad permission modes to current CLI flag
   assert.deepEqual(cursorAcpArgs({ permissionMode: "auto", model: "auto" }), [
     "--model", "auto", "--auto-review", "--approve-mcps", "acp",
   ]);
+  assert.deepEqual(cursorAcpArgs({ permissionMode: "auto", model: "grok-4.6[fast=true]", effort: "high" }), [
+    "--model", "grok-4.6[fast=true,effort=high]", "--auto-review", "--approve-mcps", "acp",
+  ]);
   assert.deepEqual(cursorAcpArgs({ permissionMode: "bypassPermissions" }), [
     "--force", "--approve-mcps", "acp",
   ]);

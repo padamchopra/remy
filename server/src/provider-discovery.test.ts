@@ -35,11 +35,26 @@ test("Claude generation decimals stay decimals", () => {
 
 test("Codex app-server models keep its live names and default", () => {
   const models = codexModels([
-    { model: "gpt-5.6-sol", displayName: "GPT-5.6-Sol", isDefault: true, hidden: false },
+    {
+      model: "gpt-5.6-sol",
+      displayName: "GPT-5.6-Sol",
+      isDefault: true,
+      hidden: false,
+      defaultReasoningEffort: "high",
+      supportedReasoningEfforts: [
+        { reasoningEffort: "low", description: "Fast." },
+        { reasoningEffort: "high", description: "Deep." },
+      ],
+    },
     { model: "hidden", displayName: "Hidden", hidden: true },
   ]);
 
-  assert.deepEqual(models[0], { value: "", label: "Default", resolvedLabel: "GPT-5.6 Sol" });
+  assert.equal(models[0]?.resolvedLabel, "GPT-5.6 Sol");
+  assert.equal(models[0]?.defaultEffort, "high");
+  assert.deepEqual(models[0]?.efforts, [
+    { value: "low", label: "Low", detail: "Fast." },
+    { value: "high", label: "High", detail: "Deep." },
+  ]);
   assert.equal(models[1]?.label, "GPT-5.6 Sol");
   assert.equal(models.length, 2);
 });

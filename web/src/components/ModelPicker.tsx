@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, ChevronDown, CircleSlash, Star } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, CircleSlash, Star } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,6 +13,8 @@ import {
 import { InputGroupButton, InputGroupText } from "@/components/ui/input-group";
 import { ProviderMark } from "@/components/ProviderMark";
 import {
+  effortLabel,
+  effortsFor,
   modelLabel,
   resolvedModelLabel,
   PROVIDERS,
@@ -73,7 +75,7 @@ function displayModel(model: ProviderModel): string {
 }
 
 function inheritedLabel(providers: Provider[], choice?: ModelChoice): string {
-  return choice ? `Default - ${resolvedModelLabel(providers, choice)}` : "Default";
+  return choice ? `Default - ${resolvedModelLabel(providers, choice)} · ${effortLabel(providers, choice)}` : "Default";
 }
 
 /// The dialog on its own, for a caller that already has a trigger.
@@ -102,6 +104,12 @@ export function ModelPicker({
   const off = allowOff && value.model === OFF;
   const inherited = allowDefault && value.provider === REMY_DEFAULT;
   const favorites = new Set(settings?.favoriteModels ?? []);
+  const [pending, setPending] = useState<ModelChoice>();
+
+  const changeOpen = (next: boolean) => {
+    if (!next) setPending(undefined);
+    onOpenChange(next);
+  };
 
   const toggleFavorite = (provider: string, model: string) => {
     const key = `${provider}:${model}`;
@@ -118,15 +126,76 @@ export function ModelPicker({
   );
 
   const pick = (choice: ModelChoice) => {
+    setPending(undefined);
     onOpenChange(false);
-    if (choice.provider === value.provider && choice.model === value.model) return;
+    if (choice.provider === value.provider && choice.model === value.model && choice.effort === value.effort) return;
     onPick(choice);
   };
+
+  const chooseModel = (provider: Provider, model: ProviderModel) => {
+    const choice: ModelChoice = {
+      provider: provider.id,
+      model: model.value,
+      effort:
+        provider.id === value.provider && model.value === value.model
+          ? value.effort ?? ""
+          : model.defaultEffort ?? "",
+    };
+    if (effortsFor(providers, choice).length === 0) pick(choice);
+    else setPending(choice);
+  };
+
+  if (pending) {
+    const provider = providers.find((entry) => entry.id === pending.provider);
+    const model = provider?.models.find((entry) => entry.value === pending.model);
+    const efforts = effortsFor(providers, pending);
+    return (
+      <CommandDialog
+        open={open}
+        onOpenChange={changeOpen}
+        title="Pick effort"
+        description="Choose how much reasoning this model uses."
+        showCloseButton={false}
+        className="top-[12%] translate-y-0 sm:max-w-[520px]"
+      >
+        <CommandList className="max-h-[440px]">
+          <CommandGroup>
+            <CommandItem value="back to models" onSelect={() => setPending(undefined)}>
+              <ArrowLeft />
+              <span>Back to models</span>
+            </CommandItem>
+          </CommandGroup>
+          <CommandGroup heading={`${provider?.label ?? pending.provider} · ${model ? displayModel(model) : pending.model}`}>
+            <CommandItem value="default effort" onSelect={() => pick({ ...pending, effort: "" })}>
+              <span>Default</span>
+              {model?.defaultEffort ? (
+                <span className="text-xs text-muted-foreground">
+                  Uses {efforts.find((entry) => entry.value === model.defaultEffort)?.label ?? model.defaultEffort}.
+                </span>
+              ) : null}
+              {!pending.effort ? <Check className="ml-auto" /> : null}
+            </CommandItem>
+            {efforts.map((effort) => (
+              <CommandItem
+                key={effort.value}
+                value={`${effort.label} ${effort.value}`}
+                onSelect={() => pick({ ...pending, effort: effort.value })}
+              >
+                <span>{effort.label}</span>
+                {effort.detail ? <span className="text-xs text-muted-foreground">{effort.detail}</span> : null}
+                {pending.effort === effort.value ? <Check className="ml-auto" /> : null}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        </CommandList>
+      </CommandDialog>
+    );
+  }
 
   return (
     <CommandDialog
       open={open}
-      onOpenChange={onOpenChange}
+      onOpenChange={changeOpen}
       title="Pick a model"
       description="Search providers and models"
       filter={match}
@@ -143,7 +212,7 @@ export function ModelPicker({
             <CommandItem
               value={`${inheritedLabel(providers, defaultChoice)} inherited`}
               keywords={defaultChoice ? [defaultChoice.provider, defaultChoice.model] : undefined}
-              onSelect={() => pick({ provider: REMY_DEFAULT, model: "" })}
+              onSelect={() => pick({ provider: REMY_DEFAULT, model: "", effort: "" })}
             >
               <ProviderMark provider={defaultChoice?.provider ?? "claude"} />
               <span>{inheritedLabel(providers, defaultChoice)}</span>
@@ -159,7 +228,7 @@ export function ModelPicker({
                 value={`${model.label} ${provider.label} favorite`}
                 keywords={[model.value, provider.id]}
                 disabled={provider.available === false || provider.enabled === false}
-                onSelect={() => pick({ provider: provider.id, model: model.value })}
+                onSelect={() => chooseModel(provider, model)}
               >
                 <ProviderMark provider={provider.id} />
                 <span className="min-w-0 truncate">{displayModel(model)}</span>
@@ -200,7 +269,7 @@ export function ModelPicker({
                   value={`${model.label} ${provider.label}`}
                   keywords={[model.value, provider.id].filter(Boolean)}
                   disabled={disabled || missing}
-                  onSelect={() => pick({ provider: provider.id, model: model.value })}
+                  onSelect={() => chooseModel(provider, model)}
                 >
                   <ProviderMark provider={provider.id} />
                   <span className="min-w-0 truncate">{displayModel(model)}</span>
@@ -232,7 +301,7 @@ export function ModelPicker({
         })}
         {allowOff && (
           <CommandGroup heading="Or not at all">
-            <CommandItem value="off none" onSelect={() => pick({ provider: value.provider, model: OFF })}>
+            <CommandItem value="off none" onSelect={() => pick({ provider: value.provider, model: OFF, effort: "" })}>
               <CircleSlash />
               <span>Off</span>
               <span className="text-xs text-muted-foreground">Remy names nothing for you.</span>
@@ -279,7 +348,7 @@ export function ModelPickerButton({
   const inherited = allowDefault && value.provider === REMY_DEFAULT;
   const label = inherited
     ? inheritedLabel(providers, defaultChoice)
-    : value.model === OFF ? "Off" : modelLabel(providers, value);
+    : value.model === OFF ? "Off" : `${modelLabel(providers, value)} · ${effortLabel(providers, value)}`;
   const mark = inherited
     ? <ProviderMark provider={defaultChoice?.provider ?? "claude"} />
     : <ProviderMark provider={value.provider} />;

@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   codexSandbox,
+  knowsEffort,
   knowsModel,
   modelLabel,
   PROVIDERS,
+  providerEffort,
   providerId,
   providerModel,
+  rememberProviderModels,
 } from "./providers.js";
 
 test("every provider offers a default, and names its own executable", () => {
@@ -37,6 +40,20 @@ test("a model reads as its own name, and an empty one as the default", () => {
   assert.equal(modelLabel("claude", "opus"), "Opus 5");
   assert.equal(modelLabel("codex", "gpt-5.6-luna"), "GPT-5.6 Luna");
   assert.equal(modelLabel("codex", ""), "Default");
+});
+
+test("effort belongs to the selected provider model", () => {
+  assert.equal(providerEffort("claude", "sonnet", "high"), "high");
+  assert.equal(providerEffort("claude", "sonnet", "ultra"), "");
+  assert.equal(knowsEffort("codex", "gpt-5.6-sol", "ultra"), true);
+
+  rememberProviderModels("codex", [{
+    value: "future-codex",
+    label: "Future Codex",
+    efforts: [{ value: "brief", label: "Brief" }],
+  }]);
+  assert.equal(providerEffort("codex", "future-codex", "brief"), "brief");
+  assert.equal(providerEffort("codex", "future-codex", "high"), "");
 });
 
 test("Codex keeps a conservative sandbox fallback for each permission mode", () => {

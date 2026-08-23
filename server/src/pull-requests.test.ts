@@ -20,6 +20,7 @@ const workspace: Workspace = {
   tint: null,
   provider: null,
   model: null,
+  effort: null,
   worktrees: [
     { path: "/code/control", branch: "main", isMain: true, dirty: false },
     { path: "/code/control-pr", branch: "feature/flight-deck", isMain: false, dirty: false },

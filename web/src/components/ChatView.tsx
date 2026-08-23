@@ -192,7 +192,7 @@ export function ChatView({
   const asks = provider?.approvals !== false;
 
   const setOption = async (
-    patch: { provider?: string; model?: string | null; permissionMode?: string },
+    patch: { provider?: string; model?: string | null; effort?: string | null; permissionMode?: string },
     what: string,
   ) => {
     try {
@@ -343,12 +343,12 @@ export function ChatView({
               ) : (
                 <ModelPickerButton
                   variant="composer"
-                  value={{ provider: provider?.id ?? "claude", model: open?.model ?? "" }}
+                  value={{ provider: provider?.id ?? "claude", model: open?.model ?? "", effort: open?.effort ?? "" }}
                   disabled={!open || working}
                   title={working ? "The model changes once this turn is done." : undefined}
                   onPick={(next) =>
                     void setOption(
-                      { provider: next.provider, model: next.model || null },
+                      { provider: next.provider, model: next.model || null, effort: next.effort ?? null },
                       next.provider === open?.provider ? "model" : "provider",
                     )
                   }

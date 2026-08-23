@@ -81,7 +81,7 @@ export function ChatComposer({
   const settings = useStore((s) => s.settings);
   const [target, setTarget] = useState(workspaces[0]?.id ?? HOME);
   const [serverId, setServerId] = useState(() => preferredServer(servers)?.id ?? "");
-  const [choice, setChoice] = useState<ModelChoice>({ provider: "claude", model: "" });
+  const [choice, setChoice] = useState<ModelChoice>({ provider: "claude", model: "", effort: "" });
   const [modelPicked, setModelPicked] = useState(false);
   const [permissionMode, setPermissionMode] = useState<PermissionValue>("default");
   const [permissionPicked, setPermissionPicked] = useState(false);
@@ -126,20 +126,26 @@ export function ChatComposer({
   // you pick something — and then yours for as long as the composer is open.
   useEffect(() => {
     if (cloud) {
-      setChoice({ provider: "cursor", model: "" });
+      setChoice({ provider: "cursor", model: "", effort: "" });
       return;
     }
     if (modelPicked) return;
     setChoice(
       workspace?.provider
-        ? { provider: workspace.provider, model: workspace.model ?? "" }
-        : { provider: settings?.defaultProvider ?? "claude", model: settings?.defaultModel ?? "" },
+        ? { provider: workspace.provider, model: workspace.model ?? "", effort: workspace.effort ?? "" }
+        : {
+            provider: settings?.defaultProvider ?? "claude",
+            model: settings?.defaultModel ?? "",
+            effort: settings?.defaultEffort ?? "",
+          },
     );
   }, [
     workspace?.provider,
     workspace?.model,
+    workspace?.effort,
     settings?.defaultProvider,
     settings?.defaultModel,
+    settings?.defaultEffort,
     modelPicked,
     cloud,
   ]);
@@ -207,7 +213,8 @@ export function ChatComposer({
         text,
         serverId: server.id,
         provider: choice.provider,
-        model: choice.model || undefined,
+        model: choice.model,
+        effort: choice.effort ?? "",
         permissionMode,
       });
       onCreated(created.id);

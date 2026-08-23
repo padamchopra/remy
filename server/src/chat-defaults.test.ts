@@ -28,17 +28,22 @@ const { patchSettings } = await import("./config.js");
 const cwd = mkdtempSync(join(tmpdir(), "remy-chat-cwd-"));
 
 test("a new thread starts on this machine's default", () => {
-  patchSettings({ defaultProvider: "claude", defaultModel: "opus" });
+  patchSettings({ defaultProvider: "claude", defaultModel: "opus", defaultEffort: "high" });
   const chat = createChat({ cwd });
   assert.equal(chat.provider, "claude");
   assert.equal(chat.model, "opus");
+  assert.equal(chat.effort, "high");
 });
 
 test("a workspace with a provider of its own stands in for the machine's", () => {
   patchSettings({ defaultProvider: "claude", defaultModel: "opus" });
-  const chat = createChat({ cwd, workspaceDefault: { provider: "codex", model: "gpt-5.6-terra" } });
+  const chat = createChat({
+    cwd,
+    workspaceDefault: { provider: "codex", model: "gpt-5.6-terra", effort: "xhigh" },
+  });
   assert.equal(chat.provider, "codex");
   assert.equal(chat.model, "gpt-5.6-terra");
+  assert.equal(chat.effort, "xhigh");
 });
 
 test("Cursor can be the workspace provider", () => {
@@ -72,10 +77,12 @@ test("what the caller asked for outranks both", () => {
     cwd,
     provider: "codex",
     model: "gpt-5.6-luna",
+    effort: "low",
     workspaceDefault: { provider: "claude", model: "sonnet" },
   });
   assert.equal(chat.provider, "codex");
   assert.equal(chat.model, "gpt-5.6-luna");
+  assert.equal(chat.effort, "low");
 });
 
 test("asking for a provider's own default is a choice, not a gap", () => {

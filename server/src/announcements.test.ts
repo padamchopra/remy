@@ -67,12 +67,13 @@ test("picking a model for an agent picks it for its conversation", async () => {
 
   // An inbox conversation is the agent, not a piece of work with a history the
   // other tool could not read — so it moves when the agent does.
-  updateAgent(REMY_AGENT_ID, { provider: "claude", model: "sonnet" });
+  updateAgent(REMY_AGENT_ID, { provider: "claude", model: "sonnet", effort: "high" });
   syncAgentDm(REMY_AGENT_ID);
 
   const moved = listDms().find((chat) => chat.id === dm.id);
   assert.equal(moved?.provider, "claude");
   assert.equal(moved?.model, "sonnet");
+  assert.equal(moved?.effort, "high");
 });
 
 test("an agent's conversation goes with the agent", async () => {

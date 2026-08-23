@@ -26,6 +26,7 @@ export interface CursorSessionOptions {
   command: string;
   cwd: string;
   model?: string;
+  effort?: string;
   permissionMode: ChatPermissionMode;
   sessionId?: string;
   additionalDirectories?: string[];
@@ -130,9 +131,19 @@ function identity<T>(value: unknown): T {
 /// Cursor's ACP executable flags. The model aliases come from `agent
 /// --list-models`; ACP remains the transport rather than the older print-mode
 /// JSON stream.
-export function cursorAcpArgs(options: Pick<CursorSessionOptions, "model" | "permissionMode">): string[] {
+export function cursorModel(model: string | undefined, effort: string | undefined): string | undefined {
+  if (!effort) return model;
+  const base = model || "auto";
+  const match = /^(.*)\[([^\]]*)\]$/.exec(base);
+  if (!match) return `${base}[effort=${effort}]`;
+  const values = match[2].split(",").map((value) => value.trim()).filter((value) => value && !value.startsWith("effort="));
+  return `${match[1]}[${[...values, `effort=${effort}`].join(",")}]`;
+}
+
+export function cursorAcpArgs(options: Pick<CursorSessionOptions, "model" | "effort" | "permissionMode">): string[] {
   const args: string[] = [];
-  if (options.model) args.push("--model", options.model);
+  const model = cursorModel(options.model, options.effort);
+  if (model) args.push("--model", model);
   if (options.permissionMode === "auto") args.push("--auto-review");
   if (options.permissionMode === "bypassPermissions") args.push("--force");
   // Remy supplies one capability-scoped MCP server. Its tools still keep their
@@ -533,6 +544,7 @@ export async function cursorAnswer(options: {
   prompt: string;
   cwd: string;
   model?: string;
+  effort?: string;
   timeoutMs: number;
   env?: NodeJS.ProcessEnv;
 }): Promise<string | undefined> {
@@ -542,6 +554,7 @@ export async function cursorAnswer(options: {
       command: options.command,
       cwd: options.cwd,
       model: options.model,
+      effort: options.effort,
       permissionMode: "plan",
       env: options.env,
     },

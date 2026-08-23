@@ -69,12 +69,14 @@ export function AgentSettings({
   defaultGitIdentity,
   defaultProvider,
   defaultModel,
+  defaultEffort,
   onDeleted,
 }: {
   agent: Agent;
   defaultGitIdentity: string;
   defaultProvider: string;
   defaultModel: string;
+  defaultEffort: string;
   onDeleted: () => void;
 }) {
   const agents = useStore((s) => s.agents);
@@ -258,9 +260,12 @@ export function AgentSettings({
             id="agent-model"
             className="w-full"
             allowDefault
-            defaultChoice={{ provider: defaultProvider, model: defaultModel }}
-            value={{ provider: agent.provider || REMY_DEFAULT, model: agent.model ?? "" }}
-            onPick={(next) => void save({ provider: next.provider, model: next.model }, "what it thinks with")}
+            defaultChoice={{ provider: defaultProvider, model: defaultModel, effort: defaultEffort }}
+            value={{ provider: agent.provider || REMY_DEFAULT, model: agent.model ?? "", effort: agent.effort ?? "" }}
+            onPick={(next) => void save(
+              { provider: next.provider, model: next.model, effort: next.effort ?? "" },
+              "what it thinks with",
+            )}
           />
         </Field>
         <Field>

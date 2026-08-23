@@ -601,10 +601,14 @@ function ThreadDefaultsField() {
         <ModelPickerButton
           id="thread-default-model"
           className="w-48"
-          value={{ provider: settings.defaultProvider ?? "claude", model: settings.defaultModel ?? "" }}
+          value={{
+            provider: settings.defaultProvider ?? "claude",
+            model: settings.defaultModel ?? "",
+            effort: settings.defaultEffort ?? "",
+          }}
           onPick={(choice) =>
             void save(
-              { defaultProvider: choice.provider, defaultModel: choice.model },
+              { defaultProvider: choice.provider, defaultModel: choice.model, defaultEffort: choice.effort ?? "" },
               "what a new thread thinks with",
             )
           }
