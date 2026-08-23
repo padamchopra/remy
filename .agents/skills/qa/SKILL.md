@@ -15,7 +15,18 @@ A snapshot of the default paint is not a test.
 
 The page does not live-reload — `server.hmr` is `false` in `web/vite.config.ts`. Reload it after every edit, or the screenshot is of the code you had before.
 
-Server changes need the clone's daemon, which cannot start while Remy.app holds port 8420. Quit Remy.app first.
+Before starting or stopping anything, check whether `REMY_CHAT_ID` is set. A thread launched inside Remy carries that variable, so its agent is running through the daemon it might otherwise try to replace.
+
+When `REMY_CHAT_ID` is set:
+
+- Never quit Remy.app, stop the process on port 8420, or replace its daemon. That ends the thread performing the QA.
+- For a UI-only change, use `npm run dev:web`; it attaches the edited UI to the already-running packaged daemon.
+- For a server change, run the server tests and report that current-code live server verification was not performed. The packaged daemon can still support UI inspection, but it does not contain the server edit.
+- Current-code live server verification happens from a controller outside that Remy daemon, after this thread has finished.
+
+When `REMY_CHAT_ID` is not set, a server change may use the clone's daemon: quit Remy.app, then run `npm run dev:web`, so the clone can take port 8420.
+
+Only stop a Vite process this agent started. If port 5173 belongs to another checkout or person, keep it running and report that this checkout could not take the preview port.
 
 Playwright drives it with the cached Chromium: `web/scripts/shoot.mjs` is the working example, and `chromiumPath()` in `web/scripts/chromium.mjs` finds the binary.
 

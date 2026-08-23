@@ -3,6 +3,7 @@ import { deviceId } from "./board-log.js";
 import { createChat, deleteChat, getChat, sendChatMessage } from "./chat.js";
 import { workspaceForProject } from "./projects.js";
 import { getTicket, linkThread, listTickets, prepareTicketStart, type TicketView } from "./tickets.js";
+import { checkoutTicketWorktree } from "./workspaces.js";
 
 const starts = new Map<string, Promise<ReturnType<typeof getChat> | undefined>>();
 
@@ -52,8 +53,9 @@ async function start(id: string, automatic: boolean): Promise<ReturnType<typeof 
     if (automatic) return undefined;
     throw new Error("This workspace is not on this device.");
   }
+  const cwd = await checkoutTicketWorktree(workspace, ticket.key);
   const chat = createChat({
-    cwd: workspace.path,
+    cwd,
     title: ticket.title,
     ...(agentId ? { agentId } : {}),
     workspaceDefault: { provider: workspace.provider, model: workspace.model },

@@ -676,6 +676,42 @@ async function managedWorktreePath(workspacePath: string, branch: string): Promi
   return path;
 }
 
+/// Gives a ticket its own stable worktree, reusing it when the ticket starts
+/// another runner later. It stays detached until the ordinary thread-naming
+/// pass gives the work a descriptive branch.
+export async function checkoutTicketWorktree(workspace: Workspace, ticketKey: string): Promise<string> {
+  if (workspace.worktrees.length === 0) return workspace.path;
+
+  const key = ticketKey.trim().toLowerCase();
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(key)) throw new Error("that ticket key cannot name a worktree");
+
+  const path = await managedWorktreePath(workspace.path, `tickets/${key}`);
+  const registered = workspace.worktrees.find((worktree) => worktree.path === path);
+  if (registered) return registered.path;
+  if (existsSync(path)) throw new Error("a worktree folder for that ticket already exists");
+
+  const main = workspace.worktrees.find((worktree) => worktree.isMain) ?? workspace.worktrees[0];
+  const localBase = main.branch || "HEAD";
+  const remoteBase = main.branch ? `origin/${main.branch}` : "";
+  const startingRef = config.worktreeBase === "remote"
+    && remoteBase
+    && await isRemoteTracking(workspace.path, remoteBase)
+    ? remoteBase
+    : localBase;
+
+  try {
+    await exec(
+      "git",
+      ["-C", workspace.path, "worktree", "add", "--detach", path, startingRef],
+      { cwd: homedir(), timeout: 60_000 },
+    );
+  } catch (error) {
+    throw new Error(checkoutError(error));
+  }
+  invalidateWorkspacesCache();
+  return path;
+}
+
 /// Hides a path from `git status` without touching the repository's
 /// `.gitignore`: `info/exclude` is per-clone and is never committed, so nobody
 /// else's checkout sees the rule and no tracked file changes.
