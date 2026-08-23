@@ -1,6 +1,6 @@
 ---
 name: qa
-description: Clicking the running Remy UI to see whether a change is actually right. Use after changing ANY component, dialog, menu, composer, empty state, shortcut, or icon.
+description: Running and clicking Remy to prove current UI and server behavior safely beside the packaged app. Use after changing ANY component, dialog, menu, composer, empty state, shortcut, icon, or server behavior exercised through the UI.
 ---
 
 # QA
@@ -11,22 +11,18 @@ A snapshot of the default paint is not a test.
 
 ## Getting a page in front of you
 
-`npm run dev:web` from the repo root serves the app at `http://127.0.0.1:5173`, against the same daemon and database as the DMG.
+Choose the preview by what changed:
+
+- **UI only:** `npm run dev:web` serves the edited UI at `http://127.0.0.1:5173` against the packaged daemon and real database.
+- **Server behavior, or an occupied 5173:** `npm run qa:web` builds the current checkout and starts an isolated daemon and Vite on unused loopback ports. Open the URL it prints. Its temporary database includes a disposable sample workspace and ticket; add `-- --empty` when testing an empty state.
 
 The page does not live-reload — `server.hmr` is `false` in `web/vite.config.ts`. Reload it after every edit, or the screenshot is of the code you had before.
 
-Before starting or stopping anything, check whether `REMY_CHAT_ID` is set. A thread launched inside Remy carries that variable, so its agent is running through the daemon it might otherwise try to replace.
+Never quit Remy.app, stop the process on port 8420, or replace its daemon for QA. A thread may be running through that exact process. The sidecar strips inherited `REMY_*` and `MC_*` credentials, uses temporary state, and owns only the processes it starts, so current server code can run beside production without reaching back into it.
 
-When `REMY_CHAT_ID` is set:
+Keep `npm run qa:web` running while clicking the app, then stop that command with Ctrl+C. It removes the temporary state. Never kill a process by port or stop another Vite instance. A pass against `npm run dev:web` verifies edited UI against the packaged server; it does not verify a server change.
 
-- Never quit Remy.app, stop the process on port 8420, or replace its daemon. That ends the thread performing the QA.
-- For a UI-only change, use `npm run dev:web`; it attaches the edited UI to the already-running packaged daemon.
-- For a server change, run the server tests and report that current-code live server verification was not performed. The packaged daemon can still support UI inspection, but it does not contain the server edit.
-- Current-code live server verification happens from a controller outside that Remy daemon, after this thread has finished.
-
-When `REMY_CHAT_ID` is not set, a server change may use the clone's daemon: quit Remy.app, then run `npm run dev:web`, so the clone can take port 8420.
-
-Only stop a Vite process this agent started. If port 5173 belongs to another checkout or person, keep it running and report that this checkout could not take the preview port.
+`npm run qa:web -- --check` is the fast startup and proxy regression check. It is not interaction QA: for a UI or behavior change, use the ordinary command and drive the printed URL.
 
 Playwright drives it with the cached Chromium: `web/scripts/shoot.mjs` is the working example, and `chromiumPath()` in `web/scripts/chromium.mjs` finds the binary.
 
