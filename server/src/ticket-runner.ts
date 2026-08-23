@@ -58,7 +58,7 @@ async function start(id: string, automatic: boolean): Promise<ReturnType<typeof 
     cwd,
     title: ticket.title,
     ...(agentId ? { agentId } : {}),
-    workspaceDefault: { provider: workspace.provider, model: workspace.model },
+    workspaceDefault: { provider: workspace.provider, model: workspace.model, effort: workspace.effort },
   });
   try {
     linkThread(ticket.id, { chatId: chat.id, agentId, linkedBy: "runner" });

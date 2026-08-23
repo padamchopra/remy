@@ -3,7 +3,7 @@ import { append, applyFields, entityIds, eventsFor } from "./board-log.js";
 import type { ChatPermissionMode } from "./chat.js";
 import { config } from "./config.js";
 import { db, runTransaction } from "./db.js";
-import { providerId, providerModel, type ProviderId } from "./providers.js";
+import { providerEffort, providerId, providerModel, type ProviderId } from "./providers.js";
 import {
   REMY_AGENT_HANDLE,
   REMY_AGENT_ID,
@@ -39,6 +39,7 @@ export interface Agent {
   /// In its provider's own naming. Absent leaves the choice to whatever that
   /// tool is configured with.
   model?: string;
+  effort?: string;
   permissionMode: ChatPermissionMode;
   avatar?: string;
   tint?: string;
@@ -76,6 +77,7 @@ const EDITABLE = [
   "instructions",
   "provider",
   "model",
+  "effort",
   "permissionMode",
   "avatar",
   "tint",
@@ -184,14 +186,14 @@ function fold(id: string): Agent | undefined {
 function write(agent: Agent): void {
   db.prepare(
     `insert into agents (
-       id, name, handle, role, instructions, provider, model, permission_mode,
+       id, name, handle, role, instructions, provider, model, effort, permission_mode,
        avatar, tint, auto_start, handoff_to, git_identity, git_name, git_email,
        preset, created_at, updated_at, deleted
-     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
      on conflict(id) do update set
        name = excluded.name, handle = excluded.handle, role = excluded.role,
        instructions = excluded.instructions, provider = excluded.provider,
-       model = excluded.model, permission_mode = excluded.permission_mode,
+       model = excluded.model, effort = excluded.effort, permission_mode = excluded.permission_mode,
        avatar = excluded.avatar, tint = excluded.tint, auto_start = excluded.auto_start,
        handoff_to = excluded.handoff_to, git_identity = excluded.git_identity,
        git_name = excluded.git_name, git_email = excluded.git_email,
@@ -204,6 +206,7 @@ function write(agent: Agent): void {
     agent.instructions,
     agent.provider,
     agent.model ?? null,
+    agent.effort ?? null,
     agent.permissionMode,
     agent.avatar ?? null,
     agent.tint ?? null,
@@ -252,6 +255,7 @@ function toAgent(row: Record<string, unknown>): Agent {
     instructions: String(row.instructions ?? ""),
     provider: agentProvider(row.provider),
     ...(row.model ? { model: String(row.model) } : {}),
+    ...(row.effort ? { effort: String(row.effort) } : {}),
     permissionMode: String(row.permission_mode) as ChatPermissionMode,
     ...(row.avatar ? { avatar: String(row.avatar) } : {}),
     ...(row.tint ? { tint: String(row.tint) } : {}),
@@ -317,6 +321,7 @@ export function workspaceAgent(): Agent {
     instructions: "",
     provider: config.defaultProvider,
     ...(config.defaultModel ? { model: config.defaultModel } : {}),
+    ...(config.defaultEffort ? { effort: config.defaultEffort } : {}),
     permissionMode: "auto",
     autoStart: true,
     handoffTo: [],
@@ -338,11 +343,13 @@ export function assignedAgent(id: string | undefined): Agent | undefined {
 ///
 /// Kept out of the stored row so changing the machine default changes every
 /// agent that still follows it, including agents made before that change.
-export function resolvedAgentModel(agent: Agent): { provider: ProviderId; model: string } {
+export function resolvedAgentModel(agent: Agent): { provider: ProviderId; model: string; effort: string } {
   const inherited = agent.provider === REMY_DEFAULT || !config.enabledProviders.includes(agent.provider);
   const provider = inherited ? config.defaultProvider : providerId(agent.provider);
   const asked = inherited ? config.defaultModel : agent.model;
-  return { provider, model: providerModel(provider, asked) };
+  const model = providerModel(provider, asked);
+  const effort = inherited ? config.defaultEffort : agent.effort;
+  return { provider, model, effort: providerEffort(provider, model, effort) };
 }
 
 // ── writing ─────────────────────────────────────────────────────────────────
@@ -385,10 +392,11 @@ function validate(input: Record<string, unknown>, existing?: Agent): Record<stri
   if (input.instructions !== undefined) patch.instructions = text(input.instructions, 8000) ?? "";
   // Provider and model are one choice: moving an agent to Codex takes its model
   // with it, to Codex's default rather than to a Claude alias Codex would refuse.
-  if (input.provider !== undefined || input.model !== undefined) {
+  if (input.provider !== undefined || input.model !== undefined || input.effort !== undefined) {
     if (input.provider === REMY_DEFAULT) {
       patch.provider = REMY_DEFAULT;
       patch.model = "";
+      patch.effort = "";
     } else {
       const current = existing?.provider === REMY_DEFAULT
         ? config.defaultProvider
@@ -400,6 +408,7 @@ function validate(input: Record<string, unknown>, existing?: Agent): Record<stri
         patch.provider = provider;
       }
       patch.model = providerModel(provider, model);
+      patch.effort = providerEffort(provider, patch.model, input.effort === undefined ? existing?.effort : input.effort);
     }
   }
   if (input.permissionMode !== undefined) {

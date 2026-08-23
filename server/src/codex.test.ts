@@ -142,6 +142,7 @@ const readline = require("node:readline");
 const rl = readline.createInterface({ input: process.stdin });
 let turn = 0;
 let active;
+let threadEffort;
 const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
 const item = (id, text) => ({ type: "agentMessage", id, text, phase: null, memoryCitation: null, delivery: null });
 const complete = (text, status = "completed") => {
@@ -157,6 +158,7 @@ rl.on("line", (line) => {
   if (message.method === "initialize") return send({ id: message.id, result: { userAgent: "fake" } });
   if (message.method === "initialized") return;
   if (message.method === "thread/start" || message.method === "thread/resume") {
+    threadEffort = message.params.modelReasoningEffort;
     return send({ id: message.id, result: { thread: { id: "thread-1" } } });
   }
   if (message.method === "turn/start") {
@@ -170,6 +172,10 @@ rl.on("line", (line) => {
     }
     if (prompt === "question") {
       return send({ id: "question-1", method: "item/tool/requestUserInput", params: { threadId: "thread-1", turnId: active, itemId: "question", isBlocking: true, questions: [{ id: "target", header: "Target", question: "Where should this run?", options: [{ label: "Local", description: "This machine." }] }] } });
+    }
+    if (prompt === "effort") {
+      complete("effort:" + threadEffort + ":" + message.params.modelReasoningEffort);
+      return;
     }
     if (prompt !== "hang") complete(prompt);
     return;
@@ -203,6 +209,20 @@ test("one app-server connection carries multiple streamed turns", async () => {
   );
   const usage = events.find((event) => event.type === "usage.updated");
   assert.equal(usage?.type === "usage.updated" && usage.usage.context_window, 200_000);
+});
+
+test("app-server receives the selected model effort", async () => {
+  const events: CodexEvent[] = [];
+  const session = createCodexSession(
+    { command: fakeAppServer(), cwd: process.cwd(), model: "gpt-5.6-sol", effort: "high", permissionMode: "plan" },
+    (event) => events.push(event),
+  );
+  await session.run("effort", { effort: "xhigh" }).done;
+  session.close();
+
+  assert.ok(events.some((event) => event.type === "item.completed"
+    && event.item.type === "agent_message"
+    && event.item.text === "effort:high:xhigh"));
 });
 
 test("app-server approvals stop in Remy's existing approval path", async () => {

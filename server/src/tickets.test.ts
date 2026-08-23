@@ -374,35 +374,40 @@ test("an inherited agent follows later model and git identity defaults", () => {
   const previous = {
     provider: config.config.defaultProvider,
     model: config.config.defaultModel,
+    effort: config.config.defaultEffort,
     identity: config.config.defaultGitIdentity,
   };
   try {
     config.config.defaultProvider = "claude";
     config.config.defaultModel = "sonnet";
+    config.config.defaultEffort = "high";
     config.config.defaultGitIdentity = "author";
     const agent = agents.createAgent({ name: "Follower" });
 
     assert.equal(agent.provider, "default");
     assert.equal(agent.gitIdentity, "default");
-    assert.deepEqual(agents.resolvedAgentModel(agent), { provider: "claude", model: "sonnet" });
+    assert.deepEqual(agents.resolvedAgentModel(agent), { provider: "claude", model: "sonnet", effort: "high" });
     assert.equal(agents.gitIdentityEnv(agent).GIT_COMMITTER_NAME, undefined);
 
     config.config.defaultProvider = "codex";
     config.config.defaultModel = "gpt-5.6-terra";
+    config.config.defaultEffort = "xhigh";
     config.config.defaultGitIdentity = "off";
-    assert.deepEqual(agents.resolvedAgentModel(agent), { provider: "codex", model: "gpt-5.6-terra" });
+    assert.deepEqual(agents.resolvedAgentModel(agent), { provider: "codex", model: "gpt-5.6-terra", effort: "xhigh" });
     assert.deepEqual(agents.gitIdentityEnv(agent), {});
 
     const fixed = agents.updateAgent(agent.id, {
       provider: "claude",
       model: "opus",
+      effort: "low",
       gitIdentity: "off",
     });
-    assert.deepEqual(agents.resolvedAgentModel(fixed), { provider: "claude", model: "opus" });
+    assert.deepEqual(agents.resolvedAgentModel(fixed), { provider: "claude", model: "opus", effort: "low" });
     assert.deepEqual(agents.gitIdentityEnv(fixed), {});
   } finally {
     config.config.defaultProvider = previous.provider;
     config.config.defaultModel = previous.model;
+    config.config.defaultEffort = previous.effort;
     config.config.defaultGitIdentity = previous.identity;
   }
 });

@@ -432,7 +432,11 @@ const server = createServer(async (req, res) => {
       syncRepoUpdateSchedule();
       // Agents that follow the machine default follow it here too, so an inbox
       // conversation is never left on the model the machine used to be on.
-      if (body.defaultProvider !== undefined || body.defaultModel !== undefined) syncAgentDms();
+      if (
+        body.defaultProvider !== undefined
+        || body.defaultModel !== undefined
+        || body.defaultEffort !== undefined
+      ) syncAgentDms();
       return json(res, 200, { ...settings, preventSleepSupported: sleepSupported() });
     }
 
@@ -1218,9 +1222,12 @@ const server = createServer(async (req, res) => {
           // An empty model is a choice — that provider's own default — so it is
           // passed through rather than collapsed into "nothing was asked".
           model: typeof body.model === "string" ? body.model : undefined,
+          effort: typeof body.effort === "string" ? body.effort : undefined,
           permissionMode: scopedChatId || externalProvider ? undefined : body.permissionMode,
           agentId: typeof body.agentId === "string" && body.agentId ? body.agentId : undefined,
-          ...(holder?.provider ? { workspaceDefault: { provider: holder.provider, model: holder.model } } : {}),
+          ...(holder?.provider
+            ? { workspaceDefault: { provider: holder.provider, model: holder.model, effort: holder.effort } }
+            : {}),
         }) });
       } catch (error) {
         return json(res, 400, { error: (error as Error).message || "could not create the chat" });
@@ -1245,6 +1252,7 @@ const server = createServer(async (req, res) => {
             title: typeof body.title === "string" ? body.title : undefined,
             provider: typeof body.provider === "string" && body.provider ? body.provider : undefined,
             model: body.model === null ? null : typeof body.model === "string" ? body.model : undefined,
+            effort: body.effort === null ? null : typeof body.effort === "string" ? body.effort : undefined,
             permissionMode: body.permissionMode,
           }) });
         } catch (error) {
@@ -1514,6 +1522,7 @@ const server = createServer(async (req, res) => {
               // Null is how a workspace goes back to following the machine.
               provider: body.provider === undefined ? undefined : body.provider === null ? null : String(body.provider),
               model: body.model === undefined ? undefined : body.model === null ? null : String(body.model),
+              effort: body.effort === undefined ? undefined : body.effort === null ? null : String(body.effort),
             }),
           });
         } catch (error) {

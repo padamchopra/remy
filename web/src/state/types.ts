@@ -64,6 +64,7 @@ export interface Chat {
   /// The named persona running this thread, when it has one.
   agentId?: string;
   model?: string;
+  effort?: string;
   preview?: string;
   updatedAt: number;
   /// When the current run of work began. Absent once the chat settles, so a
@@ -101,6 +102,7 @@ export interface Workspace {
   /// the machine. Null in both means it does.
   provider?: string | null;
   model?: string | null;
+  effort?: string | null;
   worktrees: GitWorktree[];
   /// A device projection used for routing, hidden from the workspace list.
   virtual?: boolean;
@@ -218,6 +220,7 @@ export interface ChatDetail {
   provider?: string;
   agentId?: string;
   model?: string;
+  effort?: string;
   /// How much this thread may do unasked. Changeable, unlike where it runs.
   permissionMode?: string;
   state: ChatState;
@@ -242,10 +245,12 @@ export interface ServerSettings {
   worktreeBase: "remote" | "local";
   worktreeRoot: string;
   defaultModel: string;
+  defaultEffort: string;
   /// What Remy runs its own small jobs on, as opposed to what your chats think
   /// with. Kept cheap on purpose, and `off` declines them altogether.
   remyProvider: string;
   remyModel: string;
+  remyEffort: string;
   favoriteModels: string[];
   repoUpdate: "off" | "hourly" | "sixHourly" | "daily";
   worktreeBranchPrefix: string;
@@ -311,6 +316,7 @@ export interface Agent {
   instructions: string;
   provider: string;
   model?: string;
+  effort?: string;
   permissionMode: string;
   tint?: string;
   autoStart: boolean;

@@ -99,12 +99,16 @@ function TicketSlugField({ workspace }: { workspace: Workspace }) {
 function ModelField({ workspace }: { workspace: Workspace }) {
   const settings = useStore((s) => s.settings);
   const updateWorkspace = useStore((s) => s.updateWorkspace);
-  const inherited = { provider: settings?.defaultProvider ?? "claude", model: settings?.defaultModel ?? "" };
+  const inherited = {
+    provider: settings?.defaultProvider ?? "claude",
+    model: settings?.defaultModel ?? "",
+    effort: settings?.defaultEffort ?? "",
+  };
 
-  const pick = (choice: { provider: string; model: string }) => {
+  const pick = (choice: { provider: string; model: string; effort?: string }) => {
     const patch = choice.provider === REMY_DEFAULT
-      ? { provider: null, model: null }
-      : { provider: choice.provider, model: choice.model };
+      ? { provider: null, model: null, effort: null }
+      : { provider: choice.provider, model: choice.model, effort: choice.effort ?? "" };
     void updateWorkspace(workspace.id, patch).catch((error) => {
       toast.error("Couldn't change what this workspace runs on", { description: apiError(error) });
     });
@@ -122,8 +126,8 @@ function ModelField({ workspace }: { workspace: Workspace }) {
         defaultChoice={inherited}
         value={
           workspace.provider
-            ? { provider: workspace.provider, model: workspace.model ?? "" }
-            : { provider: REMY_DEFAULT, model: "" }
+            ? { provider: workspace.provider, model: workspace.model ?? "", effort: workspace.effort ?? "" }
+            : { provider: REMY_DEFAULT, model: "", effort: "" }
         }
         onPick={pick}
       />

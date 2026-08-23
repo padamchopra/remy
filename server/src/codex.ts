@@ -61,6 +61,7 @@ export interface CodexSessionOptions {
   command: string;
   cwd: string;
   model?: string;
+  effort?: string;
   permissionMode: string;
   threadId?: string;
   additionalDirectories?: string[];
@@ -125,7 +126,7 @@ export interface CodexRun {
 }
 
 export interface CodexSession {
-  run(prompt: string, options?: { model?: string; permissionMode?: string }): CodexRun;
+  run(prompt: string, options?: { model?: string; effort?: string; permissionMode?: string }): CodexRun;
   close(): void;
 }
 
@@ -235,7 +236,7 @@ class AppServerSession implements CodexSession {
     this.ready.catch(() => {});
   }
 
-  run(prompt: string, overrides: { model?: string; permissionMode?: string } = {}): CodexRun {
+  run(prompt: string, overrides: { model?: string; effort?: string; permissionMode?: string } = {}): CodexRun {
     if (this.active) throw new Error("Codex is already running a turn.");
     let resolve!: () => void;
     let reject!: (error: Error) => void;
@@ -254,11 +255,13 @@ class AppServerSession implements CodexSession {
       const roots = [this.options.cwd, ...(this.options.additionalDirectories ?? [])];
       const permissions = codexPermissions(permissionMode, [this.options.cwd]);
       const chosenModel = overrides.model ?? this.options.model;
+      const chosenEffort = overrides.effort ?? this.options.effort;
       const result = asRecord(await this.request("turn/start", {
         threadId: this.threadId,
         input: [{ type: "text", text: prompt }],
         cwd: this.options.cwd,
         ...(chosenModel ? { model: chosenModel } : {}),
+        ...(chosenEffort ? { modelReasoningEffort: chosenEffort } : {}),
         approvalPolicy: permissions.approvalPolicy,
         sandboxPolicy: permissions.sandboxPolicy,
         runtimeWorkspaceRoots: roots,
@@ -303,6 +306,7 @@ class AppServerSession implements CodexSession {
     const common = {
       cwd: this.options.cwd,
       ...(this.options.model ? { model: this.options.model } : {}),
+      ...(this.options.effort ? { modelReasoningEffort: this.options.effort } : {}),
       ...(this.options.developerInstructions ? { developerInstructions: this.options.developerInstructions } : {}),
       approvalPolicy: permissions.approvalPolicy,
       sandbox: permissions.sandbox,
@@ -656,6 +660,7 @@ export async function codexAnswer(options: {
   prompt: string;
   cwd: string;
   model?: string;
+  effort?: string;
   timeoutMs: number;
 }): Promise<string> {
   let answer = "";
@@ -667,7 +672,7 @@ export async function codexAnswer(options: {
       }
     },
   );
-  const run = session.run(options.prompt, { model: options.model, permissionMode: "plan" });
+  const run = session.run(options.prompt, { model: options.model, effort: options.effort, permissionMode: "plan" });
   const timer = setTimeout(() => run.stop(), options.timeoutMs);
   timer.unref?.();
   try {

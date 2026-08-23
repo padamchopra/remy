@@ -28,13 +28,19 @@ test("follows the machine until the workspace is given a provider of its own", a
   const added = await workspace("plain");
   assert.equal(added.provider, null);
   assert.equal(added.model, null);
+  assert.equal(added.effort, null);
 });
 
 test("stores a workspace's provider and model as one choice", async () => {
   const added = await workspace("codex");
-  const saved = await updateWorkspace(added.id, { provider: "codex", model: "gpt-5.6-terra" });
+  const saved = await updateWorkspace(added.id, {
+    provider: "codex",
+    model: "gpt-5.6-terra",
+    effort: "xhigh",
+  });
   assert.equal(saved.provider, "codex");
   assert.equal(saved.model, "gpt-5.6-terra");
+  assert.equal(saved.effort, "xhigh");
 });
 
 test("drops a model the workspace's provider would refuse", async () => {
@@ -48,28 +54,31 @@ test("drops a model the workspace's provider would refuse", async () => {
 
 test("moving to another provider takes the model with it", async () => {
   const added = await workspace("moved");
-  await updateWorkspace(added.id, { provider: "claude", model: "opus" });
+  await updateWorkspace(added.id, { provider: "claude", model: "opus", effort: "high" });
   const saved = await updateWorkspace(added.id, { provider: "codex" });
   assert.equal(saved.provider, "codex");
   assert.equal(saved.model, null);
+  assert.equal(saved.effort, "high");
 });
 
 test("clearing the provider puts the workspace back on the machine's default", async () => {
   const added = await workspace("cleared");
-  await updateWorkspace(added.id, { provider: "claude", model: "opus" });
+  await updateWorkspace(added.id, { provider: "claude", model: "opus", effort: "high" });
   const saved = await updateWorkspace(added.id, { provider: null });
   // A model with no provider in front of it belongs to nobody, so it goes too.
   assert.equal(saved.provider, null);
   assert.equal(saved.model, null);
+  assert.equal(saved.effort, null);
 });
 
 test("leaves the choice alone when a patch does not mention it", async () => {
   const added = await workspace("renamed");
-  await updateWorkspace(added.id, { provider: "claude", model: "haiku" });
+  await updateWorkspace(added.id, { provider: "claude", model: "haiku", effort: "low" });
   const saved = await updateWorkspace(added.id, { name: "Renamed" });
   assert.equal(saved.name, "Renamed");
   assert.equal(saved.provider, "claude");
   assert.equal(saved.model, "haiku");
+  assert.equal(saved.effort, "low");
 });
 
 test("gives a ticket a stable detached worktree", async () => {

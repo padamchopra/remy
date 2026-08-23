@@ -99,27 +99,29 @@ export async function suggestName(
   request: string,
   provider: ProviderId,
   model: string,
+  effort = "",
 ): Promise<ThreadName | undefined> {
   // `off` is how someone declines this entirely.
   if (model === "off") return undefined;
   const resolved = providerId(provider);
   const answer = resolved === "codex"
-    ? await nameWithCodex(request, model)
+    ? await nameWithCodex(request, model, effort)
     : resolved === "cursor"
-      ? await nameWithCursor(request, model)
-      : await nameWithClaude(request, model);
+      ? await nameWithCursor(request, model, effort)
+      : await nameWithClaude(request, model, effort);
   return answer ? parse(answer) : undefined;
 }
 
 /// Read-only in the home directory, like the Claude side: this is a naming call
 /// and it has no business reading the repository.
-async function nameWithCodex(request: string, model: string): Promise<string | undefined> {
+async function nameWithCodex(request: string, model: string, effort: string): Promise<string | undefined> {
   try {
     return await codexAnswer({
       command: agentCommand("codex")!,
       prompt: `${SYSTEM}\n\nName the session that starts with this request:\n\n${request}`,
       cwd: homedir(),
       ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
       timeoutMs: TIMEOUT_MS,
     });
   } catch {
@@ -127,13 +129,14 @@ async function nameWithCodex(request: string, model: string): Promise<string | u
   }
 }
 
-async function nameWithCursor(request: string, model: string): Promise<string | undefined> {
+async function nameWithCursor(request: string, model: string, effort: string): Promise<string | undefined> {
   try {
     return await cursorAnswer({
       command: agentCommand("cursor")!,
       prompt: `${SYSTEM}\n\nName the session that starts with this request:\n\n${request}`,
       cwd: homedir(),
       ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
       timeoutMs: TIMEOUT_MS,
     });
   } catch {
@@ -141,7 +144,7 @@ async function nameWithCursor(request: string, model: string): Promise<string | 
   }
 }
 
-async function nameWithClaude(request: string, model: string): Promise<string | undefined> {
+async function nameWithClaude(request: string, model: string, effort: string): Promise<string | undefined> {
   const options: Options = {
     // Home, not the project: this is a one-shot naming call, and it has no
     // business reading the repository or its CLAUDE.md.
@@ -152,6 +155,7 @@ async function nameWithClaude(request: string, model: string): Promise<string | 
     maxTurns: 1,
     allowedTools: [],
     ...(model ? { model } : {}),
+    ...(effort ? { effort: effort as NonNullable<Options["effort"]> } : {}),
   };
 
   const handle = query({ prompt: `Name the session that starts with this request:\n\n${request}`, options });

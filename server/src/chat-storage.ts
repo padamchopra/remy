@@ -13,6 +13,7 @@ export interface ChatRow {
   /// below carries it across turns.
   provider: ProviderId;
   model?: string;
+  effort?: string;
   permissionMode: ChatPermissionMode;
   agentId?: string;
   /// True when this thread is an agent's inbox conversation rather than work in
@@ -47,9 +48,9 @@ export function assertChatStorage(): void {
 function writeChat(row: ChatRow): void {
   db.prepare(
     `insert into chats (
-       id, title, cwd, provider, model, permission_mode, created_at, updated_at,
+       id, title, cwd, provider, model, effort, permission_mode, created_at, updated_at,
        claude_session_id, codex_thread_id, cursor_session_id, turns, cost_usd, context_json, todos_json, error, agent_id, dm, read_at
-     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      on conflict(id) do update set
        title = excluded.title,
        agent_id = excluded.agent_id,
@@ -58,6 +59,7 @@ function writeChat(row: ChatRow): void {
        cwd = excluded.cwd,
        provider = excluded.provider,
        model = excluded.model,
+       effort = excluded.effort,
        permission_mode = excluded.permission_mode,
        updated_at = excluded.updated_at,
        claude_session_id = excluded.claude_session_id,
@@ -74,6 +76,7 @@ function writeChat(row: ChatRow): void {
     row.cwd,
     row.provider,
     row.model ?? null,
+    row.effort ?? null,
     row.permissionMode,
     row.createdAt,
     row.updatedAt,
@@ -160,6 +163,7 @@ function toChatRow(row: Record<string, unknown>): ChatRow {
     cwd: String(row.cwd),
     provider: providerId(row.provider),
     ...(row.model ? { model: String(row.model) } : {}),
+    ...(row.effort ? { effort: String(row.effort) } : {}),
     permissionMode: String(row.permission_mode) as ChatPermissionMode,
     ...(row.agent_id ? { agentId: String(row.agent_id) } : {}),
     ...(Number(row.dm) === 1 ? { dm: true } : {}),

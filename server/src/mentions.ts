@@ -142,6 +142,7 @@ const ALLOWED = [
 async function answer(agent: Agent, ticket: TicketView, comment: string): Promise<string> {
   const cwd = await workspacePathFor(ticket);
   const model = agent.model || config.defaultModel || undefined;
+  const effort = (agent.provider === "default" ? config.defaultEffort : agent.effort) || undefined;
   const instructions = agent.instructions.trim();
   const options: Options = {
     cwd: cwd ?? homedir(),
@@ -156,6 +157,7 @@ async function answer(agent: Agent, ticket: TicketView, comment: string): Promis
     allowedTools: ALLOWED,
     mcpServers: { remy: boardTools(ticket.id) },
     ...(model ? { model } : {}),
+    ...(effort ? { effort: effort as NonNullable<Options["effort"]> } : {}),
     // Belt and braces: `allowedTools` is the allowlist, and this refuses
     // anything that reaches the callback anyway. A mention must not be a way
     // to run a command on the machine.

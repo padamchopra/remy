@@ -4,6 +4,7 @@ import {
   PROVIDERS,
   rememberProviderModels,
   type Provider,
+  type ProviderEffort,
   type ProviderId,
   type ProviderModel,
 } from "./providers.js";
@@ -14,6 +15,19 @@ let cached: Promise<Provider[]> | undefined;
 function titlePart(part: string): string {
   if (/^gpt$/i.test(part)) return "GPT";
   return part ? part[0].toUpperCase() + part.slice(1) : part;
+}
+
+function effortLabel(value: string): string {
+  if (value === "xhigh") return "Extra high";
+  return titlePart(value);
+}
+
+function efforts(values: readonly string[], descriptions?: Map<string, string>): ProviderEffort[] {
+  return values.map((value) => ({
+    value,
+    label: effortLabel(value),
+    ...(descriptions?.get(value) ? { detail: descriptions.get(value) } : {}),
+  }));
 }
 
 function claudeName(model: ModelInfo): string {
@@ -47,11 +61,13 @@ export function claudeModels(models: ModelInfo[]): ProviderModel[] {
   return models.map((model) => {
     const name = claudeName(model);
     const context = claudeContext(model);
+    const supported = efforts(model.supportedEffortLevels ?? []);
     if (model.value === "default") {
       return {
         value: "",
         label: "Default",
         resolvedLabel: context ? `${name} (${context})` : name,
+        ...(supported.length ? { efforts: supported } : {}),
       };
     }
     return {
@@ -59,6 +75,7 @@ export function claudeModels(models: ModelInfo[]): ProviderModel[] {
       label: name,
       ...(context ? { context } : {}),
       detail: model.description,
+      ...(supported.length ? { efforts: supported } : {}),
     };
   });
 }
@@ -94,6 +111,22 @@ interface CodexModel {
   description?: unknown;
   hidden?: unknown;
   isDefault?: unknown;
+  defaultReasoningEffort?: unknown;
+  supportedReasoningEfforts?: unknown;
+}
+
+function codexEfforts(value: unknown): ProviderEffort[] {
+  if (!Array.isArray(value)) return [];
+  const descriptions = new Map<string, string>();
+  const values = value.flatMap((row): string[] => {
+    if (!row || typeof row !== "object") return [];
+    const effort = (row as { reasoningEffort?: unknown }).reasoningEffort;
+    if (typeof effort !== "string" || !effort) return [];
+    const description = (row as { description?: unknown }).description;
+    if (typeof description === "string" && description) descriptions.set(effort, description);
+    return [effort];
+  });
+  return efforts(values, descriptions);
 }
 
 function codexLabel(value: string, displayName: unknown): string {
@@ -109,19 +142,27 @@ export function codexModels(input: unknown): ProviderModel[] {
   const models = rows.flatMap((row): ProviderModel[] => {
     const value = typeof row.model === "string" ? row.model : typeof row.id === "string" ? row.id : "";
     if (!value || row.hidden === true) return [];
+    const supported = codexEfforts(row.supportedReasoningEfforts);
     return [{
       value,
       label: codexLabel(value, row.displayName),
       ...(typeof row.description === "string" ? { detail: row.description } : {}),
+      ...(supported.length ? { efforts: supported } : {}),
+      ...(typeof row.defaultReasoningEffort === "string" ? { defaultEffort: row.defaultReasoningEffort } : {}),
     }];
   });
   const defaultModel = rows.find((row) => row.isDefault === true);
   const defaultValue = typeof defaultModel?.model === "string" ? defaultModel.model : undefined;
+  const defaultSupported = codexEfforts(defaultModel?.supportedReasoningEfforts);
   return [
     {
       value: "",
       label: "Default",
       ...(defaultValue ? { resolvedLabel: codexLabel(defaultValue, defaultModel?.displayName) } : {}),
+      ...(defaultSupported.length ? { efforts: defaultSupported } : {}),
+      ...(typeof defaultModel?.defaultReasoningEffort === "string"
+        ? { defaultEffort: defaultModel.defaultReasoningEffort }
+        : {}),
     },
     ...models,
   ];

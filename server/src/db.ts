@@ -30,6 +30,7 @@ function migrate(database: DatabaseSync): void {
       title text not null,
       cwd text not null,
       model text,
+      effort text,
       permission_mode text not null,
       created_at integer not null,
       updated_at integer not null,
@@ -112,6 +113,7 @@ function migrate(database: DatabaseSync): void {
       instructions text not null default '',
       provider text not null default 'claude',
       model text,
+      effort text,
       permission_mode text not null default 'default',
       avatar text,
       tint text,
@@ -312,6 +314,21 @@ function migrate(database: DatabaseSync): void {
   }
   try {
     database.exec("alter table workspaces add column model text");
+  } catch {
+    // Column already exists on databases created after this migration.
+  }
+  try {
+    database.exec("alter table workspaces add column effort text");
+  } catch {
+    // Column already exists on databases created after this migration.
+  }
+  try {
+    database.exec("alter table chats add column effort text");
+  } catch {
+    // Column already exists on databases created after this migration.
+  }
+  try {
+    database.exec("alter table agents add column effort text");
   } catch {
     // Column already exists on databases created after this migration.
   }

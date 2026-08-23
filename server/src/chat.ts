@@ -43,7 +43,7 @@ import {
   type CursorRun,
   type CursorSession,
 } from "./cursor.js";
-import { providerId, providerModel, provider as providerOf, type ProviderId } from "./providers.js";
+import { providerEffort, providerId, providerModel, provider as providerOf, type ProviderId } from "./providers.js";
 import {
   assertChatStorage,
   chatStorageError,
@@ -148,6 +148,7 @@ interface ChatRecord {
   /// Which agent this thread thinks with.
   provider: ProviderId;
   model?: string;
+  effort?: string;
   permissionMode: ChatPermissionMode;
   /// True when this is an agent's inbox conversation rather than work in a
   /// repository. One per agent, and never listed among the threads.
@@ -181,6 +182,7 @@ export interface ChatSummary {
   cwd: string;
   provider: ProviderId;
   model?: string;
+  effort?: string;
   permissionMode: ChatPermissionMode;
   agentId?: string;
   /// True when this is the conversation with an agent in the inbox. It has an
@@ -399,6 +401,7 @@ class Chat {
       cwd: this.record.cwd,
       provider: this.record.provider,
       model: this.record.model,
+      effort: this.record.effort,
       permissionMode: this.record.permissionMode,
       ...(this.record.agentId ? { agentId: this.record.agentId } : {}),
       ...(this.record.dm ? { dm: true } : {}),
@@ -623,7 +626,7 @@ class Chat {
   /// yours wins.
   private async rename(request: string): Promise<void> {
     const before = this.record.title;
-    const suggested = await suggestName(request, config.remyProvider, config.remyModel);
+    const suggested = await suggestName(request, config.remyProvider, config.remyModel, config.remyEffort);
     if (!suggested || this.deleted) return;
 
     // The branch is claimed even when the title has since been changed by hand:
@@ -680,6 +683,7 @@ class Chat {
         ? { allowDangerouslySkipPermissions: true }
         : {}),
       ...(this.record.model ? { model: this.record.model } : {}),
+      ...(this.record.effort ? { effort: this.record.effort as NonNullable<Options["effort"]> } : {}),
       ...(this.record.claudeSessionId ? { resume: this.record.claudeSessionId } : {}),
       includePartialMessages: true,
       mcpServers: {
@@ -1015,6 +1019,7 @@ class Chat {
     this.record.provider = next;
     // A model belongs to a provider, so it does not travel with the thread.
     this.record.model = undefined;
+    this.record.effort = undefined;
     this.append({
       id: `p-${randomUUID()}`,
       kind: "assistant",
@@ -1042,6 +1047,7 @@ class Chat {
           command: agentCommand("cursor")!,
           cwd: this.record.cwd,
           ...(this.record.model ? { model: this.record.model } : {}),
+          ...(this.record.effort ? { effort: this.record.effort } : {}),
           permissionMode: this.record.permissionMode,
           ...(this.record.cursorSessionId ? { sessionId: this.record.cursorSessionId } : {}),
           additionalDirectories: [uploadRoot],
@@ -1180,6 +1186,7 @@ class Chat {
           command: agentCommand("codex")!,
           cwd: this.record.cwd,
           ...(this.record.model ? { model: this.record.model } : {}),
+          ...(this.record.effort ? { effort: this.record.effort } : {}),
           permissionMode: this.record.permissionMode,
           ...(this.record.codexThreadId ? { threadId: this.record.codexThreadId } : {}),
           additionalDirectories: [uploadRoot],
@@ -1205,6 +1212,7 @@ class Chat {
       );
       run = this.codexSession.run(prompt, {
         ...(this.record.model ? { model: this.record.model } : {}),
+        ...(this.record.effort ? { effort: this.record.effort } : {}),
         permissionMode: this.record.permissionMode,
       });
     } catch (error) {
@@ -1786,10 +1794,10 @@ export function syncAgentDm(agentId: string): void {
   }
   const dm = listDms().find((chat) => chat.agentId === agentId);
   if (!dm || dm.state === "working" || dm.state === "needs_input") return;
-  const { provider, model } = resolvedAgentModel(agent);
-  if (dm.provider === provider && (dm.model ?? "") === model) return;
+  const { provider, model, effort } = resolvedAgentModel(agent);
+  if (dm.provider === provider && (dm.model ?? "") === model && (dm.effort ?? "") === effort) return;
   try {
-    updateChat(dm.id, { provider, model: model || null });
+    updateChat(dm.id, { provider, model: model || null, effort: effort || null });
   } catch (error) {
     // A provider that is off, or a tool that is not installed. The conversation
     // keeps what it had rather than being left pointing at nothing.
@@ -1826,6 +1834,7 @@ export function createChat(input: {
   title?: string;
   provider?: unknown;
   model?: string;
+  effort?: string;
   permissionMode?: unknown;
   agentId?: string;
   /// Marks this as an agent's inbox conversation. `dmChatFor` is the only
@@ -1834,7 +1843,7 @@ export function createChat(input: {
   /// What the workspace this thread opens in runs on, when it does not follow
   /// the machine. The caller resolves it: which workspace holds a directory
   /// takes the worktree list, and this does not wait on git.
-  workspaceDefault?: { provider?: string | null; model?: string | null };
+  workspaceDefault?: { provider?: string | null; model?: string | null; effort?: string | null };
 }): ChatSummary {
   // Refuse loudly rather than running a conversation this server cannot keep.
   assertChatStorage();
@@ -1848,8 +1857,12 @@ export function createChat(input: {
   // default would. An agent still outranks it, including one that follows the
   // machine default rather than naming a model of its own.
   const workspace = input.workspaceDefault?.provider
-    ? { provider: input.workspaceDefault.provider, model: input.workspaceDefault.model ?? "" }
-    : { provider: config.defaultProvider, model: config.defaultModel };
+    ? {
+        provider: input.workspaceDefault.provider,
+        model: input.workspaceDefault.model ?? "",
+        effort: input.workspaceDefault.effort ?? "",
+      }
+    : { provider: config.defaultProvider, model: config.defaultModel, effort: config.defaultEffort };
   const inherited = agent ? resolvedAgentModel(agent) : workspace;
   const askedProvider = providerId(input.provider ?? inherited.provider);
   if (input.provider !== undefined && !config.enabledProviders.includes(askedProvider)) {
@@ -1864,12 +1877,14 @@ export function createChat(input: {
   // `??` rather than `||`, so asking for a provider's own Default is read as the
   // choice it is instead of a gap to fill with somebody else's model.
   const model = providerModel(provider, input.model ?? inherited.model);
+  const effort = providerEffort(provider, model, input.effort ?? inherited.effort);
   const record: ChatRecord = {
     id: randomUUID(),
     title: input.title?.trim() || "New chat",
     cwd,
     provider,
     ...(model ? { model } : {}),
+    ...(effort ? { effort } : {}),
     ...(agent ? { agentId: agent.id } : {}),
     ...(input.dm ? { dm: true } : {}),
     permissionMode: permissionMode(input.permissionMode, agent?.permissionMode ?? config.defaultPermissionMode),
@@ -1888,7 +1903,13 @@ export function createChat(input: {
 
 export function updateChat(
   id: string,
-  patch: { title?: string; provider?: unknown; model?: string | null; permissionMode?: unknown },
+  patch: {
+    title?: string;
+    provider?: unknown;
+    model?: string | null;
+    effort?: string | null;
+    permissionMode?: unknown;
+  },
 ): ChatSummary {
   const chat = mustGet(id);
   if (typeof patch.title === "string" && patch.title.trim()) chat.record.title = clip(patch.title, 120);
@@ -1906,6 +1927,15 @@ export function updateChat(
     // other one leaves the thread on this one's default.
     const model = providerModel(chat.record.provider, patch.model.trim());
     chat.record.model = model || undefined;
+    if (patch.effort === undefined) {
+      const effort = providerEffort(chat.record.provider, model, chat.record.effort);
+      chat.record.effort = effort || undefined;
+    }
+  }
+  if (patch.effort === null) chat.record.effort = undefined;
+  else if (typeof patch.effort === "string") {
+    const effort = providerEffort(chat.record.provider, chat.record.model ?? "", patch.effort.trim());
+    chat.record.effort = effort || undefined;
   }
   if (patch.permissionMode !== undefined) {
     chat.record.permissionMode = permissionMode(patch.permissionMode, chat.record.permissionMode);
@@ -1914,7 +1944,7 @@ export function updateChat(
   // process, so a running one is retired; the next message resumes with the new
   // settings.
   if (
-    (patch.provider !== undefined || patch.model !== undefined || patch.permissionMode !== undefined)
+    (patch.provider !== undefined || patch.model !== undefined || patch.effort !== undefined || patch.permissionMode !== undefined)
     && chat.isLive
   ) {
     chat.stop();

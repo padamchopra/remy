@@ -53,6 +53,7 @@ interface RawChat {
   provider?: string;
   agentId?: string;
   model?: string;
+  effort?: string;
   preview?: string;
   updatedAt?: number;
   workingSince?: number | null;
@@ -69,6 +70,7 @@ interface RawWorkspace {
   tint?: string | null;
   provider?: string | null;
   model?: string | null;
+  effort?: string | null;
   worktrees?: GitWorktree[];
   virtual?: boolean;
 }
@@ -119,7 +121,7 @@ interface State {
   addWorkspace(input: { path: string; name?: string }): Promise<void>;
   updateWorkspace(
     id: string,
-    patch: { name?: string; icon?: string | null; tint?: string | null; provider?: string | null; model?: string | null },
+    patch: { name?: string; icon?: string | null; tint?: string | null; provider?: string | null; model?: string | null; effort?: string | null },
   ): Promise<void>;
   removeWorkspace(id: string): Promise<void>;
   suggestPaths(query: string): Promise<PathSuggestion[]>;
@@ -137,6 +139,7 @@ interface State {
     serverId?: string;
     provider?: string;
     model?: string;
+    effort?: string;
     permissionMode?: string;
   }): Promise<{ id: string; serverId: string }>;
   loadSettings(): Promise<void>;
@@ -156,7 +159,7 @@ interface State {
   answerApproval(requestId: string, decision: "allow" | "allowAlways" | "deny"): Promise<void>;
   answerQuestion(requestId: string, answers: Record<string, unknown>): Promise<void>;
   interrupt(): Promise<void>;
-  setChatOptions(patch: { provider?: string; model?: string | null; permissionMode?: string }): Promise<void>;
+  setChatOptions(patch: { provider?: string; model?: string | null; effort?: string | null; permissionMode?: string }): Promise<void>;
   archiveThread(id: string): Promise<void>;
   deleteThread(id: string): Promise<void>;
 
@@ -588,8 +591,9 @@ export const useStore = create<State>((set, get) => ({
       body: {
         cwd,
         title,
-        ...(input.provider ? { provider: input.provider } : {}),
-        ...(input.model ? { model: input.model } : {}),
+        ...(input.provider !== undefined ? { provider: input.provider } : {}),
+        ...(input.model !== undefined ? { model: input.model } : {}),
+        ...(input.effort !== undefined ? { effort: input.effort } : {}),
         ...(input.permissionMode ? { permissionMode: input.permissionMode } : {}),
       },
     });
@@ -1151,11 +1155,12 @@ export const useStore = create<State>((set, get) => ({
               ...current.detail,
               provider: chat.provider,
               model: chat.model,
+              effort: chat.effort,
               permissionMode: chat.permissionMode,
             }
           : current.detail,
       chats: current.chats.map((entry) =>
-        entry.id === detail.id ? { ...entry, provider: chat.provider, model: chat.model } : entry,
+        entry.id === detail.id ? { ...entry, provider: chat.provider, model: chat.model, effort: chat.effort } : entry,
       ),
     }));
   },
@@ -1212,6 +1217,7 @@ function toDetail(raw: RawChatDetail, serverId: string): ChatDetail {
     provider: raw.provider,
     agentId: raw.agentId,
     model: raw.model,
+    effort: raw.effort,
     permissionMode: raw.permissionMode,
     state: raw.state ?? "idle",
     action: raw.action ?? undefined,
@@ -1292,6 +1298,7 @@ function toChat(raw: RawChat, serverId: string): Chat {
     provider: raw.provider,
     agentId: raw.agentId,
     model: raw.model,
+    effort: raw.effort,
     preview: raw.preview,
     updatedAt: raw.updatedAt ?? 0,
     workingSince: raw.workingSince ?? undefined,
@@ -1311,6 +1318,7 @@ function toWorkspace(raw: RawWorkspace, serverId: string): Workspace {
     tint: raw.tint,
     provider: raw.provider ?? null,
     model: raw.model ?? null,
+    effort: raw.effort ?? null,
     worktrees: raw.worktrees ?? [],
     virtual: raw.virtual === true,
   };

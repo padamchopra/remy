@@ -31,6 +31,7 @@ test("starts on the defaults a fresh install should have", () => {
   assert.equal(settings.worktreeBase, "remote");
   assert.equal(settings.worktreeRoot, "");
   assert.equal(settings.defaultModel, "");
+  assert.equal(settings.defaultEffort, "");
   // Remy's own jobs are small and frequent, so they start on the cheap model
   // rather than on whatever the chats are using.
   assert.equal(settings.remyModel, "haiku");
@@ -97,6 +98,18 @@ test("keeps Remy's own model separate from the chat default", () => {
   patchSettings({ remyModel: "sonnet" });
   assert.equal(publicSettings().defaultModel, "opus");
   assert.equal(publicSettings().remyModel, "sonnet");
+});
+
+test("stores effort with the selected provider model", () => {
+  let settings = patchSettings({ defaultProvider: "claude", defaultModel: "opus", defaultEffort: "high" });
+  assert.equal(settings.defaultEffort, "high");
+
+  settings = patchSettings({ defaultEffort: "not-real" });
+  assert.equal(settings.defaultEffort, "high");
+
+  settings = patchSettings({ defaultProvider: "codex", defaultModel: "gpt-5.6-sol", defaultEffort: "ultra" });
+  assert.equal(settings.defaultEffort, "ultra");
+  patchSettings({ defaultProvider: "claude", defaultModel: "opus", defaultEffort: "high" });
 });
 
 test("patches only the keys the caller sent", () => {

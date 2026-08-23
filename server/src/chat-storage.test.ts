@@ -38,7 +38,13 @@ function chat(id: string, overrides: Partial<ChatRow> = {}): ChatRow {
 
 test("stores a chat and reads it back with its feed in order", () => {
   assert.equal(storage.chatStorageAvailable(), true, storage.chatStorageError() ?? "");
-  storage.saveChat(chat("a", { model: "opus", claudeSessionId: "session-1", turns: 3, costUsd: 0.5 }));
+  storage.saveChat(chat("a", {
+    model: "opus",
+    effort: "high",
+    claudeSessionId: "session-1",
+    turns: 3,
+    costUsd: 0.5,
+  }));
   storage.saveEntry("a", entry("e1", "first"));
   storage.saveEntry("a", entry("e2", "second"));
   storage.saveEntry("a", entry("e3", "third"));
@@ -46,6 +52,7 @@ test("stores a chat and reads it back with its feed in order", () => {
   const loaded = storage.loadChats(100).find((c) => c.id === "a");
   assert.ok(loaded);
   assert.equal(loaded.model, "opus");
+  assert.equal(loaded.effort, "high");
   assert.equal(loaded.claudeSessionId, "session-1");
   assert.equal(loaded.turns, 3);
   assert.equal(loaded.costUsd, 0.5);
