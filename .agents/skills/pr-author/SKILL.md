@@ -55,7 +55,11 @@ If `agent-cli` is unavailable, install it globally, then run the upload again:
 npm -g i @choprapadam/agent-cli
 ```
 
-Add the returned URLs under the evidence caption. Append `?w=640` to raster image URLs for inline embeds, then read the PR description back and confirm that every URL is present and resolves successfully.
+Add the returned URLs under the evidence caption. Append `?w=640` to raster image URLs for inline embeds.
+
+Put a video URL on its own line and pair it with an inline still image. Do not wrap an external `agent-cli` URL in a `<video>` tag because GitHub strips the tag from PR Markdown.
+
+Read the PR description back and confirm that every URL is present and resolves successfully.
 
 When media is not required, omit `## Evidence`; `## Testing` carries the reviewer-visible verification.
 
