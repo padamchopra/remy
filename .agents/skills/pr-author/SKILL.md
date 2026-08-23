@@ -1,13 +1,15 @@
 ---
 name: pr-author
-description: Create, update, or publish Remy pull requests with reviewer-visible evidence. Use for ANY pull request, including every PR in a stack.
+description: Create, update, or publish Remy pull requests with proportional reviewer evidence. Use for ANY pull request, including every PR in a stack.
 ---
 
 # Authoring a pull request
 
-A PR is incomplete until its description contains at least one media artifact that shows the behavior it changes.
+Media is required when a PR changes behavior a reviewer can exercise or judge in a running Remy surface, including UI, user-visible interaction, and app behavior with an observable in-app result.
 
-`qa` owns proving the change against the running app and may use real state. PR evidence is a separate capture pass with safe state.
+Media is not required for changes with no in-app behavior to show, such as CI, release or build configuration, documentation, tests, and internal refactors. Record the relevant commands and results under `## Testing` instead.
+
+`qa` owns proving changes against the running app and may use real state. When media is required, PR evidence is a separate capture pass with safe state.
 
 ## Evidence state
 
@@ -18,7 +20,7 @@ A PR is incomplete until its description contains at least one media artifact th
 - Use plausible Remy state rather than placeholder text that makes the flow look artificial.
 - Never publish a capture containing a credential, secret value, pairing link, QR code, notification, or unrelated private window.
 
-For a stacked change, capture the behavior introduced by that PR relative to its direct base and attach the artifact to that PR. Evidence on the top PR does not cover the PRs below it.
+For a stacked change that requires media, capture the behavior introduced by that PR relative to its direct base and attach the artifact to that PR. Evidence on the top PR does not cover the PRs below it.
 
 ## Screenshot or recording
 
@@ -28,7 +30,7 @@ Use a video recording when order or time matters: opening and selecting from a c
 
 Use both when the recording proves the interaction but a still image makes the final state or a before-and-after comparison easier to inspect.
 
-For a change without a UI surface, show its observable result. Use a screenshot for one concise terminal or API result and a short recording for a multi-step command flow. Run it against a temporary repository or sanitized test state.
+Do not turn terminal output, test results, configuration diffs, or API responses into media only to satisfy PR evidence. Put that validation in the PR description as text.
 
 ## Capture quality
 
@@ -41,7 +43,7 @@ For a change without a UI surface, show its observable result. Use a screenshot 
 
 ## Publish
 
-Create the draft PR first. Preserve its existing description, add a short `## Evidence` caption that says what the artifact demonstrates, then upload the inspected files:
+Create the draft PR first. When media is required, preserve its existing description, add a short `## Evidence` caption that says what the artifact demonstrates, then upload the inspected files:
 
 ```sh
 github https://github.com/padamchopra/remy/pull/123 /tmp/remy-pr-artifacts/branch/change.png
@@ -49,4 +51,6 @@ github https://github.com/padamchopra/remy/pull/123 /tmp/remy-pr-artifacts/branc
 
 Use `--headed` only when the saved GitHub session requires sign-in. After upload, read the PR description back and confirm that the `user-attachments` media is present under the right caption.
 
-Do not substitute a written QA claim for media. If a safe, representative artifact cannot be produced, keep the PR in draft and report the concrete blocker.
+When media is not required, omit `## Evidence`; `## Testing` carries the reviewer-visible verification.
+
+Do not substitute a written QA claim for required media. If a safe, representative artifact cannot be produced for a change that requires it, keep the PR in draft and report the concrete blocker.
