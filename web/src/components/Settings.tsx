@@ -1076,10 +1076,6 @@ function ProvidersPane() {
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-2">
-        <Field className="gap-1">
-          <FieldLabel>Remy MCP</FieldLabel>
-          <FieldDescription className="text-xs">Add Remy to sessions you start outside Remy.</FieldDescription>
-        </Field>
         <ToolRow
           name="claude"
           label="Claude Code"
@@ -1180,11 +1176,7 @@ function ToolRow({
       <ItemContent className="gap-0.5">
         <ItemTitle>{label}</ItemTitle>
         <ItemDescription className="text-xs">
-          {mcp?.installed
-            ? `Remy MCP is available in your other ${label} sessions.`
-            : mcp?.configured
-            ? "Remy MCP needs to be added again."
-            : enabled === false
+          {enabled === false
             ? "Turned off. Existing threads stay available."
             : status === undefined
             ? "Checking…"
