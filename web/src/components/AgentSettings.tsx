@@ -32,8 +32,6 @@ import { AgentMark } from "@/components/AgentAvatar";
 import { EditableName } from "@/components/EditableName";
 import { ModelPickerButton, REMY_DEFAULT } from "@/components/ModelPicker";
 import { apiError } from "@/lib/api-error";
-import { TINT_IDS, tintOf } from "@/lib/tints";
-import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
 import type { Agent } from "@/state/types";
 
@@ -210,54 +208,6 @@ export function AgentSettings({
       </Field>
       )}
 
-      {!locked && (
-      <Field>
-        <FieldLabel htmlFor="agent-instructions">Instructions</FieldLabel>
-        <FieldDescription className="text-xs">
-          Added to Claude Code's own, not swapped for them.
-        </FieldDescription>
-        <Textarea
-          id="agent-instructions"
-          rows={12}
-          className="font-normal"
-          value={text("instructions")}
-          placeholder="How this agent works, in the second person."
-          onChange={(event) => setDraft((c) => ({ ...c, instructions: event.target.value }))}
-          onBlur={commit("instructions", "the instructions")}
-        />
-      </Field>
-      )}
-
-      {!locked && (
-      <>
-        <Field>
-          <FieldLabel>Icon</FieldLabel>
-          <FieldDescription className="text-xs">The face this agent wears everywhere.</FieldDescription>
-          <AgentIconPicker agent={agent} onChange={(avatar) => void save({ avatar }, "the icon")} />
-        </Field>
-
-        <Field>
-          <FieldLabel>Colour</FieldLabel>
-          <div className="flex flex-wrap gap-1.5">
-            {TINT_IDS.map((id) => (
-              <button
-                key={id}
-                type="button"
-                aria-label={id}
-                aria-pressed={agent.tint === id}
-                onClick={() => void save({ tint: id }, "the colour")}
-                className={cn(
-                  "size-6 rounded-full ring-offset-2 ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-                  tintOf(id).swatch,
-                  agent.tint === id && "ring-2 ring-primary",
-                )}
-              />
-            ))}
-          </div>
-        </Field>
-      </>
-      )}
-
       <Separator />
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -302,6 +252,28 @@ export function AgentSettings({
 
       {!locked && (
       <>
+      <Separator />
+
+      <AgentIconPicker agent={agent} onChange={(avatar) => void save({ avatar }, "the icon")} />
+
+      <Separator />
+
+      <Field>
+        <FieldLabel htmlFor="agent-instructions">Instructions</FieldLabel>
+        <FieldDescription className="text-xs">
+          Added to Claude Code's own, not swapped for them.
+        </FieldDescription>
+        <Textarea
+          id="agent-instructions"
+          rows={12}
+          className="font-normal"
+          value={text("instructions")}
+          placeholder="How this agent works, in the second person."
+          onChange={(event) => setDraft((c) => ({ ...c, instructions: event.target.value }))}
+          onBlur={commit("instructions", "the instructions")}
+        />
+      </Field>
+
       <Separator />
 
       <Field>
