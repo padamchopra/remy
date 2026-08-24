@@ -1,4 +1,4 @@
-import type { FormEvent, ReactNode } from "react";
+import type { FormEvent, KeyboardEvent, MouseEvent, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUp,
@@ -104,6 +104,12 @@ import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
 import type { Agent, Chat, ChatApproval, ChatQuestionRequest, ConvArtifact, ConvDiffLine, ConvEntry } from "@/state/types";
 
+interface ThreadCheckpoint {
+  id: string;
+  userText: string;
+  assistantText?: string;
+}
+
 /// One open chat: its feed, whatever it is waiting on, and the box to answer in.
 ///
 /// The feed is fetched once when the chat opens and patched from then on by the
@@ -194,13 +200,33 @@ export function ChatView({
   const working = state === "working";
   const conversational = chat.dm === true;
   const entries = open?.entries ?? [];
-  const visibleEntries = entries.filter(
-    (entry) => conversational
-      ? entry.kind === "user" || entry.kind === "assistant"
-      : entry.kind !== "thinking" || Boolean(entry.text?.trim()),
+  const visibleEntries = useMemo(
+    () => entries.filter(
+      (entry) => conversational
+        ? entry.kind === "user" || entry.kind === "assistant"
+        : entry.kind !== "thinking" || Boolean(entry.text?.trim()),
+    ),
+    [conversational, entries],
   );
-  const feedItems = groupToolEntries(visibleEntries);
-  const latestRequest = [...entries].reverse().find((entry) => entry.kind === "user" && entry.text)?.text;
+  const feedItems = useMemo(() => groupToolEntries(visibleEntries), [visibleEntries]);
+  const feedTurns = useMemo(() => groupFeedTurns(feedItems), [feedItems]);
+  const checkpoints = useMemo(
+    () => conversational ? [] : feedTurns.flatMap((turn): ThreadCheckpoint[] => {
+      if (!turn.checkpoint) return [];
+      let assistantText: string | undefined;
+      for (const item of turn.items) {
+        if (item.kind === "entry" && item.entry.kind === "assistant" && item.entry.text?.trim()) {
+          assistantText = compactCheckpointPreview(item.entry.text);
+        }
+      }
+      return [{
+        id: turn.checkpoint.id,
+        userText: compactCheckpointPreview(turn.checkpoint.text) || "Your message",
+        assistantText,
+      }];
+    }),
+    [conversational, feedTurns],
+  );
   const approval = open?.approval;
   const question = open?.question;
 
@@ -300,10 +326,15 @@ export function ChatView({
         )}
       >
         <div className="flex min-w-0 flex-1 flex-col">
-          {!conversational && latestRequest && <LatestRequest text={latestRequest} />}
-
-          <ScrollFeed chatId={chat.id} count={visibleEntries.length} working={working} className="min-h-0 flex-1">
-            <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-5 py-6">
+          <ScrollFeed
+            key={chat.id}
+            chatId={chat.id}
+            count={visibleEntries.length}
+            working={working}
+            checkpoints={checkpoints}
+            className="min-h-0 flex-1"
+          >
+            <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-5 py-6 [overflow-anchor:none]">
           {loading && visibleEntries.length === 0 ? (
             <FeedSkeleton />
           ) : visibleEntries.length === 0 ? (
@@ -321,24 +352,55 @@ export function ChatView({
               </Empty>
             )
           ) : (
-            feedItems.map((item) => item.kind === "tools" ? (
-              <ToolGroup
-                key={`tools:${item.entries[0].id}`}
-                entries={item.entries}
-                onOpenTicket={onOpenTicket}
-                onOpenThread={onOpenThread}
-                onOpenWorkspace={onOpenWorkspace}
-              />
-            ) : (
-              <Entry
-                key={item.entry.id}
-                entry={item.entry}
-                provider={provider?.id ?? "claude"}
-                name={persona?.name ?? provider?.label ?? "Claude"}
-                persona={persona}
-                lead={item.lead}
-              />
-            ))
+            feedTurns.map((turn, turnIndex) => {
+              const checkpoint = conversational ? undefined : turn.checkpoint;
+              const renderItem = (item: FeedItem, sticky = false) => item.kind === "tools" ? (
+                <ToolGroup
+                  key={`tools:${item.entries[0].id}`}
+                  entries={item.entries}
+                  onOpenTicket={onOpenTicket}
+                  onOpenThread={onOpenThread}
+                  onOpenWorkspace={onOpenWorkspace}
+                />
+              ) : (
+                <Entry
+                  key={item.entry.id}
+                  entry={item.entry}
+                  provider={provider?.id ?? "claude"}
+                  name={persona?.name ?? provider?.label ?? "Claude"}
+                  persona={persona}
+                  lead={item.lead}
+                  checkpoint={sticky ? checkpoint?.id : undefined}
+                />
+              );
+
+              return (
+                <section
+                  key={checkpoint?.id ?? `feed:${turnIndex}`}
+                  data-checkpoint-section={checkpoint?.id}
+                  className={cn(
+                    "flex min-w-0 flex-col gap-4",
+                    checkpoint && "group/checkpoint -mb-4",
+                  )}
+                >
+                  {renderItem(turn.items[0], Boolean(checkpoint))}
+                  {checkpoint && (
+                    <span
+                      aria-hidden="true"
+                      data-checkpoint-spacer
+                      className="pointer-events-none -mt-4 block h-0 shrink-0"
+                    />
+                  )}
+                  {turn.items.slice(1).map((item) => renderItem(item))}
+                  {checkpoint && (
+                    <span
+                      aria-hidden="true"
+                      className="pointer-events-none -mt-4 block h-4 shrink-0"
+                    />
+                  )}
+                </section>
+              );
+            })
           )}
 
           {conversational && working && persona && (
@@ -558,41 +620,316 @@ function ScrollFeed({
   chatId,
   count,
   working,
+  checkpoints,
   className,
   children,
 }: {
   chatId: string;
   count: number;
   working: boolean;
+  checkpoints: ThreadCheckpoint[];
   className?: string;
   children: ReactNode;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
+  const checkpointTarget = useRef<number | undefined>(undefined);
+  const checkpointTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const [activeCheckpoint, setActiveCheckpoint] = useState(checkpoints.at(-1)?.id);
+  const [hoveredCheckpoint, setHoveredCheckpoint] = useState<number | undefined>(undefined);
 
   useEffect(() => {
     pinned.current = true;
+    checkpointTarget.current = undefined;
+    setHoveredCheckpoint(undefined);
+    clearTimeout(checkpointTimer.current);
   }, [chatId]);
 
+  const refreshScrollState = (viewport: HTMLElement) => {
+    const distance = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+    if (checkpointTarget.current === undefined) {
+      pinned.current = distance < 80;
+    } else if (Math.abs(viewport.scrollTop - checkpointTarget.current) < 2) {
+      checkpointTarget.current = undefined;
+      clearTimeout(checkpointTimer.current);
+    }
+
+    const sections = [...(rootRef.current?.querySelectorAll<HTMLElement>("[data-checkpoint-section]") ?? [])];
+    let latestStuck: string | undefined;
+    let latestStuckTop: number | undefined;
+    const stickyEdge = viewport.scrollTop + 12;
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    for (const section of sections) {
+      const message = section.querySelector<HTMLElement>("[data-checkpoint-message]");
+      if (!message) continue;
+      const content = message.querySelector<HTMLElement>("[data-slot=message-content]");
+      const avatar = message.querySelector<HTMLElement>("[data-slot=message-avatar]");
+      const header = message.querySelector<HTMLElement>("[data-slot=message-header]");
+      const bubble = message.querySelector<HTMLElement>("[data-slot=bubble-content]");
+      const footer = message.querySelector<HTMLElement>("[data-slot=message-footer]");
+      const spacer = section.querySelector<HTMLElement>("[data-checkpoint-spacer]");
+      if (!content || !bubble || !spacer) continue;
+
+      if (!section.style.getPropertyValue("--checkpoint-natural-message-height")) {
+        const bubbleStyle = window.getComputedStyle(bubble);
+        const lineHeight = Number.parseFloat(bubbleStyle.lineHeight);
+        const compactBubbleHeight = lineHeight
+          + Number.parseFloat(bubbleStyle.paddingTop)
+          + Number.parseFloat(bubbleStyle.paddingBottom)
+          + Number.parseFloat(bubbleStyle.borderTopWidth)
+          + Number.parseFloat(bubbleStyle.borderBottomWidth);
+        section.style.setProperty("--checkpoint-natural-message-height", `${message.getBoundingClientRect().height}px`);
+        section.style.setProperty("--checkpoint-natural-bubble-height", `${bubble.getBoundingClientRect().height}px`);
+        section.style.setProperty("--checkpoint-natural-header-height", `${header?.getBoundingClientRect().height ?? 0}px`);
+        section.style.setProperty("--checkpoint-natural-footer-height", `${footer?.getBoundingClientRect().height ?? 0}px`);
+        section.style.setProperty("--checkpoint-natural-gap", window.getComputedStyle(content).rowGap);
+        section.style.setProperty("--checkpoint-compact-bubble-height", `${compactBubbleHeight}px`);
+      }
+
+      const stuck = section.offsetTop <= stickyEdge;
+      const naturalMessageHeight = Number.parseFloat(section.style.getPropertyValue("--checkpoint-natural-message-height"));
+      const naturalBubbleHeight = Number.parseFloat(section.style.getPropertyValue("--checkpoint-natural-bubble-height"));
+      const naturalHeaderHeight = Number.parseFloat(section.style.getPropertyValue("--checkpoint-natural-header-height"));
+      const naturalFooterHeight = Number.parseFloat(section.style.getPropertyValue("--checkpoint-natural-footer-height"));
+      const naturalGap = Number.parseFloat(section.style.getPropertyValue("--checkpoint-natural-gap"));
+      const compactBubbleHeight = Number.parseFloat(section.style.getPropertyValue("--checkpoint-compact-bubble-height"));
+      const collapseDistance = Math.max(0, naturalMessageHeight - compactBubbleHeight);
+      const progress = reducedMotion
+        ? (stuck ? 1 : 0)
+        : Math.max(0, Math.min(1, (stickyEdge - section.offsetTop) / Math.max(1, collapseDistance)));
+      const remaining = 1 - progress;
+
+      content.style.gap = `${naturalGap * remaining}px`;
+      if (header) {
+        header.style.height = `${naturalHeaderHeight * remaining}px`;
+        header.style.opacity = `${remaining}`;
+      }
+      bubble.style.height = `${compactBubbleHeight + (naturalBubbleHeight - compactBubbleHeight) * remaining}px`;
+      if (footer) footer.style.height = `${naturalFooterHeight * remaining}px`;
+      message.style.setProperty("--checkpoint-avatar-y", `${-32 * remaining}px`);
+      if (avatar?.hasAttribute("data-sequential-avatar")) avatar.style.opacity = `${progress}`;
+      spacer.style.height = `${Math.max(0, naturalMessageHeight - message.getBoundingClientRect().height)}px`;
+      section.toggleAttribute("data-stuck", stuck);
+      message.toggleAttribute("data-stuck", stuck);
+      message.toggleAttribute("data-compacted", progress >= 0.999);
+      if (stuck) {
+        latestStuck = section.dataset.checkpointSection;
+        latestStuckTop = section.offsetTop;
+      }
+    }
+
+    let latestVisibleMessage: string | undefined;
+    let firstVisibleBubbleTop: number | undefined;
+    const viewportRect = viewport.getBoundingClientRect();
+    for (const section of sections) {
+      if (section.hasAttribute("data-stuck")) continue;
+      const bubble = section.querySelector<HTMLElement>("[data-slot=bubble-content]");
+      if (!bubble) continue;
+      const bubbleRect = bubble.getBoundingClientRect();
+      if (bubbleRect.top < viewportRect.bottom && bubbleRect.bottom > viewportRect.top) {
+        firstVisibleBubbleTop ??= bubbleRect.top;
+        latestVisibleMessage = section.dataset.checkpointSection;
+      }
+    }
+
+    const visibleBubbleDepth = firstVisibleBubbleTop === undefined
+      ? 0
+      : Math.max(0, viewportRect.bottom - firstVisibleBubbleTop);
+    const stickyTravel = latestStuckTop === undefined
+      ? 0
+      : Math.max(0, stickyEdge - latestStuckTop);
+    const scrollOutDistance = Math.min(visibleBubbleDepth, stickyTravel);
+    for (const section of sections) {
+      const message = section.querySelector<HTMLElement>("[data-checkpoint-message]");
+      if (!message) continue;
+      const current = section.hasAttribute("data-stuck") && section.dataset.checkpointSection === latestStuck;
+      message.toggleAttribute("data-sticky-active", current);
+      message.style.setProperty("--checkpoint-reminder-y", `${current ? -scrollOutDistance : 0}px`);
+    }
+    setActiveCheckpoint(latestVisibleMessage ?? latestStuck);
+  };
+
   useEffect(() => {
-    if (!pinned.current) return;
     const viewport = rootRef.current?.querySelector<HTMLElement>("[data-slot=scroll-area-viewport]");
-    if (viewport) viewport.scrollTop = viewport.scrollHeight;
-  }, [chatId, count, working, children]);
+    if (!viewport) return;
+    const content = viewport.firstElementChild;
+    let frame = 0;
+    const refresh = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        if (pinned.current && checkpointTarget.current === undefined) {
+          viewport.scrollTop = viewport.scrollHeight;
+        }
+        refreshScrollState(viewport);
+      });
+    };
+    const observer = new ResizeObserver(refresh);
+    if (content) observer.observe(content);
+    refresh();
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [chatId, count, working]);
+
+  const scrollToCheckpoint = (id: string) => {
+    pinned.current = false;
+    setActiveCheckpoint(id);
+    const root = rootRef.current;
+    const viewport = root?.querySelector<HTMLElement>("[data-slot=scroll-area-viewport]");
+    const section = [...(root?.querySelectorAll<HTMLElement>("[data-checkpoint-section]") ?? [])]
+      .find((candidate) => candidate.dataset.checkpointSection === id);
+    if (!viewport || !section) return;
+    const target = Math.max(0, section.offsetTop - 12);
+    checkpointTarget.current = target;
+    clearTimeout(checkpointTimer.current);
+    checkpointTimer.current = setTimeout(() => {
+      checkpointTarget.current = undefined;
+    }, 1_500);
+    viewport.scrollTo({
+      top: target,
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    });
+  };
+
+  const resolvedHoveredCheckpoint = hoveredCheckpoint !== undefined && hoveredCheckpoint < checkpoints.length
+    ? hoveredCheckpoint
+    : undefined;
+  const hoveredItem = resolvedHoveredCheckpoint === undefined
+    ? undefined
+    : checkpoints[resolvedHoveredCheckpoint];
+  const activeCheckpointIndex = checkpoints.findIndex((checkpoint) => checkpoint.id === activeCheckpoint);
+  const checkpointTop = (index: number) => checkpoints.length <= 1
+    ? 0
+    : (index / (checkpoints.length - 1)) * 100;
+  const checkpointFromPointer = (event: MouseEvent<HTMLElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (checkpoints.length <= 1 || rect.height <= 0) return 0;
+    const progress = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+    return Math.round(progress * (checkpoints.length - 1));
+  };
+  const moveHoveredCheckpoint = (event: KeyboardEvent<HTMLElement>, delta: number) => {
+    event.preventDefault();
+    setHoveredCheckpoint((current) => Math.max(0, Math.min(checkpoints.length - 1, (current ?? 0) + delta)));
+  };
 
   return (
-    <ScrollArea
-      ref={rootRef}
-      className={className}
-      onScrollCapture={(event) => {
-        const viewport = event.target as HTMLElement;
-        if (viewport?.dataset?.slot !== "scroll-area-viewport") return;
-        const distance = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
-        pinned.current = distance < 80;
-      }}
-    >
-      {children}
-    </ScrollArea>
+    <div className={cn("relative", className)}>
+      <ScrollArea
+        ref={rootRef}
+        className="h-full"
+        onClickCapture={(event) => {
+          if (!(event.target instanceof Element)) return;
+          const message = event.target.closest<HTMLElement>("[data-scroll-checkpoint]");
+          if (!message) return;
+          const selection = window.getSelection();
+          if (event.detail > 0 && selection && !selection.isCollapsed && message.contains(selection.anchorNode)) return;
+          const checkpoint = message.dataset.scrollCheckpoint;
+          if (checkpoint) scrollToCheckpoint(checkpoint);
+        }}
+        onScrollCapture={(event) => {
+          const viewport = event.target as HTMLElement;
+          if (viewport?.dataset?.slot !== "scroll-area-viewport") return;
+          refreshScrollState(viewport);
+        }}
+      >
+        {children}
+      </ScrollArea>
+
+      {checkpoints.length > 0 && (
+        <nav
+          aria-label="Thread checkpoints"
+          className="pointer-events-none absolute inset-y-0 left-0 z-30 w-14"
+        >
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            data-link
+            aria-label={`Go to checkpoint ${(resolvedHoveredCheckpoint ?? Math.max(0, activeCheckpointIndex)) + 1}`}
+            className="pointer-events-auto absolute top-1/2 left-3 h-auto w-10 -translate-y-1/2 rounded-sm bg-transparent p-0 hover:bg-transparent dark:hover:bg-transparent focus-visible:ring-2 focus-visible:ring-ring/70"
+            style={{
+              height: `min(${Math.max(1, (checkpoints.length - 1) * 8)}px, calc(100vh - 18rem))`,
+              width: hoveredItem ? "22rem" : 40,
+            }}
+            onBlur={() => setHoveredCheckpoint(undefined)}
+            onClick={(event) => {
+              if (event.target instanceof Element && event.target.closest("[data-checkpoint-preview]")) return;
+              const index = checkpointFromPointer(event);
+              const checkpoint = checkpoints[index];
+              if (checkpoint) scrollToCheckpoint(checkpoint.id);
+            }}
+            onFocus={() => {
+              setHoveredCheckpoint((current) => current ?? Math.max(0, activeCheckpointIndex));
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowDown") moveHoveredCheckpoint(event, 1);
+              else if (event.key === "ArrowUp") moveHoveredCheckpoint(event, -1);
+              else if (event.key === "Home") {
+                event.preventDefault();
+                setHoveredCheckpoint(0);
+              } else if (event.key === "End") {
+                event.preventDefault();
+                setHoveredCheckpoint(checkpoints.length - 1);
+              } else if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                if (hoveredItem) scrollToCheckpoint(hoveredItem.id);
+              }
+            }}
+            onMouseLeave={() => setHoveredCheckpoint(undefined)}
+            onMouseMove={(event) => setHoveredCheckpoint(checkpointFromPointer(event))}
+          >
+            {checkpoints.map((checkpoint, index) => {
+              const active = checkpoint.id === activeCheckpoint;
+              const hoverDistance = resolvedHoveredCheckpoint === undefined
+                ? undefined
+                : Math.abs(index - resolvedHoveredCheckpoint);
+              return (
+                <span
+                  key={checkpoint.id}
+                  aria-hidden="true"
+                  data-active={active ? "true" : "false"}
+                  data-checkpoint-index={index}
+                  className={cn(
+                    "pointer-events-none absolute left-0 h-0.5 w-2 -translate-y-1/2 rounded-full bg-foreground/25 transition-[background-color,width] duration-150 motion-reduce:transition-none",
+                    hoverDistance === 0 && "bg-foreground/65",
+                    active && "bg-foreground/85",
+                  )}
+                  style={{
+                    top: `${checkpointTop(index)}%`,
+                    width: hoverDistance === 0 ? 24 : hoverDistance === 1 ? 16 : hoverDistance === 2 ? 10 : 8,
+                  }}
+                />
+              );
+            })}
+            {hoveredItem && resolvedHoveredCheckpoint !== undefined && (
+              <Card
+                data-checkpoint-preview
+                className="pointer-events-auto absolute left-8 z-10 w-80 cursor-text select-text gap-1 rounded-xl border-border/60 bg-popover/95 p-3 text-left text-popover-foreground shadow-xl shadow-black/20 backdrop-blur-md"
+                onMouseMove={(event) => event.stopPropagation()}
+                style={{
+                  top: `${checkpointTop(resolvedHoveredCheckpoint)}%`,
+                  transform: resolvedHoveredCheckpoint === 0
+                    ? "translateY(0)"
+                    : resolvedHoveredCheckpoint === checkpoints.length - 1
+                      ? "translateY(-100%)"
+                      : "translateY(-50%)",
+                }}
+              >
+                <span className="block max-w-full truncate text-sm font-medium leading-5">
+                  {hoveredItem.userText}
+                </span>
+                {hoveredItem.assistantText && (
+                  <span className="line-clamp-3 whitespace-normal text-sm leading-5 text-muted-foreground">
+                    {hoveredItem.assistantText}
+                  </span>
+                )}
+              </Card>
+            )}
+          </Button>
+        </nav>
+      )}
+    </div>
   );
 }
 
@@ -617,6 +954,15 @@ type FeedItem =
   | { kind: "entry"; entry: ConvEntry; lead: boolean }
   | { kind: "tools"; entries: ConvEntry[] };
 
+interface FeedTurn {
+  checkpoint?: ConvEntry;
+  items: FeedItem[];
+}
+
+function compactCheckpointPreview(text: string | null | undefined): string {
+  return text?.replace(/\s+/g, " ").trim() ?? "";
+}
+
 /// Consecutive tool calls are one passage in the conversation. Prose starts a
 /// new passage, so diagnostics never swallow the words that explain them.
 function groupToolEntries(entries: ConvEntry[]): FeedItem[] {
@@ -640,6 +986,26 @@ function groupToolEntries(entries: ConvEntry[]): FeedItem[] {
   return items;
 }
 
+/// A user request and everything that follows it form one turn. Keeping the
+/// real request inside that section lets CSS sticky hold it until the next turn
+/// arrives, which gives the browser ownership of the header handoff.
+function groupFeedTurns(items: FeedItem[]): FeedTurn[] {
+  const turns: FeedTurn[] = [];
+
+  for (const item of items) {
+    if (item.kind === "entry" && item.entry.kind === "user") {
+      turns.push({ checkpoint: item.entry, items: [item] });
+      continue;
+    }
+
+    const current = turns.at(-1);
+    if (current) current.items.push(item);
+    else turns.push({ items: [item] });
+  }
+
+  return turns;
+}
+
 /// `lead` marks the first entry of a run. Only that one wears the avatar and
 /// the name; the rest keep the column so the run stays aligned, and say nothing
 /// a reader already knows.
@@ -649,12 +1015,14 @@ function Entry({
   provider,
   name,
   persona,
+  checkpoint,
 }: {
   entry: ConvEntry;
   lead: boolean;
   provider: string;
   name: string;
   persona?: Agent;
+  checkpoint?: string;
 }) {
   const switched = modelSwitch(entry);
   if (switched) {
@@ -671,20 +1039,58 @@ function Entry({
 
   if (entry.kind === "user") {
     return (
-      <Message align="end">
+      <Message
+        align="end"
+        data-checkpoint-message={checkpoint}
+        className={cn(
+          checkpoint !== undefined && [
+            "sticky top-3 z-10 isolate translate-y-[var(--checkpoint-reminder-y)]",
+            "before:pointer-events-none before:absolute before:-inset-x-5 before:-top-3 before:-bottom-6 before:-z-10 before:bg-linear-to-b before:from-background before:via-background/95 before:via-60% before:to-transparent before:opacity-0 before:transition-opacity before:duration-200 before:content-[''] motion-reduce:before:transition-none",
+            "data-[sticky-active]:z-20 data-[sticky-active]:before:opacity-100",
+          ],
+        )}
+      >
         {/* The slot is its own muted disc at `min-w-8`. A smaller avatar inside
             leaves that disc showing as a ring, so the avatar fills it and the
             slot carries no colour of its own. */}
-        <MessageAvatar className={cn("bg-transparent", !lead && "invisible")}>
+        <MessageAvatar
+          data-sequential-avatar={!lead ? "" : undefined}
+          className={cn(
+            "bg-transparent translate-y-[var(--checkpoint-avatar-y)]!",
+            !lead && "opacity-0",
+          )}
+        >
           <UserAvatar />
         </MessageAvatar>
         <MessageContent>
-          {lead && <MessageHeader>You</MessageHeader>}
+          {lead && (
+            <MessageHeader className="max-h-5 overflow-hidden">
+              You
+            </MessageHeader>
+          )}
           <Bubble align="end">
-            <BubbleContent className="whitespace-pre-wrap">{entry.text}</BubbleContent>
+            <BubbleContent
+              asChild={checkpoint !== undefined}
+              className="whitespace-pre-wrap transition-[background-color] duration-150 group-data-[compacted]/message:truncate group-data-[stuck]/message:bg-primary/45! group-data-[stuck]/message:backdrop-blur-sm motion-reduce:transition-none"
+            >
+              {checkpoint !== undefined ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  data-link
+                  data-slot="bubble-content"
+                  data-scroll-checkpoint={checkpoint}
+                  aria-label="Scroll to this message"
+                  className="h-auto min-h-0 max-w-full min-w-0 justify-start whitespace-pre-wrap font-normal motion-reduce:transition-none!"
+                >
+                  {entry.text}
+                </Button>
+              ) : entry.text}
+            </BubbleContent>
           </Bubble>
           {entry.text && (
-            <MessageFooter className="opacity-0 transition-opacity focus-within:opacity-100 group-hover/message:opacity-100">
+            <MessageFooter className="max-h-6 overflow-hidden group-data-[stuck]/message:opacity-0">
               <CopyPrompt text={entry.text} />
             </MessageFooter>
           )}
@@ -1020,22 +1426,6 @@ function toolGroupSummary(entries: ConvEntry[]): string {
     : unique.join(", ");
 
   return summary.charAt(0).toUpperCase() + summary.slice(1);
-}
-
-function LatestRequest({ text }: { text: string }) {
-  const oneLine = text.replace(/\s+/g, " ").trim();
-
-  return (
-    <div className="shrink-0 border-b border-border bg-background/95 px-5 py-2" aria-label="Latest request">
-      <div className="mx-auto flex w-full max-w-3xl min-w-0 items-center gap-2">
-        <UserAvatar className="size-6 shrink-0" />
-        <span className="shrink-0 text-xs font-medium text-muted-foreground">You asked</span>
-        <span className="min-w-0 flex-1 truncate text-sm" title={oneLine}>
-          {oneLine}
-        </span>
-      </div>
-    </div>
-  );
 }
 
 function Diff({ lines }: { lines: ConvDiffLine[] }) {
