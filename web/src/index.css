@@ -128,8 +128,8 @@
   --sidebar: var(--card);
   --sidebar-foreground: var(--foreground);
   --sidebar-border: var(--border);
-  --sidebar-row-hover: var(--accent);
-  --sidebar-row-selected: var(--muted);
+  --sidebar-row-hover: color-mix(in srgb, var(--sidebar) 96%, var(--sidebar-foreground));
+  --sidebar-row-selected: color-mix(in srgb, var(--sidebar) 96%, var(--sidebar-foreground));
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
   --sidebar-accent: var(--accent);

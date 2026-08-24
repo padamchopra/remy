@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Bot, Plus, Settings2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { AvatarBadge } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -24,11 +25,11 @@ import { AgentSettings } from "@/components/AgentSettings";
 import { ChatView } from "@/components/ChatView";
 import { PaneHeader } from "@/components/PaneHeader";
 import { apiError } from "@/lib/api-error";
-import { deviceIcon } from "@/lib/devices";
+import { agentConversation, availableAgentServers } from "@/lib/inbox";
 import { plainText } from "@/lib/path";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
-import type { Agent, Chat, Server } from "@/state/types";
+import type { Agent, Chat } from "@/state/types";
 
 /// The inbox: your agents, and the conversation with the one you picked.
 ///
@@ -64,7 +65,7 @@ export function Inbox({
 }) {
   const dms = useStore((s) => s.dms);
   const servers = useStore((s) => s.servers);
-  const named = servers.length > 1;
+  const online = availableAgentServers(servers).length > 0;
 
   return (
     <main className="flex min-w-0 flex-1">
@@ -74,17 +75,19 @@ export function Inbox({
       >
         <ScrollArea className="min-h-0 flex-1">
           <ul className="flex flex-col gap-0.5 p-2">
-            {agents.map((agent) => (
-              <li key={agent.id}>
-                <AgentRow
-                  agent={agent}
-                  active={selected?.id === agent.id}
-                  dm={dms.find((chat) => chat.agentId === agent.id && chat.serverId === agent.serverId)}
-                  server={named ? servers.find((entry) => entry.id === agent.serverId) : undefined}
-                  onSelect={() => onSelectAgent(agent.handle)}
-                />
-              </li>
-            ))}
+            {agents.map((agent) => {
+              return (
+                <li key={agent.id}>
+                  <AgentRow
+                    agent={agent}
+                    active={selected?.id === agent.id}
+                    dm={agentConversation(agent.id, dms, servers)}
+                    online={online}
+                    onSelect={() => onSelectAgent(agent.handle)}
+                  />
+                </li>
+              );
+            })}
           </ul>
         </ScrollArea>
         <div className="border-t border-border p-2">
@@ -130,16 +133,15 @@ function AgentRow({
   agent,
   active,
   dm,
-  server,
+  online,
   onSelect,
 }: {
   agent: Agent;
   active: boolean;
   dm?: Chat;
-  server?: Server;
+  online: boolean;
   onSelect: () => void;
 }) {
-  const DeviceIcon = deviceIcon(server?.icon);
   const preview = dm?.preview ? plainText(dm.preview) : agent.role;
 
   return (
@@ -149,45 +151,49 @@ function AgentRow({
       aria-current={active ? "page" : undefined}
       onClick={onSelect}
       className={cn(
-        "flex w-full flex-col gap-1 rounded-md px-2 py-2 text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+        "flex w-full items-start gap-2.5 rounded-md px-2 py-2.5 text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
         active ? "bg-sidebar-row-selected" : "hover:bg-sidebar-row-hover",
       )}
     >
-      <span className="flex min-w-0 items-center gap-2">
-        <AgentMark agent={agent} className="size-5" />
-        <span className={cn("min-w-0 flex-1 truncate text-sm leading-5", dm?.unread && "font-medium")}>
-          {agent.name}
-        </span>
-        {dm?.state === "working" ? (
-          <Badge variant="info" className="h-4 px-1.5 text-[10px] leading-none">
-            <span className="shimmer">Working</span>
-          </Badge>
-        ) : dm?.unread ? (
-          <span className="size-1.5 shrink-0 rounded-full bg-primary" />
-        ) : null}
+      <span className="relative mt-0.5 shrink-0 overflow-visible">
+        <AgentMark agent={agent} className="size-9" />
+        {online && (
+          <AvatarBadge
+            role="img"
+            aria-label="Online"
+            className="-right-0.5 -bottom-0.5 size-2.5 bg-success ring-sidebar"
+          />
+        )}
       </span>
 
-      {preview && (
-        <span
-          className={cn(
-            "line-clamp-2 text-xs leading-snug",
-            dm?.unread ? "text-foreground" : "text-muted-foreground",
-          )}
-        >
-          {preview}
+      <span className="flex min-w-0 flex-1 flex-col gap-1">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className={cn("min-w-0 flex-1 truncate text-sm leading-5", dm?.unread && "font-medium")}>
+            {agent.name}
+          </span>
+          {dm?.state === "working" ? (
+            <Badge variant="info" className="h-4 px-1.5 text-[10px] leading-none">
+              <span className="shimmer">Working</span>
+            </Badge>
+          ) : dm?.unread ? (
+            <span className="size-1.5 shrink-0 rounded-full bg-primary" />
+          ) : null}
         </span>
-      )}
 
-      <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-        <span className="min-w-0 flex-1 truncate font-mono">@{agent.handle}</span>
-        {server && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <DeviceIcon className="size-3 shrink-0" />
-            </TooltipTrigger>
-            <TooltipContent>{server.name}</TooltipContent>
-          </Tooltip>
+        {preview && (
+          <span
+            className={cn(
+              "line-clamp-2 text-xs leading-snug",
+              dm?.unread ? "text-foreground" : "text-muted-foreground",
+            )}
+          >
+            {preview}
+          </span>
         )}
+
+        <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span className="min-w-0 flex-1 truncate font-mono">@{agent.handle}</span>
+        </span>
       </span>
     </button>
   );
@@ -215,15 +221,16 @@ function Conversation({
   const openDm = useStore((s) => s.openDm);
   const readChat = useStore((s) => s.readChat);
   const settings = useStore((s) => s.settings);
+  const servers = useStore((s) => s.servers);
   const [failed, setFailed] = useState<string | undefined>();
   const [editing, setEditing] = useState(false);
 
-  const chat = dms.find((entry) => entry.agentId === agent.id && entry.serverId === agent.serverId);
+  const chat = agentConversation(agent.id, dms, servers);
 
   useEffect(() => {
     setFailed(undefined);
     void openDm(agent).catch((error) => setFailed(apiError(error)));
-  }, [agent.id, agent.serverId, openDm]);
+  }, [agent.id, openDm]);
 
   // Opening it is reading it, and it stays read while it is on screen: a reply
   // that lands in front of you was never unread.

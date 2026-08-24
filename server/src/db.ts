@@ -45,7 +45,8 @@ function migrate(database: DatabaseSync): void {
       cost_usd real,
       context_json text,
       todos_json text,
-      error text
+      error text,
+      pinned integer not null default 0
     );
     create table if not exists chat_entries (
       chat_id text not null references chats(id) on delete cascade,
@@ -64,6 +65,7 @@ function migrate(database: DatabaseSync): void {
     );
     create table if not exists archives (
       id text primary key,
+      chat_id text,
       session text not null,
       archived_at integer not null,
       agent text not null,
@@ -341,6 +343,16 @@ function migrate(database: DatabaseSync): void {
   }
   try {
     database.exec("alter table chats add column read_at integer");
+  } catch {
+    // Column already exists on databases created after this migration.
+  }
+  try {
+    database.exec("alter table chats add column pinned integer not null default 0");
+  } catch {
+    // Column already exists on databases created after this migration.
+  }
+  try {
+    database.exec("alter table archives add column chat_id text");
   } catch {
     // Column already exists on databases created after this migration.
   }

@@ -255,6 +255,43 @@ test("attaching a thread does not move the ticket by itself", () => {
   assert.equal(after.threads[0].linkedBy, "you");
 });
 
+test("your ticket comment continues the newest runner thread with the same body", async () => {
+  const board = project("Comment continuity");
+  const ticket = tickets.createTicket({ projectId: board.id, title: "Keep working" });
+  tickets.linkThread(ticket.id, { chatId: "runner-old", linkedBy: "runner" });
+  tickets.linkThread(ticket.id, { chatId: "context-only" });
+  tickets.linkThread(ticket.id, { chatId: "runner-current", linkedBy: "runner" });
+
+  let delivered: { chatId: string; body: string } | undefined;
+  const resumed = await runner.resumeTicketFromComment(
+    ticket.id,
+    "Use the workspace icon here too.",
+    async (thread, body) => {
+      delivered = { chatId: thread.chatId, body };
+      return true;
+    },
+  );
+
+  assert.equal(resumed, true);
+  assert.equal(delivered?.chatId, "runner-current");
+  assert.equal(delivered?.body, "Use the workspace icon here too.");
+});
+
+test("a ticket comment does not start a manually attached thread", async () => {
+  const board = project("Comment context");
+  const ticket = tickets.createTicket({ projectId: board.id, title: "Do not resume this" });
+  tickets.linkThread(ticket.id, { chatId: "manual-context" });
+
+  let delivered = false;
+  const resumed = await runner.resumeTicketFromComment(ticket.id, "A note", async () => {
+    delivered = true;
+    return true;
+  });
+
+  assert.equal(resumed, false);
+  assert.equal(delivered, false);
+});
+
 test("a deleted thread leaves the ticket and its story behind", () => {
   const board = project("Forget");
   const ticket = tickets.createTicket({ projectId: board.id, title: "Outlives its thread" });
@@ -330,6 +367,39 @@ test("every board write is an event, so nothing changes without a record", () =>
   tickets.commentOnTicket(ticket.id, "A note for whoever picks this up");
   tickets.setTicketStatus(ticket.id, "todo");
   assert.equal(log.eventsFor("ticket", ticket.id).length, before + 2);
+});
+
+test("your comments can be edited and deleted without rewriting the board log", () => {
+  const board = project("Comments");
+  const ticket = tickets.createTicket({ projectId: board.id, title: "Discuss this" });
+  const agent = agents.createAgent({ name: "Reviewer" });
+
+  tickets.commentOnTicket(ticket.id, "First draft @reviewer");
+  const yours = tickets.ticketActivity(ticket.id).at(-1)!;
+  tickets.commentOnTicket(ticket.id, "Agent note", agent.handle);
+  const theirs = tickets.ticketActivity(ticket.id).at(-1)!;
+
+  tickets.editTicketComment(ticket.id, yours.id, "Final draft @you");
+  const edited = tickets.ticketActivity(ticket.id).find((entry) => entry.id === yours.id);
+  assert.equal(edited?.body, "Final draft @you");
+  assert.deepEqual(edited?.mentions, [{ handle: "you", id: "you" }]);
+  assert.ok(edited?.editedAt);
+  assert.throws(
+    () => tickets.editTicketComment(ticket.id, theirs.id, "Changed agent note"),
+    /only change your own comments/,
+  );
+
+  tickets.deleteTicketComment(ticket.id, yours.id);
+  assert.equal(tickets.ticketActivity(ticket.id).some((entry) => entry.id === yours.id), false);
+  assert.equal(
+    log.eventsFor("ticket", ticket.id).filter((event) => event.kind.startsWith("comment")).length,
+    4,
+  );
+  assert.throws(() => tickets.deleteTicketComment(ticket.id, yours.id), /comment is gone/);
+  assert.throws(
+    () => tickets.deleteTicketComment(ticket.id, theirs.id),
+    /only change your own comments/,
+  );
 });
 
 // ── agents ──────────────────────────────────────────────────────────────────

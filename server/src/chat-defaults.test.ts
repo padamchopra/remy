@@ -21,7 +21,13 @@ for (const command of ["claude", "codex", "agent"]) {
 }
 process.env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
 
-const { createChat } = await import("./chat.js");
+const {
+  archiveConversation,
+  createChat,
+  deleteChat,
+  restoreArchivedChat,
+  updateChat,
+} = await import("./chat.js");
 const { createAgent } = await import("./agents.js");
 const { patchSettings } = await import("./config.js");
 
@@ -92,6 +98,43 @@ test("asking for a provider's own default is a choice, not a gap", () => {
   const chat = createChat({ cwd, provider: "claude", model: "" });
   assert.equal(chat.provider, "claude");
   assert.equal(chat.model, undefined);
+});
+
+test("a started thread can change model, effort, and permission but not provider", () => {
+  const chat = createChat({ cwd, provider: "codex", model: "gpt-5.6-sol", effort: "low" });
+  const changed = updateChat(chat.id, {
+    model: "gpt-5.6-terra",
+    effort: "high",
+    permissionMode: "bypassPermissions",
+  });
+  assert.equal(changed.provider, "codex");
+  assert.equal(changed.model, "gpt-5.6-terra");
+  assert.equal(changed.effort, "high");
+  assert.equal(changed.permissionMode, "bypassPermissions");
+  assert.throws(
+    () => updateChat(chat.id, { provider: "claude" }),
+    /keeps the provider it started with/,
+  );
+});
+
+test("a thread can be pinned and restored from its archive", () => {
+  const original = createChat({ cwd, provider: "codex", model: "gpt-5.6-sol", effort: "high" });
+  const pinned = updateChat(original.id, { pinned: true });
+  assert.equal(pinned.pinned, true);
+
+  const conversation = archiveConversation(original.id);
+  deleteChat(original.id);
+  const restored = restoreArchivedChat({
+    chatId: original.id,
+    session: original.title,
+    cwd: original.cwd,
+    conversation,
+  });
+  assert.equal(restored.id, original.id);
+  assert.equal(restored.provider, "codex");
+  assert.equal(restored.model, "gpt-5.6-sol");
+  assert.equal(restored.effort, "high");
+  assert.equal(restored.pinned, undefined);
 });
 
 test("a new thread starts on the permission mode this machine was set to", () => {

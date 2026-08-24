@@ -44,6 +44,7 @@ test("stores a chat and reads it back with its feed in order", () => {
     claudeSessionId: "session-1",
     turns: 3,
     costUsd: 0.5,
+    pinned: true,
   }));
   storage.saveEntry("a", entry("e1", "first"));
   storage.saveEntry("a", entry("e2", "second"));
@@ -56,6 +57,7 @@ test("stores a chat and reads it back with its feed in order", () => {
   assert.equal(loaded.claudeSessionId, "session-1");
   assert.equal(loaded.turns, 3);
   assert.equal(loaded.costUsd, 0.5);
+  assert.equal(loaded.pinned, true);
   assert.deepEqual(loaded.entries.map((e) => e.id), ["e1", "e2", "e3"]);
 });
 

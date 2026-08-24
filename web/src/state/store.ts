@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { codeFor, type DeviceIconId } from "~/lib/devices";
+import { agentConversation, availableAgentServers } from "~/lib/inbox";
 import type { TintId } from "~/lib/tints";
 import type { Provider } from "~/lib/providers";
 import { byRank } from "~/lib/tickets";
@@ -7,6 +8,7 @@ import { transport } from "~/lib/transport";
 import { fixtureChats, fixtureServers, fixtureWorkspaces } from "./fixture";
 import type {
   Agent,
+  ArchivedThread,
   Chat,
   ChatApproval,
   ChatDetail,
@@ -59,6 +61,20 @@ interface RawChat {
   workingSince?: number | null;
   dm?: boolean;
   unread?: boolean;
+  pinned?: boolean;
+}
+
+interface RawArchive {
+  id: string;
+  session: string;
+  archivedAt: number;
+  cwd?: string | null;
+  agent?: string;
+  conversation?: {
+    title?: string;
+    model?: string;
+    entries?: ConvEntry[];
+  };
 }
 
 interface RawWorkspace {
@@ -78,6 +94,7 @@ interface RawWorkspace {
 interface State {
   servers: Server[];
   chats: Chat[];
+  archived: ArchivedThread[];
   /// The inbox: one conversation per agent, across every paired machine. Held
   /// apart from `chats` because they are two lists a person reads differently.
   dms: Chat[];
@@ -159,8 +176,11 @@ interface State {
   answerApproval(requestId: string, decision: "allow" | "allowAlways" | "deny"): Promise<void>;
   answerQuestion(requestId: string, answers: Record<string, unknown>): Promise<void>;
   interrupt(): Promise<void>;
-  setChatOptions(patch: { provider?: string; model?: string | null; effort?: string | null; permissionMode?: string }): Promise<void>;
+  setChatOptions(patch: { model?: string | null; effort?: string | null; permissionMode?: string }): Promise<void>;
+  pinThread(id: string, pinned: boolean): Promise<void>;
   archiveThread(id: string): Promise<void>;
+  restoreThread(id: string, serverId: string): Promise<Chat>;
+  deleteArchivedThread(id: string, serverId: string): Promise<void>;
   deleteThread(id: string): Promise<void>;
 
   /// The board. Read on demand by the pane that shows it rather than on every
@@ -175,10 +195,15 @@ interface State {
     body?: string;
     parentId?: string;
   }): Promise<Ticket>;
-  startTicket(id: string): Promise<{ id: string; serverId: string }>;
+  startTicket(
+    id: string,
+    options?: { provider?: string; model?: string; effort?: string; checkout?: "main" | "worktree" },
+  ): Promise<{ id: string; serverId: string }>;
   updateTicket(id: string, patch: Record<string, unknown>): Promise<void>;
   moveTicket(id: string, status: TicketStatus, before?: string, after?: string): Promise<void>;
   commentOnTicket(id: string, body: string): Promise<void>;
+  editTicketComment(id: string, commentId: string, body: string): Promise<void>;
+  deleteTicketComment(id: string, commentId: string): Promise<void>;
   deleteTicket(id: string): Promise<void>;
   ticketActivity(id: string): Promise<TicketActivity[]>;
   attachThread(ticketId: string, chatId: string): Promise<void>;
@@ -198,7 +223,7 @@ interface State {
   saveAgent(id: string | undefined, patch: Record<string, unknown>): Promise<Agent>;
   deleteAgent(id: string): Promise<void>;
   /// Opens an agent's conversation, making it if this is the first time. The
-  /// machine holding the agent is the one that holds the conversation.
+  /// first available device that can run it holds the conversation.
   openDm(agent: Agent): Promise<Chat>;
   /// Clears an inbox conversation's unread mark.
   readChat(id: string): Promise<void>;
@@ -214,6 +239,7 @@ const POLL_DISCONNECTED_MS = 4_000;
 export const useStore = create<State>((set, get) => ({
   servers: useFixture ? fixtureServers : [],
   chats: useFixture ? fixtureChats : [],
+  archived: [],
   dms: [],
   workspaces: useFixture ? fixtureWorkspaces : [],
   agents: [],
@@ -311,7 +337,7 @@ export const useStore = create<State>((set, get) => ({
 
     const servers = await transport.servers();
     if (servers.length === 0) {
-      set({ servers: [], chats: [], dms: [], workspaces: [], loading: false, error: undefined });
+      set({ servers: [], chats: [], archived: [], dms: [], workspaces: [], loading: false, error: undefined });
       return;
     }
 
@@ -322,6 +348,7 @@ export const useStore = create<State>((set, get) => ({
     set((current) => ({
       servers,
       chats: current.chats.filter((chat) => known.has(chat.serverId)),
+      archived: current.archived.filter((chat) => known.has(chat.serverId)),
       dms: current.dms.filter((chat) => known.has(chat.serverId)),
       workspaces: current.workspaces.filter((workspace) => known.has(workspace.serverId)),
     }));
@@ -334,13 +361,17 @@ export const useStore = create<State>((set, get) => ({
     await Promise.all(
       servers.map(async (server) => {
         try {
-          const [chats, workspaces] = await Promise.all([
+          const [chats, archives, workspaces] = await Promise.all([
             transport.request<{ chats?: RawChat[]; dms?: RawChat[] }>(server.id, "/chats").catch((error: unknown) => {
               // An older server has no /chats; that is not an error worth showing.
               const message = error instanceof Error ? error.message : String(error);
               if (!/\b404\b/.test(message)) throw error;
               return { chats: [] } as { chats?: RawChat[]; dms?: RawChat[] };
             }),
+            transport
+              .request<{ archives?: RawArchive[] }>(server.id, "/archives")
+              .then((listed) => listed.archives ?? [])
+              .catch(() => []),
             transport
               .request<{ workspaces?: RawWorkspace[] }>(server.id, "/workspaces")
               .then((listed) => listed.workspaces ?? [])
@@ -356,6 +387,10 @@ export const useStore = create<State>((set, get) => ({
               ...current.chats.filter((chat) => chat.serverId !== server.id),
               ...(chats.chats ?? []).map((raw) => toChat(raw, server.id)),
             ].sort(byAttention),
+            archived: [
+              ...current.archived.filter((chat) => chat.serverId !== server.id),
+              ...archives.map((raw) => toArchivedThread(raw, server.id)),
+            ].sort((a, b) => b.archivedAt - a.archivedAt),
             // The inbox comes back in the same answer, so it lands with the
             // threads rather than costing a second round trip.
             dms: [
@@ -373,6 +408,7 @@ export const useStore = create<State>((set, get) => ({
             servers: current.servers.map((entry) =>
               entry.id === server.id ? { ...entry, online: false } : entry),
             chats: current.chats.filter((chat) => chat.serverId !== server.id),
+            archived: current.archived.filter((chat) => chat.serverId !== server.id),
             dms: current.dms.filter((chat) => chat.serverId !== server.id),
             workspaces: current.workspaces.filter((workspace) => workspace.serverId !== server.id),
           }));
@@ -794,6 +830,31 @@ export const useStore = create<State>((set, get) => ({
     await get().refresh();
   },
 
+  async pinThread(id, pinned) {
+    const chat = get().chats.find((entry) => entry.id === id);
+    if (!chat) return;
+    await transport.request(chat.serverId, `/chats/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: { pinned },
+    });
+    await get().refresh();
+  },
+
+  async restoreThread(id, serverId) {
+    const body = await transport.request<{ chat: RawChat }>(
+      serverId,
+      `/archives/${encodeURIComponent(id)}/restore`,
+      { method: "POST", body: {} },
+    );
+    await get().refresh();
+    return toChat(body.chat, serverId);
+  },
+
+  async deleteArchivedThread(id, serverId) {
+    await transport.request(serverId, `/archives/${encodeURIComponent(id)}`, { method: "DELETE" });
+    await get().refresh();
+  },
+
   async deleteThread(id) {
     const chat = get().chats.find((entry) => entry.id === id);
     if (!chat) return;
@@ -903,7 +964,7 @@ export const useStore = create<State>((set, get) => ({
     return ticket;
   },
 
-  async startTicket(id) {
+  async startTicket(id, options = {}) {
     const ticket = get().tickets.find((entry) => entry.id === id);
     if (!ticket) throw new Error("That ticket is gone.");
     const target = ticket.deviceId
@@ -913,7 +974,7 @@ export const useStore = create<State>((set, get) => ({
     const body = await transport.request<{ chat?: RawChat }>(
       target,
       `/tickets/${encodeURIComponent(id)}/start`,
-      { method: "POST", body: {} },
+      { method: "POST", body: options },
     );
     const chatId = body.chat?.id;
     if (!chatId) throw new Error("Couldn't start that thread.");
@@ -967,6 +1028,26 @@ export const useStore = create<State>((set, get) => ({
     );
     set((current) => ({ tickets: withTicket(current.tickets, toTicket(answer.ticket, ticket.serverId)) }));
     void get().loadBoard().catch(() => {});
+  },
+
+  async editTicketComment(id, commentId, body) {
+    const ticket = get().tickets.find((entry) => entry.id === id);
+    if (!ticket) return;
+    await transport.request(
+      ticket.serverId,
+      `/tickets/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
+      { method: "PATCH", body: { body } },
+    );
+  },
+
+  async deleteTicketComment(id, commentId) {
+    const ticket = get().tickets.find((entry) => entry.id === id);
+    if (!ticket) return;
+    await transport.request(
+      ticket.serverId,
+      `/tickets/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
+      { method: "DELETE" },
+    );
   },
 
   async deleteTicket(id) {
@@ -1097,16 +1178,28 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async openDm(agent) {
-    const existing = get().dms.find((chat) => chat.agentId === agent.id && chat.serverId === agent.serverId);
-    if (existing) return existing;
-    const body = await transport.request<{ chat: RawChat }>(
-      agent.serverId,
-      `/agents/${encodeURIComponent(agent.id)}/dm`,
-      { method: "POST" },
-    );
-    const chat = toChat(body.chat, agent.serverId);
-    set((current) => ({ dms: [chat, ...current.dms.filter((entry) => entry.id !== chat.id)] }));
-    return chat;
+    const servers = availableAgentServers(get().servers);
+    const available = new Set(servers.map((server) => server.id));
+    const existing = agentConversation(agent.id, get().dms, get().servers);
+    if (existing && available.has(existing.serverId)) return existing;
+
+    let failure: unknown;
+    for (const server of servers) {
+      try {
+        const body = await transport.request<{ chat: RawChat }>(
+          server.id,
+          `/agents/${encodeURIComponent(agent.id)}/dm`,
+          { method: "POST" },
+        );
+        const chat = toChat(body.chat, server.id);
+        set((current) => ({ dms: [chat, ...current.dms.filter((entry) => entry.id !== chat.id)] }));
+        return chat;
+      } catch (error) {
+        failure = error;
+      }
+    }
+    if (failure) throw failure;
+    throw new Error("No device is available.");
   },
 
   async readChat(id) {
@@ -1228,6 +1321,7 @@ function toDetail(raw: RawChatDetail, serverId: string): ChatDetail {
     live: raw.live,
     error: raw.error ?? undefined,
     context: raw.context ?? undefined,
+    workingSince: raw.workingSince ?? undefined,
   };
 }
 
@@ -1285,6 +1379,8 @@ function mergeDetail(detail: ChatDetail, frame: ChatFrame): ChatDetail {
     live: frame.live ?? detail.live,
     error: frame.error === undefined ? detail.error : frame.error ?? undefined,
     context: frame.context === undefined ? detail.context : frame.context ?? undefined,
+    workingSince:
+      frame.workingSince === undefined ? detail.workingSince : (frame.workingSince ?? undefined),
   };
 }
 
@@ -1304,6 +1400,25 @@ function toChat(raw: RawChat, serverId: string): Chat {
     workingSince: raw.workingSince ?? undefined,
     ...(raw.dm ? { dm: true } : {}),
     ...(raw.unread ? { unread: true } : {}),
+    ...(raw.pinned ? { pinned: true } : {}),
+  };
+}
+
+function toArchivedThread(raw: RawArchive, serverId: string): ArchivedThread {
+  const entries = raw.conversation?.entries ?? [];
+  const preview = [...entries]
+    .reverse()
+    .find((entry) => (entry.kind === "assistant" || entry.kind === "user") && entry.text?.trim())
+    ?.text;
+  return {
+    id: raw.id,
+    serverId,
+    title: raw.conversation?.title?.trim() || raw.session,
+    cwd: raw.cwd ?? "~",
+    provider: raw.agent,
+    model: raw.conversation?.model,
+    preview,
+    archivedAt: raw.archivedAt,
   };
 }
 
@@ -1390,5 +1505,7 @@ function nameFromPath(path: string): string {
 /// Needs-you first, then working, then most recently updated.
 const RANK: Record<ChatState, number> = { needs_input: 0, working: 1, error: 2, idle: 3 };
 function byAttention(a: Chat, b: Chat): number {
-  return RANK[a.state] - RANK[b.state] || b.updatedAt - a.updatedAt;
+  return Number(b.pinned ?? false) - Number(a.pinned ?? false)
+    || RANK[a.state] - RANK[b.state]
+    || b.updatedAt - a.updatedAt;
 }

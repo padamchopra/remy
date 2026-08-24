@@ -22,7 +22,13 @@ function ScrollArea({
     >
       <ScrollAreaPrimitive.Viewport
         data-slot="scroll-area-viewport"
-        className="size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1"
+        className={cn(
+          "size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1",
+          // Radix gives the viewport child `display: table`, whose preferred
+          // width can outgrow a narrow pane. Vertical lists should follow the
+          // viewport; horizontal surfaces keep Radix's intrinsic width.
+          orientation === "vertical" && "[&>div]:block! [&>div]:min-w-0! [&>div]:w-full!",
+        )}
       >
         {children}
       </ScrollAreaPrimitive.Viewport>

@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import type { FormEvent, ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUp,
   ArrowUpRight,
@@ -45,6 +45,28 @@ import {
   MessageHeader,
 } from "@/components/ui/message";
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
+import {
+  Questionnaire,
+  QuestionnaireActions,
+  QuestionnaireChoice,
+  QuestionnaireChoiceDescription,
+  QuestionnaireChoices,
+  QuestionnaireDescription,
+  QuestionnaireError,
+  QuestionnaireInput,
+  QuestionnaireItem,
+  QuestionnaireNext,
+  QuestionnairePrevious,
+  QuestionnaireProgress,
+  QuestionnaireSubmit,
+  QuestionnaireTitle,
+} from "@/components/ui/questionnaire";
+import {
   Command,
   CommandDialog,
   CommandEmpty,
@@ -67,6 +89,8 @@ import { ProviderMark } from "@/components/ProviderMark";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Markdown } from "@/components/Markdown";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
+import { ThreadToolsButton, ThreadToolsSidebar, useThreadTools } from "@/components/SharedBrowser";
+import { ThreadToolsLayout } from "@/components/ThreadToolsLayout";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -75,6 +99,7 @@ import { CLOUD_MODES, cloudModeOf, PERMISSIONS, permissionOf } from "@/lib/chat-
 import { deviceIcon } from "@/lib/devices";
 import { displayPath } from "@/lib/path";
 import { workspaceForPath } from "@/lib/projects";
+import { PROVIDERS } from "@/lib/providers";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
 import type { Agent, Chat, ChatApproval, ChatQuestionRequest, ConvArtifact, ConvDiffLine, ConvEntry } from "@/state/types";
@@ -123,6 +148,7 @@ export function ChatView({
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const threadTools = useThreadTools(chat.id, chat.serverId);
 
   useEffect(() => {
     void openChat(chat.id).catch((caught) => {
@@ -166,7 +192,14 @@ export function ChatView({
   const open = detail?.id === chat.id ? detail : undefined;
   const state = open?.state ?? chat.state;
   const working = state === "working";
+  const conversational = chat.dm === true;
   const entries = open?.entries ?? [];
+  const visibleEntries = entries.filter(
+    (entry) => conversational
+      ? entry.kind === "user" || entry.kind === "assistant"
+      : entry.kind !== "thinking" || Boolean(entry.text?.trim()),
+  );
+  const feedItems = groupToolEntries(visibleEntries);
   const latestRequest = [...entries].reverse().find((entry) => entry.kind === "user" && entry.text)?.text;
   const approval = open?.approval;
   const question = open?.question;
@@ -191,7 +224,7 @@ export function ChatView({
   const asks = provider?.approvals !== false;
 
   const setOption = async (
-    patch: { provider?: string; model?: string | null; effort?: string | null; permissionMode?: string },
+    patch: { model?: string | null; effort?: string | null; permissionMode?: string },
     what: string,
   ) => {
     try {
@@ -237,43 +270,86 @@ export function ChatView({
           },
         ]}
       >
-        <StateBadge state={state} action={open?.action} />
         {onOpenTicket && !persona && <ThreadTicket chatId={chat.id} onOpenTicket={onOpenTicket} />}
         {headerEnd}
+        {!conversational && (
+          <ThreadToolsButton
+            active={threadTools.active}
+            shown={threadTools.shown}
+            onClick={() => threadTools.setShown(!threadTools.shown)}
+          />
+        )}
       </PaneHeader>
 
-      {latestRequest && <LatestRequest text={latestRequest} />}
+      <ThreadToolsLayout
+        open={!conversational && threadTools.shown}
+        threadId={chat.id}
+        sidebar={(
+          <ThreadToolsSidebar
+            chatId={chat.id}
+            serverId={chat.serverId}
+            tabs={threadTools.tabs}
+            activeTab={threadTools.activeTab}
+            views={threadTools.views}
+            setActiveTab={threadTools.setActiveTab}
+            setView={threadTools.setView}
+            addBrowser={threadTools.addBrowser}
+            canAddTabs={threadTools.canAddTabs}
+            closeTab={threadTools.closeTab}
+          />
+        )}
+      >
+        <div className="flex min-w-0 flex-1 flex-col">
+          {!conversational && latestRequest && <LatestRequest text={latestRequest} />}
 
-      <ScrollFeed chatId={chat.id} count={entries.length} working={working} className="min-h-0 flex-1">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-5 py-6">
-          {loading && entries.length === 0 ? (
+          <ScrollFeed chatId={chat.id} count={visibleEntries.length} working={working} className="min-h-0 flex-1">
+            <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-5 py-6">
+          {loading && visibleEntries.length === 0 ? (
             <FeedSkeleton />
-          ) : entries.length === 0 ? (
-            <Empty>
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <Wrench />
-                </EmptyMedia>
-                <EmptyTitle>Nothing here yet</EmptyTitle>
-                <EmptyDescription>
-                  {persona ? `Ask ${persona.name} for what you need.` : "Send a message to get this thread going."}
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
+          ) : visibleEntries.length === 0 ? (
+            persona ? (
+              <AgentConversationStarter persona={persona} provider={provider?.id ?? "claude"} />
+            ) : (
+              <Empty>
+                <EmptyHeader>
+                  <EmptyMedia variant="icon">
+                    <Wrench />
+                  </EmptyMedia>
+                  <EmptyTitle>Nothing here yet</EmptyTitle>
+                  <EmptyDescription>Send a message to get this thread going.</EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            )
           ) : (
-            entries.map((entry, index) => (
-              <Entry
-                key={entry.id}
-                entry={entry}
-                provider={provider?.id ?? "claude"}
-                name={persona?.name ?? provider?.label ?? "Claude"}
-                persona={persona}
-                lead={index === 0 || speaker(entries[index - 1]) !== speaker(entry)}
+            feedItems.map((item) => item.kind === "tools" ? (
+              <ToolGroup
+                key={`tools:${item.entries[0].id}`}
+                entries={item.entries}
                 onOpenTicket={onOpenTicket}
                 onOpenThread={onOpenThread}
                 onOpenWorkspace={onOpenWorkspace}
               />
+            ) : (
+              <Entry
+                key={item.entry.id}
+                entry={item.entry}
+                provider={provider?.id ?? "claude"}
+                name={persona?.name ?? provider?.label ?? "Claude"}
+                persona={persona}
+                lead={item.lead}
+              />
             ))
+          )}
+
+          {conversational && working && persona && (
+            <Marker role="status" aria-live="polite">
+              <MarkerIcon className="size-8">
+                <AgentMark agent={persona} className="size-8" />
+              </MarkerIcon>
+              <MarkerContent className="shimmer">
+                <span className="font-medium">{persona.name}</span> is working…
+              </MarkerContent>
+            </Marker>
           )}
 
           {approval && (
@@ -311,14 +387,14 @@ export function ChatView({
               <p className="text-sm text-muted-foreground">{open.error}</p>
             </Card>
           )}
-        </div>
-      </ScrollFeed>
+            </div>
+          </ScrollFeed>
 
-      <div className="shrink-0 border-t border-border px-5 py-3">
-        <form
+          <div className="min-w-0 shrink-0 border-t border-border px-5 py-3">
+            <form
           // The toolbar drops labels by how wide the composer is, not the
           // window: the sidebar takes a fixed slice, so the two differ.
-          className="@container mx-auto w-full max-w-3xl"
+          className="@container mx-auto min-w-0 w-full max-w-3xl"
           onSubmit={(event) => {
             event.preventDefault();
             void submit();
@@ -341,21 +417,23 @@ export function ChatView({
                 void submit();
               }}
             />
-            {/* One row, not two: the settings and the send button are the same
-                strip of chrome. */}
-            <InputGroupAddon align="block-end" className="gap-1">
+            {/* The controls share one strip while they fit. At the smallest
+                split-pane widths, the critical action cluster wraps intact
+                instead of spilling beyond the composer. */}
+            <InputGroupAddon align="block-end" className="min-w-0 flex-wrap gap-1">
               {cloud ? (
                 <InputGroupText>Cursor Cloud default</InputGroupText>
               ) : (
                 <ModelPickerButton
                   variant="composer"
                   value={{ provider: provider?.id ?? "claude", model: open?.model ?? "", effort: open?.effort ?? "" }}
-                  disabled={!open || working}
-                  title={working ? "The model changes once this turn is done." : undefined}
+                  onlyProvider={provider?.id ?? "claude"}
+                  disabled={!open}
+                  title={working ? "Applies to the next turn." : undefined}
                   onPick={(next) =>
                     void setOption(
-                      { provider: next.provider, model: next.model || null, effort: next.effort ?? null },
-                      next.provider === open?.provider ? "model" : "provider",
+                      { model: next.model || null, effort: next.effort ?? null },
+                      "model",
                     )
                   }
                 />
@@ -364,10 +442,10 @@ export function ChatView({
                 icon={permission.icon}
                 label={permission.label}
                 value={permission.value}
-                disabled={!open || working}
+                disabled={!open}
                 title={
                   working
-                    ? "Permissions change once this turn is done."
+                    ? "Applies to the next turn."
                     : asks
                       ? undefined
                       : `${provider?.label ?? "This provider"} can't stop to ask, so Ask keeps it read-only.`
@@ -376,18 +454,17 @@ export function ChatView({
                 options={cloud ? CLOUD_MODES : PERMISSIONS}
               />
 
-              <div className="ml-auto flex min-w-0 items-center gap-1">
+              <div className="ml-auto flex shrink-0 items-center gap-1">
                 {/* Where a thread runs is fixed when it starts, so these read
                     rather than offer. */}
-                <InputGroupText title={displayPath(chat.cwd)} className="hidden @md:flex">
-                  <DeviceIcon />
-                  {server?.name ?? "This machine"}
-                </InputGroupText>
-                {branch && (
-                  <InputGroupText title={displayPath(chat.cwd)} className="hidden min-w-0 @sm:flex">
-                    <GitBranch />
-                    <span className="max-w-32 truncate">{branch}</span>
+                {!conversational && (
+                  <InputGroupText title={displayPath(chat.cwd)} className="hidden @3xl:flex">
+                    <DeviceIcon />
+                    {server?.name ?? "This machine"}
                   </InputGroupText>
+                )}
+                {branch && (
+                  <BranchName branch={branch} />
                 )}
                 <ContextMeter context={open?.context} />
                 {working && (
@@ -414,9 +491,64 @@ export function ChatView({
               {provider?.label ?? "This provider"} can't stop to ask, so Ask keeps it read-only.
             </p>
           )}
-        </form>
-      </div>
+            </form>
+          </div>
+        </div>
+      </ThreadToolsLayout>
     </div>
+  );
+}
+
+function BranchName({ branch }: { branch: string }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  const copy = async () => {
+    let copiedSynchronously = false;
+    try {
+      const input = document.createElement("textarea");
+      input.value = branch;
+      input.setAttribute("readonly", "");
+      input.style.position = "fixed";
+      input.style.left = "-9999px";
+      document.body.append(input);
+      input.focus();
+      input.select();
+      input.setSelectionRange(0, branch.length);
+      copiedSynchronously = document.execCommand("copy");
+      input.remove();
+
+      setCopied(true);
+      clearTimeout(timer.current);
+      timer.current = setTimeout(() => setCopied(false), 1500);
+
+      if (!copiedSynchronously) await navigator.clipboard.writeText(branch);
+    } catch {
+      if (!copiedSynchronously) {
+        setCopied(false);
+        toast.error("Couldn't copy the branch", { description: "Your browser blocked clipboard access." });
+      }
+    }
+  };
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <InputGroupButton
+          type="button"
+          aria-label={`Copy branch ${branch}`}
+          className="hidden min-w-0 max-w-40 text-muted-foreground @2xl:flex"
+          onClick={() => void copy()}
+        >
+          <GitBranch />
+          <span className="truncate">{branch}</span>
+          {copied ? <Check /> : null}
+        </InputGroupButton>
+      </TooltipTrigger>
+      <TooltipContent className="font-mono">{copied ? "Copied" : branch}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -464,10 +596,48 @@ function ScrollFeed({
   );
 }
 
-/// Who an entry belongs to. Everything the agent does — its prose, its
-/// thinking, its tool calls — is one side of the conversation.
-function speaker(entry: ConvEntry): "you" | "agent" {
+const MODEL_SWITCH = /^—\s*moved to\s+(.+?)\s*—$/i;
+
+function modelSwitch(entry: ConvEntry): { provider: string; label: string } | undefined {
+  if (entry.kind !== "assistant") return undefined;
+  const label = entry.text?.match(MODEL_SWITCH)?.[1]?.trim();
+  if (!label) return undefined;
+  const provider = PROVIDERS.find((candidate) => candidate.label.toLowerCase() === label.toLowerCase());
+  return { provider: provider?.id ?? label.toLowerCase(), label };
+}
+
+/// Who an entry belongs to. Provider changes are feed state, not a reply, so
+/// the next real answer still introduces the agent that wrote it.
+function speaker(entry: ConvEntry): "you" | "agent" | "system" {
+  if (modelSwitch(entry)) return "system";
   return entry.kind === "user" ? "you" : "agent";
+}
+
+type FeedItem =
+  | { kind: "entry"; entry: ConvEntry; lead: boolean }
+  | { kind: "tools"; entries: ConvEntry[] };
+
+/// Consecutive tool calls are one passage in the conversation. Prose starts a
+/// new passage, so diagnostics never swallow the words that explain them.
+function groupToolEntries(entries: ConvEntry[]): FeedItem[] {
+  const items: FeedItem[] = [];
+
+  entries.forEach((entry, index) => {
+    if (entry.kind === "tool") {
+      const previous = items.at(-1);
+      if (previous?.kind === "tools") previous.entries.push(entry);
+      else items.push({ kind: "tools", entries: [entry] });
+      return;
+    }
+
+    items.push({
+      kind: "entry",
+      entry,
+      lead: index === 0 || speaker(entries[index - 1]) !== speaker(entry),
+    });
+  });
+
+  return items;
 }
 
 /// `lead` marks the first entry of a run. Only that one wears the avatar and
@@ -479,19 +649,26 @@ function Entry({
   provider,
   name,
   persona,
-  onOpenTicket,
-  onOpenThread,
-  onOpenWorkspace,
 }: {
   entry: ConvEntry;
   lead: boolean;
   provider: string;
   name: string;
   persona?: Agent;
-  onOpenTicket?: (key: string) => void;
-  onOpenThread?: (id: string) => void;
-  onOpenWorkspace?: (workspaceId: string) => void;
 }) {
+  const switched = modelSwitch(entry);
+  if (switched) {
+    return (
+      <Marker variant="separator" className="py-1">
+        <MarkerContent className="inline-flex items-center gap-1.5 whitespace-nowrap">
+          <span>Switched to</span>
+          <ProviderMark provider={switched.provider} className="size-3.5" />
+          <span>{switched.label}</span>
+        </MarkerContent>
+      </Marker>
+    );
+  }
+
   if (entry.kind === "user") {
     return (
       <Message align="end">
@@ -550,27 +727,25 @@ function Entry({
     );
   }
 
-  // Tool work is the agent's too, so it lines up under the same avatar column
-  // rather than starting at the edge of the feed.
+  return null;
+}
+
+/// An agent's empty conversation already reads like the first exchange: they
+/// introduce themselves in the same column their real replies will use, and
+/// the composer immediately below is the answer.
+function AgentConversationStarter({ persona, provider }: { persona: Agent; provider: string }) {
   return (
-    <div className="flex flex-col gap-1.5 pl-10">
-      <ToolEntry entry={entry} />
-      {entry.artifacts?.map((artifact, index) => (
-        <ArtifactCard
-          key={`${artifact.kind}:${artifact.key ?? artifact.id ?? index}`}
-          artifact={artifact}
-          onOpen={
-            artifact.kind === "ticket" && artifact.key && onOpenTicket
-              ? () => onOpenTicket(artifact.key!)
-              : artifact.kind === "thread" && artifact.id && onOpenThread
-                ? () => onOpenThread(artifact.id!)
-                : artifact.kind === "workspace" && artifact.id && onOpenWorkspace
-                  ? () => onOpenWorkspace(artifact.id!)
-                  : undefined
-          }
-        />
-      ))}
-    </div>
+    <Empty className="items-stretch justify-start p-0 text-left md:p-0">
+      <Message>
+        <AgentAvatar provider={provider} persona={persona} lead />
+        <MessageContent>
+          <MessageHeader>{persona.name}</MessageHeader>
+          <Bubble variant="ghost">
+            <BubbleContent>What are we working on?</BubbleContent>
+          </Bubble>
+        </MessageContent>
+      </Message>
+    </Empty>
   );
 }
 
@@ -705,8 +880,43 @@ function ToolEntry({ entry }: { entry: ConvEntry }) {
   const [expanded, setExpanded] = useState(false);
   const expandable = Boolean(entry.output || entry.diff?.length);
 
+  const trigger = (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className="h-8 w-full min-w-0 justify-start rounded-lg px-2 font-normal hover:bg-transparent"
+      aria-expanded={expandable ? expanded : undefined}
+    >
+      <Wrench data-icon="inline-start" className="shrink-0 text-muted-foreground" />
+      <span className="shrink-0 font-medium">{entry.verb ?? entry.tool ?? "Tool"}</span>
+      {entry.arg && (
+        <span className="min-w-0 flex-1 truncate text-left font-mono text-muted-foreground" title={entry.arg}>
+          {entry.arg}
+        </span>
+      )}
+      <span className="ml-auto flex shrink-0 items-center gap-2">
+        {typeof entry.adds === "number" && entry.adds > 0 && (
+          <span className="font-mono text-success-foreground">+{entry.adds}</span>
+        )}
+        {typeof entry.dels === "number" && entry.dels > 0 && (
+          <span className="font-mono text-destructive">−{entry.dels}</span>
+        )}
+        {failed && <Badge variant="destructive">Failed</Badge>}
+        {expandable && (
+          <ChevronDown
+            data-icon="inline-end"
+            className={cn("transition-transform", expanded && "rotate-180")}
+          />
+        )}
+      </span>
+    </Button>
+  );
+
   return (
-    <div
+    <Collapsible
+      open={expanded}
+      onOpenChange={setExpanded}
       className={cn(
         // `min-w-0` so this can shrink inside the feed's column: without it a
         // long command sets the width and the whole thread scrolls sideways.
@@ -714,38 +924,8 @@ function ToolEntry({ entry }: { entry: ConvEntry }) {
         failed ? "border-destructive/40 bg-destructive/5" : "border-border bg-muted/40",
       )}
     >
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        className="h-8 w-full min-w-0 justify-start rounded-lg px-2 font-normal hover:bg-transparent"
-        aria-expanded={expandable ? expanded : undefined}
-        onClick={() => expandable && setExpanded((value) => !value)}
-      >
-        <Wrench data-icon="inline-start" className="shrink-0 text-muted-foreground" />
-        <span className="shrink-0 font-medium">{entry.verb ?? entry.tool ?? "Tool"}</span>
-        {entry.arg && (
-          <span className="min-w-0 flex-1 truncate text-left font-mono text-muted-foreground" title={entry.arg}>
-            {entry.arg}
-          </span>
-        )}
-        <span className="ml-auto flex shrink-0 items-center gap-2">
-          {typeof entry.adds === "number" && entry.adds > 0 && (
-            <span className="font-mono text-success-foreground">+{entry.adds}</span>
-          )}
-          {typeof entry.dels === "number" && entry.dels > 0 && (
-            <span className="font-mono text-destructive">−{entry.dels}</span>
-          )}
-          {failed && <Badge variant="destructive">Failed</Badge>}
-          {expandable && (
-            <ChevronDown
-              data-icon="inline-end"
-              className={cn("transition-transform", expanded && "rotate-180")}
-            />
-          )}
-        </span>
-      </Button>
-      {expanded && (
+      {expandable ? <CollapsibleTrigger asChild>{trigger}</CollapsibleTrigger> : trigger}
+      <CollapsibleContent>
         <div className="flex flex-col gap-1.5 px-3 pb-2">
           {entry.diff && entry.diff.length > 0 && <Diff lines={entry.diff} />}
           {entry.output && (
@@ -756,9 +936,90 @@ function ToolEntry({ entry }: { entry: ConvEntry }) {
             </pre>
           )}
         </div>
-      )}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+function ToolGroup({
+  entries,
+  onOpenTicket,
+  onOpenThread,
+  onOpenWorkspace,
+}: {
+  entries: ConvEntry[];
+  onOpenTicket?: (key: string) => void;
+  onOpenThread?: (id: string) => void;
+  onOpenWorkspace?: (workspaceId: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const failed = entries.filter((entry) => entry.status === "error").length;
+
+  return (
+    // Tool work is the agent's too, so it stays under the agent's text column.
+    <div className="flex flex-col gap-1.5 pl-10">
+      <Collapsible open={expanded} onOpenChange={setExpanded}>
+        <Marker asChild className={cn("w-fit", failed > 0 && "text-destructive")}>
+          <CollapsibleTrigger className="group/tool-group rounded-sm py-0.5 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+            <MarkerIcon>
+              {failed > 0 ? <CircleAlert /> : <Wrench />}
+            </MarkerIcon>
+            <MarkerContent>{toolGroupSummary(entries)}</MarkerContent>
+            {failed > 0 && <Badge variant="destructive">{failed} failed</Badge>}
+            <ChevronDown className="transition-transform group-data-[state=open]/tool-group:rotate-180" />
+          </CollapsibleTrigger>
+        </Marker>
+        <CollapsibleContent className="pt-2">
+          <div className="ml-2 flex flex-col gap-1.5 border-l border-border pl-3">
+            {entries.map((entry) => <ToolEntry key={entry.id} entry={entry} />)}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+
+      {entries.flatMap((entry) => entry.artifacts ?? []).map((artifact, index) => (
+        <ArtifactCard
+          key={`${artifact.kind}:${artifact.key ?? artifact.id ?? index}`}
+          artifact={artifact}
+          onOpen={
+            artifact.kind === "ticket" && artifact.key && onOpenTicket
+              ? () => onOpenTicket(artifact.key!)
+              : artifact.kind === "thread" && artifact.id && onOpenThread
+                ? () => onOpenThread(artifact.id!)
+                : artifact.kind === "workspace" && artifact.id && onOpenWorkspace
+                  ? () => onOpenWorkspace(artifact.id!)
+                  : undefined
+          }
+        />
+      ))}
     </div>
   );
+}
+
+function toolGroupSummary(entries: ConvEntry[]): string {
+  const actions = entries.map((entry) => {
+    const verb = entry.verb?.toLowerCase() ?? "";
+    const tool = entry.tool?.toLowerCase() ?? "";
+
+    if (tool.includes("browser")) return "used the browser";
+    if (verb.includes("searched web") || tool.includes("websearch")) return "searched the web";
+    if (["edited", "wrote"].some((value) => verb.includes(value)) || /apply_patch|write|edit/.test(tool)) {
+      return "edited files";
+    }
+    if (["read", "searched", "globbed", "listed"].some((value) => verb.includes(value)) || /read|find|search|list|glob/.test(tool)) {
+      return "read files";
+    }
+    if (verb.includes("ran") || /bash|exec|command|shell/.test(tool)) return "ran commands";
+    if (verb.includes("skill")) return "loaded instructions";
+    if (verb.includes("delegated")) return "delegated work";
+    if (verb.includes("fetched")) return "fetched pages";
+    return "used tools";
+  });
+  const unique = [...new Set(actions)];
+  const summary = unique.length > 3
+    ? `${unique.slice(0, 2).join(", ")}, and ${unique.length - 2} more`
+    : unique.join(", ");
+
+  return summary.charAt(0).toUpperCase() + summary.slice(1);
 }
 
 function LatestRequest({ text }: { text: string }) {
@@ -849,92 +1110,87 @@ function QuestionCard({
   onAnswer,
 }: {
   request: ChatQuestionRequest;
-  onAnswer: (answers: Record<string, string | string[]>) => Promise<void>;
+  onAnswer: (answers: Record<string, string>) => Promise<void>;
 }) {
-  const [picks, setPicks] = useState<Record<string, string[]>>({});
   const [busy, setBusy] = useState(false);
+  const items = useMemo(
+    () => request.questions.map((question, index) => ({
+      name: `question-${index}`,
+      required: true,
+      choices: question.options.map((option) => ({ value: option.label })),
+    })),
+    [request.questions],
+  );
 
-  const toggle = (question: string, label: string, multi: boolean) => {
-    setPicks((current) => {
-      const chosen = current[question] ?? [];
-      if (!multi) return { ...current, [question]: chosen[0] === label ? [] : [label] };
-      return {
-        ...current,
-        [question]: chosen.includes(label)
-          ? chosen.filter((item) => item !== label)
-          : [...chosen, label],
-      };
-    });
-  };
+  const send = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (busy) return;
 
-  const answered = request.questions.every((question) => (picks[question.question] ?? []).length > 0);
+    const data = new FormData(event.currentTarget);
+    const answers = Object.fromEntries(
+      request.questions.map((question, index) => {
+        const values = data
+          .getAll(items[index].name)
+          .map((value) => String(value).trim())
+          .filter(Boolean);
+        return [question.question, question.multiSelect ? values.join(", ") : (values[0] ?? "")];
+      }),
+    );
 
-  const send = async () => {
     setBusy(true);
     try {
-      await onAnswer(
-        Object.fromEntries(
-          request.questions.map((question) => {
-            const chosen = picks[question.question] ?? [];
-            // Claude looks answers up by the exact question text, and wants an
-            // array only where it offered one.
-            return [question.question, question.multiSelect ? chosen : (chosen[0] ?? "")];
-          }),
-        ),
-      );
+      await onAnswer(answers);
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <Card className="gap-4 border-warning/50 p-4">
-      {request.questions.map((question) => {
-        const chosen = picks[question.question] ?? [];
-        return (
-          <div key={question.question} className="flex flex-col gap-2">
-            {question.header && (
-              <Badge variant="secondary" className="w-fit">
-                {question.header}
-              </Badge>
-            )}
-            <p className="text-sm font-medium">{question.question}</p>
-            <div className="flex flex-col gap-1.5">
-              {question.options.map((option) => {
-                const picked = chosen.includes(option.label);
-                return (
-                  <Button
-                    key={option.label}
-                    type="button"
-                    variant={picked ? "default" : "outline"}
-                    aria-pressed={picked}
-                    className="h-auto w-full justify-start px-3 py-2 text-left whitespace-normal"
-                    onClick={() => toggle(question.question, option.label, Boolean(question.multiSelect))}
-                  >
-                    {picked ? <Check className="mt-0.5 shrink-0 self-start" /> : null}
-                    <span className="flex min-w-0 flex-col gap-0.5">
-                      <span className="text-sm font-medium">{option.label}</span>
-                      {option.description && (
-                        <span
-                          className={cn(
-                            "text-xs",
-                            picked ? "text-primary-foreground/80" : "text-muted-foreground",
-                          )}
-                        >
-                          {option.description}
-                        </span>
-                      )}
-                    </span>
-                  </Button>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
-      <Button size="sm" className="w-fit" disabled={!answered || busy} onClick={() => void send()}>
-        Send answer
-      </Button>
+    <Card className="gap-0 border-warning/50 p-4">
+      <Questionnaire items={items} shortcuts="letters" onSubmit={(event) => void send(event)}>
+        {request.questions.length > 1 && <QuestionnaireProgress />}
+        {request.questions.map((question, index) => (
+          <QuestionnaireItem
+            key={items[index].name}
+            name={items[index].name}
+            required
+            multiple={Boolean(question.multiSelect)}
+            disabled={busy}
+          >
+            <QuestionnaireTitle className="flex flex-col items-start gap-2">
+              {question.header && <Badge variant="secondary">{question.header}</Badge>}
+              <span>{question.question}</span>
+            </QuestionnaireTitle>
+            <QuestionnaireDescription>
+              {question.multiSelect
+                ? "Select all that apply, or write another answer."
+                : "Choose one, or write another answer."}
+            </QuestionnaireDescription>
+            <QuestionnaireChoices>
+              {question.options.map((option) => (
+                <QuestionnaireChoice key={option.label} value={option.label}>
+                  <span className="text-sm font-medium">{option.label}</span>
+                  {option.description && (
+                    <QuestionnaireChoiceDescription>
+                      {option.description}
+                    </QuestionnaireChoiceDescription>
+                  )}
+                </QuestionnaireChoice>
+              ))}
+              <QuestionnaireInput
+                aria-label="Another answer"
+                placeholder="Type another answer…"
+              />
+            </QuestionnaireChoices>
+            <QuestionnaireError />
+          </QuestionnaireItem>
+        ))}
+        <QuestionnaireActions>
+          <QuestionnairePrevious disabled={busy} />
+          <QuestionnaireNext disabled={busy} />
+          <QuestionnaireSubmit disabled={busy}>Send answer</QuestionnaireSubmit>
+        </QuestionnaireActions>
+      </Questionnaire>
     </Card>
   );
 }
@@ -962,19 +1218,7 @@ function ThreadTicket({ chatId, onOpenTicket }: { chatId: string; onOpenTicket: 
   const onTicket = tickets.find((ticket) => ticket.threads.some((link) => link.chatId === chatId));
   const open = tickets.filter((ticket) => ticket.status !== "done" && ticket.status !== "cancelled");
 
-  if (onTicket) {
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button variant="outline" size="sm" data-link className="font-mono" onClick={() => onOpenTicket(onTicket.key)}>
-            <TicketIcon />
-            {onTicket.key}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{onTicket.title}</TooltipContent>
-      </Tooltip>
-    );
-  }
+  if (onTicket) return null;
 
   const create = async () => {
     setBusy(true);
@@ -1036,19 +1280,6 @@ function ThreadTicket({ chatId, onOpenTicket }: { chatId: string; onOpenTicket: 
       </CommandDialog>
     </>
   );
-}
-
-function StateBadge({ state, action }: { state: Chat["state"]; action?: string }) {
-  if (state === "working") {
-    return (
-      <Badge variant="info">
-        <span className="shimmer max-w-52 truncate">{action || "Working"}</span>
-      </Badge>
-    );
-  }
-  if (state === "needs_input") return <Badge variant="warning">Needs you</Badge>;
-  if (state === "error") return <Badge variant="destructive">Error</Badge>;
-  return <Badge variant="secondary">Idle</Badge>;
 }
 
 function FeedSkeleton() {

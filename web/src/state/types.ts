@@ -75,6 +75,19 @@ export interface Chat {
   dm?: boolean;
   /// The agent has said something since you last opened this.
   unread?: boolean;
+  /// Pinned threads lead the active thread list.
+  pinned?: boolean;
+}
+
+export interface ArchivedThread {
+  id: string;
+  serverId: string;
+  title: string;
+  cwd: string;
+  provider?: string;
+  model?: string;
+  preview?: string;
+  archivedAt: number;
 }
 
 export interface GitWorktree {
@@ -230,6 +243,7 @@ export interface ChatDetail {
   approval?: ChatApproval;
   question?: ChatQuestionRequest;
   context?: ContextUsage;
+  workingSince?: number;
   /// True while the chat holds a live Claude process. A cold chat resumes on
   /// the next message, so this is a hint, not a blocker.
   live?: boolean;
@@ -441,6 +455,7 @@ export interface TicketActivity {
   actor: string;
   kind: string;
   body?: string;
+  editedAt?: number;
   mentions?: TicketMention[];
   detail?: Record<string, unknown>;
 }

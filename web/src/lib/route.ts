@@ -29,7 +29,6 @@ const SETTINGS_TABS: SettingsTab[] = [
   "version-control",
   "providers",
   "devices",
-  "archive",
 ];
 
 /// The section a route belongs to, which is what the sidebar highlights.

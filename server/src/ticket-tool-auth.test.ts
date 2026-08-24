@@ -17,12 +17,18 @@ test("a Remy capability names only the thread it was minted for", () => {
 test("a Remy capability reaches orchestration without reaching administration", () => {
   assert.equal(isRemyToolRoute("GET", "/board"), true);
   assert.equal(isRemyToolRoute("POST", "/tickets/one/comment"), true);
+  assert.equal(isRemyToolRoute("PATCH", "/tickets/one/comments/two"), false);
+  assert.equal(isRemyToolRoute("DELETE", "/tickets/one/comments/two"), false);
   assert.equal(isRemyToolRoute("PATCH", "/tickets/one"), true);
   assert.equal(isRemyToolRoute("GET", "/workspaces"), true);
   assert.equal(isRemyToolRoute("POST", "/workspaces"), true);
   assert.equal(isRemyToolRoute("POST", "/runtime/environment-command"), true);
   assert.equal(isRemyToolRoute("POST", "/chats"), true);
   assert.equal(isRemyToolRoute("POST", "/chats/chat-2/message"), true);
+  assert.equal(isRemyToolRoute("GET", "/chats/chat-1/browser"), true);
+  assert.equal(isRemyToolRoute("POST", "/chats/chat-1/browser/click"), true);
+  assert.equal(isRemyToolRoute("POST", "/chats/chat-1/browser/viewport"), true);
+  assert.equal(isRemyToolRoute("DELETE", "/chats/chat-1/browser"), false);
   assert.equal(isRemyToolRoute("POST", "/tickets/one/start"), false);
   assert.equal(isRemyToolRoute("DELETE", "/tickets/one"), false);
   assert.equal(isRemyToolRoute("DELETE", "/chats/chat-1"), false);
