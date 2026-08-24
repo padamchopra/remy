@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   ArrowUp,
   ArrowUpRight,
-  Bot,
   Check,
   ChevronDown,
   CircleAlert,
@@ -61,6 +60,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ComposerMenu } from "@/components/ComposerMenu";
 import { ContextMeter } from "@/components/ContextMeter";
+import { AgentMark } from "@/components/AgentAvatar";
 import { PaneHeader } from "@/components/PaneHeader";
 import { ModelPickerButton, useProvider } from "@/components/ModelPicker";
 import { ProviderMark } from "@/components/ProviderMark";
@@ -75,10 +75,9 @@ import { CLOUD_MODES, cloudModeOf, PERMISSIONS, permissionOf } from "@/lib/chat-
 import { deviceIcon } from "@/lib/devices";
 import { displayPath } from "@/lib/path";
 import { workspaceForPath } from "@/lib/projects";
-import { tintOf } from "@/lib/tints";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
-import type { Chat, ChatApproval, ChatQuestionRequest, ConvArtifact, ConvDiffLine, ConvEntry } from "@/state/types";
+import type { Agent, Chat, ChatApproval, ChatQuestionRequest, ConvArtifact, ConvDiffLine, ConvEntry } from "@/state/types";
 
 /// One open chat: its feed, whatever it is waiting on, and the box to answer in.
 ///
@@ -107,7 +106,7 @@ export function ChatView({
   /// inbox you are talking to an agent, so the feed says its name and wears its
   /// mark; which model is behind it is on the composer, where it is a setting.
   /// It also has no work of its own, so it carries no ticket.
-  persona?: { name: string; tint?: string };
+  persona?: Agent;
 }) {
   const detail = useStore((s) => s.detail);
   const loading = useStore((s) => s.detailLoading);
@@ -228,7 +227,14 @@ export function ChatView({
               </Tooltip>
             ),
           },
-          { label: open?.title ?? chat.title },
+          {
+            label: persona ? (
+              <span className="flex min-w-0 items-center gap-1.5">
+                <AgentMark agent={persona} className="size-4" />
+                <span className="truncate">{open?.title ?? chat.title}</span>
+              </span>
+            ) : (open?.title ?? chat.title),
+          },
         ]}
       >
         <StateBadge state={state} action={open?.action} />
@@ -481,7 +487,7 @@ function Entry({
   lead: boolean;
   provider: string;
   name: string;
-  persona?: { name: string; tint?: string };
+  persona?: Agent;
   onOpenTicket?: (key: string) => void;
   onOpenThread?: (id: string) => void;
   onOpenWorkspace?: (workspaceId: string) => void;
@@ -631,28 +637,25 @@ function AgentAvatar({
   lead,
 }: {
   provider: string;
-  persona?: { name: string; tint?: string };
+  persona?: Agent;
   lead: boolean;
 }) {
   const claude = provider === "claude";
-  const colors = persona ? tintOf(persona.tint) : undefined;
   return (
     <MessageAvatar className={cn("bg-transparent", !lead && "invisible")}>
-      <Avatar>
-        {/* An agent wears the mark it wears in the inbox, so a run of messages
-            is recognised rather than read. Everywhere else it is the provider's
-            own disc: its mark on a wash of its own colour, the way the
-            workspace marks do. */}
-        {colors ? (
-          <AvatarFallback className={cn(colors.well, colors.fg)}>
-            <Bot className="size-4" />
-          </AvatarFallback>
-        ) : (
+      {/* An agent wears the mark it wears in the inbox, so a run of messages
+          is recognised rather than read. Everywhere else it is the provider's
+          own disc: its mark on a wash of its own colour, the way the
+          workspace marks do. */}
+      {persona ? (
+        <AgentMark agent={persona} className="size-8" />
+      ) : (
+        <Avatar>
           <AvatarFallback className={claude ? "bg-claude/15" : "bg-foreground/10"}>
             <ProviderMark provider={provider} className="size-4" />
           </AvatarFallback>
-        )}
-      </Avatar>
+        </Avatar>
+      )}
     </MessageAvatar>
   );
 }

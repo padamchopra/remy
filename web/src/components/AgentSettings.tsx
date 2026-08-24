@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Bot, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -27,11 +27,11 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { AgentIconPicker } from "@/components/AgentIconPicker";
+import { AgentMark } from "@/components/AgentAvatar";
 import { EditableName } from "@/components/EditableName";
 import { ModelPickerButton, REMY_DEFAULT } from "@/components/ModelPicker";
 import { apiError } from "@/lib/api-error";
-import { TINT_IDS, tintOf } from "@/lib/tints";
-import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
 import type { Agent } from "@/state/types";
 
@@ -110,22 +110,17 @@ export function AgentSettings({
     void save({ [key]: value }, what);
   };
 
-  const colors = tintOf(agent.tint);
   const identity = agent.gitIdentity;
   const resolvedIdentity = identity === REMY_DEFAULT ? defaultGitIdentity : identity;
   // Remy answers for the app itself, so who it is comes with the version you
   // are running. What is left is what a preference actually is: what it thinks
-  // with, what it may do unasked, and its colour.
+  // with and what it may do unasked.
   const locked = agent.builtIn === true;
 
   return (
     <div className="flex flex-col gap-6">
       <header className="flex items-start gap-3">
-        <span
-          className={cn("flex size-10 shrink-0 items-center justify-center rounded-xl", colors.well, colors.fg)}
-        >
-          <Bot className="size-5" />
-        </span>
+        <AgentMark agent={agent} className="size-10 rounded-xl" />
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           {locked ? (
             <span className="text-lg leading-tight font-semibold">{agent.name}</span>
@@ -213,44 +208,6 @@ export function AgentSettings({
       </Field>
       )}
 
-      {!locked && (
-      <Field>
-        <FieldLabel htmlFor="agent-instructions">Instructions</FieldLabel>
-        <FieldDescription className="text-xs">
-          Added to Claude Code's own, not swapped for them.
-        </FieldDescription>
-        <Textarea
-          id="agent-instructions"
-          rows={12}
-          className="font-normal"
-          value={text("instructions")}
-          placeholder="How this agent works, in the second person."
-          onChange={(event) => setDraft((c) => ({ ...c, instructions: event.target.value }))}
-          onBlur={commit("instructions", "the instructions")}
-        />
-      </Field>
-      )}
-
-      <Field>
-        <FieldLabel>Colour</FieldLabel>
-        <div className="flex flex-wrap gap-1.5">
-          {TINT_IDS.map((id) => (
-            <button
-              key={id}
-              type="button"
-              aria-label={id}
-              aria-pressed={agent.tint === id}
-              onClick={() => void save({ tint: id }, "the colour")}
-              className={cn(
-                "size-6 rounded-full ring-offset-2 ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-                tintOf(id).swatch,
-                agent.tint === id && "ring-2 ring-primary",
-              )}
-            />
-          ))}
-        </div>
-      </Field>
-
       <Separator />
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -295,6 +252,28 @@ export function AgentSettings({
 
       {!locked && (
       <>
+      <Separator />
+
+      <AgentIconPicker agent={agent} onChange={(avatar) => void save({ avatar }, "the icon")} />
+
+      <Separator />
+
+      <Field>
+        <FieldLabel htmlFor="agent-instructions">Instructions</FieldLabel>
+        <FieldDescription className="text-xs">
+          Added to Claude Code's own, not swapped for them.
+        </FieldDescription>
+        <Textarea
+          id="agent-instructions"
+          rows={12}
+          className="font-normal"
+          value={text("instructions")}
+          placeholder="How this agent works, in the second person."
+          onChange={(event) => setDraft((c) => ({ ...c, instructions: event.target.value }))}
+          onBlur={commit("instructions", "the instructions")}
+        />
+      </Field>
+
       <Separator />
 
       <Field>

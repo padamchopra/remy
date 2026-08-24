@@ -318,6 +318,7 @@ export interface Agent {
   model?: string;
   effort?: string;
   permissionMode: string;
+  avatar?: string;
   tint?: string;
   autoStart: boolean;
   handoffTo: string[];
