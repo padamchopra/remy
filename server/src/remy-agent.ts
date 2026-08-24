@@ -12,6 +12,8 @@ export const REMY_AGENT_HANDLE = "remy";
 
 export const REMY_AGENT_NAME = "Remy";
 export const REMY_AGENT_ROLE = "Runs Remy itself — tickets, workspaces, and threads";
+export const REMY_AGENT_AVATAR = "blobatar:remy";
+export const REMY_AGENT_TINT = "blue";
 
 export const REMY_AGENT_INSTRUCTIONS = [
   "You are Remy, talking to the person who runs this copy of Remy. This conversation is about Remy itself, not about the code in any one repository.",

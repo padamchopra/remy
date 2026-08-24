@@ -9,8 +9,10 @@ import {
   REMY_AGENT_ID,
   REMY_AGENT_INSTRUCTIONS,
   REMY_AGENT_NAME,
+  REMY_AGENT_AVATAR,
   REMY_AGENT_PRESET,
   REMY_AGENT_ROLE,
+  REMY_AGENT_TINT,
 } from "./remy-agent.js";
 
 // An agent is a thread with a character on the front: the same Claude, the same
@@ -88,9 +90,19 @@ const EDITABLE = [
 ] as const;
 
 /// What a built-in agent will not take from a client. Everything left over —
-/// its provider, its model, what it may do without asking, its face — is the
+/// its provider, its model and what it may do without asking — is the
 /// part that is a preference rather than an identity.
-const LOCKED = ["name", "handle", "role", "instructions", "handoffTo", "gitIdentity", "gitName"] as const;
+const LOCKED = [
+  "name",
+  "handle",
+  "role",
+  "instructions",
+  "avatar",
+  "tint",
+  "handoffTo",
+  "gitIdentity",
+  "gitName",
+] as const;
 
 /// A handle lives in a tool call and a commit trailer, so it is held to
 /// something short that needs no quoting.
@@ -518,6 +530,8 @@ const REMY_IDENTITY = {
   handle: REMY_AGENT_HANDLE,
   role: REMY_AGENT_ROLE,
   instructions: REMY_AGENT_INSTRUCTIONS,
+  avatar: REMY_AGENT_AVATAR,
+  tint: REMY_AGENT_TINT,
 } as const;
 
 /// Seeds Remy's own agent, then keeps it in step on every boot.
@@ -535,9 +549,6 @@ export function seedRemyAgent(): Agent {
     return createAgentWithId(REMY_AGENT_ID, {
       ...REMY_IDENTITY,
       preset: REMY_AGENT_PRESET,
-      // A colour so its mark reads as somebody rather than as a blank. Yours to
-      // change: what Remy looks like is a preference, not an identity.
-      tint: "green",
       // It edits Remy's own board rather than a repository, and being asked
       // before each ticket it was told to write is the wrong conversation.
       permissionMode: "auto",

@@ -19,13 +19,13 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { AgentMark } from "@/components/AgentAvatar";
 import { AgentSettings } from "@/components/AgentSettings";
 import { ChatView } from "@/components/ChatView";
 import { PaneHeader } from "@/components/PaneHeader";
 import { apiError } from "@/lib/api-error";
 import { deviceIcon } from "@/lib/devices";
 import { plainText } from "@/lib/path";
-import { tintOf } from "@/lib/tints";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
 import type { Agent, Chat, Server } from "@/state/types";
@@ -140,7 +140,6 @@ function AgentRow({
   onSelect: () => void;
 }) {
   const DeviceIcon = deviceIcon(server?.icon);
-  const colors = tintOf(agent.tint);
   const preview = dm?.preview ? plainText(dm.preview) : agent.role;
 
   return (
@@ -155,15 +154,7 @@ function AgentRow({
       )}
     >
       <span className="flex min-w-0 items-center gap-2">
-        <span
-          className={cn(
-            "flex size-5 shrink-0 items-center justify-center rounded",
-            colors.well,
-            colors.fg,
-          )}
-        >
-          <Bot className="size-3" />
-        </span>
+        <AgentMark agent={agent} className="size-5" />
         <span className={cn("min-w-0 flex-1 truncate text-sm leading-5", dm?.unread && "font-medium")}>
           {agent.name}
         </span>
@@ -240,7 +231,6 @@ function Conversation({
     if (chat?.unread) void readChat(chat.id);
   }, [chat?.id, chat?.unread, readChat]);
 
-  const colors = tintOf(agent.tint);
   const settingsButton = (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -327,21 +317,13 @@ function Conversation({
             // trail is only the one you are talking to.
             label: (
               <span className="flex min-w-0 items-center gap-1.5">
-                <span
-                  className={cn(
-                    "flex size-4 shrink-0 items-center justify-center rounded",
-                    colors.well,
-                    colors.fg,
-                  )}
-                >
-                  <Bot className="size-2.5" />
-                </span>
+                <AgentMark agent={agent} className="size-4" />
                 <span className="truncate">{agent.name}</span>
               </span>
             ),
           },
         ]}
-        persona={{ name: agent.name, ...(agent.tint ? { tint: agent.tint } : {}) }}
+        persona={agent}
         headerEnd={settingsButton}
       />
       {sheet}

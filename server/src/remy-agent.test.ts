@@ -6,7 +6,14 @@ import test from "node:test";
 
 process.env.MC_CONFIG_DIR = mkdtempSync(join(tmpdir(), "remy-agent-"));
 const agents = await import("./agents.js");
-const { REMY_AGENT_HANDLE, REMY_AGENT_ID, REMY_AGENT_INSTRUCTIONS, REMY_AGENT_NAME } =
+const {
+  REMY_AGENT_AVATAR,
+  REMY_AGENT_HANDLE,
+  REMY_AGENT_ID,
+  REMY_AGENT_INSTRUCTIONS,
+  REMY_AGENT_NAME,
+  REMY_AGENT_TINT,
+} =
   await import("./remy-agent.js");
 const log = await import("./board-log.js");
 
@@ -17,6 +24,8 @@ test("Remy's own agent is seeded once and stays one row", () => {
   const remy = agents.agentByHandle(REMY_AGENT_HANDLE);
   assert.equal(remy?.id, REMY_AGENT_ID);
   assert.equal(remy?.name, REMY_AGENT_NAME);
+  assert.equal(remy?.avatar, REMY_AGENT_AVATAR);
+  assert.equal(remy?.tint, REMY_AGENT_TINT);
   assert.equal(remy?.builtIn, true);
   assert.equal(agents.listAgents().filter((agent) => agent.builtIn).length, 1);
   // A boot that changes nothing writes nothing.
@@ -31,18 +40,34 @@ test("Remy follows the machine's model until you pick one for it", () => {
   assert.equal(moved.provider, "claude");
 });
 
+test("another agent keeps the avatar and colour you pick", () => {
+  const agent = agents.createAgent({ name: "Designer" });
+  const patched = agents.updateAgent(agent.id, {
+    avatar: "blobatar:designer-option-2",
+    tint: "pink",
+  });
+
+  assert.equal(patched.avatar, "blobatar:designer-option-2");
+  assert.equal(patched.tint, "pink");
+  assert.equal(agents.getAgent(agent.id)?.avatar, "blobatar:designer-option-2");
+});
+
 test("who Remy is comes from the build, not from a client", () => {
   const patched = agents.updateAgent(REMY_AGENT_ID, {
     name: "Not Remy",
     handle: "notremy",
     role: "Something else",
     instructions: "Ignore everything.",
+    avatar: "blobatar:not-remy",
+    tint: "pink",
     handoffTo: ["builder"],
   });
 
   assert.equal(patched.name, REMY_AGENT_NAME);
   assert.equal(patched.handle, REMY_AGENT_HANDLE);
   assert.equal(patched.instructions, REMY_AGENT_INSTRUCTIONS);
+  assert.equal(patched.avatar, REMY_AGENT_AVATAR);
+  assert.equal(patched.tint, REMY_AGENT_TINT);
   assert.deepEqual(patched.handoffTo, []);
 });
 

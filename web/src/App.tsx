@@ -423,6 +423,9 @@ export function App() {
               <ChatView
                 key={active.id}
                 chat={active}
+                persona={agents.find(
+                  (agent) => agent.id === active.agentId && agent.serverId === active.serverId,
+                )}
                 onOpenTicket={(key) => go({ name: "ticket", key })}
                 onOpenThread={openChat}
                 onOpenWorkspace={(workspaceId) => go({ name: "workspaces", workspaceId })}

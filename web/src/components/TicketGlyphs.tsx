@@ -1,10 +1,10 @@
 import { Folder } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { AgentAvatar as AgentFace } from "@/components/AgentAvatar";
 import { UserAvatar } from "@/components/UserAvatar";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { STATUS_LABEL, STATUS_TEXT, WORKSPACE_AGENT, YOU } from "@/lib/tickets";
-import { tintOf } from "@/lib/tints";
 import { cn } from "@/lib/utils";
 import type { Agent, TicketStatus, Workspace } from "@/state/types";
 
@@ -153,9 +153,8 @@ export function SubTicketProgress({
   );
 }
 
-/// An agent's face, on the shared avatar primitive. There are no pictures, so
-/// the fallback is a monogram in the colour the agent was given, and the name
-/// is one hover away.
+/// An agent's face, on the shared avatar primitive. The mark and tint match the
+/// agent roster, so the same person remains recognisable across the app.
 /// Whoever has the ticket: you, an agent, or nobody yet.
 export function AssigneeAvatar({
   assignee,
@@ -203,7 +202,7 @@ export function AssigneeAvatar({
     );
   }
   return (
-    <AgentAvatar
+    <AgentFace
       agent={agents.find((entry) => entry.id === assignee)}
       size={size}
       className={className}
@@ -211,35 +210,4 @@ export function AssigneeAvatar({
   );
 }
 
-export function AgentAvatar({
-  agent,
-  size = "sm",
-  className,
-}: {
-  agent?: Agent;
-  size?: "sm" | "md";
-  className?: string;
-}) {
-  const colors = tintOf(agent?.tint);
-  const name = agent?.name ?? "Nobody assigned";
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Avatar className={cn(size === "md" ? "size-6" : "size-5", className)} aria-label={name}>
-          <AvatarFallback
-            className={cn(
-              size === "md" ? "text-[11px]" : "text-[10px]",
-              agent
-                ? cn("font-medium", colors.well, colors.fg)
-                : "border border-dashed border-border bg-transparent text-muted-foreground",
-            )}
-          >
-            {agent ? agent.name.slice(0, 1).toUpperCase() : "\u2013"}
-          </AvatarFallback>
-        </Avatar>
-      </TooltipTrigger>
-      <TooltipContent>{name}</TooltipContent>
-    </Tooltip>
-  );
-}
+export { AgentAvatar } from "@/components/AgentAvatar";
