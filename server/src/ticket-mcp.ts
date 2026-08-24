@@ -248,6 +248,94 @@ server.registerTool("run_with_environment", {
   ].join("\n\n"));
 });
 
+const browserPath = `/chats/${encodeURIComponent(chatId)}/browser`;
+const browserTarget = {
+  role: z.string().max(80).optional().describe("Accessible role, such as button, link, or textbox"),
+  name: z.string().max(500).optional().describe("Accessible name or field label"),
+  text: z.string().max(500).optional().describe("Visible text when a role is not known"),
+  selector: z.string().max(1000).optional().describe("CSS selector as a fallback"),
+  x: z.number().min(0).max(2000).optional(),
+  y: z.number().min(0).max(2000).optional(),
+};
+
+server.registerTool("browser_open", {
+  description: "Open a page in this thread's shared browser so the person can watch and take control.",
+  inputSchema: { url: z.string().min(1).max(4000) },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+}, async ({ url }) => {
+  await request(`${browserPath}/open`, { method: "POST", body: { url } });
+  return ok(`Opened ${url} in the shared browser.`);
+});
+
+server.registerTool("browser_viewport", {
+  description: "Switch the shared browser between desktop and mobile responsive layouts.",
+  inputSchema: { viewport: z.enum(["desktop", "mobile"]) },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+}, async ({ viewport }) => {
+  const view = await request<{ width: number; height: number }>(`${browserPath}/viewport`, {
+    method: "POST",
+    body: { viewport },
+  });
+  return ok(`Switched the shared browser to ${viewport} (${view.width} × ${view.height}).`);
+});
+
+server.registerTool("browser_snapshot", {
+  description: "Read the shared browser's current URL, visible text, interactive elements, console, and failed requests.",
+  inputSchema: {},
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+}, async () => {
+  const snapshot = await request<{ text: string }>(`${browserPath}/snapshot`, { method: "POST" });
+  return ok(snapshot.text);
+});
+
+server.registerTool("browser_click", {
+  description: "Click an element or coordinate in the shared browser. Prefer an accessible role and name.",
+  inputSchema: browserTarget,
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+}, async (target) => {
+  await request(`${browserPath}/click`, { method: "POST", body: target });
+  return ok("Clicked in the shared browser.");
+});
+
+server.registerTool("browser_type", {
+  description: "Replace the text in a field in the shared browser. Prefer its accessible role and name.",
+  inputSchema: { ...browserTarget, value: z.string().max(20000) },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+}, async ({ value, ...target }) => {
+  await request(`${browserPath}/type`, { method: "POST", body: { ...target, value } });
+  return ok("Entered text in the shared browser.");
+});
+
+server.registerTool("browser_press", {
+  description: "Press a key or shortcut in the shared browser, such as Enter, Escape, or Meta+R.",
+  inputSchema: { key: z.string().min(1).max(100) },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+}, async ({ key }) => {
+  await request(`${browserPath}/press`, { method: "POST", body: { key } });
+  return ok(`Pressed ${key} in the shared browser.`);
+});
+
+server.registerTool("browser_scroll", {
+  description: "Scroll the shared browser by pixels.",
+  inputSchema: {
+    delta_x: z.number().min(-10000).max(10000).optional(),
+    delta_y: z.number().min(-10000).max(10000),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+}, async ({ delta_x, delta_y }) => {
+  await request(`${browserPath}/scroll`, { method: "POST", body: { deltaX: delta_x ?? 0, deltaY: delta_y } });
+  return ok("Scrolled the shared browser.");
+});
+
+server.registerTool("browser_wait", {
+  description: "Wait briefly for the shared page to update before reading it again.",
+  inputSchema: { milliseconds: z.number().int().min(0).max(10000).optional() },
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+}, async ({ milliseconds }) => {
+  await request(`${browserPath}/wait`, { method: "POST", body: { milliseconds: milliseconds ?? 500 } });
+  return ok("The shared browser finished waiting.");
+});
+
 server.registerTool("list_agents", {
   description: "List the agents available when starting a thread.",
   inputSchema: {},

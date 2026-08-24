@@ -87,6 +87,7 @@ export function ModelPicker({
   allowOff,
   allowDefault,
   defaultChoice,
+  onlyProvider,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -97,8 +98,16 @@ export function ModelPicker({
   /// Offers following the machine's thread default, for an agent or workspace.
   allowDefault?: boolean;
   defaultChoice?: ModelChoice;
+  /// Keeps an existing thread on the provider that owns its transcript.
+  onlyProvider?: string;
 }) {
   const providers = useProviders();
+  const shownProviders = onlyProvider
+    ? providers.filter((provider) => provider.id === onlyProvider)
+    : providers;
+  const searchLabel = onlyProvider
+    ? `Search ${shownProviders[0]?.label ?? "provider"} models`
+    : "Search providers and models";
   const settings = useStore((s) => s.settings);
   const saveSettings = useStore((s) => s.saveSettings);
   const off = allowOff && value.model === OFF;
@@ -119,7 +128,7 @@ export function ModelPicker({
     void saveSettings({ favoriteModels: next }).catch(() => toast.error("Couldn't update favorites"));
   };
 
-  const favoriteModels = providers.flatMap((provider) =>
+  const favoriteModels = shownProviders.flatMap((provider) =>
     provider.models.flatMap((model) =>
       model.value && favorites.has(`${provider.id}:${model.value}`) ? [{ provider, model }] : [],
     ),
@@ -151,6 +160,7 @@ export function ModelPicker({
     const efforts = effortsFor(providers, pending);
     return (
       <CommandDialog
+        key="effort"
         open={open}
         onOpenChange={changeOpen}
         title="Pick effort"
@@ -194,15 +204,16 @@ export function ModelPicker({
 
   return (
     <CommandDialog
+      key="models"
       open={open}
       onOpenChange={changeOpen}
       title="Pick a model"
-      description="Search providers and models"
+      description={searchLabel}
       filter={match}
       showCloseButton={false}
       className="top-[12%] translate-y-0 sm:max-w-[520px]"
     >
-      <CommandInput placeholder="Search providers and models" />
+      <CommandInput placeholder={searchLabel} />
       {/* A stable viewport for both short built-in catalogues and Cursor's live,
           searchable model list. */}
       <CommandList className="max-h-[440px]">
@@ -250,7 +261,7 @@ export function ModelPicker({
             ))}
           </CommandGroup>
         )}
-        {providers.map((provider) => {
+        {shownProviders.map((provider) => {
           const disabled = provider.enabled === false;
           const missing = provider.available === false;
           return (
@@ -326,6 +337,7 @@ export function ModelPickerButton({
   allowOff,
   allowDefault,
   defaultChoice,
+  onlyProvider,
   disabled,
   title,
   id,
@@ -337,6 +349,7 @@ export function ModelPickerButton({
   allowOff?: boolean;
   allowDefault?: boolean;
   defaultChoice?: ModelChoice;
+  onlyProvider?: string;
   /// Read-only, for a thread that is mid-turn. The value still shows.
   disabled?: boolean;
   title?: string;
@@ -395,6 +408,7 @@ export function ModelPickerButton({
         allowOff={allowOff}
         allowDefault={allowDefault}
         defaultChoice={defaultChoice}
+        onlyProvider={onlyProvider}
       />
     </>
   );

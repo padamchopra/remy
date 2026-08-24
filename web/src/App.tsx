@@ -5,10 +5,10 @@ import {
   GitPullRequest,
   Inbox,
   MessagesSquare,
+  PanelLeft,
   Plus,
   Search,
   SquareKanban,
-  SquarePen,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -26,7 +26,7 @@ import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { AppActionsProvider, useAppActions } from "@/actions/context";
+import { AppActionsProvider } from "@/actions/context";
 import { AppSidebar } from "@/components/AppSidebar";
 import { ChatComposer } from "@/components/ChatComposer";
 import { ChatView } from "@/components/ChatView";
@@ -45,6 +45,7 @@ import { useAppLocation } from "@/hooks/use-location";
 import { useRelease } from "@/hooks/use-release";
 import { deviceIcon } from "@/lib/devices";
 import { apiError } from "@/lib/api-error";
+import { agentConversation } from "@/lib/inbox";
 import { displayPath } from "@/lib/path";
 import { notificationsEnabled } from "@/lib/notify";
 import { devicesForWorkspace, isProjectIconFile } from "@/lib/projects";
@@ -53,9 +54,18 @@ import { WorkspaceIcon } from "@/components/WorkspaceIcon";
 import { tintOf } from "@/lib/tints";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
-import remyMark from "@/assets/remy-mark.png";
 
 type Section = "inbox" | "chats" | "workspaces" | "tasks" | "prs";
+
+const APP_SIDEBAR_KEY = "remy.app-sidebar.shown";
+
+function initialSidebarShown(): boolean {
+  try {
+    return localStorage.getItem(APP_SIDEBAR_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
 
 function routeForSection(section: Section): Route {
   if (section === "chats") return { name: "threads" };
@@ -122,6 +132,19 @@ export function App() {
   const [addWorkspaceOpen, setAddWorkspaceOpen] = useState(false);
   const [addTicketOpen, setAddTicketOpen] = useState(false);
   const [creatingAgent, setCreatingAgent] = useState(false);
+  const [sidebarShown, setSidebarShown] = useState(initialSidebarShown);
+
+  const toggleSidebar = () => {
+    setSidebarShown((shown) => {
+      const next = !shown;
+      try {
+        localStorage.setItem(APP_SIDEBAR_KEY, String(next));
+      } catch {
+        // The control still works for this window when storage is unavailable.
+      }
+      return next;
+    });
+  };
 
   const go = (next: Route, replace = false) => navigate({ route: next }, replace);
 
@@ -133,6 +156,7 @@ export function App() {
 
   const servers = useStore((s) => s.servers);
   const allChats = useStore((s) => s.chats);
+  const archived = useStore((s) => s.archived);
   const allWorkspaces = useStore((s) => s.workspaces);
   const loading = useStore((s) => s.loading);
   const error = useStore((s) => s.error);
@@ -193,14 +217,10 @@ export function App() {
     ? roster.find((entry) => entry.handle === inboxHandle)
     : roster[0];
   const inboxDm = inboxAgent
-    ? dms.find((chat) => chat.agentId === inboxAgent.id && chat.serverId === inboxAgent.serverId)
+    ? agentConversation(inboxAgent.id, dms, servers)
     : undefined;
-  // Only what the roster actually lists. The board is read from the machines
-  // this window holds a daemon of and converges from there, so a paired
-  // machine's own copy of a conversation arrives in `dms` with nothing in the
-  // list to open — counting it would be a badge you cannot clear.
-  const unread = dms.filter((chat) =>
-    chat.unread && roster.some((agent) => agent.id === chat.agentId && agent.serverId === chat.serverId),
+  const unread = roster.filter((agent) =>
+    dms.some((chat) => chat.agentId === agent.id && chat.unread),
   ).length;
 
   const newAgent = async () => {
@@ -328,10 +348,22 @@ export function App() {
         className="app-drag flex shrink-0 items-center gap-3 border-b border-border bg-sidebar pr-3"
         style={{ height: "var(--workspace-topbar-height)", paddingLeft: "var(--titlebar-traffic-light-inset)" }}
       >
-        <span className="flex items-center gap-2 text-sm font-medium">
-          <img src={remyMark} alt="" className="size-6" />
-          Remy
-        </span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="app-no-drag"
+              aria-label={sidebarShown ? "Hide sidebar" : "Show sidebar"}
+              aria-pressed={sidebarShown}
+              onClick={toggleSidebar}
+            >
+              <PanelLeft />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{sidebarShown ? "Hide sidebar" : "Show sidebar"}</TooltipContent>
+        </Tooltip>
         <div className="app-no-drag ml-auto flex items-center gap-2">
           <Badge variant={anyOnline ? "success" : "secondary"}>
             <span className="size-1.5 rounded-full bg-current" />
@@ -348,25 +380,36 @@ export function App() {
       </header>
 
       <SidebarProvider className="min-h-0 flex-1">
-        <AppSidebar
-          view={view}
-          settingsTab={settingsTab}
-          section={section}
-          selected={selected}
-          servers={servers}
-          scoped={scoped}
-          workspaces={allWorkspaces}
-          needsYou={needsYou}
-          unread={unread}
-          sections={SECTIONS}
-          onSection={(id) => go(routeForSection(id as Section))}
-          onSelectChat={openChat}
-          onOpenTicket={(key) => go({ name: "ticket", key })}
-          onOpenWorkspace={(workspaceId) => go({ name: "workspaces", workspaceId })}
-          openSettings={openSettings}
-          closeSettings={closeSettings}
-          updateAvailable={release.available}
-        />
+        <div
+          aria-hidden={!sidebarShown}
+          inert={!sidebarShown}
+          className={cn(
+            "min-h-0 shrink-0 overflow-hidden transition-[width] duration-200 ease-out motion-reduce:transition-none",
+            sidebarShown ? "w-52" : "w-0",
+          )}
+        >
+          <AppSidebar
+            view={view}
+            settingsTab={settingsTab}
+            section={section}
+            selected={selected}
+            servers={servers}
+            scoped={scoped}
+            archived={archived}
+            workspaces={allWorkspaces}
+            needsYou={needsYou}
+            unread={unread}
+            sections={SECTIONS}
+            onSection={(id) => go(routeForSection(id as Section))}
+            onSelectChat={openChat}
+            onOpenTicket={(key) => go({ name: "ticket", key })}
+            onOpenWorkspace={(workspaceId) => go({ name: "workspaces", workspaceId })}
+            onNewThread={draftChat}
+            openSettings={openSettings}
+            closeSettings={closeSettings}
+            updateAvailable={release.available}
+          />
+        </div>
 
         {view === "settings" ? (
           <SettingsPane tab={settingsTab} release={release} />
@@ -429,7 +472,6 @@ export function App() {
                 onOpenTicket={(key) => go({ name: "ticket", key })}
                 onOpenThread={openChat}
                 onOpenWorkspace={(workspaceId) => go({ name: "workspaces", workspaceId })}
-                headerEnd={<NewChatButton />}
               />
             ) : section === "chats" && canCompose ? (
               <ChatComposer
@@ -574,26 +616,6 @@ export function App() {
       />
     </div>
     </AppActionsProvider>
-  );
-}
-
-function NewChatButton() {
-  const { run } = useAppActions();
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label="New thread"
-          onClick={() => void run("thread.start")}
-        >
-          <SquarePen />
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>New thread</TooltipContent>
-    </Tooltip>
   );
 }
 

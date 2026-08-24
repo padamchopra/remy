@@ -1,4 +1,4 @@
-import { Archive, Boxes, Check, Cloud, Copy, Folder, GitBranch, Github, ImagePlus, Laptop, Monitor, Plus, RefreshCw, Smartphone, Trash2, X } from "lucide-react";
+import { Boxes, Check, Cloud, Copy, Folder, GitBranch, Github, ImagePlus, Laptop, Monitor, Plus, RefreshCw, Smartphone, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import remyMark from "@/assets/remy-mark.png";
 import { Badge } from "@/components/ui/badge";
@@ -86,7 +86,7 @@ import { useStore } from "@/state/store";
 import type { Chat, ProviderMcpStatus, Server, TailnetDevice, ToolStatus } from "@/state/types";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
-export type SettingsTab = "general" | "version-control" | "providers" | "devices" | "archive";
+export type SettingsTab = "general" | "version-control" | "providers" | "devices";
 
 export const SETTINGS_SECTIONS: {
   id: SettingsTab;
@@ -97,7 +97,6 @@ export const SETTINGS_SECTIONS: {
   { id: "version-control", label: "Version control", icon: GitBranch },
   { id: "providers", label: "Providers", icon: Boxes },
   { id: "devices", label: "Devices", icon: Laptop },
-  { id: "archive", label: "Archived threads", icon: Archive },
 ];
 
 export function SettingsPane({
@@ -125,8 +124,6 @@ export function SettingsPane({
         <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-5 py-6">
           {tab === "devices" ? (
             <DevicesPane />
-          ) : tab === "archive" ? (
-            <ArchivePane />
           ) : tab === "version-control" ? (
             <VersionControlPane />
           ) : tab === "providers" ? (
@@ -1227,140 +1224,6 @@ function Unreachable() {
       </EmptyHeader>
     </Empty>
   );
-}
-
-function ArchivePane() {
-  const servers = useStore((s) => s.servers);
-  const [items, setItems] = useState<ArchiveRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const serverKey = servers.map((server) => `${server.id}:${server.online ? "1" : "0"}`).join("|");
-
-  useEffect(() => {
-    let cancelled = false;
-    const currentServers = useStore.getState().servers;
-    setLoading(true);
-    void Promise.all(
-      currentServers.map(async (server) => {
-        if (!server.online) return [];
-        try {
-          const body = await transport.request<{ archives?: RawArchive[] }>(server.id, "/archives");
-          return (body.archives ?? []).map((archive) => toRow(archive, server));
-        } catch {
-          return [];
-        }
-      }),
-    ).then((listed) => {
-      if (cancelled) return;
-      setItems(listed.flat().sort((a, b) => b.archivedAt - a.archivedAt));
-      setLoading(false);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [serverKey]);
-
-  const remove = async (row: ArchiveRow) => {
-    try {
-      await transport.request(row.serverId, `/archives/${encodeURIComponent(row.id)}`, { method: "DELETE" });
-      setItems((current) => current.filter((item) => item.id !== row.id || item.serverId !== row.serverId));
-      toast.success("Removed the archived thread.");
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      toast.error("Couldn't remove that archive", { description: message });
-    }
-  };
-
-  if (loading) {
-    return <p className="text-sm text-muted-foreground shimmer">Loading archives…</p>;
-  }
-
-  if (items.length === 0) {
-    return (
-      <Empty className="border border-dashed">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <Archive />
-          </EmptyMedia>
-          <EmptyTitle>No archived threads</EmptyTitle>
-          <EmptyDescription>Archive a finished thread from its conversation when you're done.</EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-2">
-      {items.map((row) => (
-        <div key={`${row.serverId}:${row.id}`} className="flex items-center gap-3 rounded-lg border border-border bg-card px-3.5 py-3">
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm font-medium">{row.title}</span>
-            <span className="block truncate text-xs text-muted-foreground">
-              {[row.serverName, row.cwd ? displayPath(row.cwd) : undefined, archivedWhen(row.archivedAt)]
-                .filter(Boolean)
-                .join(" · ")}
-            </span>
-          </span>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="ghost" size="icon-xs" aria-label={`Remove ${row.title}`}>
-                <Trash2 />
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Remove {row.title}?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Remy deletes the saved copy. The original chat is already gone.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction variant="destructive" onClick={() => void remove(row)}>
-                  Remove archive
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-interface RawArchive {
-  id: string;
-  session: string;
-  archivedAt: number;
-  cwd?: string | null;
-  conversation?: { title?: string | null };
-}
-
-interface ArchiveRow {
-  id: string;
-  serverId: string;
-  serverName: string;
-  title: string;
-  cwd?: string | null;
-  archivedAt: number;
-}
-
-function toRow(archive: RawArchive, server: Server): ArchiveRow {
-  return {
-    id: archive.id,
-    serverId: server.id,
-    serverName: server.name,
-    title: archive.conversation?.title?.trim() || archive.session,
-    cwd: archive.cwd,
-    archivedAt: archive.archivedAt,
-  };
-}
-
-function archivedWhen(at: number): string {
-  try {
-    return new Date(at).toLocaleString(undefined, { month: "short", day: "numeric" });
-  } catch {
-    return "";
-  }
 }
 
 function DevicesPane() {

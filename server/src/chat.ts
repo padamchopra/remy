@@ -78,6 +78,7 @@ import {
   type ConvEntry,
   type ConvQuestion,
   type ConvTodo,
+  type Conversation,
 } from "./transcript.js";
 import { claudeTicketMcpServer, ticketPromptContext } from "./ticket-tools.js";
 import { remyToolToken } from "./ticket-tool-auth.js";
@@ -155,6 +156,7 @@ interface ChatRecord {
   dm?: boolean;
   /// When you last had this conversation open. What makes an inbox row bold.
   readAt?: number;
+  pinned?: boolean;
   createdAt: number;
   updatedAt: number;
   claudeSessionId?: string;
@@ -191,6 +193,8 @@ export interface ChatSummary {
   /// The agent has spoken since you last opened this. Derived rather than
   /// stored, so it clears the moment you read it on any device.
   unread?: boolean;
+  /// Pinned threads lead the thread list on every client of this machine.
+  pinned?: boolean;
   createdAt: number;
   updatedAt: number;
   state: ChatState;
@@ -336,6 +340,9 @@ class Chat {
   private cursorQueue: string[] = [];
   private cursorTurnId = "";
   private cursorMessages = new Map<string, string>();
+  private claudeQueue: string[] = [];
+  private restartAfterTurn = false;
+  private activePermissionMode?: ChatPermissionMode;
   private pending = new Map<string, (result: PermissionResult) => void>();
   private byToolUseId = new Map<string, ConvEntry>();
   private byId = new Map<string, ConvEntry>();
@@ -406,6 +413,7 @@ class Chat {
       ...(this.record.agentId ? { agentId: this.record.agentId } : {}),
       ...(this.record.dm ? { dm: true } : {}),
       ...(this.unread() ? { unread: true } : {}),
+      ...(this.record.pinned ? { pinned: true } : {}),
       createdAt: this.record.createdAt,
       updatedAt: this.record.updatedAt,
       state: this.state,
@@ -510,6 +518,12 @@ class Chat {
       this.persist();
       return;
     }
+    if (this.live && this.restartAfterTurn) {
+      this.claudeQueue.push(agentPrompt);
+      this.push();
+      this.persist();
+      return;
+    }
     const session = await this.start();
     session.queue.push(userMessage(agentPrompt));
     this.push();
@@ -601,6 +615,9 @@ class Chat {
     this.cursor?.stop();
     this.cursorSession?.close();
     this.cursorSession = undefined;
+    this.claudeQueue = [];
+    this.restartAfterTurn = false;
+    this.activePermissionMode = undefined;
     const live = this.live;
     // Closing the prompt stream only ends the session once the current turn
     // finishes, so interrupt first when one is running.
@@ -612,6 +629,17 @@ class Chat {
     this.openBlocks.clear();
     if (this.state === "working") this.state = "idle";
     this.push();
+  }
+
+  /// Retires a provider session without interrupting the turn it is running.
+  /// The changed settings are already stored, so the next turn starts with them.
+  reconfigure(): void {
+    if (!this.isLive) return;
+    if (this.state === "idle" || this.state === "error") {
+      this.stop();
+      return;
+    }
+    this.restartAfterTurn = true;
   }
 
   maybeReap(): void {
@@ -660,6 +688,7 @@ class Chat {
     const queue = new PromptQueue();
     const agent = this.record.agentId ? getAgent(this.record.agentId) : undefined;
     const agentInstructions = agent?.instructions.trim();
+    this.activePermissionMode = this.record.permissionMode;
     const options: Options = {
       cwd: this.record.cwd,
       pathToClaudeCodeExecutable: agentCommand("claude"),
@@ -747,6 +776,7 @@ class Chat {
         highPriority: true,
       });
     } finally {
+      const restart = this.restartAfterTurn;
       if (this.live === live) this.live = undefined;
       this.settlePending("The Claude session ended.");
       this.openBlocks.clear();
@@ -754,6 +784,18 @@ class Chat {
       this.flush();
       this.push();
       this.persist();
+      this.activePermissionMode = undefined;
+      if (restart && !this.deleted) {
+        this.restartAfterTurn = false;
+        const queued = this.claudeQueue.splice(0);
+        if (queued.length > 0) {
+          const session = await this.start();
+          for (const prompt of queued) session.queue.push(userMessage(prompt));
+          this.state = "working";
+          this.push();
+          this.persist();
+        }
+      }
     }
   }
 
@@ -949,13 +991,16 @@ class Chat {
         this.append({ id: `r-${randomUUID()}`, kind: "assistant", text: `⚠️ ${clip(detail, 400)}` });
       }
     }
-    this.state = this.pending.size > 0 ? "needs_input" : "idle";
+    if (this.restartAfterTurn) this.live?.queue.close();
+    this.state = this.pending.size > 0
+      ? "needs_input"
+      : this.restartAfterTurn && this.claudeQueue.length > 0 ? "working" : "idle";
     this.action = undefined;
     this.record.updatedAt = nowMs();
     this.flush();
     this.push();
     this.persist();
-    this.notifyTurnEnd().catch(() => {});
+    if (this.state === "idle") this.notifyTurnEnd().catch(() => {});
   }
 
   private async notifyTurnEnd(): Promise<void> {
@@ -1040,6 +1085,7 @@ class Chat {
     const agent = this.record.agentId ? getAgent(this.record.agentId) : undefined;
     this.cursorTurnId = `${randomUUID().slice(0, 8)}-`;
     this.cursorMessages.clear();
+    this.activePermissionMode = this.record.permissionMode;
     let run: CursorRun;
     try {
       this.cursorSession ??= createCursorSession(
@@ -1087,6 +1133,12 @@ class Chat {
       return;
     } finally {
       if (this.cursor === run) this.cursor = undefined;
+      if (this.restartAfterTurn) {
+        this.cursorSession?.close();
+        this.cursorSession = undefined;
+        this.restartAfterTurn = false;
+      }
+      this.activePermissionMode = undefined;
       this.record.updatedAt = nowMs();
       this.flush();
       this.persist();
@@ -1177,6 +1229,7 @@ class Chat {
     // Unique per turn and across restarts, so a resumed thread cannot collide
     // with the entries already on disk.
     this.codexTurnId = `${randomUUID().slice(0, 8)}-`;
+    this.activePermissionMode = this.record.permissionMode;
     let run: CodexRun;
     try {
       this.codexSession ??= createCodexSession(
@@ -1229,6 +1282,12 @@ class Chat {
       return;
     } finally {
       if (this.codex === run) this.codex = undefined;
+      if (this.restartAfterTurn) {
+        this.codexSession?.close();
+        this.codexSession = undefined;
+        this.restartAfterTurn = false;
+      }
+      this.activePermissionMode = undefined;
       this.record.updatedAt = nowMs();
       this.flush();
       this.persist();
@@ -1398,8 +1457,9 @@ class Chat {
   /// Runs the active workspace environment behind the same approval card as a
   /// Bash call. The provider owns neither the values nor the child process.
   async runEnvironmentCommand(input: RuntimeCommandInput): Promise<RuntimeCommandResult> {
-    if (this.record.permissionMode === "plan") throw new Error("runtime commands are unavailable in plan mode");
-    if (this.record.permissionMode === "default" || this.record.permissionMode === "acceptEdits") {
+    const permission = this.activePermissionMode ?? this.record.permissionMode;
+    if (permission === "plan") throw new Error("runtime commands are unavailable in plan mode");
+    if (permission === "default" || permission === "acceptEdits") {
       const command = [input.program, ...(input.args ?? [])].join(" ");
       const result = await this.requestToolApproval("Bash", { command }, {
         signal: new AbortController().signal,
@@ -1453,14 +1513,15 @@ class Chat {
   private async cursorApproval(request: CursorApprovalRequest): Promise<"accept" | "acceptForSession" | "decline"> {
     const name = request.toolCall.name ?? "";
     if (name.startsWith("mcp__remy__")) return "accept";
-    if (this.record.permissionMode === "bypassPermissions") return "acceptForSession";
+    const permission = this.activePermissionMode ?? this.record.permissionMode;
+    if (permission === "bypassPermissions") return "acceptForSession";
     if (
-      this.record.permissionMode === "acceptEdits"
+      permission === "acceptEdits"
       && ["edit", "delete", "move"].includes(request.toolCall.kind ?? "")
     ) {
       return "acceptForSession";
     }
-    if (this.record.permissionMode === "plan") return "decline";
+    if (permission === "plan") return "decline";
     const input = request.toolCall.rawInput && typeof request.toolCall.rawInput === "object"
       ? request.toolCall.rawInput as Record<string, unknown>
       : {};
@@ -1726,6 +1787,82 @@ export function listChats(): ChatSummary[] {
   return summaries().filter((chat) => !chat.dm);
 }
 
+/// Everything an archived thread needs to resume as the same conversation.
+/// Older archives only have the base `Conversation` fields; every extension is
+/// optional so they can still be restored as a fresh provider session.
+export interface ArchivedConversation extends Conversation {
+  effort?: string;
+  permissionMode?: ChatPermissionMode;
+  createdAt?: number;
+  claudeSessionId?: string;
+  codexThreadId?: string;
+  cursorSessionId?: string;
+  turns?: number;
+  costUsd?: number;
+  agentId?: string;
+}
+
+export function archiveConversation(id: string): ArchivedConversation {
+  const record = mustGet(id).record;
+  return {
+    available: true,
+    agent: record.provider,
+    title: record.title,
+    model: record.model,
+    effort: record.effort,
+    permissionMode: record.permissionMode,
+    createdAt: record.createdAt,
+    claudeSessionId: record.claudeSessionId,
+    codexThreadId: record.codexThreadId,
+    cursorSessionId: record.cursorSessionId,
+    turns: record.turns,
+    costUsd: record.costUsd,
+    agentId: record.agentId,
+    context: record.context,
+    todos: record.todos,
+    entries: record.entries,
+  };
+}
+
+export function restoreArchivedChat(input: {
+  chatId?: string;
+  session: string;
+  cwd: string | null;
+  conversation: ArchivedConversation;
+}): ChatSummary {
+  const cwd = expandChatCwd(input.cwd ?? "~");
+  if (!existsSync(cwd)) throw new Error("that thread's folder is no longer on this machine");
+  const id = input.chatId && !chats.has(input.chatId) ? input.chatId : randomUUID();
+  const conversation = input.conversation;
+  const provider = providerId(conversation.agent, config.defaultProvider);
+  const record: ChatRecord = {
+    id,
+    title: conversation.title?.trim() || input.session || "Archived thread",
+    cwd,
+    provider,
+    ...(conversation.model ? { model: conversation.model } : {}),
+    ...(conversation.effort ? { effort: conversation.effort } : {}),
+    permissionMode: permissionMode(conversation.permissionMode, config.defaultPermissionMode),
+    ...(conversation.agentId ? { agentId: conversation.agentId } : {}),
+    createdAt: conversation.createdAt ?? nowMs(),
+    updatedAt: nowMs(),
+    ...(conversation.claudeSessionId ? { claudeSessionId: conversation.claudeSessionId } : {}),
+    ...(conversation.codexThreadId ? { codexThreadId: conversation.codexThreadId } : {}),
+    ...(conversation.cursorSessionId ? { cursorSessionId: conversation.cursorSessionId } : {}),
+    entries: conversation.entries,
+    todos: conversation.todos,
+    ...(conversation.context ? { context: conversation.context } : {}),
+    turns: conversation.turns ?? conversation.entries.filter((entry) => entry.kind === "user").length,
+    ...(typeof conversation.costUsd === "number" ? { costUsd: conversation.costUsd } : {}),
+  };
+  const chat = new Chat(record);
+  chats.set(id, chat);
+  chat.persist();
+  for (const entry of record.entries) saveEntry(id, entry);
+  broadcast({ type: "chats" });
+  return chat.summary();
+}
+
 /// The inbox: one conversation per agent, most recently spoken to first.
 ///
 /// An agent's conversation belongs to the agent, so a row whose agent is gone
@@ -1797,7 +1934,7 @@ export function syncAgentDm(agentId: string): void {
   const { provider, model, effort } = resolvedAgentModel(agent);
   if (dm.provider === provider && (dm.model ?? "") === model && (dm.effort ?? "") === effort) return;
   try {
-    updateChat(dm.id, { provider, model: model || null, effort: effort || null });
+    updateChat(dm.id, { provider, model: model || null, effort: effort || null }, { allowProviderChange: true });
   } catch (error) {
     // A provider that is off, or a tool that is not installed. The conversation
     // keeps what it had rather than being left pointing at nothing.
@@ -1909,46 +2046,53 @@ export function updateChat(
     model?: string | null;
     effort?: string | null;
     permissionMode?: unknown;
+    pinned?: boolean;
   },
+  options: { allowProviderChange?: boolean } = {},
 ): ChatSummary {
   const chat = mustGet(id);
+  let runtimeChanged = false;
   if (typeof patch.title === "string" && patch.title.trim()) chat.record.title = clip(patch.title, 120);
   if (patch.provider !== undefined) {
     const next = providerId(patch.provider, chat.record.provider);
     if (!config.enabledProviders.includes(next)) throw new Error("that provider is turned off");
     if (next !== chat.record.provider) {
+      if (!options.allowProviderChange) throw new Error("This thread keeps the provider it started with.");
       agentCommand(next);
       chat.switchProvider(next);
+      runtimeChanged = true;
     }
   }
-  if (patch.model === null) chat.record.model = undefined;
+  if (patch.model === null) {
+    chat.record.model = undefined;
+    runtimeChanged = true;
+  }
   else if (typeof patch.model === "string") {
     // Held to the provider the thread now runs on, so a model picked for the
     // other one leaves the thread on this one's default.
     const model = providerModel(chat.record.provider, patch.model.trim());
     chat.record.model = model || undefined;
+    runtimeChanged = true;
     if (patch.effort === undefined) {
       const effort = providerEffort(chat.record.provider, model, chat.record.effort);
       chat.record.effort = effort || undefined;
     }
   }
-  if (patch.effort === null) chat.record.effort = undefined;
+  if (patch.effort === null) {
+    chat.record.effort = undefined;
+    runtimeChanged = true;
+  }
   else if (typeof patch.effort === "string") {
     const effort = providerEffort(chat.record.provider, chat.record.model ?? "", patch.effort.trim());
     chat.record.effort = effort || undefined;
+    runtimeChanged = true;
   }
   if (patch.permissionMode !== undefined) {
     chat.record.permissionMode = permissionMode(patch.permissionMode, chat.record.permissionMode);
+    runtimeChanged = true;
   }
-  // Provider, model and permission mode are start-up options for the agent's
-  // process, so a running one is retired; the next message resumes with the new
-  // settings.
-  if (
-    (patch.provider !== undefined || patch.model !== undefined || patch.effort !== undefined || patch.permissionMode !== undefined)
-    && chat.isLive
-  ) {
-    chat.stop();
-  }
+  if (typeof patch.pinned === "boolean") chat.record.pinned = patch.pinned;
+  if (runtimeChanged) chat.reconfigure();
   chat.record.updatedAt = nowMs();
   chat.persist();
   chat.push();

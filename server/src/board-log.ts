@@ -21,6 +21,8 @@ export type LogKind =
   | "field"
   | "status"
   | "comment"
+  | "comment_edit"
+  | "comment_delete"
   | "handoff"
   | "link"
   | "unlink"
@@ -208,7 +210,17 @@ export function eventsSince(vector: Record<string, number>, limit = 500): LogEve
 
 const LOG_ENTITIES: LogEntity[] = ["project", "agent", "ticket", "recurrence"];
 const LOG_KINDS: LogKind[] = [
-  "create", "field", "status", "comment", "handoff", "link", "unlink", "ran", "tombstone",
+  "create",
+  "field",
+  "status",
+  "comment",
+  "comment_edit",
+  "comment_delete",
+  "handoff",
+  "link",
+  "unlink",
+  "ran",
+  "tombstone",
 ];
 
 /// An event off the wire, or nothing if it is not one. A peer is trusted with

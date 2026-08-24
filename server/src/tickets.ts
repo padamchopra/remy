@@ -79,6 +79,7 @@ export interface TicketActivity {
   actor: string;
   kind: string;
   body?: string;
+  editedAt?: number;
   /// Who the comment named, if anyone. See `Mention`.
   mentions?: Mention[];
   detail?: Record<string, unknown>;
@@ -300,7 +301,7 @@ function toTicket(row: Record<string, unknown>): Ticket {
 
 function threadsFor(ticketId: string): TicketThread[] {
   const rows = db
-    .prepare("select * from ticket_threads where ticket_id = ? order by created_at asc")
+    .prepare("select * from ticket_threads where ticket_id = ? order by created_at asc, rowid asc")
     .all(ticketId) as Record<string, unknown>[];
   return rows.map((row) => ({
     ticketId: String(row.ticket_id),
@@ -381,21 +382,63 @@ export function parseMentions(body: string): Mention[] {
 }
 
 export function ticketActivity(id: string): TicketActivity[] {
-  return eventsFor("ticket", id)
+  const events = eventsFor("ticket", id);
+  const comments = new Map<string, { actor: string; body: string; mentions: Mention[]; editedAt?: number }>();
+  const deletedComments = new Set<string>();
+
+  for (const event of events) {
+    if (event.kind === "comment") {
+      if (deletedComments.has(event.id)) continue;
+      comments.set(event.id, {
+        actor: String(event.payload.actor ?? YOU),
+        body: String(event.payload.body ?? ""),
+        mentions: Array.isArray(event.payload.mentions) ? event.payload.mentions as Mention[] : [],
+      });
+      continue;
+    }
+    const commentId = typeof event.payload.commentId === "string" ? event.payload.commentId : "";
+    if (!commentId) continue;
+    if (event.kind === "comment_delete") {
+      const comment = comments.get(commentId);
+      if (comment?.actor !== YOU || event.payload.actor !== YOU) continue;
+      comments.delete(commentId);
+      deletedComments.add(commentId);
+      continue;
+    }
+    if (event.kind === "comment_edit" && !deletedComments.has(commentId)) {
+      const comment = comments.get(commentId);
+      if (comment?.actor !== YOU || event.payload.actor !== YOU) continue;
+      comments.set(commentId, {
+        actor: comment.actor,
+        body: String(event.payload.body ?? ""),
+        mentions: Array.isArray(event.payload.mentions) ? event.payload.mentions as Mention[] : [],
+        editedAt: event.at,
+      });
+    }
+  }
+
+  return events
     .filter((event) => ACTIVITY_KINDS.has(event.kind))
     // A field event that only moved a card in its column is noise on a feed.
     .filter((event) => event.kind !== "field" || Object.keys(event.payload).some((key) => key !== "rank"))
-    .map((event) => ({
-      id: event.id,
-      at: event.at,
-      actor: String(event.payload.actor ?? "you"),
-      kind: event.kind,
-      ...(event.payload.body ? { body: String(event.payload.body) } : {}),
-      ...(Array.isArray(event.payload.mentions)
-        ? { mentions: event.payload.mentions as Mention[] }
-        : {}),
-      detail: event.payload,
-    }));
+    .flatMap((event): TicketActivity[] => {
+      const comment = event.kind === "comment" ? comments.get(event.id) : undefined;
+      if (event.kind === "comment" && !comment) return [];
+      return [{
+        id: event.id,
+        at: event.at,
+        actor: String(event.payload.actor ?? "you"),
+        kind: event.kind,
+        ...(comment
+          ? {
+              body: comment.body,
+              mentions: comment.mentions,
+              ...(comment.editedAt ? { editedAt: comment.editedAt } : {}),
+            }
+          : event.payload.body ? { body: String(event.payload.body) } : {}),
+        detail: event.payload,
+      }];
+    });
 }
 
 /// What `assigneeAgentId` holds when the ticket is yours rather than an
@@ -548,6 +591,33 @@ export function commentOnTicket(id: string, body: string, actor = "you"): Ticket
   const text_ = body.trim().slice(0, 10000);
   if (!text_) throw new Error("a comment needs something in it");
   append("ticket", id, "comment", { body: text_, actor, mentions: parseMentions(text_) });
+  return getTicketOrThrow(id);
+}
+
+function ownComment(id: string, commentId: string): TicketActivity {
+  if (!getTicket(id)) throw new Error("no such ticket");
+  const comment = ticketActivity(id).find((entry) => entry.id === commentId && entry.kind === "comment");
+  if (!comment) throw new Error("That comment is gone.");
+  if (comment.actor !== YOU) throw new Error("You can only change your own comments.");
+  return comment;
+}
+
+export function editTicketComment(id: string, commentId: string, body: string): TicketView {
+  ownComment(id, commentId);
+  const text_ = body.trim().slice(0, 10000);
+  if (!text_) throw new Error("A comment needs something in it.");
+  append("ticket", id, "comment_edit", {
+    commentId,
+    body: text_,
+    actor: YOU,
+    mentions: parseMentions(text_),
+  });
+  return getTicketOrThrow(id);
+}
+
+export function deleteTicketComment(id: string, commentId: string): TicketView {
+  ownComment(id, commentId);
+  append("ticket", id, "comment_delete", { commentId, actor: YOU });
   return getTicketOrThrow(id);
 }
 

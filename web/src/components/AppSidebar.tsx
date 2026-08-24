@@ -1,6 +1,18 @@
-import type { ComponentProps, ComponentType } from "react";
-import { useEffect, useState } from "react";
-import { Archive, ArrowUpCircle, ChevronLeft, Clock, GitBranch, Settings2, Trash2 } from "lucide-react";
+import type { ComponentType } from "react";
+import { useState } from "react";
+import {
+  Archive,
+  ArchiveRestore,
+  ArrowUpCircle,
+  ChevronLeft,
+  Clock,
+  GitBranch,
+  Pin,
+  PinOff,
+  Settings2,
+  SquarePen,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -13,22 +25,16 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuLabel,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
-import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
+  SidebarGroupAction,
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuAction,
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -44,9 +50,11 @@ import { deviceIcon } from "@/lib/devices";
 import { modelLabel, providerLabel, PROVIDERS } from "@/lib/providers";
 import { displayPath, plainText } from "@/lib/path";
 import { apiError } from "@/lib/api-error";
+import { elapsedSince, useTicker } from "@/lib/elapsed";
 import { workspaceForPath } from "@/lib/projects";
+import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
-import type { Chat, ChatState, Server, Ticket, Workspace } from "@/state/types";
+import type { ArchivedThread, Chat, ChatState, Server, Ticket, Workspace } from "@/state/types";
 
 export function AppSidebar({
   view,
@@ -55,6 +63,7 @@ export function AppSidebar({
   selected,
   servers,
   scoped,
+  archived,
   workspaces,
   needsYou,
   unread,
@@ -63,6 +72,7 @@ export function AppSidebar({
   onSelectChat,
   onOpenTicket,
   onOpenWorkspace,
+  onNewThread,
   openSettings,
   closeSettings,
   updateAvailable,
@@ -73,6 +83,7 @@ export function AppSidebar({
   selected: string | null;
   servers: Server[];
   scoped: Chat[];
+  archived: ArchivedThread[];
   workspaces: Workspace[];
   needsYou: number;
   unread: number;
@@ -81,6 +92,7 @@ export function AppSidebar({
   onSelectChat: (id: string) => void;
   onOpenTicket: (key: string) => void;
   onOpenWorkspace: (workspaceId: string) => void;
+  onNewThread: () => void;
   openSettings: (tab?: SettingsTab) => void;
   closeSettings: () => void;
   updateAvailable?: boolean;
@@ -145,41 +157,64 @@ export function AppSidebar({
           <SidebarContent>
             {/* Threads, in every section. They are the work; whatever else you
                 are looking at, one is always a click away. */}
-            <SidebarGroup className="min-h-0 flex-1">
+            <SidebarGroup className="min-h-0">
               <SidebarGroupLabel>
                 Threads
-                {scoped.length > 0 && <span className="ml-auto tabular-nums">{scoped.length}</span>}
               </SidebarGroupLabel>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <SidebarGroupAction aria-label="New thread" onClick={onNewThread}>
+                    <SquarePen />
+                  </SidebarGroupAction>
+                </TooltipTrigger>
+                <TooltipContent side="right">New thread</TooltipContent>
+              </Tooltip>
               <SidebarGroupContent>
                 <SidebarMenu>
                   {scoped.length === 0 ? (
                     stillLooking ? null : (
-                      <p className="px-2 py-1.5 text-xs text-muted-foreground">No threads yet.</p>
+                      <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                        {archived.length > 0 ? "No active threads." : "No threads yet."}
+                      </p>
                     )
                   ) : (
                     scoped.map((chat) => (
                       <SidebarMenuItem key={chat.id}>
-                        <ContextMenu>
-                          <ContextMenuTrigger asChild>
-                            <ThreadRow
-                              chat={chat}
-                              active={selected === chat.id}
-                              workspace={workspaces[workspaceForPath(chat.cwd, workspaces)]}
-                              server={servers.find((entry) => entry.id === chat.serverId)}
-                              now={now}
-                              onSelect={() => onSelectChat(chat.id)}
-                              onOpenTicket={onOpenTicket}
-                              onOpenWorkspace={onOpenWorkspace}
-                            />
-                          </ContextMenuTrigger>
-                          <ThreadMenu chat={chat} />
-                        </ContextMenu>
+                        <ThreadRow
+                          chat={chat}
+                          active={selected === chat.id}
+                          workspace={workspaces[workspaceForPath(chat.cwd, workspaces)]}
+                          server={servers.find((entry) => entry.id === chat.serverId)}
+                          now={now}
+                          onSelect={() => onSelectChat(chat.id)}
+                          onOpenTicket={onOpenTicket}
+                          onOpenWorkspace={onOpenWorkspace}
+                        />
+                        <ThreadActions chat={chat} />
                       </SidebarMenuItem>
                     ))
                   )}
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
+            {archived.length > 0 && (
+              <SidebarGroup className="pt-0">
+                <SidebarGroupLabel>Archived</SidebarGroupLabel>
+                <SidebarGroupContent>
+                  <SidebarMenu>
+                    {archived.map((thread) => (
+                      <ArchivedThreadItem
+                        key={`${thread.serverId}:${thread.id}`}
+                        thread={thread}
+                        workspace={workspaces[workspaceForPath(thread.cwd, workspaces)]}
+                        server={servers.find((entry) => entry.id === thread.serverId)}
+                        onSelectChat={onSelectChat}
+                      />
+                    ))}
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </SidebarGroup>
+            )}
           </SidebarContent>
         </>
       )}
@@ -228,69 +263,194 @@ function ThreadState({ state }: { state: ChatState }) {
         : "destructive";
 
   return (
-    <Badge variant={variant} className="h-4 px-1.5 text-[10px] leading-none">
+    <Badge variant={variant} className="h-[18px] px-1.5 py-0 text-[10px] leading-4">
       {state === "working" ? <span className="shimmer">{label}</span> : label}
     </Badge>
   );
 }
 
 
-/// What you can do to a thread without opening it.
-///
-/// Both actions end the thread, so neither is offered while it is working or
-/// waiting on you — there is a turn in flight to lose. The server refuses them
-/// in that state too.
-function ThreadMenu({ chat }: { chat: Chat }) {
-  const archiveThread = useStore((s) => s.archiveThread);
-  const deleteThread = useStore((s) => s.deleteThread);
-  const [confirming, setConfirming] = useState(false);
-  const busy = chat.state === "working" || chat.state === "needs_input";
+/// Hover actions keep lifecycle controls beside the thread without crowding
+/// every row. Archiving stays unavailable while a turn is in flight.
+const threadActionLeftClass = "z-20 right-6 translate-x-1 !bg-transparent transition-[opacity,transform] duration-150 group-focus-within/menu-item:translate-x-0 group-hover/menu-item:translate-x-0 hover:!bg-transparent motion-reduce:transition-none";
+const threadActionRightClass = "z-20 translate-x-1 !bg-transparent transition-[opacity,transform] duration-150 group-focus-within/menu-item:translate-x-0 group-hover/menu-item:translate-x-0 hover:!bg-transparent motion-reduce:transition-none";
+const threadRowHoverClass = "group-focus-within/menu-item:!bg-sidebar-row-hover group-hover/menu-item:!bg-sidebar-row-hover";
 
-  const archive = async () => {
+function ThreadActionFade({ compact = false }: { compact?: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "pointer-events-none absolute right-1 z-10 h-5 w-[72px] bg-[linear-gradient(to_right,transparent_0,var(--sidebar-row-hover)_32px,var(--sidebar-row-hover)_100%)] transition-opacity duration-150 group-focus-within/menu-item:opacity-100 group-hover/menu-item:opacity-100 md:opacity-0 motion-reduce:transition-none",
+        compact ? "top-1" : "top-1.5",
+      )}
+    />
+  );
+}
+
+function ThreadActions({ chat }: { chat: Chat }) {
+  const pinThread = useStore((s) => s.pinThread);
+  const archiveThread = useStore((s) => s.archiveThread);
+  const [saving, setSaving] = useState(false);
+  const running = chat.state === "working" || chat.state === "needs_input";
+
+  const pin = async () => {
+    setSaving(true);
     try {
-      await archiveThread(chat.id);
-      toast.success("Archived the thread.", { description: "It is in Settings, under Archived threads." });
+      await pinThread(chat.id, !chat.pinned);
+      toast.success(chat.pinned ? "Unpinned the thread." : "Pinned the thread.");
     } catch (caught) {
-      toast.error("Couldn't archive that thread", { description: apiError(caught) });
+      toast.error(`Couldn't ${chat.pinned ? "unpin" : "pin"} that thread`, { description: apiError(caught) });
+    } finally {
+      setSaving(false);
     }
   };
 
-  const remove = async () => {
+  const archive = async () => {
+    setSaving(true);
     try {
-      await deleteThread(chat.id);
-      toast.success("Deleted the thread.");
+      await archiveThread(chat.id);
+      toast.success("Archived the thread.");
     } catch (caught) {
-      toast.error("Couldn't delete that thread", { description: apiError(caught) });
+      toast.error("Couldn't archive that thread", { description: apiError(caught) });
+    } finally {
+      setSaving(false);
     }
   };
 
   return (
     <>
-      <ContextMenuContent className="w-44">
-        <ContextMenuItem disabled={busy} onSelect={() => void archive()}>
-          <Archive />
-          Archive
-        </ContextMenuItem>
-        <ContextMenuItem disabled={busy} variant="destructive" onSelect={() => setConfirming(true)}>
-          <Trash2 />
-          Delete
-        </ContextMenuItem>
-        {busy && (
-          <>
-            <ContextMenuSeparator />
-            <ContextMenuLabel className="font-normal text-muted-foreground">
-              {chat.state === "working" ? "Still working." : "Waiting on you."}
-            </ContextMenuLabel>
-          </>
+      <ThreadActionFade />
+
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <SidebarMenuAction
+            showOnHover
+            className={threadActionLeftClass}
+            aria-label={`${chat.pinned ? "Unpin" : "Pin"} ${chat.title}`}
+            disabled={saving}
+            onClick={() => void pin()}
+          >
+            {chat.pinned ? <PinOff /> : <Pin />}
+          </SidebarMenuAction>
+        </TooltipTrigger>
+        <TooltipContent side="top" sideOffset={6}>{chat.pinned ? "Unpin" : "Pin"}</TooltipContent>
+      </Tooltip>
+
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <SidebarMenuAction
+            showOnHover
+            className={threadActionRightClass}
+            aria-label={`Archive ${chat.title}`}
+            disabled={saving || running}
+            onClick={() => void archive()}
+          >
+            <Archive />
+          </SidebarMenuAction>
+        </TooltipTrigger>
+        <TooltipContent side="top" sideOffset={6}>Archive</TooltipContent>
+      </Tooltip>
+    </>
+  );
+}
+
+function ArchivedThreadItem({
+  thread,
+  workspace,
+  server,
+  onSelectChat,
+}: {
+  thread: ArchivedThread;
+  workspace?: Workspace;
+  server?: Server;
+  onSelectChat: (id: string) => void;
+}) {
+  const restoreThread = useStore((s) => s.restoreThread);
+  const deleteArchivedThread = useStore((s) => s.deleteArchivedThread);
+  const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+
+  const restore = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const chat = await restoreThread(thread.id, thread.serverId);
+      toast.success("Unarchived the thread.");
+      onSelectChat(chat.id);
+    } catch (caught) {
+      toast.error("Couldn't unarchive that thread", { description: apiError(caught) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await deleteArchivedThread(thread.id, thread.serverId);
+      toast.success("Deleted the thread.");
+    } catch (caught) {
+      toast.error("Couldn't delete that thread", { description: apiError(caught) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        data-link
+        size="sm"
+        className={cn(
+          "text-muted-foreground group-has-data-[sidebar=menu-action]/menu-item:pr-2 group-focus-within/menu-item:pr-12 group-hover/menu-item:pr-12",
+          threadRowHoverClass,
         )}
-      </ContextMenuContent>
+        disabled={busy}
+        onClick={() => void restore()}
+      >
+        <WorkspaceMark home={!workspace} workspace={workspace} server={server} size="sm" />
+        <span className="min-w-0 flex-1 truncate text-sidebar-foreground">{thread.title}</span>
+      </SidebarMenuButton>
+
+      <ThreadActionFade compact />
+
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <SidebarMenuAction
+            showOnHover
+            className={threadActionLeftClass}
+            aria-label={`Unarchive ${thread.title}`}
+            disabled={busy}
+            onClick={() => void restore()}
+          >
+            <ArchiveRestore />
+          </SidebarMenuAction>
+        </TooltipTrigger>
+        <TooltipContent side="top" sideOffset={6}>Unarchive</TooltipContent>
+      </Tooltip>
+
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <SidebarMenuAction
+            showOnHover
+            className={threadActionRightClass}
+            aria-label={`Delete ${thread.title}`}
+            disabled={busy}
+            onClick={() => setConfirming(true)}
+          >
+            <Trash2 />
+          </SidebarMenuAction>
+        </TooltipTrigger>
+        <TooltipContent side="top" sideOffset={6}>Delete</TooltipContent>
+      </Tooltip>
 
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete {chat.title}?</AlertDialogTitle>
+            <AlertDialogTitle>Delete {thread.title}?</AlertDialogTitle>
             <AlertDialogDescription>
-              The conversation goes with it. Archive instead to keep a copy.
+              This permanently deletes the archived conversation.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -301,7 +461,7 @@ function ThreadMenu({ chat }: { chat: Chat }) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </>
+    </SidebarMenuItem>
   );
 }
 
@@ -315,7 +475,6 @@ function ThreadRow({
   onSelect,
   onOpenTicket,
   onOpenWorkspace,
-  ...trigger
 }: {
   chat: Chat;
   active: boolean;
@@ -325,21 +484,21 @@ function ThreadRow({
   onSelect: () => void;
   onOpenTicket: (key: string) => void;
   onOpenWorkspace: (workspaceId: string) => void;
-  // `ContextMenuTrigger asChild` hands its ref and handlers down; without
-  // spreading them onto the button, right-click never reaches the menu.
-} & ComponentProps<"button">) {
+}) {
   const DeviceIcon = deviceIcon(server?.icon);
   const place = workspace?.name ?? displayPath(chat.cwd);
-  const elapsed = chat.workingSince ? since(chat.workingSince, now) : undefined;
+  const elapsed = chat.workingSince ? elapsedSince(chat.workingSince, now) : undefined;
   const tickets = useStore((s) => s.tickets);
   const ticket = tickets.find((entry) => entry.threads.some((link) => link.chatId === chat.id));
 
   const row = (
     <SidebarMenuButton
-      {...trigger}
       data-link
       isActive={active}
-      className="h-auto flex-col items-stretch gap-1 py-2"
+      className={cn(
+        "h-auto flex-col items-stretch gap-1 py-2 group-has-data-[sidebar=menu-action]/menu-item:pr-2 group-focus-within/menu-item:pr-12 group-hover/menu-item:pr-12",
+        threadRowHoverClass,
+      )}
       onClick={onSelect}
     >
       {/* Where the thread lives, and what it is answering — an eyebrow above
@@ -373,6 +532,7 @@ function ThreadRow({
 
       <span className="flex min-w-0 items-center gap-1.5">
         <span className="min-w-0 flex-1 truncate">{chat.title}</span>
+        {chat.pinned && <Pin className="size-3 shrink-0 text-muted-foreground" aria-label="Pinned" />}
         <ThreadState state={chat.state} />
       </span>
 
@@ -509,27 +669,4 @@ function ThreadModel({ provider, model }: { provider?: string; model?: string })
       </TooltipContent>
     </Tooltip>
   );
-}
-
-/// A clock that only runs while something on screen needs it, so an idle
-/// sidebar re-renders no more than the data does.
-function useTicker(running: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!running) return;
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [running]);
-  return now;
-}
-
-/// How long a thread has been at it, at a glance. Seconds while that is the
-/// interesting number, then minutes, then hours.
-export function since(start: number, now: number): string {
-  const seconds = Math.max(0, Math.round((now - start) / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }

@@ -21,6 +21,8 @@ export interface ChatRow {
   dm?: boolean;
   /// When this conversation was last read, so an inbox row knows to be bold.
   readAt?: number;
+  /// Pinned threads lead the sidebar until you unpin them.
+  pinned?: boolean;
   createdAt: number;
   updatedAt: number;
   claudeSessionId?: string;
@@ -49,13 +51,14 @@ function writeChat(row: ChatRow): void {
   db.prepare(
     `insert into chats (
        id, title, cwd, provider, model, effort, permission_mode, created_at, updated_at,
-       claude_session_id, codex_thread_id, cursor_session_id, turns, cost_usd, context_json, todos_json, error, agent_id, dm, read_at
-     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       claude_session_id, codex_thread_id, cursor_session_id, turns, cost_usd, context_json, todos_json, error, agent_id, dm, read_at, pinned
+     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      on conflict(id) do update set
        title = excluded.title,
        agent_id = excluded.agent_id,
        dm = excluded.dm,
        read_at = excluded.read_at,
+       pinned = excluded.pinned,
        cwd = excluded.cwd,
        provider = excluded.provider,
        model = excluded.model,
@@ -91,6 +94,7 @@ function writeChat(row: ChatRow): void {
     row.agentId ?? null,
     row.dm ? 1 : 0,
     row.readAt ?? null,
+    row.pinned ? 1 : 0,
   );
 }
 
@@ -168,6 +172,7 @@ function toChatRow(row: Record<string, unknown>): ChatRow {
     ...(row.agent_id ? { agentId: String(row.agent_id) } : {}),
     ...(Number(row.dm) === 1 ? { dm: true } : {}),
     ...(typeof row.read_at === "number" ? { readAt: row.read_at } : {}),
+    ...(Number(row.pinned) === 1 ? { pinned: true } : {}),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
     ...(row.claude_session_id ? { claudeSessionId: String(row.claude_session_id) } : {}),

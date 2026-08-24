@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowUpRight,
+  CirclePlus,
   Folder,
+  FolderGit2,
   GitBranch,
   Link2,
   Link2Off,
+  MessageSquare,
   MessagesSquare,
+  MoreHorizontal,
+  Pencil,
   Play,
   Plus,
   Send,
@@ -24,6 +29,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
+import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
 import {
   Command,
@@ -34,12 +40,37 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
+import {
+  Message,
+  MessageAvatar,
+  MessageContent,
+  MessageHeader,
+} from "@/components/ui/message";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
@@ -51,16 +82,19 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { EditableName } from "@/components/EditableName";
 import { Markdown, type Mention } from "@/components/Markdown";
 import { MentionField } from "@/components/MentionField";
+import { ModelPickerButton } from "@/components/ModelPicker";
 import { PaneHeader } from "@/components/PaneHeader";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { NewTicketDialog } from "@/components/Board";
 import { AssigneeAvatar, StatusIcon, SubTicketProgress } from "@/components/TicketGlyphs";
 import { apiError } from "@/lib/api-error";
 import { deviceIcon } from "@/lib/devices";
+import type { ModelChoice } from "@/lib/providers";
 import { devicesForWorkspace, localWorkspace } from "@/lib/projects";
 import {
   DERIVED_STATUSES,
@@ -74,7 +108,7 @@ import {
   shortDate,
 } from "@/lib/tickets";
 import { useStore } from "@/state/store";
-import type { Agent, Ticket, TicketActivity, TicketStatus } from "@/state/types";
+import type { Agent, Ticket, TicketActivity, TicketStatus, Workspace } from "@/state/types";
 
 /// One ticket: what it is, who has it, what it is broken into, and every thread
 /// that has worked on it.
@@ -106,23 +140,38 @@ export function TicketView({
   const agents = useStore((s) => s.agents);
   const chats = useStore((s) => s.chats);
   const tickets = useStore((s) => s.tickets);
+  const settings = useStore((s) => s.settings);
   const updateTicket = useStore((s) => s.updateTicket);
   const moveTicket = useStore((s) => s.moveTicket);
   const deleteTicket = useStore((s) => s.deleteTicket);
   const startTicket = useStore((s) => s.startTicket);
   const commentOnTicket = useStore((s) => s.commentOnTicket);
+  const editTicketComment = useStore((s) => s.editTicketComment);
+  const deleteTicketComment = useStore((s) => s.deleteTicketComment);
   const detachThread = useStore((s) => s.detachThread);
   const readActivity = useStore((s) => s.ticketActivity);
 
   const [activity, setActivity] = useState<TicketActivity[]>([]);
   const [attaching, setAttaching] = useState(false);
   const [addingSub, setAddingSub] = useState(false);
+  const [startOpen, setStartOpen] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [startChoice, setStartChoice] = useState<ModelChoice>({ provider: "claude", model: "" });
+  const [startCheckout, setStartCheckout] = useState<"main" | "worktree">("main");
   const [editingBody, setEditingBody] = useState(false);
   const [draft, setDraft] = useState(ticket.body);
 
   const project = projects.find((entry) => entry.id === ticket.projectId);
   const workspace = project ? localWorkspace(project, workspaces) : undefined;
+  const gitWorkspace = Boolean(workspace?.worktrees.length);
+  const defaultStartChoice = workspace?.provider
+    ? { provider: workspace.provider, model: workspace.model ?? "", effort: workspace.effort ?? "" }
+    : {
+        provider: settings?.defaultProvider ?? "claude",
+        model: settings?.defaultModel ?? "",
+        effort: settings?.defaultEffort ?? "",
+      };
+  const defaultStartCheckout = gitWorkspace ? settings?.defaultCheckout ?? "main" : "main";
   const device = deviceForTicket(ticket, boardDevices, servers);
   const eligibleDevices = workspace
     ? devicesForWorkspace(workspace, workspaces, servers)
@@ -154,6 +203,29 @@ export function TicketView({
     }
   };
 
+  const setStartDialogOpen = (open: boolean) => {
+    if (open) {
+      setStartChoice(defaultStartChoice);
+      setStartCheckout(defaultStartCheckout);
+    }
+    setStartOpen(open);
+  };
+
+  const beginThread = () => {
+    setStarting(true);
+    void startTicket(ticket.id, {
+      provider: startChoice.provider,
+      model: startChoice.model,
+      effort: startChoice.effort,
+      checkout: startCheckout,
+    })
+      .then((thread) => onOpenThread(thread.id))
+      .catch((error) => {
+        setStarting(false);
+        toast.error("Couldn't start that thread", { description: apiError(error) });
+      });
+  };
+
   return (
     <main className="flex min-w-0 flex-1 flex-col">
       <PaneHeader
@@ -166,22 +238,61 @@ export function TicketView({
         ]}
       >
         {(ticket.status === "backlog" || ticket.status === "todo") && (
-          <Button
-            size="sm"
-            disabled={starting}
-            onClick={() => {
-              setStarting(true);
-              void startTicket(ticket.id)
-                .then((thread) => onOpenThread(thread.id))
-                .catch((error) => {
-                  setStarting(false);
-                  toast.error("Couldn't start that thread", { description: apiError(error) });
-                });
-            }}
-          >
-            <Play />
-            {starting ? "Starting…" : "Start thread"}
-          </Button>
+          <Dialog open={startOpen} onOpenChange={setStartDialogOpen}>
+            <DialogTrigger asChild>
+              <Button size="sm" disabled={starting}>
+                <Play data-icon="inline-start" />
+                Start thread
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-sm">
+              <DialogHeader>
+                <DialogTitle>Start thread</DialogTitle>
+                <DialogDescription>Choose how this thread starts.</DialogDescription>
+              </DialogHeader>
+              <FieldGroup className="gap-5 py-1">
+                <Field>
+                  <FieldLabel htmlFor="ticket-start-provider">Provider</FieldLabel>
+                  <ModelPickerButton
+                    id="ticket-start-provider"
+                    value={startChoice}
+                    onPick={setStartChoice}
+                    className="w-full"
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel>Checkout</FieldLabel>
+                  <ToggleGroup
+                    type="single"
+                    variant="outline"
+                    value={startCheckout}
+                    onValueChange={(value) => {
+                      if (value === "main" || value === "worktree") setStartCheckout(value);
+                    }}
+                    className="w-full"
+                  >
+                    <ToggleGroupItem value="worktree" disabled={!gitWorkspace} className="flex-1">
+                      <FolderGit2 />
+                      New worktree
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="main" className="flex-1">
+                      <Folder />
+                      Main checkout
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+                </Field>
+              </FieldGroup>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button type="button" variant="outline" disabled={starting}>Cancel</Button>
+                </DialogClose>
+                <Button type="button" disabled={starting} onClick={beginThread}>
+                  <Play data-icon="inline-start" />
+                  {starting ? "Starting…" : "Start thread"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         )}
         <AlertDialog>
           <Tooltip>
@@ -407,7 +518,30 @@ export function TicketView({
 
             <section className="flex flex-col gap-3">
               <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Activity</h2>
-              <ActivityFeed activity={activity} agents={agents} onOpenAgent={onOpenAgent} />
+              <ActivityFeed
+                activity={activity}
+                agents={agents}
+                workspace={workspace}
+                onOpenAgent={onOpenAgent}
+                onEdit={async (commentId, body) => {
+                  try {
+                    await editTicketComment(ticket.id, commentId, body);
+                    refreshActivity();
+                  } catch (error) {
+                    toast.error("Couldn't edit that comment", { description: apiError(error) });
+                    throw error;
+                  }
+                }}
+                onDelete={async (commentId) => {
+                  try {
+                    await deleteTicketComment(ticket.id, commentId);
+                    refreshActivity();
+                  } catch (error) {
+                    toast.error("Couldn't delete that comment", { description: apiError(error) });
+                    throw error;
+                  }
+                }}
+              />
               <CommentBox
                 agents={agents}
                 onSend={async (body) => {
@@ -613,35 +747,215 @@ function Property({
 function ActivityFeed({
   activity,
   agents,
+  workspace,
   onOpenAgent,
+  onEdit,
+  onDelete,
 }: {
   activity: TicketActivity[];
   agents: Agent[];
+  workspace?: Workspace;
   onOpenAgent: (handle: string) => void;
+  onEdit: (commentId: string, body: string) => Promise<void>;
+  onDelete: (commentId: string) => Promise<void>;
 }) {
   if (activity.length === 0) {
     return <p className="text-sm text-muted-foreground">Nothing has happened yet.</p>;
   }
   return (
-    <ol className="flex flex-col gap-2.5">
-      {activity.map((entry) => (
-        <li key={entry.id} className="flex gap-2.5 text-sm">
-          <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-muted-foreground/50" />
-          <div className="flex min-w-0 flex-col gap-0.5">
-            <span className="text-muted-foreground">
-              <span className="text-foreground">{actorName(entry.actor, agents)}</span> {describe(entry)}
-              <span className="ml-2 text-[11px]">{when(entry.at)}</span>
-            </span>
-            {entry.kind === "comment" && entry.body && (
-              <div className="rounded-lg border border-border bg-card px-3 py-2">
-                <Markdown text={entry.body} mentions={named(entry, agents, onOpenAgent)} />
-              </div>
-            )}
-          </div>
+    <ol className="flex flex-col gap-4">
+      {activity.map((entry) => entry.kind === "comment" && entry.body ? (
+        <CommentActivity
+          key={entry.id}
+          entry={entry}
+          agents={agents}
+          workspace={workspace}
+          onOpenAgent={onOpenAgent}
+          onEdit={onEdit}
+          onDelete={onDelete}
+        />
+      ) : (
+        <li key={entry.id}>
+          <Marker>
+            <MarkerIcon className="flex h-4 w-8 items-center justify-center">
+              {activityIcon(entry)}
+            </MarkerIcon>
+            <MarkerContent className="flex items-baseline gap-1.5">
+              <span className="text-foreground">{actorName(entry.actor, agents)}</span>
+              <span>{describe(entry)}</span>
+              <time className="ml-auto shrink-0 text-xs" dateTime={new Date(entry.at).toISOString()}>
+                {when(entry.at)}
+              </time>
+            </MarkerContent>
+          </Marker>
         </li>
       ))}
     </ol>
   );
+}
+
+function CommentActivity({
+  entry,
+  agents,
+  workspace,
+  onOpenAgent,
+  onEdit,
+  onDelete,
+}: {
+  entry: TicketActivity;
+  agents: Agent[];
+  workspace?: Workspace;
+  onOpenAgent: (handle: string) => void;
+  onEdit: (commentId: string, body: string) => Promise<void>;
+  onDelete: (commentId: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(entry.body ?? "");
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const roster = useMemo(() => people(agents), [agents]);
+  const own = entry.actor === YOU;
+
+  useEffect(() => setDraft(entry.body ?? ""), [entry.body]);
+
+  const save = async () => {
+    const body = draft.trim();
+    if (!body || body === entry.body) {
+      setEditing(false);
+      setDraft(entry.body ?? "");
+      return;
+    }
+    setSaving(true);
+    try {
+      await onEdit(entry.id, body);
+      setEditing(false);
+    } catch {
+      // The toast above keeps the editor open with the text intact.
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <li>
+      <Message>
+        <MessageAvatar className="self-start bg-transparent">
+          <AssigneeAvatar
+            assignee={activityActorId(entry.actor, agents)}
+            agents={agents}
+            workspace={workspace}
+            size="md"
+          />
+        </MessageAvatar>
+        <MessageContent className="gap-1.5">
+          <MessageHeader className="gap-1.5 px-0">
+            <span className="truncate text-foreground">{actorName(entry.actor, agents)}</span>
+            <time className="shrink-0" dateTime={new Date(entry.at).toISOString()}>{when(entry.at)}</time>
+            {entry.editedAt && <span>Edited</span>}
+            {own && !editing && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button className="ml-auto" variant="ghost" size="icon-xs" aria-label="Comment actions">
+                    <MoreHorizontal />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem onSelect={() => setEditing(true)}>
+                      <Pencil />
+                      Edit comment
+                    </DropdownMenuItem>
+                    <DropdownMenuItem variant="destructive" onSelect={() => setDeleteOpen(true)}>
+                      <Trash2 />
+                      Delete comment
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </MessageHeader>
+          <Bubble variant="muted" className="w-full max-w-full">
+            <BubbleContent className="w-full">
+              {editing ? (
+                <div className="flex flex-col gap-2">
+                  <MentionField
+                    rows={3}
+                    value={draft}
+                    onChange={setDraft}
+                    people={roster}
+                    agents={agents}
+                    onSubmit={() => void save()}
+                    aria-label="Edit comment"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      disabled={saving}
+                      onClick={() => {
+                        setEditing(false);
+                        setDraft(entry.body ?? "");
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button size="xs" disabled={!draft.trim() || saving} onClick={() => void save()}>
+                      Save comment
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <Markdown text={entry.body ?? ""} mentions={named(entry, agents, onOpenAgent)} />
+              )}
+            </BubbleContent>
+          </Bubble>
+        </MessageContent>
+      </Message>
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete comment?</AlertDialogTitle>
+            <AlertDialogDescription>This removes your comment from this ticket.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={deleting}
+              onClick={(event) => {
+                event.preventDefault();
+                setDeleting(true);
+                void onDelete(entry.id)
+                  .then(() => setDeleteOpen(false))
+                  .catch(() => {})
+                  .finally(() => setDeleting(false));
+              }}
+            >
+              Delete comment
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </li>
+  );
+}
+
+function activityActorId(actor: string, agents: Agent[]): string | undefined {
+  if (actor === YOU || actor === WORKSPACE_AGENT) return actor;
+  return agents.find((agent) => agent.id === actor || agent.handle === actor)?.id;
+}
+
+function activityIcon(entry: TicketActivity) {
+  if (entry.kind === "status" && typeof entry.detail?.status === "string") {
+    return <StatusIcon status={entry.detail.status as TicketStatus} decorative />;
+  }
+  if (entry.kind === "create") return <CirclePlus />;
+  if (entry.kind === "link") return <Link2 />;
+  if (entry.kind === "unlink") return <Link2Off />;
+  if (entry.kind === "handoff") return <MessagesSquare />;
+  if (entry.kind === "field") return <Pencil />;
+  return <MessageSquare />;
 }
 
 /// What the entry's `@` tokens should render as now.
@@ -667,7 +981,7 @@ function actorName(actor: string, agents: Agent[]): string {
   if (actor === "you") return "You";
   if (actor === "remy") return "Remy";
   if (actor === WORKSPACE_AGENT) return "Workspace agent";
-  return agents.find((agent) => agent.id === actor)?.name ?? actor;
+  return agents.find((agent) => agent.id === actor || agent.handle === actor)?.name ?? actor;
 }
 
 function describe(entry: TicketActivity): string {
@@ -689,7 +1003,14 @@ function when(at: number): string {
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
-  return new Date(at).toLocaleDateString();
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  const date = new Date(at);
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(date.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
+  });
 }
 
 function CommentBox({
@@ -724,11 +1045,11 @@ function CommentBox({
         people={roster}
         agents={agents}
         onSubmit={() => void send()}
-        placeholder="Leave a note. @ names an agent or you."
+        placeholder="Write a comment. @ names an agent or you."
       />
       <Button size="sm" className="self-end" disabled={!value.trim() || sending} onClick={() => void send()}>
         <Send />
-        Comment
+        Add comment
       </Button>
     </div>
   );

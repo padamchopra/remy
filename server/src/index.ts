@@ -6,7 +6,7 @@ import { config, patchSettings, publicSettings } from "./config.js";
 import { AgentStartupError, AgentUnavailableError, agentKind, inferAgent, type AgentKind } from "./agent.js";
 import { createAgent, deleteAgent, getAgent, listAgents, seedPresetAgents, seedRemyAgent, updateAgent } from "./agents.js";
 import { deliverAnnouncements } from "./announcements.js";
-import { archiveChat, deleteArchivedChat, listArchivedChats } from "./archives.js";
+import { archiveChat, deleteArchivedChat, getArchivedChat, listArchivedChats } from "./archives.js";
 import { deviceId, onLocalAppend, onRemoteMerge, type LogEvent } from "./board-log.js";
 import {
   adoptWorkspace,
@@ -17,7 +17,9 @@ import {
 import {
   commentOnTicket,
   createTicket,
+  deleteTicketComment,
   deleteTicket,
+  editTicketComment,
   getTicket,
   handoffTicket,
   linkThread,
@@ -30,9 +32,15 @@ import {
   unlinkThread,
   updateTicket,
 } from "./tickets.js";
-import { reconcileAgentTickets, reconcileTicket, startTicketThread } from "./ticket-runner.js";
+import {
+  reconcileAgentTickets,
+  reconcileTicket,
+  resumeTicketFromComment,
+  startTicketThread,
+} from "./ticket-runner.js";
 import {
   chatsUnavailable,
+  archiveConversation,
   createChat,
   deleteChat,
   dmChatFor,
@@ -47,6 +55,7 @@ import {
   syncAgentDms,
   respondToApproval,
   respondToQuestion,
+  restoreArchivedChat,
   runChatEnvironmentCommand,
   sendChatMessage,
   stopChat,
@@ -74,6 +83,20 @@ import {
 } from "./cursor-cloud.js";
 import { handleHookEvent } from "./events.js";
 import { attachNotifyStream, broadcast, deliverFromPeer, pushSession, pushSessionList } from "./notify.js";
+import {
+  browserSnapshotText,
+  browserView,
+  clickBrowser,
+  closeBrowser,
+  insertBrowser,
+  openBrowser,
+  pressBrowser,
+  scrollBrowser,
+  setBrowserViewport,
+  type BrowserTarget,
+  typeBrowser,
+  waitInBrowser,
+} from "./browser.js";
 import { forgetPushDevice, pushStatus, registerPushDevice } from "./push.js";
 import { discover } from "./tailnet.js";
 import {
@@ -1040,8 +1063,20 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { activity: ticketActivity(id) });
       }
       if (req.method === "POST" && parts[2] === "start") {
+        const body = await readJson(req);
         try {
-          const chat = await startTicketThread(id);
+          const checkout = body.checkout === undefined
+            ? undefined
+            : body.checkout === "main" || body.checkout === "worktree"
+              ? body.checkout
+              : null;
+          if (checkout === null) return json(res, 400, { error: "Pick Main checkout or New worktree." });
+          const chat = await startTicketThread(id, {
+            checkout,
+            ...(typeof body.provider === "string" ? { provider: body.provider } : {}),
+            ...(typeof body.model === "string" ? { model: body.model } : {}),
+            ...(typeof body.effort === "string" ? { effort: body.effort } : {}),
+          });
           if (!chat) return json(res, 409, { error: "Couldn't start that thread." });
           broadcast({ type: "board" });
           return json(res, 200, { chat });
@@ -1103,17 +1138,50 @@ const server = createServer(async (req, res) => {
       if (req.method === "POST" && parts[2] === "comment") {
         const body = await readJson(req);
         try {
-          const ticket = commentOnTicket(id, String(body.body ?? ""), ticketActor(body.actor));
+          const actor = ticketActor(body.actor);
+          const ticket = commentOnTicket(id, String(body.body ?? ""), actor);
           broadcast({ type: "board" });
           // Naming an agent asks it a question. The turn runs on its own and
           // posts its reply as another comment, so the request does not wait
           // on a model to think.
           const said = ticketActivity(id).at(-1);
           if (said?.mentions?.length) answerMentions(id, said.mentions, said.body ?? "", said.actor);
+          // The comment is already durable board activity, so an unavailable
+          // device cannot make posting it fail. A successful delivery appears
+          // in the linked thread as the same user turn and resumes its agent.
+          if (actor === "you" && said?.body) {
+            void resumeTicketFromComment(id, said.body).catch((error) => {
+              console.error(`could not continue ticket ${id} from its comment:`, error);
+            });
+          }
           return json(res, 200, { ticket });
         } catch (error) {
           const message = (error as Error).message || "could not add that comment";
           return json(res, /no such/.test(message) ? 404 : 400, { error: message });
+        }
+      }
+      if (
+        (req.method === "PATCH" || req.method === "DELETE")
+        && parts[2] === "comments"
+        && parts[3]
+      ) {
+        const commentId = decodeURIComponent(parts[3]);
+        try {
+          const before = ticketActivity(id).find((entry) => entry.id === commentId);
+          const ticket = req.method === "PATCH"
+            ? editTicketComment(id, commentId, String((await readJson(req)).body ?? ""))
+            : deleteTicketComment(id, commentId);
+          broadcast({ type: "board" });
+          if (req.method === "PATCH") {
+            const after = ticketActivity(id).find((entry) => entry.id === commentId);
+            const known = new Set((before?.mentions ?? []).map((mention) => mention.id));
+            const added = (after?.mentions ?? []).filter((mention) => !known.has(mention.id));
+            if (after && added.length > 0) answerMentions(id, added, after.body ?? "", after.actor);
+          }
+          return json(res, 200, { ticket });
+        } catch (error) {
+          const message = (error as Error).message || "could not change that comment";
+          return json(res, /no such|gone/.test(message) ? 404 : 400, { error: message });
         }
       }
       // Attaching an existing thread. Deliberately does not start or resume it:
@@ -1235,6 +1303,69 @@ const server = createServer(async (req, res) => {
     }
     if (parts[0] === "chats" && parts[1]) {
       const id = decodeURIComponent(parts[1]);
+      if (parts[2] === "browser") {
+        if (!fullAccess && (!scopedChatId || scopedChatId !== id)) {
+          return json(res, 403, { error: "an agent can control only its own thread's browser" });
+        }
+        if (!getChat(id)) return json(res, 404, { error: "no such chat" });
+        const browserId = url.searchParams.get("instance")?.trim() || "default";
+        if (!/^[A-Za-z0-9_-]{1,100}$/.test(browserId)) {
+          return json(res, 400, { error: "that browser tab id is not valid" });
+        }
+        const controller = scopedChatId ? "agent" as const : "you" as const;
+        if (req.method === "GET" && parts.length === 3) {
+          return json(res, 200, await browserView(id, true, browserId));
+        }
+        if (req.method === "POST" && parts.length === 4) {
+          const body = await readJson(req);
+          const target: BrowserTarget = {
+            selector: typeof body.selector === "string" ? body.selector : undefined,
+            role: typeof body.role === "string" ? body.role : undefined,
+            name: typeof body.name === "string" ? body.name : undefined,
+            text: typeof body.text === "string" ? body.text : undefined,
+            x: typeof body.x === "number" ? body.x : undefined,
+            y: typeof body.y === "number" ? body.y : undefined,
+          };
+          try {
+            if (parts[3] === "open") return json(res, 200, await openBrowser(id, String(body.url ?? ""), controller, browserId));
+            if (parts[3] === "viewport") {
+              if (body.viewport !== "desktop" && body.viewport !== "mobile") {
+                return json(res, 400, { error: "choose the desktop or mobile viewport" });
+              }
+              return json(res, 200, await setBrowserViewport(id, body.viewport, controller, browserId));
+            }
+            if (parts[3] === "snapshot") return json(res, 200, { text: await browserSnapshotText(id, browserId) });
+            if (parts[3] === "click") return json(res, 200, await clickBrowser(id, target, controller, browserId));
+            if (parts[3] === "type") return json(res, 200, await typeBrowser(id, target, String(body.value ?? ""), controller, browserId));
+            if (parts[3] === "insert") return json(res, 200, await insertBrowser(id, String(body.value ?? ""), controller, browserId));
+            if (parts[3] === "press") return json(res, 200, await pressBrowser(id, String(body.key ?? ""), controller, browserId));
+            if (parts[3] === "scroll") {
+              return json(res, 200, await scrollBrowser(
+                id,
+                typeof body.deltaX === "number" ? body.deltaX : 0,
+                typeof body.deltaY === "number" ? body.deltaY : 0,
+                controller,
+                browserId,
+              ));
+            }
+            if (parts[3] === "wait") {
+              return json(res, 200, await waitInBrowser(
+                id,
+                typeof body.milliseconds === "number" ? body.milliseconds : 500,
+                controller,
+                browserId,
+              ));
+            }
+            if (parts[3] === "close") {
+              await closeBrowser(id, browserId);
+              return json(res, 200, { ok: true });
+            }
+          } catch (error) {
+            return json(res, 409, { error: (error as Error).message || "the browser action failed" });
+          }
+          return json(res, 404, { error: "no such browser action" });
+        }
+      }
       if (req.method === "GET" && parts.length === 2) {
         const chat = getChat(id);
         return chat ? json(res, 200, chat) : json(res, 404, { error: "no such chat" });
@@ -1254,13 +1385,16 @@ const server = createServer(async (req, res) => {
             model: body.model === null ? null : typeof body.model === "string" ? body.model : undefined,
             effort: body.effort === null ? null : typeof body.effort === "string" ? body.effort : undefined,
             permissionMode: body.permissionMode,
+            pinned: typeof body.pinned === "boolean" ? body.pinned : undefined,
           }) });
         } catch (error) {
-          return json(res, 404, { error: (error as Error).message || "no such chat" });
+          const message = (error as Error).message || "could not update that thread";
+          return json(res, /no such/.test(message) ? 404 : 409, { error: message });
         }
       }
       if (req.method === "DELETE" && parts.length === 2) {
         try {
+          void closeBrowser(id);
           deleteChat(id);
           return json(res, 200, { ok: true });
         } catch (error) {
@@ -1276,18 +1410,13 @@ const server = createServer(async (req, res) => {
           return json(res, 409, { error: "this thread is still running" });
         }
         const archive = archiveChat({
+          chatId: chat.id,
           session: chat.title,
           agent: chat.provider,
           cwd: chat.cwd,
-          conversation: {
-            available: true,
-            agent: chat.provider,
-            title: chat.title,
-            model: chat.model,
-            todos: chat.todos,
-            entries: chat.entries,
-          },
+          conversation: archiveConversation(chat.id),
         });
+        void closeBrowser(id);
         deleteChat(id);
         return json(res, 200, { archive });
       }
@@ -1488,6 +1617,23 @@ const server = createServer(async (req, res) => {
 
     if (url.pathname === "/archives" && req.method === "GET") {
       return json(res, 200, { archives: listArchivedChats() });
+    }
+    if (parts[0] === "archives" && parts[1] && parts[2] === "restore" && req.method === "POST") {
+      const id = decodeURIComponent(parts[1]);
+      const archive = getArchivedChat(id);
+      if (!archive) return json(res, 404, { error: "archived thread not found" });
+      try {
+        const chat = restoreArchivedChat({
+          chatId: archive.chatId,
+          session: archive.session,
+          cwd: archive.cwd,
+          conversation: archive.conversation,
+        });
+        deleteArchivedChat(id);
+        return json(res, 200, { chat });
+      } catch (error) {
+        return json(res, 409, { error: (error as Error).message || "could not unarchive that thread" });
+      }
     }
     if (parts[0] === "archives" && parts[1] && req.method === "DELETE") {
       try {
