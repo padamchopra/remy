@@ -22,6 +22,7 @@ import { IconPicker } from "@/components/IconPicker";
 import { ModelPickerButton, REMY_DEFAULT } from "@/components/ModelPicker";
 import { WorkspaceFileIcon } from "@/components/WorkspaceIcon";
 import { WorkspaceEnvironmentSettings } from "@/components/WorkspaceEnvironmentSettings";
+import { WorkspaceWorktrees } from "@/components/WorkspaceWorktrees";
 import { apiError } from "@/lib/api-error";
 import { deviceIcon } from "@/lib/devices";
 import { displayPath } from "@/lib/path";
@@ -196,6 +197,8 @@ export function WorkspaceSettings({
           <TicketSlugField workspace={workspace} />
 
           <WorkspaceEnvironmentSettings workspace={workspace} />
+
+          <WorkspaceWorktrees workspace={workspace} />
 
           <div className="flex flex-col gap-2">
             <p className="px-1 text-xs font-medium text-muted-foreground">Devices</p>

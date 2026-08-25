@@ -150,6 +150,8 @@ interface State {
   suggestPaths(query: string): Promise<PathSuggestion[]>;
   suggestWorkspaceIcons(id: string, query: string): Promise<WorkspaceIconMatch[]>;
   workspaceFile(id: string, path: string): Promise<{ mime: string; data: string } | undefined>;
+  loadWorkspaceWorktrees(id: string): Promise<GitWorktree[]>;
+  cleanWorkspaceWorktree(id: string, path: string, force: boolean): Promise<GitWorktree[]>;
   listBranches(workspaceId: string): Promise<GitBranch[]>;
   checkoutBranch(input: {
     workspaceId: string;
@@ -562,6 +564,51 @@ export const useStore = create<State>((set, get) => ({
     } catch {
       return undefined;
     }
+  },
+
+  async loadWorkspaceWorktrees(id) {
+    const workspace = get().workspaces.find((entry) => entry.id === id);
+    if (!workspace) throw new Error("This workspace is no longer available.");
+    if (useFixture) return workspace.worktrees;
+    const server = get().servers.find((entry) => entry.id === workspace.serverId);
+    if (!server?.online) throw new Error("This device isn't connected.");
+    const listed = await transport.request<{ dirty?: Record<string, boolean> }>(
+      server.id,
+      `/workspaces/${encodeURIComponent(id)}/dirty`,
+    );
+    const dirty = listed.dirty ?? {};
+    const worktrees = workspace.worktrees.map((worktree) => ({
+      ...worktree,
+      dirty: dirty[worktree.path] ?? true,
+    }));
+    set((current) => ({
+      workspaces: current.workspaces.map((entry) =>
+        entry.id === id && entry.serverId === server.id ? { ...entry, worktrees } : entry),
+    }));
+    return worktrees;
+  },
+
+  async cleanWorkspaceWorktree(id, path, force) {
+    const workspace = get().workspaces.find((entry) => entry.id === id);
+    if (!workspace) throw new Error("This workspace is no longer available.");
+    if (useFixture) {
+      const target = workspace.worktrees.find((worktree) => worktree.path === path);
+      if (!target || target.isMain) throw new Error("Only linked worktrees can be cleaned up.");
+      if (target.dirty && !force) throw new Error("Commit or stash your changes before cleaning up this worktree.");
+      const worktrees = workspace.worktrees.filter((worktree) => worktree.path !== path);
+      set((current) => ({
+        workspaces: current.workspaces.map((entry) => entry.id === id ? { ...entry, worktrees } : entry),
+      }));
+      return worktrees;
+    }
+    const server = get().servers.find((entry) => entry.id === workspace.serverId);
+    if (!server?.online) throw new Error("This device isn't connected.");
+    await transport.request(
+      server.id,
+      `/workspaces/${encodeURIComponent(id)}/worktrees/close`,
+      { method: "POST", body: { path, force } },
+    );
+    return get().loadWorkspaceWorktrees(id);
   },
 
   async listBranches(workspaceId) {

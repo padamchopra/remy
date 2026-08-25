@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -15,8 +15,10 @@ const {
   addWorkspace,
   checkoutTicketWorktree,
   checkoutWorkspaceBranch,
+  closeWorkspaceWorktree,
   listWorkspaces,
   updateWorkspace,
+  worktreeDirtyMap,
 } = await import("./workspaces.js");
 
 /// A folder is all a workspace needs to be; the git metadata is attached when
@@ -112,6 +114,31 @@ test("gives a ticket a stable detached worktree from the remote default", async 
 test("keeps tickets in place when a folder is not a Git checkout", async () => {
   const added = await workspace("non-git-ticket");
   assert.equal(await checkoutTicketWorktree(added, "PLAIN-1"), added.path);
+});
+
+test("loads worktree changes on demand and protects them from safe cleanup", async () => {
+  const path = mkdtempSync(join(tmpdir(), "remy-worktree-cleanup-"));
+  execFileSync("git", ["init", "-b", "main", path]);
+  execFileSync("git", ["-C", path, "config", "user.name", "Remy Test"]);
+  execFileSync("git", ["-C", path, "config", "user.email", "remy@example.test"]);
+  writeFileSync(join(path, "README.md"), "main\n");
+  execFileSync("git", ["-C", path, "add", "README.md"]);
+  execFileSync("git", ["-C", path, "commit", "-m", "Initial commit"]);
+
+  const linked = mkdtempSync(join(tmpdir(), "remy-linked-cleanup-"));
+  rmSync(linked, { recursive: true });
+  execFileSync("git", ["-C", path, "worktree", "add", "-b", "cleanup-test", linked]);
+  writeFileSync(join(linked, "dirty.txt"), "keep me\n");
+  const added = await addWorkspace("cleanup", path);
+
+  const dirty = await worktreeDirtyMap(added.id);
+  assert.equal(dirty[realpathSync(path)], false);
+  assert.equal(dirty[realpathSync(linked)], true);
+  await assert.rejects(closeWorkspaceWorktree(added.id, realpathSync(linked), false), /uncommitted changes/);
+  assert.equal(existsSync(linked), true);
+
+  await closeWorkspaceWorktree(added.id, realpathSync(linked), true);
+  assert.equal(existsSync(linked), false);
 });
 
 test("switches the main checkout before a thread starts and preserves Git's failure reason", async () => {
