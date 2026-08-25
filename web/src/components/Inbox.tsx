@@ -226,6 +226,12 @@ function Conversation({
   const [editing, setEditing] = useState(false);
 
   const chat = agentConversation(agent.id, dms, servers);
+  const headerLabel = (
+    <span className="flex min-w-0 items-center gap-2">
+      <AgentMark agent={agent} animate="always" className="size-6" />
+      <span className="truncate text-base font-semibold">{agent.name}</span>
+    </span>
+  );
 
   useEffect(() => {
     setFailed(undefined);
@@ -284,7 +290,7 @@ function Conversation({
   if (!chat) {
     return (
       <div className="flex min-w-0 flex-1 flex-col">
-        <PaneHeader crumbs={[{ label: agent.name }]}>{settingsButton}</PaneHeader>
+        <PaneHeader crumbs={[{ label: headerLabel }]}>{settingsButton}</PaneHeader>
         <Empty className="flex-1">
           <EmptyHeader>
             <EmptyMedia variant="icon"><Bot /></EmptyMedia>
@@ -322,12 +328,7 @@ function Conversation({
           {
             // The list beside this already says which agents there are, so the
             // trail is only the one you are talking to.
-            label: (
-              <span className="flex min-w-0 items-center gap-1.5">
-                <AgentMark agent={agent} className="size-4" />
-                <span className="truncate">{agent.name}</span>
-              </span>
-            ),
+            label: headerLabel,
           },
         ]}
         persona={agent}

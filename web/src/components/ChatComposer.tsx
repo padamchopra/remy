@@ -59,8 +59,7 @@ const CHECKOUTS = [
 /// What a new worktree starts from. `remote` keeps it current with the default
 /// branch on the remote; `local` follows whatever the main checkout is on.
 function worktreeBase(branch?: string | null, mode?: "remote" | "local"): string {
-  const name = branch || "main";
-  return mode === "local" ? name : `origin/${name}`;
+  return mode === "local" ? branch || "HEAD" : "origin/HEAD";
 }
 
 export function ChatComposer({
@@ -89,7 +88,9 @@ export function ChatComposer({
   const [branch, setBranch] = useState<string>();
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [switchingBranch, setSwitchingBranch] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const checkoutDefaultsRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     textareaRef.current?.focus();
@@ -111,7 +112,7 @@ export function ChatComposer({
     : undefined) ?? undefined;
   const place = home ? (server?.name ?? "~") : workspace.name;
   const DeviceIcon = deviceIcon(server?.icon);
-  const canSend = Boolean(text.trim() && server && !busy);
+  const canSend = Boolean(text.trim() && server && !busy && !switchingBranch);
   const provider = useProvider(choice.provider);
   const asks = provider?.approvals !== false;
   const providerName = provider?.label ?? "This provider";
@@ -121,6 +122,7 @@ export function ChatComposer({
   const checkoutLabel = CHECKOUTS.find((entry) => entry.value === checkout)?.label ?? "Main checkout";
   const CheckoutIcon = checkout === "worktree" ? FolderGit2 : Folder;
   const branchName = branch ?? mainBranch;
+  const checkoutDefaults = `${workspace?.id ?? HOME}\0${settings?.defaultCheckout ?? "main"}\0${settings?.worktreeBase ?? "remote"}`;
 
   // The workspace's own choice if it has one, this machine's otherwise, until
   // you pick something — and then yours for as long as the composer is open.
@@ -157,13 +159,18 @@ export function ChatComposer({
     setPermissionMode(permissionOf(settings?.defaultPermissionMode).value);
   }, [settings?.defaultPermissionMode, permissionPicked]);
 
-  // Switching workspace re-applies this machine's defaults rather than keeping
-  // the last workspace's branch.
+  // A new workspace or default starts fresh. A later workspace refresh only
+  // mirrors its main branch, without moving the picker back to the default mode.
   useEffect(() => {
+    if (checkoutDefaultsRef.current === checkoutDefaults) {
+      if (checkout === "main" && !switchingBranch) setBranch(mainBranch);
+      return;
+    }
+    checkoutDefaultsRef.current = checkoutDefaults;
     const mode = settings?.defaultCheckout ?? "main";
     setCheckout(mode);
     setBranch(mode === "worktree" ? worktreeBase(mainBranch, settings?.worktreeBase) : mainBranch ?? undefined);
-  }, [workspace?.id, mainBranch, settings?.defaultCheckout, settings?.worktreeBase]);
+  }, [checkoutDefaults, checkout, mainBranch, settings?.defaultCheckout, settings?.worktreeBase, switchingBranch]);
 
   const pickWorkspace = (value: string) => {
     const id = deviceIdFromValue(value);
@@ -183,6 +190,25 @@ export function ChatComposer({
     setBranch(next === "worktree" ? worktreeBase(mainBranch, settings?.worktreeBase) : mainBranch);
   };
 
+  const pickBranch = async (value: string): Promise<boolean> => {
+    if (!workspace || checkout === "worktree") {
+      setBranch(value);
+      return true;
+    }
+    setSwitchingBranch(true);
+    try {
+      await checkoutBranch({ workspaceId: workspace.id, branch: value, mode: "main" });
+      setBranch(value);
+      toast.success(`Your main checkout is now on ${value}.`);
+      return true;
+    } catch (caught) {
+      toast.error("Couldn't switch branches", { description: apiError(caught) });
+      return false;
+    } finally {
+      setSwitchingBranch(false);
+    }
+  };
+
   const pickDevice = (id: string) => {
     setServerId(id);
     if (!workspace || workspace.serverId === id) return;
@@ -200,11 +226,11 @@ export function ChatComposer({
     setBusy(true);
     try {
       let cwd = home || !workspace ? "~" : mainPath(workspace);
-      if (git && workspace && branchName) {
+      if (git && workspace && branchName && checkout === "worktree") {
         const next = await checkoutBranch({
           workspaceId: workspace.id,
           branch: branchName,
-          mode: checkout,
+          mode: "worktree",
         });
         cwd = next.path;
       }
@@ -288,7 +314,7 @@ export function ChatComposer({
                 aria-label="Message"
                 placeholder="Ask a question or describe a change."
                 value={text}
-                disabled={busy}
+                disabled={busy || switchingBranch}
                 className="min-h-28"
                 onChange={(event) => setText(event.target.value)}
                 onKeyDown={(event) => {
@@ -356,7 +382,8 @@ export function ChatComposer({
                     <BranchPicker
                       workspaceId={workspace.id}
                       branch={branchName}
-                      onPick={setBranch}
+                      busy={switchingBranch}
+                      onPick={pickBranch}
                     />
                     <ComposerMenu
                       icon={CheckoutIcon}
@@ -365,6 +392,7 @@ export function ChatComposer({
                       align="end"
                       onChange={pickCheckout}
                       options={CHECKOUTS}
+                      disabled={switchingBranch}
                     />
                   </div>
                 ) : null}
@@ -385,11 +413,13 @@ export function ChatComposer({
 function BranchPicker({
   workspaceId,
   branch,
+  busy,
   onPick,
 }: {
   workspaceId: string;
   branch: string;
-  onPick: (value: string) => void;
+  busy: boolean;
+  onPick: (value: string) => Promise<boolean>;
 }) {
   const listBranches = useStore((s) => s.listBranches);
   const [open, setOpen] = useState(false);
@@ -421,7 +451,7 @@ function BranchPicker({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <InputGroupButton aria-label="Branch" className="min-w-0">
+        <InputGroupButton aria-label="Branch" className="min-w-0" disabled={busy}>
           <GitBranch />
           <span className="max-w-40 truncate">{branch}</span>
           <ChevronDown />
@@ -445,9 +475,11 @@ function BranchPicker({
                     <CommandItem
                       key={entry.name}
                       value={entry.name}
+                      disabled={busy}
                       onSelect={() => {
-                        onPick(entry.name);
-                        setOpen(false);
+                        void onPick(entry.name).then((picked) => {
+                          if (picked) setOpen(false);
+                        });
                       }}
                     >
                       <GitBranch />

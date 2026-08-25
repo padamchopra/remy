@@ -21,6 +21,7 @@ export interface Transport {
   readonly kind: "electron" | "proxy";
   servers(): Promise<Server[]>;
   request<T>(serverId: string, path: string, init?: { method?: string; body?: unknown }): Promise<T>;
+  upload<T>(serverId: string, path: string, input: { file: File }): Promise<T>;
   /// Live frames. Returns an unsubscribe.
   subscribe(handler: (serverId: string, payload: unknown) => void): () => void;
   onStatus(handler: (serverId: string, online: boolean, error?: string) => void): () => void;
@@ -141,6 +142,14 @@ function withPeers(base: LocalTransport): Transport {
       return base.request<T>(localId, `/peers/${encodeURIComponent(serverId)}/api${path}`, init);
     },
 
+    upload<T>(serverId: string, path: string, input: { file: File }) {
+      if (serverId === "cursor-cloud" && hasCursorCloud && localId) {
+        return base.upload<T>(localId, `/cursor-cloud/api${path}`, input);
+      }
+      if (!peerIds.has(serverId) || !localId) return base.upload<T>(serverId, path, input);
+      return base.upload<T>(localId, `/peers/${encodeURIComponent(serverId)}/api${path}`, input);
+    },
+
     async addServer(input) {
       await base.request(await home(), "/peers", { method: "POST", body: input });
       listed = undefined;
@@ -240,6 +249,11 @@ interface Bridge {
     path: string,
     init?: { method?: string; body?: unknown },
   ): Promise<{ ok: true; data: unknown } | { ok: false; error: string }>;
+  upload?(
+    serverId: string,
+    path: string,
+    input: { data: Uint8Array; filename: string; mimeType: string },
+  ): Promise<{ ok: true; data: unknown } | { ok: false; error: string }>;
   onPush(handler: (serverId: string, payload: unknown) => void): () => void;
   onStatus(handler: (serverId: string, online: boolean, error?: string) => void): () => void;
   /// Raises the desktop window. Absent in a browser, and on an older shell.
@@ -283,6 +297,17 @@ function electronTransport(bridge: Bridge): LocalTransport {
     },
     async request<T>(serverId: string, path: string, init?: { method?: string; body?: unknown }) {
       const result = await bridge.request(serverId, path, init);
+      if (!result.ok) throw new Error(result.error);
+      return result.data as T;
+    },
+    async upload<T>(serverId: string, path: string, input: { file: File }) {
+      if (!bridge.upload) throw new Error("Update Remy on this machine to attach images.");
+      const data = new Uint8Array(await input.file.arrayBuffer());
+      const result = await bridge.upload(serverId, path, {
+        data,
+        filename: input.file.name,
+        mimeType: input.file.type,
+      });
       if (!result.ok) throw new Error(result.error);
       return result.data as T;
     },
@@ -370,6 +395,28 @@ function proxyTransport(): LocalTransport {
       });
       const text = await response.text();
       if (!response.ok) throw new Error(text || `${response.status} ${response.statusText}`);
+      return (text ? JSON.parse(text) : null) as T;
+    },
+    async upload<T>(_serverId: string, path: string, input: { file: File }) {
+      const response = await fetch(`/api${path}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": input.file.type,
+          "X-Filename": input.file.name,
+        },
+        body: input.file,
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        let message = text || `${response.status} ${response.statusText}`;
+        try {
+          const parsed = JSON.parse(text) as { error?: string };
+          if (parsed.error) message = parsed.error;
+        } catch {
+          // Keep a short non-JSON response as the useful detail.
+        }
+        throw new Error(message);
+      }
       return (text ? JSON.parse(text) : null) as T;
     },
     subscribe(handler) {

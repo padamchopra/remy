@@ -37,6 +37,12 @@ export interface ConnectionEvents {
   status: (serverId: string, online: boolean, error?: string) => void;
 }
 
+export interface DesktopClient {
+  version: string;
+  arch: string;
+  updates: boolean;
+}
+
 /// Reconnect backoff. The server is usually on the same tailnet, so the first
 /// retry is quick; the ceiling stops a sleeping laptop from hammering it.
 const BACKOFF_MS = [500, 1_000, 2_000, 5_000, 10_000, 30_000];
@@ -47,7 +53,7 @@ export class Connection extends EventEmitter {
   private timers = new Map<string, NodeJS.Timeout>();
   private closing = false;
 
-  constructor(private servers: ServerConfig[]) {
+  constructor(private servers: ServerConfig[], private client?: DesktopClient) {
     super();
   }
 
@@ -110,6 +116,39 @@ export class Connection extends EventEmitter {
     return (text ? JSON.parse(text) : null) as T;
   }
 
+  /// Uploads bytes without exposing the device token to the renderer. The
+  /// server owns the attachment afterwards, so a thread opened from another
+  /// machine can use the same opaque reference.
+  async upload<T>(
+    serverId: string,
+    path: string,
+    input: { data: Uint8Array; filename: string; mimeType: string },
+  ): Promise<T> {
+    const server = this.servers.find((item) => item.id === serverId);
+    if (!server) throw new Error(`no server ${serverId}`);
+    const response = await fetch(new URL(path, server.url), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${server.token}`,
+        "Content-Type": input.mimeType,
+        "X-Filename": input.filename,
+      },
+      body: input.data,
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      let message = text || `${response.status} ${response.statusText}`;
+      try {
+        const parsed = JSON.parse(text) as { error?: string };
+        if (parsed.error) message = parsed.error;
+      } catch {
+        // Keep a short non-JSON response as the useful detail.
+      }
+      throw new Error(message);
+    }
+    return (text ? JSON.parse(text) : null) as T;
+  }
+
   start(): void {
     for (const server of this.servers) this.connect(server);
   }
@@ -126,6 +165,12 @@ export class Connection extends EventEmitter {
     if (this.closing) return;
     const url = new URL("/notify/stream", server.url);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    if (server.builtin && this.client) {
+      url.searchParams.set("client", "desktop");
+      url.searchParams.set("version", this.client.version);
+      url.searchParams.set("arch", this.client.arch);
+      if (this.client.updates) url.searchParams.set("updates", "1");
+    }
     // `notify=0` subscribes to live state without becoming a notification
     // target. The desktop app wants the banners, so it is left absent.
 

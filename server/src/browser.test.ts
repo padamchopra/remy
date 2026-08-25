@@ -8,6 +8,8 @@ process.env.MC_CONFIG_DIR = mkdtempSync(join(tmpdir(), "remy-browser-tabs-"));
 const { browserView, browserViewportSize, closeBrowser } = await import("./browser.js");
 
 test("browser viewport presets use responsive QA dimensions", () => {
+  assert.deepEqual(browserViewportSize("fullscreen"), { width: 1920, height: 1080 });
+  assert.deepEqual(browserViewportSize("fullscreen", { width: 913, height: 677 }), { width: 913, height: 677 });
   assert.deepEqual(browserViewportSize("desktop"), { width: 1280, height: 800 });
   assert.deepEqual(browserViewportSize("mobile"), { width: 390, height: 844 });
 });

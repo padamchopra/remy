@@ -87,6 +87,17 @@ test("a command reads as one tool line that gains its output", () => {
 
   const failed = codexEntry({ ...running, status: "completed", exit_code: 1, aggregated_output: "1 failing" });
   assert.equal(failed?.status, "error");
+
+  const stopped = codexEntry({
+    ...running,
+    status: "completed",
+    exit_code: 1,
+    aggregated_output: "QA sidecar is ready.\n^C",
+  });
+  assert.equal(stopped?.status, "stopped");
+
+  const interrupted = codexEntry({ ...running, status: "stopped", aggregated_output: "Stopped by user." });
+  assert.equal(interrupted?.status, "stopped");
 });
 
 test("a patch says which file, or how many", () => {
@@ -129,8 +140,8 @@ test("the plan is the thread's plan, not a line in its feed", () => {
   ]);
 });
 
-test("both halves of the prompt occupy the context window", () => {
-  assert.equal(codexTokens({ input_tokens: 1_000, cached_input_tokens: 9_000, output_tokens: 200 }), 10_000);
+test("cached input is already part of the prompt", () => {
+  assert.equal(codexTokens({ input_tokens: 10_000, cached_input_tokens: 9_000, output_tokens: 200 }), 10_000);
   assert.equal(codexTokens(undefined), 0);
 });
 
@@ -164,6 +175,7 @@ rl.on("line", (line) => {
   if (message.method === "turn/start") {
     active = "turn-" + (++turn);
     const prompt = message.params.input[0].text;
+    const images = message.params.input.filter((item) => item.type === "image");
     send({ id: message.id, result: { turn: { id: active, status: "inProgress", items: [] } } });
     send({ method: "turn/started", params: { threadId: "thread-1", turn: { id: active, status: "inProgress", items: [] } } });
     if (prompt === "approval") {
@@ -175,6 +187,10 @@ rl.on("line", (line) => {
     }
     if (prompt === "effort") {
       complete("effort:" + threadEffort + ":" + message.params.modelReasoningEffort);
+      return;
+    }
+    if (prompt === "image") {
+      complete("images:" + images.length + ":" + images[0].url);
       return;
     }
     if (prompt !== "hang") complete(prompt);
@@ -209,6 +225,20 @@ test("one app-server connection carries multiple streamed turns", async () => {
   );
   const usage = events.find((event) => event.type === "usage.updated");
   assert.equal(usage?.type === "usage.updated" && usage.usage.context_window, 200_000);
+});
+
+test("Codex receives native image inputs", async () => {
+  const events: CodexEvent[] = [];
+  const session = createCodexSession(
+    { command: fakeAppServer(), cwd: process.cwd(), permissionMode: "plan" },
+    (event) => events.push(event),
+  );
+  await session.run("image", { images: [{ dataUrl: "data:image/png;base64,iVBORw0KGgo=" }] }).done;
+  session.close();
+  assert.ok(events.some((event) =>
+    event.type === "item.completed"
+    && event.item.type === "agent_message"
+    && event.item.text === "images:1:data:image/png;base64,iVBORw0KGgo="));
 });
 
 test("app-server receives the selected model effort", async () => {

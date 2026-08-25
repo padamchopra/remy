@@ -25,7 +25,14 @@ export async function takeSnapshot(): Promise<string> {
 
   // One frame of whatever was shared, then the share stops immediately — this
   // is a screenshot, not a recording.
-  const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+  const stream = await navigator.mediaDevices.getDisplayMedia({
+    video: {
+      width: { ideal: 3840 },
+      height: { ideal: 2160 },
+      frameRate: { ideal: 1, max: 5 },
+    },
+    audio: false,
+  });
   try {
     const video = document.createElement("video");
     video.srcObject = stream;
@@ -35,11 +42,14 @@ export async function takeSnapshot(): Promise<string> {
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 
     const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    const scale = 3840 / Math.max(video.videoWidth, video.videoHeight);
+    canvas.width = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
     const context = canvas.getContext("2d");
     if (!context) throw new Error("This browser can't draw the capture.");
-    context.drawImage(video, 0, 0);
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
     video.pause();
 
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));

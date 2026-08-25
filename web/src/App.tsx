@@ -38,6 +38,7 @@ import { Board, NewTicketDialog } from "@/components/Board";
 import { Recurring } from "@/components/Recurring";
 import { MissingTicket, TicketView } from "@/components/TicketView";
 import { SettingsPane, type SettingsTab } from "@/components/Settings";
+import type { AnalyticsTab } from "@/components/AnalyticsSettings";
 import { Inbox as InboxPane } from "@/components/Inbox";
 import { WorkspaceSettings } from "@/components/WorkspaceSettings";
 import { useNotifications } from "@/hooks/use-notifications";
@@ -125,6 +126,9 @@ export function App() {
   const section = sectionOf(route) as Section;
   const view = route.name === "settings" ? "settings" : "app";
   const settingsTab: SettingsTab = route.name === "settings" ? route.tab : "general";
+  const analyticsTab: AnalyticsTab = route.name === "settings" && route.tab === "analytics"
+    ? route.analyticsTab ?? "general"
+    : "general";
   const selected = route.name === "threads" ? (route.threadId ?? null) : null;
   const workspaceSettingsId = route.name === "workspaces" ? (route.workspaceId ?? null) : null;
 
@@ -267,6 +271,20 @@ export function App() {
   });
 
   const active = chats.find((chat) => chat.id === selected) ?? null;
+  const activeArchive = archived.find((thread) => thread.id === selected) ?? null;
+  const archivedChat = activeArchive ? {
+    id: activeArchive.id,
+    serverId: activeArchive.serverId,
+    title: activeArchive.title,
+    cwd: activeArchive.cwd,
+    state: "idle" as const,
+    provider: activeArchive.provider,
+    agentId: activeArchive.agentId,
+    model: activeArchive.model,
+    effort: activeArchive.effort,
+    preview: activeArchive.preview,
+    updatedAt: activeArchive.archivedAt,
+  } : null;
   const needsYou = scoped.filter((chat) => chat.state === "needs_input").length;
   const working = scoped.filter((chat) => chat.state === "working").length;
   const anyOnline = servers.some((s) => s.online);
@@ -321,9 +339,12 @@ export function App() {
   // never existed. Fall back to the composer rather than showing an empty pane.
   useEffect(() => {
     if (!selected || loading) return;
-    if (allChats.some((chat) => chat.id === selected)) return;
+    if (
+      allChats.some((chat) => chat.id === selected)
+      || archived.some((thread) => thread.id === selected)
+    ) return;
     go({ name: "threads" }, true);
-  }, [selected, loading, allChats]);
+  }, [selected, loading, allChats, archived]);
 
   const chatCounts = (
     <div className="flex items-center gap-4 text-xs text-muted-foreground">
@@ -412,7 +433,12 @@ export function App() {
         </div>
 
         {view === "settings" ? (
-          <SettingsPane tab={settingsTab} release={release} />
+          <SettingsPane
+            tab={settingsTab}
+            analyticsTab={analyticsTab}
+            onAnalyticsTab={(tab) => go({ name: "settings", tab: "analytics", analyticsTab: tab }, true)}
+            release={release}
+          />
         ) : route.name === "board" ? (
           <Board
             scope={route.scope}
@@ -470,6 +496,18 @@ export function App() {
                   (agent) => agent.id === active.agentId && agent.serverId === active.serverId,
                 )}
                 onOpenTicket={(key) => go({ name: "ticket", key })}
+                onOpenThread={openChat}
+                onOpenWorkspace={(workspaceId) => go({ name: "workspaces", workspaceId })}
+              />
+            ) : section === "chats" && activeArchive && archivedChat ? (
+              <ChatView
+                key={`archived:${activeArchive.id}`}
+                chat={archivedChat}
+                archived={activeArchive}
+                persona={agents.find(
+                  (agent) => agent.id === activeArchive.agentId && agent.serverId === activeArchive.serverId,
+                )}
+                onRestored={openChat}
                 onOpenThread={openChat}
                 onOpenWorkspace={(workspaceId) => go({ name: "workspaces", workspaceId })}
               />

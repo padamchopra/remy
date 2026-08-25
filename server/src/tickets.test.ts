@@ -125,16 +125,11 @@ test("auto-start becomes ready regardless of whether Todo or assignee changes fi
   assert.equal(runner.shouldAutoStart(tickets.getTicket(assigneeFirst.id)!), true);
 });
 
-test("a thread only moves a ticket between In progress and Needs input", () => {
+test("a linked thread moves a ticket between In progress and Needs input", () => {
   const board = project("Statuses");
   const ticket = tickets.createTicket({ projectId: board.id, title: "Flaky login test" });
   tickets.linkThread(ticket.id, { chatId: "chat-1" });
-
-  // Backlog is not one of the derived pair, so a working thread leaves it be.
-  tickets.syncTicketFromThread("chat-1", "working");
-  assert.equal(tickets.getTicket(ticket.id)?.status, "backlog");
-
-  tickets.setTicketStatus(ticket.id, "in_progress");
+  assert.equal(tickets.getTicket(ticket.id)?.status, "in_progress");
   tickets.syncTicketFromThread("chat-1", "needs_input");
   assert.equal(tickets.getTicket(ticket.id)?.status, "needs_input");
 
@@ -149,15 +144,6 @@ test("a thread only moves a ticket between In progress and Needs input", () => {
   tickets.setTicketStatus(ticket.id, "done");
   tickets.syncTicketFromThread("chat-1", "working");
   assert.equal(tickets.getTicket(ticket.id)?.status, "done");
-});
-
-test("a working thread picks up a ticket from Todo", () => {
-  const board = project("Starts");
-  const ticket = tickets.createTicket({ projectId: board.id, title: "Start here", status: "todo" });
-  tickets.linkThread(ticket.id, { chatId: "chat-start" });
-
-  tickets.syncTicketFromThread("chat-start", "working");
-  assert.equal(tickets.getTicket(ticket.id)?.status, "in_progress");
 });
 
 test("starting a ticket hands You and Nobody to the workspace agent", () => {
@@ -243,16 +229,30 @@ test("an explicit work request links its ticket before the turn starts", () => {
   assert.equal(tickets.ticketForChat("chat-prompt")?.id, ticket.id);
   assert.equal(tickets.getTicket(ticket.id)?.status, "in_progress");
 
+  const spaced = tickets.createTicket({ projectId: board.id, title: "Spaced prompt", status: "todo" });
+  const spacedKey = spaced.key.replace("-", " ");
+  assert.equal(tickets.linkTicketFromWorkPrompt("chat-spaced", `Work on ${spacedKey}`)?.id, spaced.id);
+  assert.equal(tickets.ticketForChat("chat-spaced")?.id, spaced.id);
+  assert.equal(tickets.getTicket(spaced.id)?.status, "in_progress");
+
   const question = tickets.createTicket({ projectId: board.id, title: "Prompt question" });
   assert.equal(tickets.linkTicketFromWorkPrompt("chat-question", `What is ${question.key}?`), undefined);
 });
 
-test("attaching a thread does not move the ticket by itself", () => {
-  const board = project("Bookkeeping");
-  const ticket = tickets.createTicket({ projectId: board.id, title: "Attach me" });
-  const after = tickets.linkThread(ticket.id, { chatId: "chat-attach" });
-  assert.equal(after.status, "backlog");
-  assert.equal(after.threads[0].linkedBy, "you");
+test("attaching a thread starts non-terminal work and preserves terminal states", () => {
+  const board = project("Attachment status");
+  for (const status of ["backlog", "todo", "needs_input"] as const) {
+    const ticket = tickets.createTicket({ projectId: board.id, title: `Start ${status}`, status });
+    const after = tickets.linkThread(ticket.id, { chatId: `chat-${status}` });
+    assert.equal(after.status, "in_progress");
+    assert.equal(after.threads[0].linkedBy, "you");
+  }
+
+  for (const status of ["pr_review", "done", "cancelled"] as const) {
+    const ticket = tickets.createTicket({ projectId: board.id, title: `Keep ${status}`, status });
+    const after = tickets.linkThread(ticket.id, { chatId: `chat-${status}` });
+    assert.equal(after.status, status);
+  }
 });
 
 test("your ticket comment continues the newest runner thread with the same body", async () => {

@@ -5,9 +5,10 @@ import { chromium, type Browser, type BrowserContext, type Locator, type Page } 
 import { broadcast } from "./notify.js";
 
 export type BrowserController = "agent" | "you";
-export type BrowserViewport = "desktop" | "mobile";
+export type BrowserViewport = "fullscreen" | "desktop" | "mobile";
 
 const BROWSER_VIEWPORTS: Record<BrowserViewport, { width: number; height: number }> = {
+  fullscreen: { width: 1920, height: 1080 },
   desktop: { width: 1280, height: 800 },
   mobile: { width: 390, height: 844 },
 };
@@ -41,6 +42,7 @@ interface BrowserSession {
   context: BrowserContext;
   page: Page;
   viewport: BrowserViewport;
+  size: { width: number; height: number };
   revision: number;
   controller?: BrowserController;
   cursor?: { x: number; y: number; pressed?: boolean };
@@ -53,8 +55,15 @@ interface BrowserSession {
 
 const sessions = new Map<string, BrowserSession>();
 
-export function browserViewportSize(viewport: BrowserViewport): { width: number; height: number } {
-  return BROWSER_VIEWPORTS[viewport];
+export function browserViewportSize(
+  viewport: BrowserViewport,
+  size?: { width?: number; height?: number },
+): { width: number; height: number } {
+  if (viewport !== "fullscreen" || !size) return BROWSER_VIEWPORTS[viewport];
+  return {
+    width: Math.round(Math.min(3840, Math.max(240, Number(size.width) || BROWSER_VIEWPORTS.fullscreen.width))),
+    height: Math.round(Math.min(2160, Math.max(200, Number(size.height) || BROWSER_VIEWPORTS.fullscreen.height))),
+  };
 }
 
 function sessionKey(chatId: string, browserId: string): string {
@@ -123,6 +132,7 @@ async function createSession(chatId: string, browserId: string): Promise<Browser
     context,
     page,
     viewport,
+    size,
     revision: 0,
     humanEpoch: 0,
     queue: Promise.resolve(),
@@ -153,15 +163,14 @@ async function sessionFor(chatId: string, browserId: string): Promise<BrowserSes
 }
 
 function changed(chatId: string, browserId: string, session: BrowserSession): void {
-  const size = browserViewportSize(session.viewport);
   session.revision += 1;
   broadcast({
     type: "browser",
     chatId,
     browserId,
     viewport: session.viewport,
-    width: size.width,
-    height: size.height,
+    width: session.size.width,
+    height: session.size.height,
     revision: session.revision,
     active: true,
     controller: session.controller,
@@ -221,7 +230,7 @@ function locatorFor(page: Page, target: BrowserTarget): Locator {
 }
 
 async function cursorFor(session: BrowserSession, target: BrowserTarget): Promise<{ x: number; y: number }> {
-  const size = browserViewportSize(session.viewport);
+  const size = session.size;
   if (Number.isFinite(target.x) && Number.isFinite(target.y)) {
     return {
       x: Math.max(0, Math.min(size.width, Number(target.x))),
@@ -246,14 +255,17 @@ export async function setBrowserViewport(
   viewport: BrowserViewport,
   controller: BrowserController,
   browserId = "default",
+  requestedSize?: { width?: number; height?: number },
 ): Promise<BrowserView> {
   if (!sessions.has(sessionKey(chatId, browserId))) {
     throw new Error("Open a page before changing its viewport.");
   }
   return queued(chatId, browserId, controller, async (session, epoch) => {
+    const size = browserViewportSize(viewport, requestedSize);
     session.viewport = viewport;
+    session.size = size;
     session.cursor = undefined;
-    await session.page.setViewportSize(browserViewportSize(viewport));
+    await session.page.setViewportSize(size);
     if (controller === "agent") assertAgentStillControls(session, epoch);
     await session.page.waitForTimeout(100);
     return browserView(chatId, true, browserId);
@@ -370,7 +382,7 @@ export async function browserSnapshotText(chatId: string, browserId = "default")
   return [
     `Page: ${title || "Untitled"}`,
     `URL: ${session.page.url()}`,
-    `Viewport: ${session.viewport} (${browserViewportSize(session.viewport).width} × ${browserViewportSize(session.viewport).height})`,
+    `Viewport: ${session.viewport} (${session.size.width} × ${session.size.height})`,
     interactive.length ? `\nInteractive elements:\n${interactive.map((item) => `- ${item?.role}: ${item?.name || "Unnamed"}`).join("\n")}` : "",
     body ? `\nVisible text:\n${body.slice(0, 20_000)}` : "",
     session.console.length ? `\nRecent console:\n${session.console.join("\n")}` : "",
@@ -384,15 +396,14 @@ export async function browserView(chatId: string, screenshot = false, browserId 
     const viewport: BrowserViewport = "desktop";
     return { browserId, active: false, viewport, ...browserViewportSize(viewport), revision: 0 };
   }
-  const size = browserViewportSize(session.viewport);
   const view: BrowserView = {
     browserId,
     active: true,
     url: session.page.url(),
     title: await session.page.title().catch(() => ""),
     viewport: session.viewport,
-    width: size.width,
-    height: size.height,
+    width: session.size.width,
+    height: session.size.height,
     revision: session.revision,
     controller: session.controller,
     cursor: session.cursor,

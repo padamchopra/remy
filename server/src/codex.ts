@@ -15,7 +15,7 @@ export type CodexItem =
       command: string;
       aggregated_output?: string;
       exit_code?: number;
-      status: "in_progress" | "completed" | "failed";
+      status: "in_progress" | "completed" | "failed" | "stopped";
     }
   | {
       id: string;
@@ -126,7 +126,12 @@ export interface CodexRun {
 }
 
 export interface CodexSession {
-  run(prompt: string, options?: { model?: string; effort?: string; permissionMode?: string }): CodexRun;
+  run(prompt: string, options?: {
+    model?: string;
+    effort?: string;
+    permissionMode?: string;
+    images?: Array<{ dataUrl: string }>;
+  }): CodexRun;
   close(): void;
 }
 
@@ -236,7 +241,12 @@ class AppServerSession implements CodexSession {
     this.ready.catch(() => {});
   }
 
-  run(prompt: string, overrides: { model?: string; effort?: string; permissionMode?: string } = {}): CodexRun {
+  run(prompt: string, overrides: {
+    model?: string;
+    effort?: string;
+    permissionMode?: string;
+    images?: Array<{ dataUrl: string }>;
+  } = {}): CodexRun {
     if (this.active) throw new Error("Codex is already running a turn.");
     let resolve!: () => void;
     let reject!: (error: Error) => void;
@@ -258,7 +268,10 @@ class AppServerSession implements CodexSession {
       const chosenEffort = overrides.effort ?? this.options.effort;
       const result = asRecord(await this.request("turn/start", {
         threadId: this.threadId,
-        input: [{ type: "text", text: prompt }],
+        input: [
+          { type: "text", text: prompt },
+          ...(overrides.images ?? []).map((image) => ({ type: "image", url: image.dataUrl })),
+        ],
         cwd: this.options.cwd,
         ...(chosenModel ? { model: chosenModel } : {}),
         ...(chosenEffort ? { modelReasoningEffort: chosenEffort } : {}),
@@ -559,7 +572,14 @@ function toCodexItem(value: unknown): CodexItem | undefined {
     return { id, type: "reasoning", text: [...summary, ...content].join("\n") };
   }
   if (type === "commandExecution") {
-    const status = item.status === "inProgress" ? "in_progress" : item.status === "completed" ? "completed" : "failed";
+    const rawStatus = stringValue(item.status);
+    const status = rawStatus === "inProgress"
+      ? "in_progress"
+      : rawStatus === "completed"
+        ? "completed"
+        : /cancel|interrupt|stopp/i.test(rawStatus ?? "")
+          ? "stopped"
+          : "failed";
     return {
       id,
       type: "command_execution",
@@ -608,8 +628,13 @@ export function codexEntry(item: CodexItem, turn = ""): ConvEntry | undefined {
       return { id, kind: "thinking", text: clip(item.text ?? "", MAX_THINK) };
     case "command_execution": {
       const entry: ConvEntry = { id, kind: "tool", tool: "Bash", verb: "Ran", arg: clip(item.command ?? "", MAX_ARG) };
-      if (item.status !== "in_progress") entry.status = item.status === "failed" || item.exit_code ? "error" : "ok";
       const output = item.aggregated_output?.trim();
+      const stopped = item.status === "stopped"
+        || item.exit_code === 130
+        || /(?:\^C|SIGINT)\s*$/i.test(output ?? "");
+      if (item.status !== "in_progress") {
+        entry.status = stopped ? "stopped" : item.status === "failed" || item.exit_code ? "error" : "ok";
+      }
       if (output) applyToolOutput(entry, output, MAX_OUTPUT);
       return entry;
     }
@@ -649,7 +674,7 @@ export function codexTodos(item: CodexItem): ConvTodo[] {
 
 export function codexTokens(usage: CodexUsage | undefined): number {
   if (!usage) return 0;
-  return num(usage.input_tokens) + num(usage.cached_input_tokens);
+  return num(usage.input_tokens);
 }
 
 /// One small read-only answer for Remy's own background work, such as naming a

@@ -3,6 +3,7 @@ import { config } from "./config.js";
 import { forwardNotification } from "./peers.js";
 import { sendPush } from "./push.js";
 import type { RegistryEntry } from "./registry.js";
+import { attachAppUpdateHost } from "./app-update.js";
 
 export interface NotifyEvent {
   session: string;
@@ -36,9 +37,10 @@ const subscribers = new Set<WebSocket>();
 const notifyTargets = new Set<WebSocket>();
 const alive = new WeakSet<WebSocket>();
 
-export function attachNotifyStream(ws: WebSocket, notifies: boolean): void {
+export function attachNotifyStream(ws: WebSocket, notifies: boolean, params = new URLSearchParams()): void {
   subscribers.add(ws);
   if (notifies) notifyTargets.add(ws);
+  attachAppUpdateHost(ws, params);
   alive.add(ws);
   ws.on("pong", () => alive.add(ws));
   const drop = () => {

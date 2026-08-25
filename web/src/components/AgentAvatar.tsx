@@ -1,6 +1,6 @@
 import "blobatar/motion.css";
 
-import { traits } from "blobatar";
+import { traits, type Animate } from "blobatar";
 import {
   happy,
   love,
@@ -156,7 +156,15 @@ export function encodeAgentAvatar(config: AgentAvatarConfig): string {
   return `${AVATAR_PREFIX}${CONFIG_PREFIX}${encodeURIComponent(config.seed)}?${params}`;
 }
 
-export function AgentMark({ agent, className }: { agent: Agent; className?: string }) {
+export function AgentMark({
+  agent,
+  className,
+  animate = "hover",
+}: {
+  agent: Agent;
+  className?: string;
+  animate?: Animate;
+}) {
   const config = agentAvatarConfig(agent);
   const shapeOption = AGENT_AVATAR_SHAPES.find((option) => option.value === config.shape);
   const toneOption = AGENT_AVATAR_TONES.find((option) => option.value === config.tone);
@@ -171,14 +179,14 @@ export function AgentMark({ agent, className }: { agent: Agent; className?: stri
             traits: { shape: 0.745 },
             hue: 225,
             expression: smug,
-            animate: "hover",
+            animate,
           }
         : {
             ...(shape === undefined ? {} : { traits: { shape } }),
             hue: config.hue,
             ...(tone === undefined ? {} : { tone }),
             expression: EXPRESSIONS[config.expression],
-            animate: "hover",
+            animate,
           }}
     />
   );

@@ -206,6 +206,7 @@ export function AppSidebar({
                       <ArchivedThreadItem
                         key={`${thread.serverId}:${thread.id}`}
                         thread={thread}
+                        active={selected === thread.id}
                         workspace={workspaces[workspaceForPath(thread.cwd, workspaces)]}
                         server={servers.find((entry) => entry.id === thread.serverId)}
                         onSelectChat={onSelectChat}
@@ -357,11 +358,13 @@ function ThreadActions({ chat }: { chat: Chat }) {
 
 function ArchivedThreadItem({
   thread,
+  active,
   workspace,
   server,
   onSelectChat,
 }: {
   thread: ArchivedThread;
+  active: boolean;
   workspace?: Workspace;
   server?: Server;
   onSelectChat: (id: string) => void;
@@ -407,7 +410,8 @@ function ArchivedThreadItem({
           threadRowHoverClass,
         )}
         disabled={busy}
-        onClick={() => void restore()}
+        isActive={active}
+        onClick={() => onSelectChat(thread.id)}
       >
         <WorkspaceMark home={!workspace} workspace={workspace} server={server} size="sm" />
         <span className="min-w-0 flex-1 truncate text-sidebar-foreground">{thread.title}</span>
@@ -501,19 +505,19 @@ function ThreadRow({
       )}
       onClick={onSelect}
     >
-      {/* Where the thread lives, and what it is answering — an eyebrow above
-          the title, so you place the row before you read it. */}
+      {/* A linked ticket is the most useful destination; otherwise the
+          workspace names where the thread lives. The workspace mark remains
+          stable so either row is recognisable before it is read. */}
       <span className="flex min-w-0 items-center gap-1.5 text-[11px] leading-none font-normal text-muted-foreground">
         <WorkspaceMark home={!workspace} workspace={workspace} server={server} size="sm" />
-        <span className="min-w-0 flex-1 truncate">{place}</span>
-        {ticket && (
+        {ticket ? (
           // A key, not a button: this row is already a button, and one inside
           // another is not markup a browser will honour. The click is stopped
           // here so opening the ticket does not also open the thread.
           <span
             role="link"
             tabIndex={0}
-            className="shrink-0 rounded font-mono text-[10px] text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            className="min-w-0 flex-1 truncate rounded font-mono text-[10px] text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             onClick={(event) => {
               event.stopPropagation();
               onOpenTicket(ticket.key);
@@ -527,6 +531,8 @@ function ThreadRow({
           >
             {ticket.key}
           </span>
+        ) : (
+          <span className="min-w-0 flex-1 truncate">{place}</span>
         )}
       </span>
 

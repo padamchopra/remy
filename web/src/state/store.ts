@@ -12,6 +12,7 @@ import type {
   Chat,
   ChatApproval,
   ChatDetail,
+  ChatImageAttachment,
   ChatQuestionRequest,
   ChatState,
   ContextUsage,
@@ -72,8 +73,13 @@ interface RawArchive {
   agent?: string;
   conversation?: {
     title?: string;
+    agentId?: string;
     model?: string;
+    effort?: string;
+    permissionMode?: string;
     entries?: ConvEntry[];
+    todos?: ConvTodo[];
+    context?: ContextUsage;
   };
 }
 
@@ -172,7 +178,8 @@ interface State {
   updateRepos(): Promise<void>;
   openChat(id: string): Promise<void>;
   closeChat(): void;
-  sendMessage(text: string): Promise<void>;
+  uploadMessageImage(file: File): Promise<ChatImageAttachment>;
+  sendMessage(text: string, attachments?: ChatImageAttachment[]): Promise<void>;
   answerApproval(requestId: string, decision: "allow" | "allowAlways" | "deny"): Promise<void>;
   answerQuestion(requestId: string, answers: Record<string, unknown>): Promise<void>;
   interrupt(): Promise<void>;
@@ -789,13 +796,25 @@ export const useStore = create<State>((set, get) => ({
     set({ openId: undefined, detail: undefined, detailLoading: false });
   },
 
-  async sendMessage(text) {
+  async uploadMessageImage(file) {
+    const detail = get().detail;
+    if (!detail) throw new Error("Open a thread before attaching an image.");
+    const body = await transport.upload<{ attachment?: ChatImageAttachment }>(
+      detail.serverId,
+      `/chats/${encodeURIComponent(detail.id)}/upload`,
+      { file },
+    );
+    if (!body.attachment) throw new Error("That image didn't finish uploading.");
+    return body.attachment;
+  },
+
+  async sendMessage(text, attachments = []) {
     const detail = get().detail;
     const trimmed = text.trim();
     if (!detail || !trimmed) return;
     await transport.request(detail.serverId, `/chats/${encodeURIComponent(detail.id)}/message`, {
       method: "POST",
-      body: { text: trimmed },
+      body: { text: trimmed, attachments },
     });
     // The server echoes the message back as a `chat` frame. With the socket
     // down there is no frame coming, so read the feed once instead.
@@ -1416,9 +1435,15 @@ function toArchivedThread(raw: RawArchive, serverId: string): ArchivedThread {
     title: raw.conversation?.title?.trim() || raw.session,
     cwd: raw.cwd ?? "~",
     provider: raw.agent,
+    agentId: raw.conversation?.agentId,
     model: raw.conversation?.model,
+    effort: raw.conversation?.effort,
+    permissionMode: raw.conversation?.permissionMode,
     preview,
     archivedAt: raw.archivedAt,
+    entries,
+    todos: raw.conversation?.todos ?? [],
+    context: raw.conversation?.context,
   };
 }
 

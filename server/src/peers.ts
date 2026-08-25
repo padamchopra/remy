@@ -149,9 +149,17 @@ function peerName(value: unknown, fallback: string): string {
 export async function callPeer<T>(
   peer: Pick<Peer, "url" | "token">,
   path: string,
-  init: { method?: string; body?: unknown; peerAuth?: boolean } = {},
+  init: {
+    method?: string;
+    body?: unknown;
+    rawBody?: Buffer;
+    filename?: string;
+    contentType?: string;
+    peerAuth?: boolean;
+  } = {},
 ): Promise<T> {
-  const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  if (init.body !== undefined && init.rawBody !== undefined) throw new Error("a peer request has one body");
+  const signal = AbortSignal.timeout(init.rawBody ? 120_000 : REQUEST_TIMEOUT_MS);
   const method = init.method ?? "GET";
   const timestamp = String(Date.now());
   const peerSignature = init.peerAuth
@@ -159,6 +167,12 @@ export async function callPeer<T>(
       .update(`remy-peer:${deviceId}:${method}:${path}:${timestamp}`)
       .digest("base64url")
     : undefined;
+  const requestBody: BodyInit | undefined = init.rawBody
+    ? init.rawBody.buffer.slice(
+      init.rawBody.byteOffset,
+      init.rawBody.byteOffset + init.rawBody.byteLength,
+    ) as ArrayBuffer
+    : init.body === undefined ? undefined : JSON.stringify(init.body);
   // Concatenated rather than resolved against a base: a root-relative path
   // resolved against `https://host/remy` would drop the `/remy`, and a peer
   // behind a path prefix is exactly the shape `tailscale serve` can produce.
@@ -171,9 +185,12 @@ export async function callPeer<T>(
         "X-Remy-Peer-Time": timestamp,
         "X-Remy-Peer-Signature": peerSignature,
       } : {}),
-      ...(init.body === undefined ? {} : { "Content-Type": "application/json" }),
+      ...(init.rawBody ? {
+        "Content-Type": init.contentType ?? "application/octet-stream",
+        "X-Filename": init.filename ?? "image",
+      } : init.body === undefined ? {} : { "Content-Type": "application/json" }),
     },
-    ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+    ...(requestBody === undefined ? {} : { body: requestBody }),
     signal,
   });
   const text = await response.text();
@@ -481,7 +498,13 @@ export function acceptAnnouncement(body: Record<string, unknown>): PeerView {
 export async function proxyToPeer<T>(
   peerId: string,
   path: string,
-  init: { method?: string; body?: unknown } = {},
+  init: {
+    method?: string;
+    body?: unknown;
+    rawBody?: Buffer;
+    filename?: string;
+    contentType?: string;
+  } = {},
 ): Promise<T> {
   const peer = getPeer(peerId);
   if (!peer) throw new Error("that device is not paired");

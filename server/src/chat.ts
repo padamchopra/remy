@@ -79,10 +79,12 @@ import {
   type ConvQuestion,
   type ConvTodo,
   type Conversation,
+  type ChatImageAttachment,
 } from "./transcript.js";
 import { claudeTicketMcpServer, ticketPromptContext } from "./ticket-tools.js";
 import { remyToolToken } from "./ticket-tool-auth.js";
 import { forgetChat, linkTicketFromWorkPrompt, syncTicketFromThread } from "./tickets.js";
+import { readChatImage } from "./chat-attachments.js";
 import { uploadRoot } from "./uploads.js";
 import { nameDetachedWorktree } from "./workspaces.js";
 
@@ -295,10 +297,23 @@ class PromptQueue implements AsyncIterable<SDKUserMessage> {
   }
 }
 
-function userMessage(text: string): SDKUserMessage {
+interface ChatPrompt {
+  text: string;
+  attachments: ChatImageAttachment[];
+}
+
+function userMessage(chatId: string, prompt: ChatPrompt): SDKUserMessage {
+  const images = prompt.attachments.map((attachment) => ({
+    type: "image" as const,
+    source: {
+      type: "base64" as const,
+      media_type: attachment.mimeType,
+      data: readChatImage(chatId, attachment).base64,
+    },
+  }));
   return {
     type: "user",
-    message: { role: "user", content: [{ type: "text", text }] },
+    message: { role: "user", content: [{ type: "text", text: prompt.text }, ...images] },
     parent_tool_use_id: null,
     session_id: "",
   } as SDKUserMessage;
@@ -329,7 +344,7 @@ class Chat {
   private codexSession?: CodexSession;
   private codex?: CodexRun;
   private codexDrain?: Promise<void>;
-  private codexQueue: string[] = [];
+  private codexQueue: ChatPrompt[] = [];
   /// What the turn running now prefixes its entry ids with. Item ids are only
   /// meaningful within their originating Codex turn, so this keeps later turns
   /// from writing over earlier transcript entries.
@@ -337,10 +352,10 @@ class Chat {
   private cursorSession?: CursorSession;
   private cursor?: CursorRun;
   private cursorDrain?: Promise<void>;
-  private cursorQueue: string[] = [];
+  private cursorQueue: ChatPrompt[] = [];
   private cursorTurnId = "";
   private cursorMessages = new Map<string, string>();
-  private claudeQueue: string[] = [];
+  private claudeQueue: ChatPrompt[] = [];
   private restartAfterTurn = false;
   private activePermissionMode?: ChatPermissionMode;
   private pending = new Map<string, (result: PermissionResult) => void>();
@@ -362,6 +377,7 @@ class Chat {
 
   constructor(record: ChatRecord) {
     this.record = record;
+    this.peakTokens = Math.max(record.context?.peakTokens ?? 0, record.context?.tokens ?? 0);
     for (const entry of record.entries) this.byId.set(entry.id, entry);
   }
 
@@ -471,7 +487,7 @@ class Chat {
 
   // ── sending ──────────────────────────────────────────────────────────────
 
-  async send(text: string): Promise<void> {
+  async send(text: string, attachments: ChatImageAttachment[] = []): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed) return;
     const safeText = await redactForCwd(this.record.cwd, trimmed);
@@ -486,8 +502,14 @@ class Chat {
     if (first && !this.record.dm) void this.rename(safeText);
     linkTicketFromWorkPrompt(this.record.id, safeText, this.record.agentId);
     const ticketContext = ticketPromptContext(this.record.id);
-    const agentPrompt = ticketContext ? `${ticketContext}\n\n${safeText}` : safeText;
-    this.append({ id: `u-${randomUUID()}`, kind: "user", text: clip(safeText, MAX_TEXT) });
+    const agentText = ticketContext ? `${ticketContext}\n\n${safeText}` : safeText;
+    const agentPrompt: ChatPrompt = { text: agentText, attachments };
+    this.append({
+      id: `u-${randomUUID()}`,
+      kind: "user",
+      text: clip(safeText, MAX_TEXT),
+      ...(attachments.length > 0 ? { attachments } : {}),
+    });
     this.record.error = undefined;
     // A prompt typed while Claude is blocked on a permission is queued behind
     // it, so the chat is still waiting on the human, not working.
@@ -525,7 +547,7 @@ class Chat {
       return;
     }
     const session = await this.start();
-    session.queue.push(userMessage(agentPrompt));
+    session.queue.push(userMessage(this.record.id, agentPrompt));
     this.push();
     this.persist();
   }
@@ -790,7 +812,7 @@ class Chat {
         const queued = this.claudeQueue.splice(0);
         if (queued.length > 0) {
           const session = await this.start();
-          for (const prompt of queued) session.queue.push(userMessage(prompt));
+          for (const prompt of queued) session.queue.push(userMessage(this.record.id, prompt));
           this.state = "working";
           this.push();
           this.persist();
@@ -888,6 +910,7 @@ class Chat {
           this.remove(entry.id);
           return;
         }
+        entry.completedAt ??= nowMs();
         this.markDirty(entry.id);
         this.flush();
         break;
@@ -964,6 +987,7 @@ class Chat {
       const entry = this.byToolUseId.get(block.tool_use_id);
       if (!entry) continue;
       entry.status = block.is_error ? "error" : "ok";
+      entry.completedAt ??= nowMs();
       const toolUseResult = message.tool_use_result as Record<string, unknown> | undefined;
       if (entry.questions) {
         applyAnswers(entry.questions, toolUseResult?.answers);
@@ -991,6 +1015,7 @@ class Chat {
         this.append({ id: `r-${randomUUID()}`, kind: "assistant", text: `⚠️ ${clip(detail, 400)}` });
       }
     }
+    this.completeLatestMessage();
     if (this.restartAfterTurn) this.live?.queue.close();
     this.state = this.pending.size > 0
       ? "needs_input"
@@ -1032,6 +1057,7 @@ class Chat {
       : this.peakTokens > config.contextLimit ? 1_000_000 : config.contextLimit;
     this.record.context = {
       tokens,
+      peakTokens: this.peakTokens,
       limit,
       limitEstimated: !exactLimit,
       model: model ?? this.record.context?.model,
@@ -1081,7 +1107,7 @@ class Chat {
     }
   }
 
-  private async cursorTurn(prompt: string): Promise<void> {
+  private async cursorTurn(prompt: ChatPrompt): Promise<void> {
     const agent = this.record.agentId ? getAgent(this.record.agentId) : undefined;
     this.cursorTurnId = `${randomUUID().slice(0, 8)}-`;
     this.cursorMessages.clear();
@@ -1118,7 +1144,13 @@ class Chat {
         (request) => this.cursorQuestion(request),
         (request) => this.cursorPlan(request),
       );
-      run = this.cursorSession.run(prompt);
+      run = this.cursorSession.run(
+        prompt.text,
+        prompt.attachments.map((attachment) => ({
+          base64: readChatImage(this.record.id, attachment).base64,
+          mimeType: attachment.mimeType,
+        })),
+      );
     } catch (error) {
       this.failTurn(error);
       return;
@@ -1168,6 +1200,7 @@ class Chat {
         this.push();
         return;
       case "turn.completed":
+        this.completeLatestMessage();
         return;
       case "turn.failed":
         this.recordFailure(event.error);
@@ -1175,6 +1208,8 @@ class Chat {
       case "usage.updated":
         this.noteTokens(event.used, this.record.model, event.size);
         if (event.costUsd !== undefined) this.record.costUsd = event.costUsd;
+        this.push();
+        if (nowMs() - this.lastPersist > 5_000) this.persist();
         return;
       case "compacted":
         this.compactions += 1;
@@ -1224,7 +1259,7 @@ class Chat {
     }
   }
 
-  private async codexTurn(prompt: string): Promise<void> {
+  private async codexTurn(prompt: ChatPrompt): Promise<void> {
     const agent = this.record.agentId ? getAgent(this.record.agentId) : undefined;
     // Unique per turn and across restarts, so a resumed thread cannot collide
     // with the entries already on disk.
@@ -1263,10 +1298,13 @@ class Chat {
         (request) => this.codexApproval(request),
         (request) => this.codexQuestion(request),
       );
-      run = this.codexSession.run(prompt, {
+      run = this.codexSession.run(prompt.text, {
         ...(this.record.model ? { model: this.record.model } : {}),
         ...(this.record.effort ? { effort: this.record.effort } : {}),
         permissionMode: this.record.permissionMode,
+        images: prompt.attachments.map((attachment) => ({
+          dataUrl: readChatImage(this.record.id, attachment).dataUrl,
+        })),
       });
     } catch (error) {
       this.failTurn(error);
@@ -1321,6 +1359,7 @@ class Chat {
         this.push();
         return;
       case "turn.completed":
+        this.completeLatestMessage();
         return;
       case "usage.updated":
         this.noteTokens(codexTokens(event.usage), this.record.model, event.usage.context_window);
@@ -1342,6 +1381,7 @@ class Chat {
         }
         const entry = codexEntry(event.item, this.codexTurnId);
         if (!entry) return;
+        if (event.type === "item.completed") entry.completedAt = nowMs();
         this.upsert(entry);
         if (entry.kind === "tool") {
           this.action = `${entry.verb ?? ""} ${entry.arg ?? ""}`.trim();
@@ -1358,12 +1398,23 @@ class Chat {
   /// updated and completed under one id, so it is one line in the feed that
   /// gains its output rather than three that repeat it.
   private upsert(entry: ConvEntry): void {
+    if (entry.kind === "tool" && entry.status) entry.completedAt ??= nowMs();
     const existing = this.byId.get(entry.id);
     if (!existing) {
       this.append(entry);
       return;
     }
     Object.assign(existing, entry);
+    if (entry.kind === "tool" && entry.status) existing.completedAt ??= nowMs();
+    this.markDirty(entry.id);
+  }
+
+  private completeLatestMessage(): void {
+    const entry = [...this.record.entries]
+      .reverse()
+      .find((item) => item.kind === "assistant" || item.kind === "thinking");
+    if (!entry || entry.completedAt) return;
+    entry.completedAt = nowMs();
     this.markDirty(entry.id);
   }
 
@@ -1629,6 +1680,7 @@ class Chat {
   // ── feed bookkeeping ─────────────────────────────────────────────────────
 
   private append(entry: ConvEntry, options: { defer?: boolean } = {}): void {
+    entry.at ??= nowMs();
     redactEntry(entry);
     this.record.entries.push(entry);
     this.byId.set(entry.id, entry);
@@ -2100,8 +2152,12 @@ export function updateChat(
   return chat.summary();
 }
 
-export async function sendChatMessage(id: string, text: string): Promise<void> {
-  await mustGet(id).send(text);
+export async function sendChatMessage(
+  id: string,
+  text: string,
+  attachments: ChatImageAttachment[] = [],
+): Promise<void> {
+  await mustGet(id).send(text, attachments);
 }
 
 export async function runChatEnvironmentCommand(

@@ -34,6 +34,7 @@ export const TICKET_STATUSES: TicketStatus[] = [
 /// yours, or something an agent had to declare on purpose — so a card you drag
 /// to Done is not dragged back by the next turn that happens to end.
 const DERIVED: TicketStatus[] = ["in_progress", "needs_input"];
+const STARTED_BY_ATTACHMENT: TicketStatus[] = ["backlog", "todo", "needs_input"];
 
 export interface Ticket {
   id: string;
@@ -655,16 +656,30 @@ export function linkThread(
   if (existing && existing.id !== ticketId) {
     throw new Error(`that thread is already on ${existing.key}`);
   }
-  if (existing?.id === ticketId) return existing;
-  append("ticket", ticketId, "link", {
-    chatId,
-    deviceId: threadDeviceId,
-    actor: "you",
-    linkedBy: input.linkedBy ?? "you",
-    ...(input.agentId ? { agentId: input.agentId } : {}),
-    ...(input.stage ? { stage: input.stage } : {}),
+  if (existing?.id === ticketId) {
+    return STARTED_BY_ATTACHMENT.includes(existing.status)
+      ? setTicketStatus(existing.id, "in_progress", { actor: "remy" })
+      : existing;
+  }
+
+  let linked: TicketView | undefined;
+  // Link and promotion commit together, so a board subscriber never observes
+  // a newly attached thread still sitting in a not-started column.
+  runTransaction(() => {
+    append("ticket", ticketId, "link", {
+      chatId,
+      deviceId: threadDeviceId,
+      actor: "you",
+      linkedBy: input.linkedBy ?? "you",
+      ...(input.agentId ? { agentId: input.agentId } : {}),
+      ...(input.stage ? { stage: input.stage } : {}),
+    });
+    linked = getTicketOrThrow(ticketId);
+    if (STARTED_BY_ATTACHMENT.includes(linked.status)) {
+      linked = setTicketStatus(linked.id, "in_progress", { actor: "remy" });
+    }
   });
-  return getTicketOrThrow(ticketId);
+  return linked!;
 }
 
 export function unlinkThread(ticketId: string, chatId: string, onDevice = deviceId): TicketView {
@@ -687,13 +702,14 @@ export function forgetChat(chatId: string): void {
 
 /// The derived half of the status rule.
 ///
-/// A working thread picks up a ticket from Todo, then moves it between In
-/// progress and Needs input. Backlog and terminal states stay deliberate.
+/// A working thread picks up a ticket from Backlog or Todo, then moves it
+/// between In progress and Needs input. Terminal states stay deliberate.
 export function syncTicketFromThread(chatId: string, state: string, onDevice = deviceId): void {
   const ticket = ticketForChat(chatId, onDevice);
   if (!ticket) return;
   const active = state === "working" || state === "needs_input" || state === "error";
-  if (!DERIVED.includes(ticket.status) && !(ticket.status === "todo" && active)) return;
+  const starting = ticket.status === "backlog" || ticket.status === "todo";
+  if (!DERIVED.includes(ticket.status) && !(starting && active)) return;
   const next: TicketStatus = state === "needs_input" || state === "error" ? "needs_input" : "in_progress";
   if (next === ticket.status) return;
   try {
@@ -703,7 +719,7 @@ export function syncTicketFromThread(chatId: string, state: string, onDevice = d
   }
 }
 
-const WORK_TICKET = /\b(?:work on|start|implement|build|fix|pick up|take)\s+(?:ticket\s+)?([a-z][a-z0-9]{0,15}-[1-9]\d*)\b/i;
+const WORK_TICKET = /\b(?:work on|start|implement|build|fix|pick up|take)\s+(?:ticket\s+)?([a-z][a-z0-9]{0,15})(?:-|\s+)([1-9]\d*)\b/i;
 
 /// Connects an explicit "work on REMY-1" request to its ticket before the
 /// agent sees the prompt. A question that merely mentions a key stays a normal
@@ -711,14 +727,12 @@ const WORK_TICKET = /\b(?:work on|start|implement|build|fix|pick up|take)\s+(?:t
 export function linkTicketFromWorkPrompt(chatId: string, prompt: string, agentId?: string): TicketView | undefined {
   const existing = ticketForChat(chatId);
   if (existing) return existing;
-  const key = WORK_TICKET.exec(prompt)?.[1]?.toUpperCase();
-  if (!key) return undefined;
+  const match = WORK_TICKET.exec(prompt);
+  if (!match) return undefined;
+  const key = `${match[1]}-${match[2]}`.toUpperCase();
   const ticket = ticketByKey(key);
   if (!ticket) return undefined;
-  const linked = linkThread(ticket.id, { chatId, agentId, linkedBy: "runner" });
-  return linked.status === "backlog" || linked.status === "todo"
-    ? setTicketStatus(linked.id, "in_progress", { actor: "remy" })
-    : linked;
+  return linkThread(ticket.id, { chatId, agentId, linkedBy: "runner" });
 }
 
 // Renaming a project's slug re-keys its tickets. Registered here rather than

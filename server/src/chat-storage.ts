@@ -146,6 +146,17 @@ export function loadChats(entryLimit: number): StoredChat[] {
   }));
 }
 
+/// One thread with the same bounded feed shape as `loadChats`.
+export function loadChat(id: string, entryLimit: number): StoredChat | undefined {
+  const row = db.prepare("select * from chats where id = ?").get(id) as Record<string, unknown> | undefined;
+  if (!row) return undefined;
+  const entries = db.prepare("select json from chat_entries where chat_id = ? order by seq desc limit ?");
+  return {
+    ...toChatRow(row),
+    entries: readEntries(entries, id, entryLimit),
+  };
+}
+
 function readEntries(statement: StatementSync, chatId: string, limit: number): ConvEntry[] {
   const rows = statement.all(chatId, limit) as { json: string }[];
   const parsed: ConvEntry[] = [];

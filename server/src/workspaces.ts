@@ -710,9 +710,8 @@ export async function checkoutTicketWorktree(workspace: Workspace, ticketKey: st
 
   const main = workspace.worktrees.find((worktree) => worktree.isMain) ?? workspace.worktrees[0];
   const localBase = main.branch || "HEAD";
-  const remoteBase = main.branch ? `origin/${main.branch}` : "";
+  const remoteBase = "origin/HEAD";
   const startingRef = config.worktreeBase === "remote"
-    && remoteBase
     && await isRemoteTracking(workspace.path, remoteBase)
     ? remoteBase
     : localBase;

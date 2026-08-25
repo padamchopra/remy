@@ -1,11 +1,13 @@
 import type { FormEvent, KeyboardEvent, MouseEvent, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArchiveRestore,
   ArrowUp,
   ArrowUpRight,
   Check,
   ChevronDown,
   CircleAlert,
+  CircleStop,
   Copy,
   Folder,
   GitBranch,
@@ -35,7 +37,6 @@ import {
   InputGroupAddon,
   InputGroupButton,
   InputGroupText,
-  InputGroupTextarea,
 } from "@/components/ui/input-group";
 import {
   Message,
@@ -81,6 +82,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ComposerMenu } from "@/components/ComposerMenu";
+import {
+  InlineImageComposer,
+  type InlineImageComposerHandle,
+  type InlineImageComposerValue,
+} from "@/components/InlineImageComposer";
 import { ContextMeter } from "@/components/ContextMeter";
 import { AgentMark } from "@/components/AgentAvatar";
 import { PaneHeader } from "@/components/PaneHeader";
@@ -102,7 +108,7 @@ import { workspaceForPath } from "@/lib/projects";
 import { PROVIDERS } from "@/lib/providers";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
-import type { Agent, Chat, ChatApproval, ChatQuestionRequest, ConvArtifact, ConvDiffLine, ConvEntry } from "@/state/types";
+import type { Agent, ArchivedThread, Chat, ChatApproval, ChatQuestionRequest, ConvArtifact, ConvDiffLine, ConvEntry } from "@/state/types";
 
 interface ThreadCheckpoint {
   id: string;
@@ -116,20 +122,24 @@ interface ThreadCheckpoint {
 /// `chat` frames the server pushes as a turn streams.
 export function ChatView({
   chat,
+  archived,
   headerEnd,
   onOpenTicket,
   onOpenThread,
   onOpenWorkspace,
+  onRestored,
   crumbs,
   persona,
 }: {
   chat: Chat;
+  archived?: ArchivedThread;
   headerEnd?: ReactNode;
   onOpenTicket?: (key: string) => void;
   /// Where a card in the feed goes when a Remy tool made a thread or registered
   /// a workspace. Without these the card is still drawn; it just does not open.
   onOpenThread?: (id: string) => void;
   onOpenWorkspace?: (workspaceId: string) => void;
+  onRestored?: (id: string) => void;
   /// Replaces the workspace-and-title trail. An inbox conversation is placed by
   /// who you are talking to, not by the folder it happens to run in.
   crumbs?: { label: ReactNode }[];
@@ -144,6 +154,8 @@ export function ChatView({
   const openChat = useStore((s) => s.openChat);
   const closeChat = useStore((s) => s.closeChat);
   const sendMessage = useStore((s) => s.sendMessage);
+  const uploadMessageImage = useStore((s) => s.uploadMessageImage);
+  const restoreThread = useStore((s) => s.restoreThread);
   const answerApproval = useStore((s) => s.answerApproval);
   const answerQuestion = useStore((s) => s.answerQuestion);
   const interrupt = useStore((s) => s.interrupt);
@@ -151,30 +163,27 @@ export function ChatView({
 
   const workspaces = useStore((s) => s.workspaces);
   const servers = useStore((s) => s.servers);
-  const [text, setText] = useState("");
+  const [draft, setDraft] = useState<InlineImageComposerValue>({
+    text: "",
+    attachments: [],
+    uploading: false,
+  });
   const [busy, setBusy] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const threadTools = useThreadTools(chat.id, chat.serverId);
+  const composerRef = useRef<InlineImageComposerHandle>(null);
+  const threadTools = useThreadTools(chat.id, chat.serverId, !archived);
 
   useEffect(() => {
+    if (archived) return;
     void openChat(chat.id).catch((caught) => {
       toast.error("Couldn't open that thread", { description: apiError(caught) });
     });
     return () => closeChat();
-  }, [chat.id, openChat, closeChat]);
+  }, [chat.id, archived, openChat, closeChat]);
 
   useEffect(() => {
-    textareaRef.current?.focus();
+    composerRef.current?.clear();
+    composerRef.current?.focus();
   }, [chat.id]);
-
-  // The textarea is sized to what is in it: `scrollHeight` after a reset is the
-  // height the content wants, and the class caps how far that can go.
-  useEffect(() => {
-    const box = textareaRef.current;
-    if (!box) return;
-    box.style.height = "auto";
-    box.style.height = `${box.scrollHeight}px`;
-  }, [text]);
 
   // Which project this chat is in, so the breadcrumb reads as a place rather
   // than a path. A chat started in `~` belongs to no workspace and wears the
@@ -195,7 +204,21 @@ export function ChatView({
 
   // The store may still hold the chat that was open a moment ago, so paint from
   // the list row until the fetch for this one lands.
-  const open = detail?.id === chat.id ? detail : undefined;
+  const open = archived ? {
+    id: chat.id,
+    serverId: chat.serverId,
+    title: archived.title,
+    cwd: archived.cwd,
+    provider: archived.provider,
+    agentId: archived.agentId,
+    model: archived.model,
+    effort: archived.effort,
+    permissionMode: archived.permissionMode,
+    state: "idle" as const,
+    entries: archived.entries,
+    todos: archived.todos,
+    context: archived.context,
+  } : detail?.id === chat.id ? detail : undefined;
   const state = open?.state ?? chat.state;
   const working = state === "working";
   const conversational = chat.dm === true;
@@ -231,17 +254,31 @@ export function ChatView({
   const question = open?.question;
 
   const submit = async () => {
-    const trimmed = text.trim();
-    if (!trimmed || busy) return;
+    const trimmed = draft.text.trim();
+    if (!trimmed || draft.uploading || busy || archived) return;
     setBusy(true);
     try {
-      await sendMessage(trimmed);
-      setText("");
+      await sendMessage(trimmed, draft.attachments);
+      composerRef.current?.clear();
     } catch (caught) {
       toast.error("Couldn't send that message", { description: apiError(caught) });
     } finally {
       setBusy(false);
-      textareaRef.current?.focus();
+      composerRef.current?.focus();
+    }
+  };
+
+  const unarchive = async () => {
+    if (!archived || busy) return;
+    setBusy(true);
+    try {
+      const restored = await restoreThread(archived.id, archived.serverId);
+      toast.success("Unarchived the thread.");
+      onRestored?.(restored.id);
+    } catch (caught) {
+      toast.error("Couldn't unarchive that thread", { description: apiError(caught) });
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -296,9 +333,9 @@ export function ChatView({
           },
         ]}
       >
-        {onOpenTicket && !persona && <ThreadTicket chatId={chat.id} onOpenTicket={onOpenTicket} />}
+        {onOpenTicket && !persona && !archived && <ThreadTicket chatId={chat.id} onOpenTicket={onOpenTicket} />}
         {headerEnd}
-        {!conversational && (
+        {!conversational && !archived && (
           <ThreadToolsButton
             active={threadTools.active}
             shown={threadTools.shown}
@@ -308,7 +345,7 @@ export function ChatView({
       </PaneHeader>
 
       <ThreadToolsLayout
-        open={!conversational && threadTools.shown}
+        open={!conversational && !archived && threadTools.shown}
         threadId={chat.id}
         sidebar={(
           <ThreadToolsSidebar
@@ -320,8 +357,11 @@ export function ChatView({
             setActiveTab={threadTools.setActiveTab}
             setView={threadTools.setView}
             addBrowser={threadTools.addBrowser}
-            canAddTabs={threadTools.canAddTabs}
+            addAnalytics={threadTools.addAnalytics}
+            addPerformance={threadTools.addPerformance}
+            canAddBrowser={threadTools.canAddBrowser}
             closeTab={threadTools.closeTab}
+            visible={!conversational && !archived && threadTools.shown}
           />
         )}
       >
@@ -453,6 +493,31 @@ export function ChatView({
           </ScrollFeed>
 
           <div className="min-w-0 shrink-0 border-t border-border px-5 py-3">
+            {archived && (
+              <Item
+                variant="outline"
+                size="sm"
+                className="mx-auto mb-3 w-full max-w-3xl bg-muted/30"
+              >
+                <ItemMedia variant="icon">
+                  <ArchiveRestore />
+                </ItemMedia>
+                <ItemContent>
+                  <ItemTitle>Unarchive this thread to reply.</ItemTitle>
+                </ItemContent>
+                <ItemActions>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => void unarchive()}
+                  >
+                    <ArchiveRestore />
+                    Unarchive
+                  </Button>
+                </ItemActions>
+              </Item>
+            )}
             <form
           // The toolbar drops labels by how wide the composer is, not the
           // window: the sidebar takes a fixed slice, so the two differ.
@@ -463,21 +528,21 @@ export function ChatView({
           }}
         >
           <InputGroup className="items-stretch rounded-xl">
-            <InputGroupTextarea
-              ref={textareaRef}
-              aria-label="Message"
-              placeholder={persona ? `Message ${persona.name}.` : "Reply, or ask for the next change."}
-              value={text}
-              // Two lines at rest, growing with what you write. The reply box
-              // sits under the thread it belongs to, so idle height is space
-              // taken from the conversation.
-              className="max-h-56 min-h-11 resize-none"
-              onChange={(event) => setText(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
-                event.preventDefault();
-                void submit();
-              }}
+            <InlineImageComposer
+              ref={composerRef}
+              ariaLabel="Message"
+              placeholder={
+                archived
+                  ? "Unarchive to reply."
+                  : persona
+                    ? `Message ${persona.name}.`
+                    : "Reply, or ask for the next change."
+              }
+              disabled={Boolean(archived)}
+              onChange={setDraft}
+              onSubmit={() => void submit()}
+              onUpload={uploadMessageImage}
+              onError={(message) => toast.error(message)}
             />
             {/* The controls share one strip while they fit. At the smallest
                 split-pane widths, the critical action cluster wraps intact
@@ -490,7 +555,7 @@ export function ChatView({
                   variant="composer"
                   value={{ provider: provider?.id ?? "claude", model: open?.model ?? "", effort: open?.effort ?? "" }}
                   onlyProvider={provider?.id ?? "claude"}
-                  disabled={!open}
+                  disabled={!open || Boolean(archived)}
                   title={working ? "Applies to the next turn." : undefined}
                   onPick={(next) =>
                     void setOption(
@@ -504,7 +569,7 @@ export function ChatView({
                 icon={permission.icon}
                 label={permission.label}
                 value={permission.value}
-                disabled={!open}
+                disabled={!open || Boolean(archived)}
                 title={
                   working
                     ? "Applies to the next turn."
@@ -540,7 +605,7 @@ export function ChatView({
                   variant="default"
                   size="icon-sm"
                   className="rounded-full"
-                  disabled={!text.trim() || busy}
+                  disabled={!draft.text.trim() || draft.uploading || busy || Boolean(archived)}
                   aria-label="Send"
                 >
                   <ArrowUp />
@@ -1282,7 +1347,9 @@ function CopyPrompt({ text }: { text: string }) {
 }
 
 function ToolEntry({ entry }: { entry: ConvEntry }) {
-  const failed = entry.status === "error";
+  const status = toolStatus(entry);
+  const failed = status === "error";
+  const stopped = status === "stopped";
   const [expanded, setExpanded] = useState(false);
   const expandable = Boolean(entry.output || entry.diff?.length);
 
@@ -1309,6 +1376,7 @@ function ToolEntry({ entry }: { entry: ConvEntry }) {
           <span className="font-mono text-destructive">−{entry.dels}</span>
         )}
         {failed && <Badge variant="destructive">Failed</Badge>}
+        {stopped && <Badge variant="secondary">Stopped</Badge>}
         {expandable && (
           <ChevronDown
             data-icon="inline-end"
@@ -1359,19 +1427,23 @@ function ToolGroup({
   onOpenWorkspace?: (workspaceId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const failed = entries.filter((entry) => entry.status === "error").length;
+  const failed = entries.filter((entry) => toolStatus(entry) === "error").length;
+  const stopped = entries.filter((entry) => toolStatus(entry) === "stopped").length;
 
   return (
     // Tool work is the agent's too, so it stays under the agent's text column.
     <div className="flex flex-col gap-1.5 pl-10">
       <Collapsible open={expanded} onOpenChange={setExpanded}>
-        <Marker asChild className={cn("w-fit", failed > 0 && "text-destructive")}>
+        <Marker asChild className="w-fit">
           <CollapsibleTrigger className="group/tool-group rounded-sm py-0.5 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
-            <MarkerIcon>
-              {failed > 0 ? <CircleAlert /> : <Wrench />}
+            <MarkerIcon className={failed > 0 ? "text-destructive" : undefined}>
+              {failed > 0 ? <CircleAlert /> : stopped > 0 ? <CircleStop /> : <Wrench />}
             </MarkerIcon>
             <MarkerContent>{toolGroupSummary(entries)}</MarkerContent>
             {failed > 0 && <Badge variant="destructive">{failed} failed</Badge>}
+            {stopped > 0 && (
+              <Badge variant="secondary">{stopped === 1 ? "Stopped" : `${stopped} stopped`}</Badge>
+            )}
             <ChevronDown className="transition-transform group-data-[state=open]/tool-group:rotate-180" />
           </CollapsibleTrigger>
         </Marker>
@@ -1399,6 +1471,12 @@ function ToolGroup({
       ))}
     </div>
   );
+}
+
+function toolStatus(entry: ConvEntry): ConvEntry["status"] {
+  if (entry.status === "stopped") return "stopped";
+  if (entry.status === "error" && /(?:\^C|SIGINT)\s*$/i.test(entry.output ?? "")) return "stopped";
+  return entry.status;
 }
 
 function toolGroupSummary(entries: ConvEntry[]): string {

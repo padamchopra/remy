@@ -1,4 +1,4 @@
-import { Boxes, Check, Cloud, Copy, Folder, GitBranch, Github, ImagePlus, Laptop, Monitor, Plus, RefreshCw, Smartphone, Trash2, X } from "lucide-react";
+import { Boxes, ChartNoAxesCombined, Check, Cloud, Copy, Folder, GitBranch, Github, ImagePlus, Laptop, Monitor, Plus, RefreshCw, Smartphone, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import remyMark from "@/assets/remy-mark.png";
 import { Badge } from "@/components/ui/badge";
@@ -40,7 +40,7 @@ import { DEVICE_ICON_IDS, deviceIcon, type DeviceIconId } from "@/lib/devices";
 import { formatPairCode, hostLabel, parsePairingLink } from "@/lib/pairing";
 import { displayPath } from "@/lib/path";
 import { workspaceForPath } from "@/lib/projects";
-import { isNewer, summarizeNotes, type RemyRelease } from "@/lib/release";
+import { fetchLatestRelease, isNewer, summarizeNotes, type RemyRelease } from "@/lib/release";
 import { transport } from "@/lib/transport";
 import type { TintId } from "@/lib/tints";
 import { cn } from "@/lib/utils";
@@ -84,9 +84,14 @@ import { IDENTITIES } from "@/components/AgentSettings";
 import { useAppUpdate, type AppUpdatePhase } from "@/hooks/use-app-update";
 import { useStore } from "@/state/store";
 import type { Chat, ProviderMcpStatus, Server, TailnetDevice, ToolStatus } from "@/state/types";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import type { AnalyticsTab } from "@/components/AnalyticsSettings";
 
-export type SettingsTab = "general" | "version-control" | "providers" | "devices";
+const AnalyticsSettings = lazy(() => import("@/components/AnalyticsSettings").then((module) => ({
+  default: module.AnalyticsSettings,
+})));
+
+export type SettingsTab = "general" | "version-control" | "providers" | "devices" | "analytics";
 
 export const SETTINGS_SECTIONS: {
   id: SettingsTab;
@@ -97,13 +102,18 @@ export const SETTINGS_SECTIONS: {
   { id: "version-control", label: "Version control", icon: GitBranch },
   { id: "providers", label: "Providers", icon: Boxes },
   { id: "devices", label: "Devices", icon: Laptop },
+  { id: "analytics", label: "Analytics", icon: ChartNoAxesCombined },
 ];
 
 export function SettingsPane({
   tab,
+  analyticsTab,
+  onAnalyticsTab,
   release,
 }: {
   tab: SettingsTab;
+  analyticsTab: AnalyticsTab;
+  onAnalyticsTab: (tab: AnalyticsTab) => void;
   release: {
     current: string;
     latest?: RemyRelease;
@@ -121,13 +131,17 @@ export function SettingsPane({
     <main className="flex min-w-0 flex-1 flex-col">
       <PaneHeader crumbs={[{ label: "Settings" }, { label: section.label }]} />
       <ScrollArea className="min-h-0 flex-1">
-        <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-5 py-6">
+        <div className={cn("mx-auto flex w-full flex-col gap-6 px-5 py-6", tab === "analytics" ? "max-w-6xl" : "max-w-2xl")}>
           {tab === "devices" ? (
             <DevicesPane />
           ) : tab === "version-control" ? (
             <VersionControlPane />
           ) : tab === "providers" ? (
             <ProvidersPane />
+          ) : tab === "analytics" ? (
+            <Suspense fallback={<div className="h-80 animate-pulse rounded-xl bg-accent" />}>
+              <AnalyticsSettings tab={analyticsTab} onTab={onAnalyticsTab} />
+            </Suspense>
           ) : (
             <GeneralPane release={release} />
           )}
@@ -1232,12 +1246,29 @@ function DevicesPane() {
   const removeServer = useStore((s) => s.removeServer);
   const updateServer = useStore((s) => s.updateServer);
   const [busy, setBusy] = useState(false);
+  const [latestRelease, setLatestRelease] = useState<RemyRelease>();
+  const hasPeer = servers.some((server) => server.peer);
   // Pairing lives in the daemon on this machine rather than in any one window,
   // so the desktop app, a browser and the phone all pair once and see one list.
   const home = servers.find((server) => server.local) ?? servers.find((server) => !server.cloud);
   // Nothing can pair with a machine nothing can reach, so the list below says
   // so rather than offering buttons that cannot work.
   const homeReachable = useIdentity(home?.id)?.exposed === true;
+
+  useEffect(() => {
+    if (!hasPeer) return;
+    let cancelled = false;
+    void fetchLatestRelease()
+      .then((release) => {
+        if (!cancelled) setLatestRelease(release);
+      })
+      .catch(() => {
+        // The device versions still render when the release feed is offline.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [hasPeer]);
 
   const unpair = async (server: Server) => {
     setBusy(true);
@@ -1268,6 +1299,7 @@ function DevicesPane() {
         <DeviceCard
           key={server.id}
           server={server}
+          latestRelease={latestRelease}
           homeId={home?.id}
           busy={busy}
           onUnpair={() => void unpair(server)}
@@ -1410,12 +1442,14 @@ function CursorCloudCard({ homeId }: { homeId: string }) {
 
 function DeviceCard({
   server,
+  latestRelease,
   homeId,
   busy,
   onUnpair,
   onUpdate,
 }: {
   server: Server;
+  latestRelease?: RemyRelease;
   homeId?: string;
   busy: boolean;
   onUnpair: () => void;
@@ -1468,33 +1502,148 @@ function DeviceCard({
         </span>
 
         {!server.local && (
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="ghost" size="icon-xs" disabled={busy} aria-label={`Unpair ${server.name}`}>
-                <Trash2 />
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Unpair {server.name}?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Its threads and board stop syncing here. Pair it again from its link.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction variant="destructive" onClick={onUnpair}>
-                  Unpair device
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          <span className="flex shrink-0 items-center gap-1.5">
+            <RemoteUpdateAction server={server} latestRelease={latestRelease} />
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="ghost" size="icon-xs" disabled={busy} aria-label={`Unpair ${server.name}`}>
+                  <Trash2 />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Unpair {server.name}?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Its threads and board stop syncing here. Pair it again from its link.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction variant="destructive" onClick={onUnpair}>
+                    Unpair device
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </span>
         )}
       </div>
       <NotifyField server={server} homeId={homeId} />
       {server.local ? <ReachableField serverId={server.id} identity={identity} /> : null}
       {server.online ? <StayAwakeField serverId={server.id} /> : null}
     </div>
+  );
+}
+
+type RemoteUpdateStatus = {
+  supported: boolean;
+  version?: string;
+  arch?: string;
+  state: "idle" | "starting" | "downloading" | "installing" | "failed";
+  busyThreads: number;
+  error?: string;
+};
+
+function RemoteUpdateAction({ server, latestRelease }: { server: Server; latestRelease?: RemyRelease }) {
+  const [status, setStatus] = useState<RemoteUpdateStatus>();
+  const [olderBuild, setOlderBuild] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const shownFailure = useRef<string | undefined>(undefined);
+
+  const load = useCallback(async () => {
+    try {
+      const next = await transport.request<RemoteUpdateStatus>(server.id, "/server/app-update");
+      setStatus(next);
+      setOlderBuild(false);
+    } catch {
+      setOlderBuild(true);
+    }
+  }, [server.id]);
+
+  useEffect(() => {
+    if (!server.online) {
+      setStatus(undefined);
+      return;
+    }
+    void load();
+  }, [load, server.online]);
+
+  useEffect(() => {
+    if (!status || (status.state !== "starting" && status.state !== "downloading" && status.state !== "installing")) return;
+    const timer = window.setInterval(() => void load(), 2_000);
+    return () => window.clearInterval(timer);
+  }, [load, status]);
+
+  useEffect(() => {
+    if (status?.state !== "failed" || !status.error || shownFailure.current === status.error) return;
+    shownFailure.current = status.error;
+    toast.error(`Couldn't update ${server.name}`, { description: status.error });
+  }, [server.name, status]);
+
+  const start = async () => {
+    setStarting(true);
+    try {
+      const next = await transport.request<RemoteUpdateStatus>(server.id, "/server/app-update", { method: "POST" });
+      setStatus(next);
+      toast.success(`Updating ${server.name}.`);
+    } catch (caught) {
+      toast.error(`Couldn't update ${server.name}`, { description: apiError(caught) });
+      await load();
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  if (!server.online) return null;
+  if (olderBuild) {
+    return <span className="max-w-36 text-right text-xs text-muted-foreground">Update Remy there once to enable this.</span>;
+  }
+  if (!status) return null;
+  if (!status.supported) return <span className="max-w-32 text-right text-xs text-muted-foreground">Open Remy there to update it.</span>;
+
+  const active = starting || status.state === "starting" || status.state === "downloading" || status.state === "installing";
+  const available = Boolean(latestRelease && status.version && isNewer(latestRelease.version, status.version));
+
+  if (active) {
+    return (
+      <Button size="xs" variant="outline" disabled>
+        <RefreshCw className="animate-spin" />
+        Updating…
+      </Button>
+    );
+  }
+
+  if (!available || !latestRelease) {
+    return status.version ? (
+      <span className="font-mono text-xs text-muted-foreground tabular-nums">Remy {status.version}</span>
+    ) : null;
+  }
+
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button size="xs" variant="outline">
+          <RefreshCw />
+          Update to {latestRelease.version}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Update {server.name}?</AlertDialogTitle>
+          <AlertDialogDescription>
+            {status.busyThreads > 0
+              ? `Stop ${status.busyThreads === 1 ? "the running thread" : `${status.busyThreads} running threads`} on that device first.`
+              : "Remy closes, installs the update, and reopens on that device."}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction disabled={status.busyThreads > 0 || starting} onClick={() => void start()}>
+            Update device
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
