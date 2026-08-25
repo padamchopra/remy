@@ -267,6 +267,31 @@ test("an announcement without a reachable address is refused", () => {
   assert.equal(peers.listPeers().length, 0);
 });
 
+test("a client can forward image bytes to the device that owns its thread", async () => {
+  const originalFetch = globalThis.fetch;
+  const image = Buffer.from([137, 80, 78, 71]);
+  globalThis.fetch = async (_input, init) => {
+    assert.equal(init?.method, "POST");
+    assert.equal(new Headers(init?.headers).get("content-type"), "image/png");
+    assert.equal(new Headers(init?.headers).get("x-filename"), "screen.png");
+    assert.deepEqual(Buffer.from(await new Response(init?.body).arrayBuffer()), image);
+    return new Response(JSON.stringify({ attachment: { id: "remote" } }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  try {
+    const result = await peers.callPeer<{ attachment: { id: string } }>(
+      { url: "https://remote.test", token: "secret" },
+      "/chats/thread/upload",
+      { method: "POST", rawBody: image, filename: "screen.png", contentType: "image/png" },
+    );
+    assert.equal(result.attachment.id, "remote");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("this machine will not pair with itself", () => {
   assert.throws(
     () => peers.acceptAnnouncement({ deviceId: log.deviceId, url: "https://me.example", token: "t" }),

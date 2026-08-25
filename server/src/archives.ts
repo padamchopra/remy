@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type AgentKind } from "./agent.js";
+import type { ArchivedConversation } from "./chat.js";
 import { db } from "./db.js";
-import { type Conversation } from "./transcript.js";
 
 export interface ArchivedChat {
   id: string;
@@ -10,7 +10,7 @@ export interface ArchivedChat {
   archivedAt: number;
   agent: AgentKind;
   cwd: string | null;
-  conversation: Conversation;
+  conversation: ArchivedConversation;
 }
 
 export function listArchivedChats(): ArchivedChat[] {
@@ -65,9 +65,9 @@ export function deleteArchivedChat(id: string): void {
   if (result.changes === 0) throw new Error("archived chat not found");
 }
 
-function parseConversation(raw: string): Conversation {
+function parseConversation(raw: string): ArchivedConversation {
   try {
-    return JSON.parse(raw) as Conversation;
+    return JSON.parse(raw) as ArchivedConversation;
   } catch {
     return { available: false, todos: [], entries: [] };
   }

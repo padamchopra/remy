@@ -52,6 +52,13 @@ contextBridge.exposeInMainWorld("remy", {
   ): Promise<{ ok: true; data: unknown } | { ok: false; error: string }> =>
     ipcRenderer.invoke("mc:request", serverId, path, init),
 
+  upload: (
+    serverId: string,
+    path: string,
+    input: { data: Uint8Array; filename: string; mimeType: string },
+  ): Promise<{ ok: true; data: unknown } | { ok: false; error: string }> =>
+    ipcRenderer.invoke("mc:upload", serverId, path, input),
+
   /// Live frames from `/notify/stream`. Returns an unsubscribe.
   onPush: (handler: (serverId: string, payload: unknown) => void) => {
     const listener = (_event: unknown, serverId: string, payload: unknown) =>

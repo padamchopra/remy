@@ -6,6 +6,9 @@ import { config, patchSettings, publicSettings } from "./config.js";
 import { AgentStartupError, AgentUnavailableError, agentKind, inferAgent, type AgentKind } from "./agent.js";
 import { createAgent, deleteAgent, getAgent, listAgents, seedPresetAgents, seedRemyAgent, updateAgent } from "./agents.js";
 import { deliverAnnouncements } from "./announcements.js";
+import { appUpdateStatus, reportAppUpdate, requestAppUpdate } from "./app-update.js";
+import { localAnalytics } from "./analytics.js";
+import { threadAnalytics, threadPerformance } from "./thread-metrics.js";
 import { archiveChat, deleteArchivedChat, getArchivedChat, listArchivedChats } from "./archives.js";
 import { deviceId, onLocalAppend, onRemoteMerge, type LogEvent } from "./board-log.js";
 import {
@@ -66,6 +69,7 @@ import { findProjectFiles, findSkills } from "./discovery.js";
 import { discoveredProviders } from "./provider-discovery.js";
 import { setProviderEnabled } from "./provider-settings.js";
 import { externalMcpProvider } from "./external-mcp-auth.js";
+import { explicitlyRequestedTicketStatus } from "./ticket-tool-contract.js";
 import { installProviderMcp, providerMcpStatuses, removeProviderMcp } from "./provider-mcp.js";
 import {
   archiveCursorCloudChat,
@@ -166,6 +170,11 @@ import { setSleepBusyCheck, sleepSupported, syncSleepAssertion } from "./sleep.j
 import { highlightedIndex, parsePanePrompt } from "./prompt.js";
 import { questionBroker } from "./questions.js";
 import { MAX_UPLOAD_BYTES, saveUpload } from "./uploads.js";
+import {
+  MAX_CHAT_IMAGE_BYTES,
+  saveChatImage,
+  validateChatImages,
+} from "./chat-attachments.js";
 import { registry, type PendingMessage } from "./registry.js";
 import { getQuickReplies, setQuickReplies } from "./settings.js";
 import { githubAvatar, githubLogin, tooling } from "./tooling.js";
@@ -322,6 +331,10 @@ function syncActiveTicketThreads(): void {
   }
 }
 
+function activeChatCount(): number {
+  return listAllChats().filter((chat) => chat.state === "working" || chat.state === "needs_input").length;
+}
+
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -391,8 +404,31 @@ const server = createServer(async (req, res) => {
     if (url.pathname === "/server/update" && req.method === "GET") {
       return json(res, 200, updateStatus());
     }
+
+    if (url.pathname === "/analytics" && req.method === "GET") {
+      const days = Number(url.searchParams.get("days") ?? 30);
+      const timeZone = url.searchParams.get("timeZone") ?? "UTC";
+      return json(res, 200, await localAnalytics(days, timeZone));
+    }
     if (url.pathname === "/server/update" && req.method === "POST") {
       return json(res, 202, startServerUpdate());
+    }
+    if (url.pathname === "/server/app-update" && req.method === "GET") {
+      return json(res, 200, appUpdateStatus(activeChatCount()));
+    }
+    if (url.pathname === "/server/app-update" && req.method === "POST") {
+      try {
+        return json(res, 202, requestAppUpdate(activeChatCount()));
+      } catch (error) {
+        return json(res, 409, { error: (error as Error).message });
+      }
+    }
+    if (url.pathname === "/server/app-update" && req.method === "PATCH") {
+      try {
+        return json(res, 200, reportAppUpdate(await readJson(req), activeChatCount()));
+      } catch (error) {
+        return json(res, 409, { error: (error as Error).message });
+      }
     }
 
     // Your GitHub picture, stored the same way as one picked off a disk.
@@ -793,10 +829,17 @@ const server = createServer(async (req, res) => {
     if (parts[0] === "peers" && parts[2] === "api" && parts.length >= 4) {
       const peerId = decodeURIComponent(parts[1]);
       const target = `/${parts.slice(3).join("/")}${url.search}`;
-      const body = req.method === "GET" || req.method === "HEAD" ? undefined : await readJson(req);
+      const imageUpload = req.method === "POST" && /^\/chats\/[^/]+\/upload(?:\?|$)/.test(target);
+      const rawBody = imageUpload ? await readRawBody(req, MAX_CHAT_IMAGE_BYTES) : undefined;
+      const body = req.method === "GET" || req.method === "HEAD" || imageUpload ? undefined : await readJson(req);
       try {
         const data = await proxyToPeer(peerId, target, {
           method: req.method ?? "GET",
+          ...(rawBody ? {
+            rawBody,
+            filename: String(req.headers["x-filename"] ?? "image"),
+            contentType: String(req.headers["content-type"] ?? "application/octet-stream"),
+          } : {}),
           ...(body && Object.keys(body).length > 0 ? { body } : {}),
         });
         return json(res, 200, data);
@@ -1124,6 +1167,14 @@ const server = createServer(async (req, res) => {
       }
       if (req.method === "POST" && parts[2] === "status") {
         const body = await readJson(req);
+        if (scopedChatId) {
+          const latest = [...(getChat(scopedChatId)?.entries ?? [])]
+            .reverse()
+            .find((entry) => entry.kind === "user")?.text;
+          if (!explicitlyRequestedTicketStatus(latest, body.instruction, body.status)) {
+            return json(res, 403, { error: "Change a ticket's status only when the person explicitly asks." });
+          }
+        }
         try {
           const ticket = setTicketStatus(id, body.status, {
             actor: ticketActor(body.actor),
@@ -1233,9 +1284,8 @@ const server = createServer(async (req, res) => {
           }
           const actor = ticketActor(body.actor);
           const ticket = handoffTicket(id, next.id, actor);
-          const moved = setTicketStatus(ticket.id, "todo", { actor });
           broadcast({ type: "board" });
-          return json(res, 200, { ticket: moved });
+          return json(res, 200, { ticket });
         } catch (error) {
           return json(res, 404, { error: (error as Error).message || "could not hand off that ticket" });
         }
@@ -1303,6 +1353,18 @@ const server = createServer(async (req, res) => {
     }
     if (parts[0] === "chats" && parts[1]) {
       const id = decodeURIComponent(parts[1]);
+      if (req.method === "GET" && parts[2] === "analytics" && parts.length === 3) {
+        const chat = getChat(id);
+        if (!chat) return json(res, 404, { error: "no such chat" });
+        const report = threadAnalytics(id, chat);
+        return report ? json(res, 200, report) : json(res, 404, { error: "no such chat" });
+      }
+      if (req.method === "GET" && parts[2] === "performance" && parts.length === 3) {
+        const chat = getChat(id);
+        if (!chat) return json(res, 404, { error: "no such chat" });
+        const report = threadPerformance(id, chat);
+        return report ? json(res, 200, report) : json(res, 404, { error: "no such chat" });
+      }
       if (parts[2] === "browser") {
         if (!fullAccess && (!scopedChatId || scopedChatId !== id)) {
           return json(res, 403, { error: "an agent can control only its own thread's browser" });
@@ -1329,10 +1391,18 @@ const server = createServer(async (req, res) => {
           try {
             if (parts[3] === "open") return json(res, 200, await openBrowser(id, String(body.url ?? ""), controller, browserId));
             if (parts[3] === "viewport") {
-              if (body.viewport !== "desktop" && body.viewport !== "mobile") {
-                return json(res, 400, { error: "choose the desktop or mobile viewport" });
+              if (body.viewport !== "fullscreen" && body.viewport !== "desktop" && body.viewport !== "mobile") {
+                return json(res, 400, { error: "Choose Fullscreen, Desktop, or Mobile." });
               }
-              return json(res, 200, await setBrowserViewport(id, body.viewport, controller, browserId));
+              return json(res, 200, await setBrowserViewport(
+                id,
+                body.viewport,
+                controller,
+                browserId,
+                body.viewport === "fullscreen"
+                  ? { width: Number(body.width), height: Number(body.height) }
+                  : undefined,
+              ));
             }
             if (parts[3] === "snapshot") return json(res, 200, { text: await browserSnapshotText(id, browserId) });
             if (parts[3] === "click") return json(res, 200, await clickBrowser(id, target, controller, browserId));
@@ -1426,7 +1496,8 @@ const server = createServer(async (req, res) => {
         }
         const body = await readJson(req);
         try {
-          await sendChatMessage(id, String(body.text ?? ""));
+          const attachments = validateChatImages(id, body.attachments);
+          await sendChatMessage(id, String(body.text ?? ""), attachments);
           return json(res, 200, { ok: true });
         } catch (error) {
           return json(res, 409, { error: (error as Error).message || "could not send the message" });
@@ -1478,14 +1549,19 @@ const server = createServer(async (req, res) => {
       }
       if (req.method === "POST" && parts[2] === "upload") {
         const filename = String(req.headers["x-filename"] ?? "upload.bin");
-        const data = await readRawBody(req, MAX_UPLOAD_BYTES);
+        const mimeType = String(req.headers["content-type"] ?? "application/octet-stream");
         try {
           // Resolve the chat first, so an upload can only ever land under an id
           // the server itself minted.
           chatCwd(id);
-          return json(res, 200, { path: saveUpload(`chat-${id}`, filename, data) });
         } catch (error) {
           return json(res, 404, { error: (error as Error).message || "no such chat" });
+        }
+        try {
+          const data = await readRawBody(req, MAX_CHAT_IMAGE_BYTES);
+          return json(res, 200, { attachment: saveChatImage(id, filename, mimeType, data) });
+        } catch (error) {
+          return json(res, 400, { error: (error as Error).message || "could not attach that image" });
         }
       }
       // Most work does not start on a board — it starts as a thread, and ten
@@ -2071,7 +2147,7 @@ server.on("upgrade", (req, socket, head) => {
     // target — the phone's role, since its banners come from Apple Push.
     // Absent means yes, so an older desktop client keeps receiving them.
     const notifies = url.searchParams.get("notify") !== "0";
-    wss.handleUpgrade(req, socket, head, (ws) => attachNotifyStream(ws, notifies));
+    wss.handleUpgrade(req, socket, head, (ws) => attachNotifyStream(ws, notifies, url.searchParams));
     return;
   }
   const name = decodeURIComponent(parts[1]);

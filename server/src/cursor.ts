@@ -91,7 +91,7 @@ export interface CursorRun {
 }
 
 export interface CursorSession {
-  run(prompt: string): CursorRun;
+  run(prompt: string, images?: Array<{ base64: string; mimeType: string }>): CursorRun;
   close(): void;
 }
 
@@ -211,7 +211,7 @@ class AcpCursorSession implements CursorSession {
     });
   }
 
-  run(prompt: string): CursorRun {
+  run(prompt: string, images: Array<{ base64: string; mimeType: string }> = []): CursorRun {
     if (this.active) throw new Error("a Cursor turn is already running");
     const controller = new AbortController();
     const active = {
@@ -240,9 +240,15 @@ class AcpCursorSession implements CursorSession {
         }
         const response = await this.connection.agent.request(
           acp.methods.agent.session.prompt,
-          { sessionId: this.sessionId, prompt: [{ type: "text", text: sent }] },
+          {
+            sessionId: this.sessionId,
+            prompt: [
+              { type: "text", text: sent },
+              ...images.map((image) => ({ type: "image" as const, data: image.base64, mimeType: image.mimeType })),
+            ],
+          },
           { cancellationSignal: controller.signal },
-        );
+        ) as PromptResponse;
         this.onEvent({ type: "turn.completed", response });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

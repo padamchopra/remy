@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -14,8 +14,11 @@ process.env.HOME = stateDir;
 const {
   addWorkspace,
   checkoutTicketWorktree,
+  checkoutWorkspaceBranch,
+  closeWorkspaceWorktree,
   listWorkspaces,
   updateWorkspace,
+  worktreeDirtyMap,
 } = await import("./workspaces.js");
 
 /// A folder is all a workspace needs to be; the git metadata is attached when
@@ -81,7 +84,7 @@ test("leaves the choice alone when a patch does not mention it", async () => {
   assert.equal(saved.effort, "low");
 });
 
-test("gives a ticket a stable detached worktree", async () => {
+test("gives a ticket a stable detached worktree from the remote default", async () => {
   const path = mkdtempSync(join(tmpdir(), "remy-ticket-worktree-"));
   execFileSync("git", ["init", "-b", "main", path]);
   execFileSync("git", ["-C", path, "config", "user.name", "Remy Test"]);
@@ -89,12 +92,19 @@ test("gives a ticket a stable detached worktree", async () => {
   writeFileSync(join(path, "README.md"), "ticket worktree\n");
   execFileSync("git", ["-C", path, "add", "README.md"]);
   execFileSync("git", ["-C", path, "commit", "-m", "Initial commit"]);
+  const remoteDefault = execFileSync("git", ["-C", path, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  execFileSync("git", ["-C", path, "update-ref", "refs/remotes/origin/main", remoteDefault]);
+  execFileSync("git", ["-C", path, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
+  execFileSync("git", ["-C", path, "switch", "-c", "feature"]);
+  writeFileSync(join(path, "README.md"), "feature checkout\n");
+  execFileSync("git", ["-C", path, "commit", "-am", "Feature commit"]);
 
   const added = await addWorkspace("tickets", path);
   const first = await checkoutTicketWorktree(added, "REMY-42");
   assert.equal(first, join(realpathSync(path), ".remy", "tickets", "remy-42"));
   assert.equal(existsSync(first), true);
   assert.equal(execFileSync("git", ["-C", first, "rev-parse", "--abbrev-ref", "HEAD"], { encoding: "utf8" }).trim(), "HEAD");
+  assert.equal(execFileSync("git", ["-C", first, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), remoteDefault);
 
   const refreshed = (await listWorkspaces()).find((entry) => entry.id === added.id)!;
   assert.equal(await checkoutTicketWorktree(refreshed, "REMY-42"), first);
@@ -104,4 +114,55 @@ test("gives a ticket a stable detached worktree", async () => {
 test("keeps tickets in place when a folder is not a Git checkout", async () => {
   const added = await workspace("non-git-ticket");
   assert.equal(await checkoutTicketWorktree(added, "PLAIN-1"), added.path);
+});
+
+test("loads worktree changes on demand and protects them from safe cleanup", async () => {
+  const path = mkdtempSync(join(tmpdir(), "remy-worktree-cleanup-"));
+  execFileSync("git", ["init", "-b", "main", path]);
+  execFileSync("git", ["-C", path, "config", "user.name", "Remy Test"]);
+  execFileSync("git", ["-C", path, "config", "user.email", "remy@example.test"]);
+  writeFileSync(join(path, "README.md"), "main\n");
+  execFileSync("git", ["-C", path, "add", "README.md"]);
+  execFileSync("git", ["-C", path, "commit", "-m", "Initial commit"]);
+
+  const linked = mkdtempSync(join(tmpdir(), "remy-linked-cleanup-"));
+  rmSync(linked, { recursive: true });
+  execFileSync("git", ["-C", path, "worktree", "add", "-b", "cleanup-test", linked]);
+  writeFileSync(join(linked, "dirty.txt"), "keep me\n");
+  const added = await addWorkspace("cleanup", path);
+
+  const dirty = await worktreeDirtyMap(added.id);
+  assert.equal(dirty[realpathSync(path)], false);
+  assert.equal(dirty[realpathSync(linked)], true);
+  await assert.rejects(closeWorkspaceWorktree(added.id, realpathSync(linked), false), /uncommitted changes/);
+  assert.equal(existsSync(linked), true);
+
+  await closeWorkspaceWorktree(added.id, realpathSync(linked), true);
+  assert.equal(existsSync(linked), false);
+});
+
+test("switches the main checkout before a thread starts and preserves Git's failure reason", async () => {
+  const path = mkdtempSync(join(tmpdir(), "remy-main-checkout-"));
+  execFileSync("git", ["init", "-b", "main", path]);
+  execFileSync("git", ["-C", path, "config", "user.name", "Remy Test"]);
+  execFileSync("git", ["-C", path, "config", "user.email", "remy@example.test"]);
+  writeFileSync(join(path, "README.md"), "main\n");
+  execFileSync("git", ["-C", path, "add", "README.md"]);
+  execFileSync("git", ["-C", path, "commit", "-m", "Main commit"]);
+  execFileSync("git", ["-C", path, "switch", "-c", "feature"]);
+  writeFileSync(join(path, "README.md"), "feature\n");
+  execFileSync("git", ["-C", path, "commit", "-am", "Feature commit"]);
+  execFileSync("git", ["-C", path, "switch", "main"]);
+
+  const added = await addWorkspace("main checkout", path);
+  const switched = await checkoutWorkspaceBranch(added.id, "feature", "main");
+  assert.equal(switched.path, realpathSync(path));
+  assert.equal(execFileSync("git", ["-C", path, "branch", "--show-current"], { encoding: "utf8" }).trim(), "feature");
+
+  writeFileSync(join(path, "README.md"), "uncommitted\n");
+  await assert.rejects(
+    checkoutWorkspaceBranch(added.id, "main", "main"),
+    /Commit or stash on this checkout before you switch\./,
+  );
+  assert.equal(execFileSync("git", ["-C", path, "branch", "--show-current"], { encoding: "utf8" }).trim(), "feature");
 });

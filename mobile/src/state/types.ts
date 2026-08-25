@@ -89,11 +89,13 @@ export interface PathSuggestion {
 export interface ConvEntry {
   id: string;
   kind: "user" | "assistant" | "thinking" | "tool";
+  at?: number;
+  completedAt?: number;
   text?: string;
   tool?: string;
   verb?: string;
   arg?: string;
-  status?: "ok" | "error";
+  status?: "ok" | "error" | "stopped";
   output?: string;
   file?: string;
   skill?: string;
@@ -149,6 +151,7 @@ export interface ChatQuestionRequest {
 
 export interface ContextUsage {
   tokens: number;
+  peakTokens?: number;
   limit: number;
   limitEstimated: boolean;
   model?: string;

@@ -85,9 +85,15 @@ export interface ArchivedThread {
   title: string;
   cwd: string;
   provider?: string;
+  agentId?: string;
   model?: string;
+  effort?: string;
+  permissionMode?: string;
   preview?: string;
   archivedAt: number;
+  entries: ConvEntry[];
+  todos: ConvTodo[];
+  context?: ContextUsage;
 }
 
 export interface GitWorktree {
@@ -138,11 +144,13 @@ export interface WorkspaceIconMatch {
 export interface ConvEntry {
   id: string;
   kind: "user" | "assistant" | "thinking" | "tool";
+  at?: number;
+  completedAt?: number;
   text?: string;
   tool?: string;
   verb?: string;
   arg?: string;
-  status?: "ok" | "error";
+  status?: "ok" | "error" | "stopped";
   output?: string;
   file?: string;
   skill?: string;
@@ -152,6 +160,14 @@ export interface ConvEntry {
   questions?: ConvQuestion[];
   /// What a Remy tool made on this call, drawn as a card under the tool row.
   artifacts?: ConvArtifact[];
+  attachments?: ChatImageAttachment[];
+}
+
+export interface ChatImageAttachment {
+  id: string;
+  name: string;
+  mimeType: "image/gif" | "image/jpeg" | "image/png" | "image/webp";
+  sizeBytes: number;
 }
 
 /// Something a Remy tool made — a ticket, a thread, a workspace — with enough
@@ -214,6 +230,7 @@ export interface ChatQuestionRequest {
 /// and reported token accounting.
 export interface ContextUsage {
   tokens: number;
+  peakTokens?: number;
   limit: number;
   /// True when `limit` is a guess rather than a number this session proved.
   limitEstimated: boolean;

@@ -51,6 +51,48 @@ function serverDir(): string {
 }
 
 let connection: Connection | undefined;
+const remoteUpdates = new Set<string>();
+
+function appUpdateRequest(payload: unknown): { requestId: string } | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+  const value = payload as { type?: unknown; action?: unknown; requestId?: unknown };
+  if (value.type !== "app-update" || value.action !== "install-latest" || typeof value.requestId !== "string") {
+    return undefined;
+  }
+  return { requestId: value.requestId };
+}
+
+async function reportRemoteUpdate(
+  serverId: string,
+  requestId: string,
+  state: "downloading" | "installing" | "failed",
+  error?: string,
+): Promise<void> {
+  try {
+    await connection?.request(serverId, "/server/app-update", {
+      method: "PATCH",
+      body: { requestId, state, ...(error ? { error } : {}) },
+    });
+  } catch (caught) {
+    console.warn("remy: could not report remote update state", caught);
+  }
+}
+
+async function runRemoteUpdate(serverId: string, requestId: string): Promise<void> {
+  if (remoteUpdates.has(requestId)) return;
+  remoteUpdates.add(requestId);
+  try {
+    await reportRemoteUpdate(serverId, requestId, "downloading");
+    await downloadUpdate();
+    await reportRemoteUpdate(serverId, requestId, "installing");
+    installUpdate();
+  } catch (caught) {
+    const message = caught instanceof Error ? caught.message : "Couldn't install the update.";
+    await reportRemoteUpdate(serverId, requestId, "failed", message);
+  } finally {
+    remoteUpdates.delete(requestId);
+  }
+}
 
 /// Bridges the connection to the renderer.
 ///
@@ -101,7 +143,11 @@ async function wireIpc(): Promise<void> {
       if (!envUrl) saveServers(configPath, servers);
     }
   }
-  connection = new Connection(servers);
+  connection = new Connection(servers, {
+    version: app.getVersion(),
+    arch: process.arch,
+    updates: app.isPackaged,
+  });
 
   // Broadcast rather than target one window, so a reopened window still
   // receives pushes without re-wiring anything.
@@ -110,7 +156,15 @@ async function wireIpc(): Promise<void> {
       if (!window.isDestroyed()) window.webContents.send(channel, ...args);
     }
   };
-  connection.on("push", (serverId: string, payload: unknown) => send("mc:push", serverId, payload));
+  connection.on("push", (serverId: string, payload: unknown) => {
+    const requested = appUpdateRequest(payload);
+    const target = connection?.configs().find((server) => server.id === serverId);
+    if (requested && target?.builtin) {
+      void runRemoteUpdate(serverId, requested.requestId);
+      return;
+    }
+    send("mc:push", serverId, payload);
+  });
   connection.on("status", (serverId: string, online: boolean, error?: string) =>
     send("mc:status", serverId, online, error),
   );
@@ -138,11 +192,18 @@ async function wireIpc(): Promise<void> {
     const window = BrowserWindow.getAllWindows()[0];
     if (!window) throw new Error("no window to capture");
     const image = await window.webContents.capturePage();
+    const size = image.getSize();
+    const scale = 3840 / Math.max(size.width, size.height);
+    const fourKImage = image.resize({
+      width: Math.round(size.width * scale),
+      height: Math.round(size.height * scale),
+      quality: "best",
+    });
     const stamp = new Date()
       .toLocaleString("sv", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })
       .replace(/[: ]/g, (match) => (match === " " ? " at " : "."));
     const file = join(app.getPath("desktop"), `Remy ${stamp}.png`);
-    await writeFile(file, image.toPNG());
+    await writeFile(file, fourKImage.toPNG());
     return file;
   });
 
@@ -204,6 +265,23 @@ async function wireIpc(): Promise<void> {
       // the server's message instead of Electron's serialisation of it.
       try {
         return { ok: true as const, data: await connection.request(serverId, path, init ?? {}) };
+      } catch (error) {
+        return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "mc:upload",
+    async (
+      _event,
+      serverId: string,
+      path: string,
+      input: { data: Uint8Array; filename: string; mimeType: string },
+    ) => {
+      if (!connection) throw new Error("no connection");
+      try {
+        return { ok: true as const, data: await connection.upload(serverId, path, input) };
       } catch (error) {
         return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
       }

@@ -1,3 +1,4 @@
+import type { AnalyticsTab } from "@/components/AnalyticsSettings";
 import type { SettingsTab } from "@/components/Settings";
 
 /// Where the window is, written down so a reload lands back on it.
@@ -18,7 +19,7 @@ export type Route =
   | { name: "ticket"; key: string }
   | { name: "prs" }
   | { name: "recurring"; scope?: string }
-  | { name: "settings"; tab: SettingsTab };
+  | { name: "settings"; tab: SettingsTab; analyticsTab?: AnalyticsTab };
 
 export interface AppLocation {
   route: Route;
@@ -29,6 +30,7 @@ const SETTINGS_TABS: SettingsTab[] = [
   "version-control",
   "providers",
   "devices",
+  "analytics",
 ];
 
 /// The section a route belongs to, which is what the sidebar highlights.
@@ -43,7 +45,7 @@ export function sectionOf(route: Route): "inbox" | "chats" | "workspaces" | "prs
 
 export function parseLocation(hash: string): AppLocation {
   const raw = hash.replace(/^#/, "");
-  const [path] = raw.split("?");
+  const [path, query = ""] = raw.split("?");
   const [head, tail] = path.replace(/^\/+/, "").split("/");
   const rest = tail ? decodeURIComponent(tail) : undefined;
 
@@ -60,7 +62,9 @@ export function parseLocation(hash: string): AppLocation {
   if (head === "tickets" && rest) return { route: { name: "ticket", key: rest } };
   if (head === "settings") {
     const tab = SETTINGS_TABS.includes(rest as SettingsTab) ? (rest as SettingsTab) : "general";
-    return { route: { name: "settings", tab } };
+    const askedAnalyticsTab = new URLSearchParams(query).get("tab");
+    const analyticsTab: AnalyticsTab = askedAnalyticsTab === "usage" ? "usage" : "general";
+    return { route: { name: "settings", tab, ...(tab === "analytics" ? { analyticsTab } : {}) } };
   }
   // Threads are the front door, so anything unrecognised lands there rather
   // than on a blank screen.
@@ -78,7 +82,7 @@ export function formatLocation({ route }: AppLocation): string {
           : route.name === "ticket"
             ? `/tickets/${encodeURIComponent(route.key)}`
             : route.name === "settings"
-              ? `/settings/${route.tab}`
+              ? `/settings/${route.tab}${route.tab === "analytics" && route.analyticsTab === "usage" ? "?tab=usage" : ""}`
               : route.name === "prs"
                 ? "/pull-requests"
                 : `/inbox${route.agent ? `/${encodeURIComponent(route.agent)}` : ""}`;

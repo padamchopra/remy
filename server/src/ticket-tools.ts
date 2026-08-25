@@ -5,7 +5,11 @@ import { z } from "zod";
 import { agentByHandle, getAgent, listAgents } from "./agents.js";
 import { listProjects, projectForWorkspace } from "./projects.js";
 import { artifactMarker, type ConvArtifact } from "./remy-artifacts.js";
-import { REMY_TOOL_INSTRUCTIONS } from "./ticket-tool-contract.js";
+import {
+  explicitlyRequestedTicketStatus,
+  REMY_TOOL_INSTRUCTIONS,
+  THREAD_TICKET_STATUSES,
+} from "./ticket-tool-contract.js";
 import { addWorkspace, listWorkspaces } from "./workspaces.js";
 import {
   browserSnapshotText,
@@ -18,7 +22,6 @@ import {
   waitInBrowser,
 } from "./browser.js";
 import {
-  TICKET_STATUSES,
   commentOnTicket,
   createTicket,
   getTicket,
@@ -31,7 +34,6 @@ import {
   ticketByKey,
   ticketForChat,
   updateTicket,
-  type TicketStatus,
   type TicketView,
 } from "./tickets.js";
 
@@ -109,7 +111,7 @@ function describe(ticket: TicketView): string {
 export function ticketPromptContext(chatId: string): string | undefined {
   const ticket = ticketForChat(chatId);
   if (!ticket) return undefined;
-  return `<remy_ticket_context>\n${describe(ticket)}\n\nThis thread is linked to this ticket. Use the Remy ticket tools to keep the ticket accurate as the work changes.\n</remy_ticket_context>`;
+  return `<remy_ticket_context>\n${describe(ticket)}\n\nThis thread is linked to this ticket. Use the Remy ticket tools to keep its scope and activity accurate. Change its status only when the person explicitly asks for a particular status; never infer Done from finishing your work.\n</remy_ticket_context>`;
 }
 
 /// A tool's answer, and the card the feed draws under it. The marker rides in
@@ -224,8 +226,8 @@ export function claudeTicketMcpServer(chatId: string, agentId: string | undefine
       ),
       tool(
         "browser_viewport",
-        "Switch the shared browser between desktop and mobile responsive layouts.",
-        { viewport: z.enum(["desktop", "mobile"]) },
+        "Switch the shared browser between fullscreen, desktop, and mobile responsive layouts.",
+        { viewport: z.enum(["fullscreen", "desktop", "mobile"]) },
         async ({ viewport }) => {
           const view = await setBrowserViewport(chatId, viewport, "agent");
           return ok(`Switched the shared browser to ${viewport} (${view.width} × ${view.height}).`);
@@ -401,7 +403,7 @@ export function claudeTicketMcpServer(chatId: string, agentId: string | undefine
           title: z.string().min(1).max(200),
           body: z.string().max(20000).optional().describe("The description in markdown"),
           workspace: z.string().optional().describe("Registered workspace name, id, path, or origin. Omit it to use this thread's folder."),
-          status: z.enum(TICKET_STATUSES as [TicketStatus, ...TicketStatus[]]).optional().describe("Defaults to Backlog."),
+          status: z.enum(THREAD_TICKET_STATUSES).optional().describe("Defaults to Backlog. Choose another status only when the person explicitly asks."),
         },
         async ({ title, body, workspace, status }) => {
           const path = await workspacePath(workspace, threads.currentCwd);
@@ -462,13 +464,20 @@ export function claudeTicketMcpServer(chatId: string, agentId: string | undefine
       ),
       tool(
         "set_ticket_status",
-        "Move a ticket when its real work state changes.",
+        "Move a ticket only when the person explicitly asks for a particular status. Never infer Done from finishing work.",
         {
           key,
-          status: z.enum(TICKET_STATUSES as [TicketStatus, ...TicketStatus[]]),
+          status: z.enum(THREAD_TICKET_STATUSES),
           note: z.string().max(10000).optional(),
+          instruction: z.string().max(1000).describe("The exact words from the person's latest message that request this status"),
         },
-        async ({ key: asked, status, note }) => {
+        async ({ key: asked, status, note, instruction }) => {
+          const latest = [...(threads.read(chatId)?.entries ?? [])]
+            .reverse()
+            .find((entry) => entry.kind === "user")?.text;
+          if (!explicitlyRequestedTicketStatus(latest, instruction, status)) {
+            throw new Error("Change a ticket's status only when the person explicitly asks.");
+          }
           const ticket = ticketFor(asked, chatId);
           const actor = agentId ? getAgent(agentId)?.handle ?? "remy" : "remy";
           const moved = setTicketStatus(ticket.id, status, { actor, note });
@@ -519,8 +528,7 @@ export function claudeTicketMcpServer(chatId: string, agentId: string | undefine
           if (!next) throw new Error(`No agent called @${handle}.`);
           if (!current?.handoffTo.includes(next.handle)) throw new Error(`@${current?.handle ?? "workspace"} cannot hand tickets to @${next.handle}.`);
           const handed = handoffTicket(ticket.id, next.id, current.handle);
-          setTicketStatus(handed.id, "todo", { actor: current.handle });
-          return ok(`Handed ${handed.key} to @${next.handle} in Todo.`, ticketCard(handed));
+          return ok(`Handed ${handed.key} to @${next.handle}.`, ticketCard(handed));
         },
         { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
       ),

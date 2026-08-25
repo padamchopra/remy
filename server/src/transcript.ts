@@ -1,4 +1,4 @@
-import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readdirSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentKind } from "./agent.js";
@@ -7,16 +7,29 @@ import { takeArtifacts, type ConvArtifact } from "./remy-artifacts.js";
 
 export type { ConvArtifact };
 
+export interface ChatImageAttachment {
+  /// Opaque id minted by the device that owns the thread. A client never sends
+  /// a filesystem path, because the browser may be on another machine.
+  id: string;
+  name: string;
+  mimeType: "image/gif" | "image/jpeg" | "image/png" | "image/webp";
+  sizeBytes: number;
+}
+
 // A single rendered item in the conversation feed. `kind` picks the renderer on
 // the client; the other fields are populated per kind.
 export interface ConvEntry {
   id: string;
   kind: "user" | "assistant" | "thinking" | "tool";
+  /// When Remy first saw this item. Older entries may not carry timing data.
+  at?: number;
+  /// When a streamed message or tool finished.
+  completedAt?: number;
   text?: string;
   tool?: string;
   verb?: string;
   arg?: string;
-  status?: "ok" | "error";
+  status?: "ok" | "error" | "stopped";
   output?: string;
   file?: string;
   skill?: string;
@@ -27,6 +40,9 @@ export interface ConvEntry {
   /// What a Remy tool made on this call — a ticket, a thread, a workspace —
   /// shown as a card under the tool row rather than left in its output.
   artifacts?: ConvArtifact[];
+  /// Images sent with a user message, retained so every client renders the
+  /// same inline references after a refresh.
+  attachments?: ChatImageAttachment[];
 }
 
 /// Records a tool's result on its feed entry, lifting out anything a Remy tool
@@ -125,6 +141,7 @@ export interface SessionInfo {
 // assistant message — the only place this exists, since nothing reports it live.
 export interface ContextUsage {
   tokens: number; // context size of the most recent request
+  peakTokens?: number; // largest live context report retained for this session
   limit: number;
   // True when `limit` is a guess rather than a number this session proved (by
   // auto-compacting) or the operator declared. The client says so.
@@ -132,6 +149,31 @@ export interface ContextUsage {
   model?: string;
   compactions: number;
   droppedTokens: number; // history discarded by compaction, cumulative
+}
+
+/// One provider transcript reduced to the facts Analytics needs. The result is
+/// cached by path and size below, so opening Settings again only stats files
+/// whose provider has written more data since the last read.
+export interface TranscriptAnalytics {
+  usage: TranscriptUsageSample[];
+  tools: TranscriptToolCall[];
+  cost: Array<{ at: number; costUsd: number }>;
+}
+
+export interface TranscriptUsageSample {
+  at: number;
+  model?: string;
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheCreationTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+}
+
+export interface TranscriptToolCall {
+  at: number;
+  tool: string;
+  skill?: string;
 }
 
 // Transcripts grow without bound (tens of MB for long sessions), so we only ever
@@ -180,6 +222,34 @@ export function discoverClaudeTranscript(cwd?: string): { path: string; sessionI
   } catch {
     return undefined;
   }
+}
+
+let codexTranscriptIndex = new Map<string, string>();
+let codexTranscriptIndexedAt = 0;
+const CODEX_TRANSCRIPT_INDEX_TTL = 30_000;
+
+/// Finds the rollout Codex writes for a thread without opening every rollout.
+/// Its filenames end in the thread id, so a directory-name index is enough.
+export function resolveCodexTranscriptPath(threadId?: string): string | undefined {
+  if (!threadId) return undefined;
+  if (Date.now() - codexTranscriptIndexedAt > CODEX_TRANSCRIPT_INDEX_TTL || !codexTranscriptIndex.has(threadId)) {
+    const next = new Map<string, string>();
+    for (const root of [join(homedir(), ".codex", "sessions"), join(homedir(), ".codex", "archived_sessions")]) {
+      try {
+        const files = readdirSync(root, { recursive: true, encoding: "utf8" });
+        for (const relative of files) {
+          if (!relative.endsWith(".jsonl")) continue;
+          const match = relative.match(/([0-9a-f]{8}-[0-9a-f-]{27})\.jsonl$/i);
+          if (match?.[1]) next.set(match[1], join(root, relative));
+        }
+      } catch {
+        // Codex has not run here yet.
+      }
+    }
+    codexTranscriptIndex = next;
+    codexTranscriptIndexedAt = Date.now();
+  }
+  return codexTranscriptIndex.get(threadId);
 }
 
 export function readConversation(path: string | undefined, limit = 120): Conversation {
@@ -390,6 +460,8 @@ function readCodexConversation(lines: any[], limit: number): Conversation {
 // instead of a read, however many clients are watching.
 const usageCache = new Map<string, ContextUsage>();
 const USAGE_CACHE_MAX = 200;
+const analyticsCache = new Map<string, TranscriptAnalytics>();
+const ANALYTICS_CACHE_MAX = 300;
 
 export function readContextUsage(path: string | undefined, declaredContextLimit = 200_000): ContextUsage | undefined {
   if (!path || !existsSync(path)) return undefined;
@@ -479,8 +551,123 @@ export function readContextUsage(path: string | undefined, declaredContextLimit 
   return usage;
 }
 
+/// Reads cumulative usage and invocation history from one provider transcript.
+///
+/// This intentionally does not aggregate across threads. A transcript is the
+/// unit whose size tells us whether anything changed; `analytics.ts` combines
+/// these already-reduced answers without reopening an unchanged file.
+export function readTranscriptAnalytics(path: string | undefined): TranscriptAnalytics | undefined {
+  if (!path || !existsSync(path)) return undefined;
+  let size: number;
+  try {
+    size = statSync(path).size;
+  } catch {
+    return undefined;
+  }
+  const key = `${path}:${size}`;
+  const hit = analyticsCache.get(key);
+  if (hit) return hit;
+
+  const usage: TranscriptUsageSample[] = [];
+  const tools: TranscriptToolCall[] = [];
+  const cost: Array<{ at: number; costUsd: number }> = [];
+  let codexModel: string | undefined;
+
+  for (const record of allLines(path)) {
+    const at = timestamp(record?.timestamp);
+    if (record?.type === "turn_context" && typeof record.payload?.model === "string") {
+      codexModel = record.payload.model;
+      continue;
+    }
+
+    if (record?.type === "event_msg" && record.payload?.type === "token_count") {
+      const tokens = record.payload?.info?.last_token_usage;
+      if (!tokens) continue;
+      const input = num(tokens.input_tokens);
+      const cached = Math.min(input, num(tokens.cached_input_tokens));
+      usage.push({
+        at,
+        ...(codexModel ? { model: codexModel } : {}),
+        inputTokens: Math.max(0, input - cached),
+        cachedInputTokens: cached,
+        cacheCreationTokens: num(tokens.cache_write_input_tokens),
+        outputTokens: num(tokens.output_tokens),
+        reasoningTokens: num(tokens.reasoning_output_tokens),
+      });
+      continue;
+    }
+
+    if (record?.type === "response_item") {
+      const payload = record.payload;
+      if (payload?.type !== "function_call" && payload?.type !== "custom_tool_call") continue;
+      const tool = str(payload.name) ?? "tool";
+      const described = describeTool(tool, codexToolInput(payload));
+      tools.push({ at, tool, ...(described.skill ? { skill: described.skill } : {}) });
+      continue;
+    }
+
+    if (record?.type === "assistant") {
+      const message = record.message;
+      const tokens = message?.usage;
+      if (tokens) {
+        usage.push({
+          at,
+          ...(typeof message?.model === "string" ? { model: message.model } : {}),
+          inputTokens: num(tokens.input_tokens),
+          cachedInputTokens: num(tokens.cache_read_input_tokens),
+          cacheCreationTokens: num(tokens.cache_creation_input_tokens),
+          outputTokens: num(tokens.output_tokens),
+          reasoningTokens: 0,
+        });
+      }
+      for (const block of Array.isArray(message?.content) ? message.content : []) {
+        if (block?.type !== "tool_use") continue;
+        const tool = str(block.name) ?? "tool";
+        const described = describeTool(tool, block.input);
+        tools.push({ at, tool, ...(described.skill ? { skill: described.skill } : {}) });
+      }
+      continue;
+    }
+
+    if (record?.type === "result") {
+      const costUsd = num(record.total_cost_usd);
+      if (costUsd > 0) cost.push({ at, costUsd });
+    }
+  }
+
+  const answer = { usage, tools, cost };
+  if (analyticsCache.size >= ANALYTICS_CACHE_MAX) analyticsCache.clear();
+  analyticsCache.set(key, answer);
+  return answer;
+}
+
 function num(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function timestamp(value: unknown): number {
+  if (typeof value !== "string") return 0;
+  const at = Date.parse(value);
+  return Number.isFinite(at) ? at : 0;
+}
+
+function allLines(path: string): any[] {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    return [];
+  }
+  const out: any[] = [];
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      out.push(JSON.parse(line));
+    } catch {
+      // A provider may still be writing the final line.
+    }
+  }
+  return out;
 }
 
 function tailLines(path: string, maxBytes = MAX_TAIL): any[] {

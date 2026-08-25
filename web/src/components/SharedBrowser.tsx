@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent, type WheelEvent } from "react";
-import { ArrowRight, Globe2, LoaderCircle, Monitor, MousePointer2, PanelRightClose, PanelRightOpen, Plus, Smartphone, X } from "lucide-react";
+import { ArrowRight, ChartNoAxesCombined, Gauge, Globe2, LoaderCircle, Maximize2, Monitor, MousePointer2, PanelRightClose, PanelRightOpen, Plus, Smartphone, X } from "lucide-react";
 import { toast } from "sonner";
+import { ThreadAnalyticsTool, ThreadPerformanceTool } from "@/components/ThreadInsights";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -23,7 +24,7 @@ export interface SharedBrowserView {
   active: boolean;
   url?: string;
   title?: string;
-  viewport?: "desktop" | "mobile";
+  viewport?: "fullscreen" | "desktop" | "mobile";
   width: number;
   height: number;
   revision: number;
@@ -35,7 +36,7 @@ export interface SharedBrowserView {
 
 export interface ThreadToolTab {
   id: string;
-  type: "browser";
+  type: "browser" | "analytics" | "performance";
 }
 
 function browserPath(chatId: string, browserId: string, action?: string): string {
@@ -43,7 +44,7 @@ function browserPath(chatId: string, browserId: string, action?: string): string
   return `${base}?instance=${encodeURIComponent(browserId)}`;
 }
 
-export function useThreadTools(chatId: string, serverId: string) {
+export function useThreadTools(chatId: string, serverId: string, enabled = true) {
   const [tabs, setTabs] = useState<ThreadToolTab[]>([{ id: "default", type: "browser" }]);
   const [activeTab, setActiveTab] = useState("default");
   const [views, setViews] = useState<Record<string, SharedBrowserView | undefined>>({});
@@ -51,8 +52,10 @@ export function useThreadTools(chatId: string, serverId: string) {
   const [supportsInstances, setSupportsInstances] = useState(false);
   const refreshTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const nextBrowser = useRef(2);
+  const nextInsight = useRef(2);
 
   const refresh = useCallback(async (browserId = "default") => {
+    if (!enabled) return;
     try {
       const next = await transport.request<SharedBrowserView>(
         serverId,
@@ -63,13 +66,17 @@ export function useThreadTools(chatId: string, serverId: string) {
     } catch {
       setViews((current) => ({ ...current, [browserId]: undefined }));
     }
-  }, [chatId, serverId]);
+  }, [chatId, serverId, enabled]);
 
   useEffect(() => {
-    for (const tab of tabs) void refresh(tab.id);
-  }, [refresh, tabs]);
+    if (!enabled) return;
+    for (const tab of tabs) {
+      if (tab.type === "browser") void refresh(tab.id);
+    }
+  }, [enabled, refresh, tabs]);
 
   useEffect(() => {
+    if (!enabled) return;
     const unsubscribe = transport.subscribe((_source, payload) => {
       const frame = payload as Partial<SharedBrowserView> & { type?: string; chatId?: string; browserId?: string };
       if (frame.type !== "browser" || frame.chatId !== chatId) return;
@@ -96,7 +103,7 @@ export function useThreadTools(chatId: string, serverId: string) {
       clearTimeout(refreshTimer.current);
       unsubscribe();
     };
-  }, [chatId, refresh]);
+  }, [chatId, enabled, refresh]);
 
   const addBrowser = () => {
     if (!supportsInstances && tabs.length > 0) return;
@@ -108,7 +115,17 @@ export function useThreadTools(chatId: string, serverId: string) {
     setShown(true);
   };
 
-  const closeTab = async (browserId: string) => {
+  const addInsight = (type: "analytics" | "performance") => {
+    const id = tabs.some((tab) => tab.type === type)
+      ? `${type}-${Date.now().toString(36)}-${nextInsight.current++}`
+      : type;
+    setTabs((current) => [...current, { id, type }]);
+    setActiveTab(id);
+    setShown(true);
+  };
+
+  const closeTab = async (tab: ThreadToolTab) => {
+    const browserId = tab.id;
     setTabs((current) => {
       const next = current.filter((tab) => tab.id !== browserId);
       if (activeTab === browserId) setActiveTab(next.at(-1)?.id ?? "");
@@ -119,6 +136,7 @@ export function useThreadTools(chatId: string, serverId: string) {
       delete next[browserId];
       return next;
     });
+    if (tab.type !== "browser") return;
     try {
       await transport.request(serverId, browserPath(chatId, browserId, "close"), { method: "POST", body: {} });
     } catch (caught) {
@@ -134,7 +152,9 @@ export function useThreadTools(chatId: string, serverId: string) {
     setView: (browserId: string, view: SharedBrowserView) =>
       setViews((current) => ({ ...current, [browserId]: view })),
     addBrowser,
-    canAddTabs: supportsInstances || tabs.length === 0,
+    addAnalytics: () => addInsight("analytics"),
+    addPerformance: () => addInsight("performance"),
+    canAddBrowser: supportsInstances || !tabs.some((tab) => tab.type === "browser"),
     closeTab,
     shown,
     setShown,
@@ -180,8 +200,11 @@ export function ThreadToolsSidebar({
   setActiveTab,
   setView,
   addBrowser,
-  canAddTabs,
+  addAnalytics,
+  addPerformance,
+  canAddBrowser,
   closeTab,
+  visible,
 }: {
   chatId: string;
   serverId: string;
@@ -191,20 +214,25 @@ export function ThreadToolsSidebar({
   setActiveTab: (id: string) => void;
   setView: (id: string, view: SharedBrowserView) => void;
   addBrowser: () => void;
-  canAddTabs: boolean;
-  closeTab: (id: string) => Promise<void>;
+  addAnalytics: () => void;
+  addPerformance: () => void;
+  canAddBrowser: boolean;
+  closeTab: (tab: ThreadToolTab) => Promise<void>;
+  visible: boolean;
 }) {
   return (
     <section aria-label="Thread tools" className="flex size-full min-h-0 flex-col bg-background">
       {tabs.length > 0 ? (
         <Tabs value={activeTab} onValueChange={setActiveTab} className="min-h-0 flex-1 gap-0">
           <TabsList variant="line" aria-label="Open tools" className="h-10 w-full min-w-0 justify-start gap-0 overflow-x-auto overflow-y-hidden rounded-none border-b border-border px-2 py-0">
-            {tabs.map((tab, index) => {
-              const label = index === 0 ? "Browser" : `Browser ${index + 1}`;
+            {tabs.map((tab) => {
+              const typeIndex = tabs.filter((candidate) => candidate.type === tab.type).findIndex((candidate) => candidate.id === tab.id);
+              const label = toolLabel(tab, typeIndex);
+              const Icon = toolIcon(tab.type);
               return (
                 <div key={tab.id} className="flex h-full min-w-0 shrink-0 items-center">
                   <TabsTrigger value={tab.id} className="min-w-0 max-w-36 shrink px-2 after:bottom-0!">
-                    <Globe2 />
+                    <Icon />
                     <span className="truncate">{label}</span>
                     {views[tab.id]?.active && <span className="size-1.5 shrink-0 rounded-full bg-success-foreground" />}
                   </TabsTrigger>
@@ -213,7 +241,7 @@ export function ThreadToolsSidebar({
                     variant="ghost"
                     size="icon-xs"
                     aria-label={`Close ${label} tab`}
-                    onClick={() => void closeTab(tab.id)}
+                    onClick={() => void closeTab(tab)}
                   >
                     <X />
                   </Button>
@@ -227,17 +255,23 @@ export function ThreadToolsSidebar({
                   variant="ghost"
                   size="icon-xs"
                   aria-label="Add tool tab"
-                  disabled={!canAddTabs}
-                  title={canAddTabs ? undefined : "Restart Remy to add more tool tabs."}
                 >
                   <Plus />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start">
                 <DropdownMenuGroup>
-                  <DropdownMenuItem onSelect={addBrowser}>
+                  <DropdownMenuItem onSelect={addBrowser} disabled={!canAddBrowser}>
                     <Globe2 />
                     Browser
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={addAnalytics}>
+                    <ChartNoAxesCombined />
+                    Analytics
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={addPerformance}>
+                    <Gauge />
+                    Performance
                   </DropdownMenuItem>
                 </DropdownMenuGroup>
               </DropdownMenuContent>
@@ -245,13 +279,19 @@ export function ThreadToolsSidebar({
           </TabsList>
           {tabs.map((tab) => (
             <TabsContent key={tab.id} value={tab.id} className="min-h-0 overflow-hidden">
-              <SharedBrowser
-                chatId={chatId}
-                serverId={serverId}
-                browserId={tab.id}
-                view={views[tab.id]}
-                setView={(view) => setView(tab.id, view)}
-              />
+              {tab.type === "browser" ? (
+                <SharedBrowser
+                  chatId={chatId}
+                  serverId={serverId}
+                  browserId={tab.id}
+                  view={views[tab.id]}
+                  setView={(view) => setView(tab.id, view)}
+                />
+              ) : tab.type === "analytics" ? (
+                <ThreadAnalyticsTool chatId={chatId} serverId={serverId} enabled={visible && activeTab === tab.id} />
+              ) : (
+                <ThreadPerformanceTool chatId={chatId} serverId={serverId} enabled={visible && activeTab === tab.id} />
+              )}
             </TabsContent>
           ))}
         </Tabs>
@@ -261,15 +301,37 @@ export function ThreadToolsSidebar({
             <EmptyMedia variant="icon"><Globe2 /></EmptyMedia>
             <EmptyTitle>No tools open</EmptyTitle>
             <EmptyDescription>Add a tool when you need it beside this thread.</EmptyDescription>
-            <Button type="button" size="sm" onClick={addBrowser}>
-              <Plus data-icon="inline-start" />
-              Add browser
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" size="sm">
+                  <Plus data-icon="inline-start" />
+                  Add tool
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="center">
+                <DropdownMenuGroup>
+                  <DropdownMenuItem onSelect={addBrowser}><Globe2 />Browser</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={addAnalytics}><ChartNoAxesCombined />Analytics</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={addPerformance}><Gauge />Performance</DropdownMenuItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </EmptyHeader>
         </Empty>
       )}
     </section>
   );
+}
+
+function toolLabel(tab: ThreadToolTab, typeIndex: number): string {
+  const label = tab.type === "analytics" ? "Analytics" : tab.type === "performance" ? "Performance" : "Browser";
+  return typeIndex > 0 ? `${label} ${typeIndex + 1}` : label;
+}
+
+function toolIcon(type: ThreadToolTab["type"]) {
+  if (type === "analytics") return ChartNoAxesCombined;
+  if (type === "performance") return Gauge;
+  return Globe2;
 }
 
 export function SharedBrowser({
@@ -289,6 +351,8 @@ export function SharedBrowser({
   const [busy, setBusy] = useState(false);
   const pageRef = useRef<HTMLButtonElement>(null);
   const keyboardRef = useRef<HTMLInputElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const resizeTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
     if (view?.url) setAddress(view.url);
@@ -351,6 +415,32 @@ export function SharedBrowser({
   const viewport = view?.viewport ?? (view && view.width < view.height ? "mobile" : "desktop");
   const canChangeViewport = Boolean(view?.active && view.viewport);
 
+  const fullscreenSize = () => {
+    const bounds = stageRef.current?.getBoundingClientRect();
+    return bounds
+      ? { width: Math.round(bounds.width), height: Math.round(bounds.height) }
+      : {};
+  };
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage || viewport !== "fullscreen" || !view?.active) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const width = Math.round(entry.contentRect.width);
+      const height = Math.round(entry.contentRect.height);
+      if (!width || !height || (width === view.width && height === view.height)) return;
+      clearTimeout(resizeTimer.current);
+      resizeTimer.current = setTimeout(() => {
+        void action("viewport", { viewport: "fullscreen", width, height });
+      }, 120);
+    });
+    observer.observe(stage);
+    return () => {
+      clearTimeout(resizeTimer.current);
+      observer.disconnect();
+    };
+  }, [view?.active, view?.height, view?.width, viewport]);
+
   return (
     <div className="flex size-full min-h-0 flex-col">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
@@ -363,9 +453,13 @@ export function SharedBrowser({
           aria-label="Browser viewport"
           disabled={!canChangeViewport}
           onValueChange={(next) => {
+            if (next === "fullscreen") void action("viewport", { viewport: next, ...fullscreenSize() });
             if (next === "desktop" || next === "mobile") void action("viewport", { viewport: next });
           }}
         >
+          <ToggleGroupItem value="fullscreen" aria-label="Fullscreen viewport" title="Fullscreen viewport" className="px-2">
+            <Maximize2 />
+          </ToggleGroupItem>
           <ToggleGroupItem value="desktop" aria-label="Desktop viewport" title="Desktop viewport" className="px-2">
             <Monitor />
           </ToggleGroupItem>
@@ -394,11 +488,17 @@ export function SharedBrowser({
         </Button>
       </form>
 
-      <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-muted/20 p-3">
+      <div
+        ref={stageRef}
+        className={cn(
+          "flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-muted/20",
+          viewport === "fullscreen" ? "p-0" : "p-3",
+        )}
+      >
         {view?.active && view.screenshot ? (
           <div
-            className="relative max-h-full max-w-full"
-            style={{
+            className={cn("relative max-h-full max-w-full", viewport === "fullscreen" && "size-full")}
+            style={viewport === "fullscreen" ? undefined : {
               aspectRatio: `${view.width} / ${view.height}`,
               ...(view.width < view.height ? { height: "100%" } : { width: "100%" }),
             }}
@@ -407,7 +507,10 @@ export function SharedBrowser({
               ref={pageRef}
               type="button"
               variant="ghost"
-              className="relative size-full overflow-hidden rounded-md border border-border bg-white p-0 shadow-sm focus-visible:ring-2"
+              className={cn(
+                "relative size-full overflow-hidden border border-border bg-white p-0 shadow-sm focus-visible:ring-2",
+                viewport === "fullscreen" ? "rounded-none border-0 shadow-none" : "rounded-md",
+              )}
               aria-label="Browser page. Click, scroll, or type to take control."
               onClick={click}
               onWheel={scroll}

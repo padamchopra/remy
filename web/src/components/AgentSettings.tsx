@@ -13,7 +13,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -26,7 +26,6 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AgentIconPicker } from "@/components/AgentIconPicker";
 import { AgentMark } from "@/components/AgentAvatar";
 import { EditableName } from "@/components/EditableName";
@@ -139,43 +138,6 @@ export function AgentSettings({
             </p>
           )}
         </div>
-        {!locked && (
-        <AlertDialog>
-          {/* Both triggers are `asChild`, so they have to collapse onto the one
-              button — a Tooltip root in between would swallow the dialog's
-              props and the button would open nothing. */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <AlertDialogTrigger asChild>
-                <Button variant="ghost" size="icon-sm" aria-label={`Delete ${agent.name}`}>
-                  <Trash2 />
-                </Button>
-              </AlertDialogTrigger>
-            </TooltipTrigger>
-            <TooltipContent>Delete agent</TooltipContent>
-          </Tooltip>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Delete {agent.name}?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Threads it already started keep running. Tickets assigned to it lose their assignee.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={() =>
-                  void deleteAgent(agent.id)
-                    .then(onDeleted)
-                    .catch((error) => toast.error("Couldn't delete that agent", { description: apiError(error) }))
-                }
-              >
-                Delete
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-        )}
       </header>
 
       {!locked && (
@@ -370,6 +332,51 @@ export function AgentSettings({
           onCheckedChange={(next) => void save({ autoStart: next }, "whether it starts unattended")}
         />
       </Field>
+
+      <Separator />
+
+      <FieldGroup className="gap-0">
+        <Field
+          orientation="responsive"
+          className="rounded-lg border border-destructive/25 bg-destructive/5 p-4"
+        >
+          <FieldContent>
+            <FieldLabel>Delete {agent.name}</FieldLabel>
+            <FieldDescription className="text-xs">
+              Its existing threads keep running, and its tickets lose their assignee.
+            </FieldDescription>
+          </FieldContent>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="destructive" size="sm">
+                <Trash2 />
+                Delete agent
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete {agent.name}?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Threads it already started keep running. Tickets assigned to it lose their assignee.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  variant="destructive"
+                  onClick={() =>
+                    void deleteAgent(agent.id)
+                      .then(onDeleted)
+                      .catch((error) => toast.error("Couldn't delete that agent", { description: apiError(error) }))
+                  }
+                >
+                  Delete
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </Field>
+      </FieldGroup>
       </>
       )}
     </div>

@@ -17,6 +17,7 @@ test("a Remy capability names only the thread it was minted for", () => {
 test("a Remy capability reaches orchestration without reaching administration", () => {
   assert.equal(isRemyToolRoute("GET", "/board"), true);
   assert.equal(isRemyToolRoute("POST", "/tickets/one/comment"), true);
+  assert.equal(isRemyToolRoute("POST", "/tickets/one/status"), true);
   assert.equal(isRemyToolRoute("PATCH", "/tickets/one/comments/two"), false);
   assert.equal(isRemyToolRoute("DELETE", "/tickets/one/comments/two"), false);
   assert.equal(isRemyToolRoute("PATCH", "/tickets/one"), true);

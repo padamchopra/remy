@@ -60,7 +60,9 @@ rl.on("line", (line) => {
   if (message.method === "session/prompt") {
     const prompt = message.params.prompt[0].text;
     pendingPrompt = message.id;
-    update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "reply:" + prompt } });
+    update({ sessionUpdate: "usage_update", used: 1234, size: 200000, cost: { amount: 0.42, currency: "USD" } });
+    const images = message.params.prompt.filter((item) => item.type === "image");
+    update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "reply:" + prompt + ":images:" + images.length } });
     if (prompt === "approval") {
       pendingKind = "approval";
       update({ sessionUpdate: "tool_call", toolCallId: "tool-1", title: "Run tests", name: "Bash", kind: "execute", status: "pending", rawInput: { command: "npm test" }, content: [], locations: [] });
@@ -103,7 +105,20 @@ test("one ACP connection carries turns and returns Remy's approval choice", asyn
 
   assert.equal(events.filter((event) => event.type === "session.started").length, 1);
   assert.equal(events.filter((event) => event.type === "turn.started").length, 2);
+  assert.ok(events.some((event) => event.type === "usage.updated" && event.used === 1234 && event.size === 200000 && event.costUsd === 0.42));
   assert.ok(events.some((event) => event.type === "tool.updated" && event.toolCall.toolCallId === "tool-1"));
+});
+
+test("Cursor receives native ACP image blocks", async () => {
+  const events: CursorEvent[] = [];
+  const session = createCursorSession(
+    { command: fakeCursor(), cwd: process.cwd(), permissionMode: "default" },
+    (event) => events.push(event),
+  );
+  await session.run("image", [{ base64: "iVBORw0KGgo=", mimeType: "image/png" }]).done;
+  session.close();
+  assert.ok(events.some((event) =>
+    event.type === "message.delta" && event.text === "reply:image:images:1"));
 });
 
 test("Cursor's question and plan extensions use Remy's existing input cards", async () => {

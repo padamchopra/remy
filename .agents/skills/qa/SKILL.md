@@ -16,6 +16,8 @@ Choose the preview by what changed:
 - **UI only:** `npm run dev:web` serves the edited UI at `http://127.0.0.1:5173` against the packaged daemon and real database.
 - **Server behavior, or an occupied 5173:** `npm run qa:web` builds the current checkout and starts an isolated daemon and Vite on unused loopback ports. Open the URL it prints. Its temporary database includes a disposable sample workspace and ticket; add `-- --empty` when testing an empty state.
 
+Probe `http://127.0.0.1:5173` before starting Vite. If it already responds, do not retry `npm run dev:web`: reuse it only for a UI-only change, and use `npm run qa:web` for current server code.
+
 The page does not live-reload — `server.hmr` is `false` in `web/vite.config.ts`. Reload it after every edit, or the screenshot is of the code you had before.
 
 Never quit Remy.app, stop the process on port 8420, or replace its daemon for QA. A thread may be running through that exact process. The sidecar strips inherited `REMY_*` and `MC_*` credentials, uses temporary state, and owns only the processes it starts, so current server code can run beside production without reaching back into it.
@@ -24,7 +26,7 @@ Keep `npm run qa:web` running while clicking the app, then stop that command wit
 
 `npm run qa:web -- --check` is the fast startup and proxy regression check. It is not interaction QA: for a UI or behavior change, use the ordinary command and drive the printed URL.
 
-Playwright drives it with the cached Chromium: `web/scripts/shoot.mjs` is the working example, and `chromiumPath()` in `web/scripts/chromium.mjs` finds the binary.
+Use Remy's browser tools when they are available. For an ad-hoc Playwright check, run from `web/`, where `playwright-core` is installed; `web/scripts/shoot.mjs` is the working example and `chromiumPath()` in `web/scripts/chromium.mjs` finds the binary.
 
 ## What counts as having checked it
 

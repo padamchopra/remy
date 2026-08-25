@@ -3,7 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { basename } from "node:path";
 import { homedir } from "node:os";
 import { z } from "zod";
-import { REMY_TOOL_INSTRUCTIONS } from "./ticket-tool-contract.js";
+import { REMY_TOOL_INSTRUCTIONS, THREAD_TICKET_STATUSES } from "./ticket-tool-contract.js";
 import { artifactMarker, type ConvArtifact } from "./remy-artifacts.js";
 
 interface ApiTicket {
@@ -268,8 +268,8 @@ server.registerTool("browser_open", {
 });
 
 server.registerTool("browser_viewport", {
-  description: "Switch the shared browser between desktop and mobile responsive layouts.",
-  inputSchema: { viewport: z.enum(["desktop", "mobile"]) },
+  description: "Switch the shared browser between fullscreen, desktop, and mobile responsive layouts.",
+  inputSchema: { viewport: z.enum(["fullscreen", "desktop", "mobile"]) },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
 }, async ({ viewport }) => {
   const view = await request<{ width: number; height: number }>(`${browserPath}/viewport`, {
@@ -439,7 +439,7 @@ server.registerTool("create_ticket", {
     title: z.string().min(1).max(200),
     body: z.string().max(20000).optional().describe("The description in markdown"),
     workspace: z.string().optional().describe("Registered workspace name, id, path, or origin. Omit it to use this thread's folder."),
-    status: z.enum(["backlog", "todo", "in_progress", "needs_input", "pr_review", "done", "cancelled"]).optional().describe("Defaults to Backlog."),
+    status: z.enum(THREAD_TICKET_STATUSES).optional().describe("Defaults to Backlog. Choose another status only when the person explicitly asks."),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
 }, async ({ title, body, workspace, status }) => {
@@ -504,18 +504,19 @@ server.registerTool("update_ticket", {
 });
 
 server.registerTool("set_ticket_status", {
-  description: "Move a ticket when its real work state changes.",
+  description: "Move a ticket only when the person explicitly asks for a particular status. Never infer Done from finishing work.",
   inputSchema: {
     key,
-    status: z.enum(["backlog", "todo", "in_progress", "needs_input", "pr_review", "done", "cancelled"]),
+    status: z.enum(THREAD_TICKET_STATUSES),
     note: z.string().max(10000).optional(),
+    instruction: z.string().max(1000).describe("The exact words from the person's latest message that request this status"),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-}, async ({ key: asked, status, note }) => {
+}, async ({ key: asked, status, note, instruction }) => {
   const { ticket } = await ticketFor(asked);
   await request(`/tickets/${encodeURIComponent(ticket.id)}/status`, {
     method: "POST",
-    body: { status, note, actor: agentId },
+    body: { status, note, instruction, actor: agentId },
   });
   return ok(`Moved ${ticket.key} to ${status}.`, { ...ticketCard(ticket), detail: status });
 });
@@ -566,7 +567,7 @@ server.registerTool("handoff_ticket", {
     method: "POST",
     body: { agentId: next.id, actor: current.handle },
   });
-  return ok(`Handed ${ticket.key} to @${next.handle} in Todo.`, { ...ticketCard(ticket), detail: "Todo" });
+  return ok(`Handed ${ticket.key} to @${next.handle}.`, ticketCard(ticket));
 });
 
 await server.connect(new StdioServerTransport());
