@@ -47,7 +47,6 @@ import { useRelease } from "@/hooks/use-release";
 import { deviceIcon } from "@/lib/devices";
 import { apiError } from "@/lib/api-error";
 import { agentConversation } from "@/lib/inbox";
-import { displayPath } from "@/lib/path";
 import { notificationsEnabled } from "@/lib/notify";
 import { devicesForWorkspace, isProjectIconFile } from "@/lib/projects";
 import { sectionOf, type Route } from "@/lib/route";
@@ -578,9 +577,6 @@ export function App() {
                           </span>
                           <span className="min-w-0 flex-1">
                             <span className="block truncate text-sm leading-5 font-medium">{workspace.name}</span>
-                            <span className="block truncate font-mono text-[11px] leading-4 text-muted-foreground">
-                              {displayPath(workspace.path)}
-                            </span>
                           </span>
                           {devices.length > 0 && (
                             <span className="flex shrink-0 items-center -space-x-1.5">
