@@ -1,4 +1,5 @@
 import { Box, Code, Database, Folder, GitBranch, Globe, Sparkles, Terminal, type LucideIcon } from "lucide-react-native";
+import type { Server, Workspace } from "../state/types";
 
 export const PROJECT_ICONS = {
   folder: Folder,
@@ -27,6 +28,40 @@ export function isProjectIconFile(value: unknown): value is string {
 
 export function projectIcon(id: ProjectIconId | string | null | undefined): LucideIcon {
   return PROJECT_ICONS[id && isProjectIcon(id) ? id : "folder"];
+}
+
+export interface WorkspaceGroup {
+  id: string;
+  workspace: Workspace;
+  copies: Workspace[];
+}
+
+/// One repository across Macs, or one ordinary folder on one Mac.
+export function workspaceGroups(all: Workspace[], servers: Server[]): WorkspaceGroup[] {
+  const grouped = new Map<string, Workspace[]>();
+  for (const workspace of all) {
+    if (workspace.virtual) continue;
+    const id = workspace.origin
+      ? `repository:${workspace.origin}`
+      : `folder:${workspace.serverId}:${workspace.id}`;
+    grouped.set(id, [...(grouped.get(id) ?? []), workspace]);
+  }
+
+  const serverRank = (workspace: Workspace): number => {
+    const server = servers.find((entry) => entry.id === workspace.serverId);
+    if (server?.home && server.online) return 0;
+    if (server?.online) return 1;
+    if (server?.home) return 2;
+    return 3;
+  };
+
+  return [...grouped.entries()]
+    .map(([id, copies]) => ({
+      id,
+      copies,
+      workspace: [...copies].sort((a, b) => serverRank(a) - serverRank(b) || a.name.localeCompare(b.name))[0],
+    }))
+    .sort((a, b) => a.workspace.name.localeCompare(b.workspace.name));
 }
 
 export function workspaceForPath(

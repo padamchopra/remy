@@ -214,7 +214,7 @@ export const useStore = create<State>((set, get) => ({
             const listed = await transport.request<{ workspaces?: RawWorkspace[] }>(server.id, "/workspaces");
             workspaces = (listed.workspaces ?? []).map((raw) => toWorkspace(raw, server.id));
           } catch {
-            workspaces = [];
+            workspaces = get().workspaces.filter((workspace) => workspace.serverId === server.id);
           }
           return {
             server: { ...server, online: server.cloud ? server.online : true },
@@ -228,7 +228,7 @@ export const useStore = create<State>((set, get) => ({
             server: { ...server, online: false },
             chats: [] as Chat[],
             dms: [] as Chat[],
-            workspaces: [] as Workspace[],
+            workspaces: get().workspaces.filter((workspace) => workspace.serverId === server.id),
           };
         }
       }),

@@ -35,7 +35,7 @@ import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { CLOUD_MODES, cloudModeOf, PERMISSIONS, permissionOf, type PermissionValue } from "@/lib/chat-options";
 import { apiError } from "@/lib/api-error";
 import { deviceIcon } from "@/lib/devices";
-import { devicesForWorkspace } from "@/lib/projects";
+import { devicesForWorkspace, workspaceGroups } from "@/lib/projects";
 import type { ModelChoice } from "@/lib/providers";
 import { useStore } from "@/state/store";
 import type { GitBranch as Branch, Server, Workspace } from "@/state/types";
@@ -523,20 +523,21 @@ function WorkspaceMenu({
   onAddWorkspace: () => void;
 }) {
   const selected = home ? deviceValue(serverId) : workspace?.id;
+  const grouped = workspaceGroups(workspaces, servers);
   return (
     <DropdownMenuContent align="start" side="bottom" sideOffset={6}>
-      {workspaces.some((entry) => !entry.virtual) && (
+      {grouped.length > 0 && (
         <DropdownMenuGroup>
-          {workspaces.filter((entry) => !entry.virtual).map((entry) => (
-            <DropdownMenuItem key={entry.id} onSelect={() => onPick(entry.id)}>
+          {grouped.map(({ id, workspace: entry, copies }) => (
+            <DropdownMenuItem key={id} onSelect={() => onPick(entry.id)}>
               <WorkspaceMark home={false} workspace={entry} size="sm" />
               {entry.name}
-              {selected === entry.id ? <Check className="ml-auto" /> : null}
+              {copies.some((copy) => copy.id === selected) ? <Check className="ml-auto" /> : null}
             </DropdownMenuItem>
           ))}
         </DropdownMenuGroup>
       )}
-      {workspaces.some((entry) => !entry.virtual) && servers.some((entry) => !entry.workspaceOnly) && <DropdownMenuSeparator />}
+      {grouped.length > 0 && servers.some((entry) => !entry.workspaceOnly) && <DropdownMenuSeparator />}
       <DropdownMenuGroup>
         {servers.filter((entry) => !entry.workspaceOnly).map((entry) => {
           const Icon = deviceIcon(entry.icon);

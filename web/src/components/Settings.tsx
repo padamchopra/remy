@@ -56,6 +56,7 @@ import {
 import { ModelPickerButton } from "@/components/ModelPicker";
 import { PERMISSIONS, permissionOf } from "@/lib/chat-options";
 import { ProviderMark } from "@/components/ProviderMark";
+import type { Provider } from "@/lib/providers";
 import { AvatarFrom, PresetAvatar } from "@/components/UserAvatar";
 import { Markdown } from "@/components/Markdown";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
@@ -83,7 +84,7 @@ import {
 import { IDENTITIES } from "@/components/AgentSettings";
 import { useAppUpdate, type AppUpdatePhase } from "@/hooks/use-app-update";
 import { useStore } from "@/state/store";
-import type { Chat, ProviderMcpStatus, Server, TailnetDevice, ToolStatus } from "@/state/types";
+import type { Chat, ProviderMcpStatus, Server, TailnetDevice, Tooling, ToolStatus } from "@/state/types";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { AnalyticsTab } from "@/components/AnalyticsSettings";
 
@@ -109,11 +110,15 @@ export function SettingsPane({
   tab,
   analyticsTab,
   onAnalyticsTab,
+  providerDeviceId,
+  onProviderDevice,
   release,
 }: {
   tab: SettingsTab;
   analyticsTab: AnalyticsTab;
   onAnalyticsTab: (tab: AnalyticsTab) => void;
+  providerDeviceId?: string;
+  onProviderDevice: (deviceId: string) => void;
   release: {
     current: string;
     latest?: RemyRelease;
@@ -137,7 +142,7 @@ export function SettingsPane({
           ) : tab === "version-control" ? (
             <VersionControlPane />
           ) : tab === "providers" ? (
-            <ProvidersPane />
+            <ProvidersPane deviceId={providerDeviceId} onDevice={onProviderDevice} />
           ) : tab === "analytics" ? (
             <Suspense fallback={<div className="h-80 animate-pulse rounded-xl bg-accent" />}>
               <AnalyticsSettings tab={analyticsTab} onTab={onAnalyticsTab} />
@@ -1040,45 +1045,89 @@ function when(at: number): string {
 /// Only that. Which of them a new thread reaches for is a different question,
 /// and it is answered once, in General — a picker here as well read as two
 /// settings for one choice.
-function ProvidersPane() {
+interface ProviderDeviceState {
+  serverId: string;
+  tooling: Tooling;
+  providers: Provider[];
+  mcpProviders: Record<string, ProviderMcpStatus>;
+}
+
+function ProvidersPane({ deviceId, onDevice }: { deviceId?: string; onDevice: (deviceId: string) => void }) {
   const servers = useStore((s) => s.servers);
-  const online = servers.some((server) => server.online);
-  const tooling = useStore((s) => s.tooling);
-  const loadTooling = useStore((s) => s.loadTooling);
-  const providers = useStore((s) => s.providers);
-  const loadProviders = useStore((s) => s.loadProviders);
-  const setProviderEnabled = useStore((s) => s.setProviderEnabled);
-  const mcpProviders = useStore((s) => s.mcpProviders);
-  const loadMcpProviders = useStore((s) => s.loadMcpProviders);
-  const installProviderMcp = useStore((s) => s.installProviderMcp);
-  const removeProviderMcp = useStore((s) => s.removeProviderMcp);
+  const devices = servers.filter((server) => !server.cloud);
+  const home = devices.find((server) => server.local) ?? devices[0];
+  const selected = devices.find((server) => server.id === deviceId) ?? home;
+  const selectedId = selected?.id;
+  const loadLocalProviders = useStore((s) => s.loadProviders);
+  const [state, setState] = useState<ProviderDeviceState>();
+  const [unavailableDeviceId, setUnavailableDeviceId] = useState<string>();
   const [mcpBusy, setMcpBusy] = useState<string>();
-  const enabledCount = providers?.filter((provider) => provider.enabled !== false).length ?? 3;
+  const loadGeneration = useRef(0);
+  const selectedState = state?.serverId === selectedId ? state : undefined;
+  const unavailable = unavailableDeviceId === selectedId;
+  const loading = !selectedState && !unavailable;
+  const enabledCount = selectedState?.providers.filter((provider) => provider.enabled !== false).length ?? 3;
+
+  const load = useCallback(async (showLoading = true) => {
+    if (!selectedId) return;
+    const generation = ++loadGeneration.current;
+    if (showLoading) {
+      setState(undefined);
+    }
+    setUnavailableDeviceId(undefined);
+    try {
+      const [tooling, providerResponse, mcpResponse] = await Promise.all([
+        transport.request<Tooling>(selectedId, "/server/tooling"),
+        transport.request<{ providers?: Provider[] }>(selectedId, "/server/providers"),
+        transport.request<{ providers?: ProviderMcpStatus[] }>(selectedId, "/server/mcp").catch(() => undefined),
+      ]);
+      if (generation !== loadGeneration.current) return;
+      setState({
+        serverId: selectedId,
+        tooling,
+        providers: providerResponse.providers ?? [],
+        mcpProviders: Object.fromEntries((mcpResponse?.providers ?? []).map((entry) => [entry.provider, entry])),
+      });
+    } catch {
+      if (generation === loadGeneration.current) setUnavailableDeviceId(selectedId);
+    }
+  }, [selectedId]);
 
   useEffect(() => {
-    if (online) void Promise.all([loadTooling(), loadProviders(), loadMcpProviders()]).catch(() => {});
-  }, [online, loadTooling, loadProviders, loadMcpProviders]);
+    void load();
+  }, [load]);
 
   const toggle = async (provider: string, enabled: boolean) => {
+    if (!selected) return;
     try {
-      await setProviderEnabled(provider, enabled);
+      await transport.request(selected.id, `/server/providers/${encodeURIComponent(provider)}`, {
+        method: "PATCH",
+        body: { enabled },
+      });
+      await load(false);
+      if (selected.local) await loadLocalProviders();
     } catch (caught) {
       toast.error("Couldn't change that provider", { description: apiError(caught) });
     }
   };
 
-  const providerOn = (id: string) => providers?.find((provider) => provider.id === id)?.enabled !== false;
+  const providerOn = (id: string) => selectedState?.providers.find((provider) => provider.id === id)?.enabled !== false;
+  const planDetail = (status?: ToolStatus) => [status?.plan, status?.organization].filter(Boolean).join(" · ");
 
   const changeMcp = async (provider: string, label: string, install: boolean) => {
+    if (!selected) return;
     setMcpBusy(provider);
     try {
-      if (install) {
-        await installProviderMcp(provider);
-        toast.success(`Remy MCP was added to ${label}.`);
-      } else {
-        await removeProviderMcp(provider);
-        toast.success(`Remy MCP was removed from ${label}.`);
-      }
+      const status = await transport.request<ProviderMcpStatus>(
+        selected.id,
+        `/server/mcp/${encodeURIComponent(provider)}`,
+        { method: install ? "POST" : "DELETE", body: {} },
+      );
+      setState((current) => current?.serverId === selected.id ? {
+        ...current,
+        mcpProviders: { ...current.mcpProviders, [provider]: status },
+      } : current);
+      toast.success(`Remy MCP was ${install ? "added to" : "removed from"} ${label} on ${selected.name}.`);
     } catch (caught) {
       toast.error(`Couldn't ${install ? "add" : "remove"} Remy MCP`, { description: apiError(caught) });
     } finally {
@@ -1086,68 +1135,114 @@ function ProvidersPane() {
     }
   };
 
-  if (!online) return <Unreachable />;
+  if (!selected) return <Unreachable />;
+
+  const scope = selected.local ? "this machine" : selected.name;
+  const DeviceIcon = deviceIcon(selected.icon);
 
   return (
     <div className="flex flex-col gap-5">
+      <Field orientation="responsive" className="rounded-lg border border-border bg-card p-3.5">
+        <FieldContent>
+          <FieldLabel>Device</FieldLabel>
+          <FieldDescription>Each device keeps its own provider setup.</FieldDescription>
+        </FieldContent>
+        <Select value={selected.id} onValueChange={onDevice}>
+          <SelectTrigger aria-label="Provider device" className="w-full sm:w-64">
+            <SelectValue>
+              <DeviceIcon className="size-4" />
+              <span className="truncate">{selected.name}</span>
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {devices.map((server) => {
+                const Icon = deviceIcon(server.icon);
+                return (
+                  <SelectItem key={server.id} value={server.id}>
+                    <Icon className="size-4" />
+                    <span className="min-w-0 flex-1 truncate">{server.name}</span>
+                    <span
+                      className={cn("size-1.5 rounded-full", server.online ? "bg-success" : "bg-muted-foreground")}
+                      aria-label={server.online ? "Online" : "Offline"}
+                    />
+                  </SelectItem>
+                );
+              })}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </Field>
+
+      {unavailable ? (
+        <Unreachable deviceName={selected.name} />
+      ) : (
       <div className="flex flex-col gap-2">
         <ToolRow
           name="claude"
           label="Claude Code"
           mark={<ProviderMark provider="claude" />}
-          status={tooling?.claude}
+          status={selectedState?.tooling.claude}
           enabled={providerOn("claude")}
-          disableToggle={enabledCount === 1 && providerOn("claude")}
+          disableToggle={loading || (enabledCount === 1 && providerOn("claude"))}
           onEnabledChange={(enabled) => void toggle("claude", enabled)}
-          mcp={mcpProviders?.claude}
+          mcp={selectedState?.mcpProviders.claude}
           mcpBusy={mcpBusy === "claude"}
           onMcpChange={(install) => void changeMcp("claude", "Claude Code", install)}
           detail={
-            tooling?.claude.available
-              ? "Threads run through the copy of Claude Code on this machine."
-              : "Install Claude Code on this machine to run threads on Claude."
+            planDetail(selectedState?.tooling.claude) || (selectedState?.tooling.claude.available
+              ? `Threads run through Claude Code on ${scope}.`
+              : `Install Claude Code on ${scope} to run threads on Claude.`)
           }
         />
         <ToolRow
           name="codex"
           label="Codex"
           mark={<ProviderMark provider="codex" />}
-          status={tooling?.codex}
+          status={selectedState?.tooling.codex}
           enabled={providerOn("codex")}
-          disableToggle={enabledCount === 1 && providerOn("codex")}
+          disableToggle={loading || (enabledCount === 1 && providerOn("codex"))}
           onEnabledChange={(enabled) => void toggle("codex", enabled)}
-          mcp={mcpProviders?.codex}
+          mcp={selectedState?.mcpProviders.codex}
           mcpBusy={mcpBusy === "codex"}
           onMcpChange={(install) => void changeMcp("codex", "Codex", install)}
           detail={
-            tooling?.codex?.available
-              ? "Threads run through Codex on this machine."
-              : "Install Codex on this machine to run threads on it."
+            planDetail(selectedState?.tooling.codex) || (selectedState?.tooling.codex.available
+              ? `Threads run through Codex on ${scope}.`
+              : `Install Codex on ${scope} to run threads on it.`)
           }
         />
-        <ToolRow
-          name="cursor"
-          label="Cursor"
-          mark={<ProviderMark provider="cursor" />}
-          status={tooling?.cursor}
-          enabled={providerOn("cursor")}
-          disableToggle={enabledCount === 1 && providerOn("cursor")}
-          onEnabledChange={(enabled) => void toggle("cursor", enabled)}
-          mcp={mcpProviders?.cursor}
-          mcpBusy={mcpBusy === "cursor"}
-          onMcpChange={(install) => void changeMcp("cursor", "Cursor", install)}
-          detail={
-            tooling?.cursor?.available
-              ? "Threads run through Cursor on this machine."
-              : "Install Cursor Agent on this machine to run threads on it."
-          }
-        />
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
+          <ToolRow
+            className="rounded-none border-0 bg-transparent"
+            name="cursor"
+            label="Cursor"
+            mark={<ProviderMark provider="cursor" />}
+            status={selectedState?.tooling.cursor}
+            enabled={providerOn("cursor")}
+            disableToggle={loading || (enabledCount === 1 && providerOn("cursor"))}
+            onEnabledChange={(enabled) => void toggle("cursor", enabled)}
+            mcp={selectedState?.mcpProviders.cursor}
+            mcpBusy={mcpBusy === "cursor"}
+            onMcpChange={(install) => void changeMcp("cursor", "Cursor", install)}
+            detail={
+              planDetail(selectedState?.tooling.cursor) || (selectedState?.tooling.cursor.available
+                ? `Threads run through Cursor on ${scope}.`
+                : `Install Cursor Agent on ${scope} to run threads on it.`)
+            }
+          />
+          {selectedState ? (
+            <CursorCloudCard serverId={selected.id} cursorEnabled={providerOn("cursor")} />
+          ) : null}
+        </div>
       </div>
+      )}
     </div>
   );
 }
 
 function ToolRow({
+  className,
   name,
   label,
   status,
@@ -1160,6 +1255,7 @@ function ToolRow({
   mcpBusy,
   onMcpChange,
 }: {
+  className?: string;
   name: string;
   label: string;
   status?: ToolStatus;
@@ -1175,7 +1271,7 @@ function ToolRow({
 }) {
   const ok = status?.available && status.authenticated !== false;
   return (
-    <Item variant="outline" size="sm" className="gap-2.5">
+    <Item variant="outline" size="sm" className={cn("gap-2.5", className)}>
       <ItemMedia>
         {mark ?? (
           <span
@@ -1226,14 +1322,14 @@ function ToolRow({
   );
 }
 
-function Unreachable() {
+function Unreachable({ deviceName }: { deviceName?: string } = {}) {
   return (
     <Empty className="border border-dashed">
       <EmptyHeader>
         <EmptyMedia variant="icon">
           <Laptop />
         </EmptyMedia>
-        <EmptyTitle>This machine is offline</EmptyTitle>
+        <EmptyTitle>{deviceName ? `${deviceName} is offline` : "This machine is offline"}</EmptyTitle>
         <EmptyDescription>Open Remy on it to change these settings.</EmptyDescription>
       </EmptyHeader>
     </Empty>
@@ -1311,7 +1407,6 @@ function DevicesPane() {
           }}
         />
       ))}
-      {home ? <CursorCloudCard homeId={home.id} /> : null}
       {home ? <PhonesField serverId={home.id} /> : null}
       <DiscoveredDevices homeId={home?.id} reachable={homeReachable} />
       <AddDevice onAdd={addServer} />
@@ -1327,7 +1422,7 @@ interface CursorCloudStatus {
   keyName?: string;
 }
 
-function CursorCloudCard({ homeId }: { homeId: string }) {
+function CursorCloudCard({ serverId, cursorEnabled }: { serverId: string; cursorEnabled: boolean }) {
   const refresh = useStore((s) => s.refresh);
   const [status, setStatus] = useState<CursorCloudStatus>();
   const [open, setOpen] = useState(false);
@@ -1335,17 +1430,18 @@ function CursorCloudCard({ homeId }: { homeId: string }) {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    setStatus(await transport.request<CursorCloudStatus>(homeId, "/cursor-cloud/status"));
-  }, [homeId]);
+    setStatus(await transport.request<CursorCloudStatus>(serverId, "/cursor-cloud/status"));
+  }, [serverId]);
 
   useEffect(() => {
+    setStatus(undefined);
     void load().catch(() => {});
   }, [load]);
 
   const connect = async () => {
     setBusy(true);
     try {
-      const next = await transport.request<CursorCloudStatus>(homeId, "/cursor-cloud/connect", {
+      const next = await transport.request<CursorCloudStatus>(serverId, "/cursor-cloud/connect", {
         method: "POST",
         body: { apiKey },
       });
@@ -1364,7 +1460,7 @@ function CursorCloudCard({ homeId }: { homeId: string }) {
   const disconnect = async () => {
     setBusy(true);
     try {
-      const next = await transport.request<CursorCloudStatus>(homeId, "/cursor-cloud/connect", { method: "DELETE" });
+      const next = await transport.request<CursorCloudStatus>(serverId, "/cursor-cloud/connect", { method: "DELETE" });
       setStatus(next);
       await refresh();
       toast.success("Cursor Cloud is disconnected.");
@@ -1376,47 +1472,58 @@ function CursorCloudCard({ homeId }: { homeId: string }) {
   };
 
   const detail = status?.configured
-    ? status.enabled
+    ? cursorEnabled
       ? [status.account, status.keyName].filter(Boolean).join(" · ") || "Ready for workspace threads."
       : "Cursor is off in Providers."
-    : "Run workspace threads in Cursor Cloud.";
+    : cursorEnabled
+      ? "Run workspace threads in Cursor Cloud."
+      : "Turn on Cursor to run workspace threads in Cursor Cloud.";
 
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-3.5 py-3">
-      <span className="flex size-8 items-center justify-center rounded-md bg-muted">
+    <Item size="sm" className="rounded-none border-x-0 border-b-0 bg-transparent">
+      <ItemMedia variant="icon">
         <Cloud className="size-4" />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block text-sm font-medium">Cursor Cloud</span>
-        <span className="block truncate text-xs text-muted-foreground">{detail}</span>
-      </span>
-      {status?.configured ? (
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <Button variant="outline" size="sm" disabled={busy}>Disconnect</Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Disconnect Cursor Cloud?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Saved transcripts stay in Remy, but you can't start or continue cloud threads.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={() => void disconnect()}>Disconnect</AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      ) : (
-        <Button variant="outline" size="sm" disabled={busy} onClick={() => setOpen(true)}>Connect</Button>
-      )}
+      </ItemMedia>
+      <ItemContent className="gap-0.5">
+        <ItemTitle>Cursor Cloud</ItemTitle>
+        <ItemDescription className="text-xs">{detail}</ItemDescription>
+      </ItemContent>
+      <ItemActions>
+        {status?.configured ? (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" size="sm" disabled={busy}>Disconnect</Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Disconnect Cursor Cloud?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Saved transcripts stay in Remy, but you can't start or continue cloud threads.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={() => void disconnect()}>Disconnect</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={busy || !cursorEnabled}
+            onClick={() => setOpen(true)}
+          >
+            Connect
+          </Button>
+        )}
+      </ItemActions>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Connect Cursor Cloud</DialogTitle>
             <DialogDescription>
-              Paste an API key from Cursor. Remy keeps it in this Mac's Keychain.
+              Paste an API key from Cursor. Remy keeps it in the selected device's Keychain.
             </DialogDescription>
           </DialogHeader>
           <Field>
@@ -1436,7 +1543,7 @@ function CursorCloudCard({ homeId }: { homeId: string }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </Item>
   );
 }
 

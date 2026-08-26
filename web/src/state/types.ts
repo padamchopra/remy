@@ -290,6 +290,7 @@ export interface ServerSettings {
   deviceName: string;
   deviceIcon: string;
   deviceTint: string;
+  tailscaleServeEnabled: boolean;
   /// What every agent set to Remy default signs with.
   defaultGitIdentity: "off" | "author";
   /// What a new thread and every inherited agent thinks with. It pairs with
@@ -320,6 +321,8 @@ export interface ToolStatus {
   version?: string;
   authenticated?: boolean;
   account?: string;
+  plan?: string;
+  organization?: string;
   error?: string;
 }
 

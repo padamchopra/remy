@@ -351,12 +351,13 @@ async function drain(chat: CloudChatRecord, run: Run, agent?: SDKAgent): Promise
 
 function requireApiKey(): string {
   const key = cleartextApiKey();
-  if (!key) throw new Error("connect Cursor Cloud in Devices first");
+  if (!key) throw new Error("connect Cursor Cloud in Providers first");
   if (!config.enabledProviders.includes("cursor")) throw new Error("turn on Cursor in Providers first");
   return key;
 }
 
 export async function connectCursorCloud(value: unknown): Promise<CursorCloudStatus> {
+  if (!config.enabledProviders.includes("cursor")) throw new Error("turn on Cursor in Providers first");
   const apiKey = typeof value === "string" ? value.trim() : "";
   if (!apiKey || apiKey.length > 512) throw new Error("enter a Cursor API key");
   const me = await sdk.me(apiKey).catch((error) => {

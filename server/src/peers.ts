@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { hostname } from "node:os";
 import { deviceId, eventsSince, mergeRemote, onLocalAppend, versionVector } from "./board-log.js";
-import { config, patchSettings } from "./config.js";
+import { config, hasTailscaleServePreference, patchSettings } from "./config.js";
 import { db } from "./db.js";
 import { exportEnvironmentSync, mergeEnvironmentSync } from "./environments.js";
 import { reprojectAll as reprojectAgents, seedPresetAgents } from "./agents.js";
@@ -348,6 +348,10 @@ export async function updateIdentity(patch: Record<string, unknown>): Promise<Id
 /// Puts this daemon on the tailnet, the same way `deploy/setup.sh` does. Serve,
 /// never funnel: the tailnet can reach it, the public internet cannot.
 export async function setExposed(on: boolean): Promise<IdentityView> {
+  // Remember the desired state separately from the mapping Tailscale happens
+  // to have right now. A restart can repair a missing or stale mapping only if
+  // it knows that this machine was meant to stay reachable.
+  patchSettings({ tailscaleServeEnabled: on });
   // Prefer HTTPS; fall back to tailnet HTTP for a tailnet without certs, which
   // is still WireGuard-encrypted and still tailnet-only, just without TLS on
   // top. Turning it off removes the mappings one at a time rather than running
@@ -380,6 +384,45 @@ export async function setExposed(on: boolean): Promise<IdentityView> {
     );
   }
   return next;
+}
+
+const EXPOSURE_RECONCILE_MS = 30_000;
+let exposureReconcile: Promise<void> | undefined;
+
+/// Keeps the Tailnet route aligned with the daemon's current port.
+///
+/// Existing installs already have a persistent Tailscale Serve rule but did
+/// not store the preference that created it. The first current build adopts a
+/// rule only when it demonstrably fronts this daemon; after that the explicit
+/// preference decides whether startup may recreate it.
+export async function reconcileTailnetExposure(): Promise<void> {
+  if (hasTailscaleServePreference() && !config.tailscaleServeEnabled) return;
+
+  const current = await serveTarget();
+  if (!hasTailscaleServePreference()) {
+    if (!current) return;
+    patchSettings({ tailscaleServeEnabled: true });
+  }
+  if (!config.tailscaleServeEnabled || current) return;
+  await setExposed(true);
+}
+
+/// Starts one non-overlapping reconciliation loop for the life of the daemon.
+export function startTailnetExposureReconciler(): () => void {
+  const run = () => {
+    if (exposureReconcile) return;
+    exposureReconcile = reconcileTailnetExposure()
+      .catch((error) => {
+        console.warn("remy: could not repair Tailnet reachability", error);
+      })
+      .finally(() => {
+        exposureReconcile = undefined;
+      });
+  };
+  run();
+  const timer = setInterval(run, EXPOSURE_RECONCILE_MS);
+  timer.unref?.();
+  return () => clearInterval(timer);
 }
 
 // --- Pairing ---------------------------------------------------------------

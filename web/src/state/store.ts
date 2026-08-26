@@ -141,13 +141,13 @@ interface State {
   addServer(input: { url: string; token: string; name?: string }): Promise<void>;
   removeServer(id: string): Promise<void>;
   updateServer(id: string, patch: { name?: string; icon?: DeviceIconId; tint?: TintId }): Promise<void>;
-  addWorkspace(input: { path: string; name?: string }): Promise<void>;
+  addWorkspace(input: { path: string; name?: string; serverId?: string }): Promise<void>;
   updateWorkspace(
     id: string,
     patch: { name?: string; icon?: string | null; tint?: string | null; provider?: string | null; model?: string | null; effort?: string | null },
   ): Promise<void>;
   removeWorkspace(id: string): Promise<void>;
-  suggestPaths(query: string): Promise<PathSuggestion[]>;
+  suggestPaths(query: string, serverId?: string): Promise<PathSuggestion[]>;
   suggestWorkspaceIcons(id: string, query: string): Promise<WorkspaceIconMatch[]>;
   workspaceFile(id: string, path: string): Promise<{ mime: string; data: string } | undefined>;
   loadWorkspaceWorktrees(id: string): Promise<GitWorktree[]>;
@@ -384,7 +384,7 @@ export const useStore = create<State>((set, get) => ({
             transport
               .request<{ workspaces?: RawWorkspace[] }>(server.id, "/workspaces")
               .then((listed) => listed.workspaces ?? [])
-              .catch(() => []),
+              .catch(() => undefined),
           ]);
           set((current) => ({
             // One machine answering is enough to stop saying "Connecting…":
@@ -406,10 +406,15 @@ export const useStore = create<State>((set, get) => ({
               ...current.dms.filter((chat) => chat.serverId !== server.id),
               ...(chats.dms ?? []).map((raw) => toChat(raw, server.id)),
             ],
-            workspaces: [
-              ...current.workspaces.filter((workspace) => workspace.serverId !== server.id),
-              ...workspaces.map((raw) => toWorkspace(raw, server.id)),
-            ],
+            // Keep the last catalogue when a paired machine is asleep. Its
+            // folders still exist there, and the device chip already says the
+            // machine is offline. A successful empty answer still clears it.
+            workspaces: workspaces === undefined
+              ? current.workspaces
+              : [
+                  ...current.workspaces.filter((workspace) => workspace.serverId !== server.id),
+                  ...workspaces.map((raw) => toWorkspace(raw, server.id)),
+                ],
           }));
         } catch (error) {
           failures.set(server.id, `${server.name}: ${error instanceof Error ? error.message : String(error)}`);
@@ -419,7 +424,9 @@ export const useStore = create<State>((set, get) => ({
             chats: current.chats.filter((chat) => chat.serverId !== server.id),
             archived: current.archived.filter((chat) => chat.serverId !== server.id),
             dms: current.dms.filter((chat) => chat.serverId !== server.id),
-            workspaces: current.workspaces.filter((workspace) => workspace.serverId !== server.id),
+            // A transient connection failure must not make that machine's
+            // workspaces disappear from the fleet catalogue.
+            workspaces: current.workspaces,
           }));
         }
       }),
@@ -465,7 +472,10 @@ export const useStore = create<State>((set, get) => ({
     if (!name) throw new Error("Pick a folder to add.");
 
     if (useFixture) {
-      const serverId = get().servers.find((server) => server.local)?.id ?? get().servers[0]?.id ?? "studio";
+      const serverId = input.serverId
+        ?? get().servers.find((server) => server.local)?.id
+        ?? get().servers[0]?.id
+        ?? "studio";
       set((current) => ({
         workspaces: [
           ...current.workspaces.filter((workspace) => !(workspace.serverId === serverId && workspace.path === path)),
@@ -475,7 +485,7 @@ export const useStore = create<State>((set, get) => ({
       return;
     }
 
-    const server = localServer(get().servers);
+    const server = get().servers.find((entry) => entry.id === input.serverId) ?? localServer(get().servers);
     if (!server) throw new Error("This machine isn't connected.");
     await transport.request(server.id, "/workspaces", { method: "POST", body: { name, path } });
     await get().refresh();
@@ -518,9 +528,9 @@ export const useStore = create<State>((set, get) => ({
     await get().refresh();
   },
 
-  async suggestPaths(query) {
+  async suggestPaths(query, serverId) {
     if (useFixture) return [];
-    const server = localServer(get().servers);
+    const server = get().servers.find((entry) => entry.id === serverId) ?? localServer(get().servers);
     if (!server?.online) return [];
     try {
       const listed = await transport.request<{ paths?: PathSuggestion[] }>(

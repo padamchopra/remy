@@ -19,7 +19,7 @@ export type Route =
   | { name: "ticket"; key: string }
   | { name: "prs" }
   | { name: "recurring"; scope?: string }
-  | { name: "settings"; tab: SettingsTab; analyticsTab?: AnalyticsTab };
+  | { name: "settings"; tab: SettingsTab; analyticsTab?: AnalyticsTab; deviceId?: string };
 
 export interface AppLocation {
   route: Route;
@@ -62,9 +62,18 @@ export function parseLocation(hash: string): AppLocation {
   if (head === "tickets" && rest) return { route: { name: "ticket", key: rest } };
   if (head === "settings") {
     const tab = SETTINGS_TABS.includes(rest as SettingsTab) ? (rest as SettingsTab) : "general";
-    const askedAnalyticsTab = new URLSearchParams(query).get("tab");
+    const params = new URLSearchParams(query);
+    const askedAnalyticsTab = params.get("tab");
     const analyticsTab: AnalyticsTab = askedAnalyticsTab === "usage" ? "usage" : "general";
-    return { route: { name: "settings", tab, ...(tab === "analytics" ? { analyticsTab } : {}) } };
+    const deviceId = params.get("device") || undefined;
+    return {
+      route: {
+        name: "settings",
+        tab,
+        ...(tab === "analytics" ? { analyticsTab } : {}),
+        ...(tab === "providers" && deviceId ? { deviceId } : {}),
+      },
+    };
   }
   // Threads are the front door, so anything unrecognised lands there rather
   // than on a blank screen.
@@ -82,7 +91,13 @@ export function formatLocation({ route }: AppLocation): string {
           : route.name === "ticket"
             ? `/tickets/${encodeURIComponent(route.key)}`
             : route.name === "settings"
-              ? `/settings/${route.tab}${route.tab === "analytics" && route.analyticsTab === "usage" ? "?tab=usage" : ""}`
+              ? `/settings/${route.tab}${
+                  route.tab === "analytics" && route.analyticsTab === "usage"
+                    ? "?tab=usage"
+                    : route.tab === "providers" && route.deviceId
+                      ? `?device=${encodeURIComponent(route.deviceId)}`
+                      : ""
+                }`
               : route.name === "prs"
                 ? "/pull-requests"
                 : `/inbox${route.agent ? `/${encodeURIComponent(route.agent)}` : ""}`;

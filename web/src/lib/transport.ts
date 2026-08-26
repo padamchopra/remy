@@ -157,7 +157,7 @@ function withPeers(base: LocalTransport): Transport {
 
     async removeServer(id) {
       listed = undefined;
-      if (id === "cursor-cloud") throw new Error("Disconnect Cursor Cloud in its device settings.");
+      if (id === "cursor-cloud") throw new Error("Disconnect Cursor Cloud in Providers.");
       if (!peerIds.has(id)) return base.removeServer(id);
       await base.request(await home(), `/peers/${encodeURIComponent(id)}`, { method: "DELETE" });
     },

@@ -31,12 +31,14 @@ export function PathPicker({
   onChange,
   onSubmit,
   autoFocus,
+  serverId,
 }: {
   value: string;
   onChange: (path: string) => void;
   /// ⌘↵ takes the highlighted folder, or whatever is typed.
   onSubmit: (path: string) => void;
   autoFocus?: boolean;
+  serverId?: string;
 }) {
   const suggestPaths = useStore((s) => s.suggestPaths);
   const [suggestions, setSuggestions] = useState<PathSuggestion[]>([]);
@@ -46,7 +48,7 @@ export function PathPicker({
     let cancelled = false;
     // Typing walks the tree, so the ask is debounced rather than sent per key.
     const timer = setTimeout(() => {
-      void suggestPaths(value).then((next) => {
+      void suggestPaths(value, serverId).then((next) => {
         if (!cancelled) setSuggestions(next);
       });
     }, 120);
@@ -54,7 +56,7 @@ export function PathPicker({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [value, suggestPaths]);
+  }, [value, serverId, suggestPaths]);
 
   const highlightedPath = () =>
     suggestions.find((item) => item.path.toLowerCase() === highlighted.current.toLowerCase())?.path;

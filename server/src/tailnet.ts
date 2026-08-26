@@ -133,14 +133,45 @@ export async function tailnetHost(): Promise<string | undefined> {
 
 /// Whether `tailscale serve` is fronting this daemon, and on which listener.
 /// Serve is the only way in: the daemon itself binds loopback.
+export interface ServeStatus {
+  Web?: Record<string, {
+    Handlers?: Record<string, { Proxy?: string }>;
+  }>;
+}
+
+/// The listener that actually fronts this daemon. A different Tailscale Serve
+/// rule on the same machine is not proof that Remy is reachable, and a stale
+/// rule pointing at an older port is exactly the state startup must repair.
+export function serveTargetFromStatus(
+  parsed: ServeStatus | undefined,
+  localPort = config.port,
+): { https: boolean } | undefined {
+  const expected = `http://127.0.0.1:${localPort}`;
+  for (const [listener, web] of Object.entries(parsed?.Web ?? {})) {
+    const matches = Object.values(web.Handlers ?? {}).some((handler) => {
+      if (typeof handler.Proxy !== "string") return false;
+      return handler.Proxy.replace(/\/$/, "") === expected;
+    });
+    if (matches) return { https: listener.endsWith(":443") };
+  }
+  return undefined;
+}
+
 export async function serveTarget(): Promise<{ https: boolean } | undefined> {
-  const parsed = await tailscaleJson<{ Web?: Record<string, unknown> }>(["serve", "status", "--json"]);
-  if (!parsed) return undefined;
-  const hosts = Object.keys(parsed.Web ?? {});
-  if (hosts.length === 0) return undefined;
-  // A serve key is `host:port`. 443 is the HTTPS listener; anything else is
-  // tailnet HTTP, still WireGuard-encrypted but without TLS on top.
-  return { https: hosts.some((host) => host.endsWith(":443")) };
+  return serveTargetFromStatus(
+    await tailscaleJson<ServeStatus>(["serve", "status", "--json"]),
+  );
+}
+
+/// A paired endpoint and a discovery result name the same Tailnet machine even
+/// while the endpoint itself is returning a gateway error.
+export function sameTailnetHost(endpoint: string, host: string): boolean {
+  try {
+    return new URL(endpoint).hostname.toLowerCase().replace(/\.$/, "")
+      === host.toLowerCase().replace(/\.$/, "");
+  } catch {
+    return false;
+  }
 }
 
 export interface TailnetDevice {

@@ -192,6 +192,8 @@ export interface ServerSettings {
   deviceName: string;
   deviceIcon: string;
   deviceTint: string;
+  /// Absent from a Mac that predates automatic Tailnet repair.
+  tailscaleServeEnabled?: boolean;
   defaultGitIdentity: "off" | "author";
   defaultProvider: string;
   /// Absent from a Mac on an older build, which started every thread on Ask.

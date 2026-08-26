@@ -10,6 +10,7 @@ process.env.MC_CONFIG_DIR = stateDir;
 process.env.HOME = stateDir;
 
 const cloud = await import("./cursor-cloud.js");
+const { setProviderEnabled } = await import("./config.js");
 
 function fakeRun(messages: SDKMessage[]): Run {
   return {
@@ -81,6 +82,12 @@ test("streams a Cursor Cloud run into Remy's transcript without exposing its API
     archive: async () => {},
   });
 
+  setProviderEnabled("cursor", false);
+  await assert.rejects(
+    cloud.connectCursorCloud("cursor-cloud-secret"),
+    /turn on Cursor in Providers first/,
+  );
+  setProviderEnabled("cursor", true);
   const status = await cloud.connectCursorCloud("cursor-cloud-secret");
   assert.equal(status.configured, true);
   assert.equal(JSON.stringify(status).includes("cursor-cloud-secret"), false);

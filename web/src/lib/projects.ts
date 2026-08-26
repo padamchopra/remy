@@ -41,18 +41,72 @@ export function projectIcon(id: ProjectIconId | string | null | undefined): Luci
   return PROJECT_ICONS[id && isProjectIcon(id) ? id : "folder"];
 }
 
+export interface WorkspaceGroup {
+  /// Stable across refreshes. Repository copies share their normalised origin;
+  /// ordinary folders include the device because their paths are only local.
+  id: string;
+  workspace: Workspace;
+  copies: Workspace[];
+}
+
+/// Every device-local checkout represented by one workspace row.
+///
+/// A Git remote is the repository's cross-device identity. A plain folder has
+/// no equivalent identity, so even the same path and name on two machines must
+/// remain two workspaces rather than being guessed into one.
+export function workspaceCopies(workspace: Workspace, all: Workspace[]): Workspace[] {
+  if (workspace.origin) {
+    return all.filter((entry) => !entry.virtual && entry.origin === workspace.origin);
+  }
+  return all.filter(
+    (entry) => !entry.virtual && entry.serverId === workspace.serverId && entry.id === workspace.id,
+  );
+}
+
+/// One row per repository, or per device-local folder.
+///
+/// The representative is a real checkout because opening a workspace still
+/// needs a concrete machine and path. Prefer this machine, then any connected
+/// machine, while the group retains every copy for the device picker.
+export function workspaceGroups(all: Workspace[], servers: Server[]): WorkspaceGroup[] {
+  const grouped = new Map<string, Workspace[]>();
+  for (const workspace of all) {
+    if (workspace.virtual) continue;
+    const id = workspace.origin
+      ? `repository:${workspace.origin}`
+      : `folder:${workspace.serverId}:${workspace.id}`;
+    grouped.set(id, [...(grouped.get(id) ?? []), workspace]);
+  }
+
+  const serverRank = (workspace: Workspace): number => {
+    const server = servers.find((entry) => entry.id === workspace.serverId);
+    if (server?.local && server.online) return 0;
+    if (server?.online) return 1;
+    if (server?.local) return 2;
+    return 3;
+  };
+
+  return [...grouped.entries()]
+    .map(([id, copies]) => ({
+      id,
+      copies,
+      workspace: [...copies].sort((a, b) => serverRank(a) - serverRank(b) || a.name.localeCompare(b.name))[0],
+    }))
+    .sort((a, b) => a.workspace.name.localeCompare(b.workspace.name));
+}
+
 /// The machines that hold the same repository as this workspace. A folder
 /// without a git origin has no cross-device identity, so it stays on the one
 /// machine where it was added rather than matching another folder by name.
 export function devicesForWorkspace(workspace: Workspace, all: Workspace[], servers: Server[]): Server[] {
-  const related = all.filter((entry) =>
-    entry.id === workspace.id || (workspace.origin ? entry.origin === workspace.origin : false),
-  );
+  const related = workspaceCopies(workspace, all);
   const ids = [...new Set(related.map((entry) => entry.serverId))];
-  return ids.flatMap((id) => {
-    const server = servers.find((entry) => entry.id === id);
-    return server ? [server] : [];
-  });
+  return ids
+    .flatMap((id) => {
+      const server = servers.find((entry) => entry.id === id);
+      return server ? [server] : [];
+    })
+    .sort((a, b) => Number(Boolean(b.local)) - Number(Boolean(a.local)) || a.name.localeCompare(b.name));
 }
 
 /// Where a project is checked out on this machine, if it is at all. A project

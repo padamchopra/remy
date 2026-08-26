@@ -15,6 +15,7 @@ import {
   adoptWorkspace,
   listProjects,
   syncProjectBindings,
+  unbindWorkspace,
   updateProject,
 } from "./projects.js";
 import {
@@ -102,7 +103,7 @@ import {
   waitInBrowser,
 } from "./browser.js";
 import { forgetPushDevice, pushStatus, registerPushDevice } from "./push.js";
-import { discover } from "./tailnet.js";
+import { discover, sameTailnetHost } from "./tailnet.js";
 import {
   approvePair,
   askToPair,
@@ -125,6 +126,7 @@ import {
   proxyToPeer,
   removePeer,
   startPeerSync,
+  startTailnetExposureReconciler,
   syncAnswer,
   syncNow,
   thisMachineIcon,
@@ -654,7 +656,7 @@ const server = createServer(async (req, res) => {
     // nothing has to be typed or carried to get this list.
     if (url.pathname === "/tailnet" && req.method === "GET") {
       const found = await discover(url.searchParams.get("refresh") === "1");
-      const paired = new Set(listPeers().map((peer) => peer.url));
+      const paired = listPeers();
       const self = await identity();
       return json(res, 200, {
         devices: found
@@ -666,7 +668,7 @@ const server = createServer(async (req, res) => {
             online: device.online,
             remy: Boolean(device.url),
             ...(device.url ? { url: device.url } : {}),
-            paired: Boolean(device.url && paired.has(device.url)),
+            paired: paired.some((peer) => sameTailnetHost(peer.url, device.host)),
           })),
       });
     }
@@ -1722,7 +1724,12 @@ const server = createServer(async (req, res) => {
     if (url.pathname === "/workspaces" && req.method === "POST") {
       const body = await readJson(req);
       try {
-        return json(res, 200, { workspace: await addWorkspace(String(body.name ?? ""), String(body.path ?? "")) });
+        const workspace = await addWorkspace(String(body.name ?? ""), String(body.path ?? ""));
+        // A Git checkout joins the repository project immediately. Its event
+        // can then reach another device before either window happens to open
+        // the board, while the local path remains a binding only on this disk.
+        adoptWorkspace(workspace);
+        return json(res, 200, { workspace });
       } catch (err) {
         return json(res, 400, { error: (err as Error).message || "could not add workspace" });
       }
@@ -1731,6 +1738,7 @@ const server = createServer(async (req, res) => {
       const id = decodeURIComponent(parts[1]);
       if (req.method === "DELETE" && parts.length === 2) {
         removeWorkspace(id);
+        unbindWorkspace(id);
         return json(res, 200, { ok: true });
       }
       if (req.method === "PATCH" && parts.length === 2) {
@@ -2159,6 +2167,7 @@ server.on("upgrade", (req, socket, head) => {
 // exposed on the LAN or any public interface.
 server.listen(config.port, "127.0.0.1", () => {
   console.log(`remy server listening on 127.0.0.1:${config.port}`);
+  startTailnetExposureReconciler();
 });
 setSleepBusyCheck(() =>
   listAllChats().some((chat) => chat.state === "working" || chat.state === "needs_input"),
