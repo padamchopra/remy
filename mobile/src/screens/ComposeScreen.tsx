@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Dimensions,
   Keyboard,
@@ -25,6 +25,7 @@ import {
   Popover,
 } from "../components/ComposerMenu";
 import { WorkspaceMark } from "../components/WorkspaceMark";
+import { workspaceGroups } from "../lib/projects";
 
 const HOME = "home";
 const DEVICE_PREFIX = "device:";
@@ -59,6 +60,10 @@ function mainPath(workspace?: Workspace): string {
 export function ComposeScreen({ onCreated }: { onCreated: (id: string) => void }) {
   const workspaces = useStore((s) => s.workspaces);
   const servers = useStore((s) => s.servers);
+  const groupedWorkspaces = useMemo(
+    () => workspaceGroups(workspaces, servers),
+    [workspaces, servers],
+  );
   const createChat = useStore((s) => s.createChat);
   const checkoutBranch = useStore((s) => s.checkoutBranch);
   const settings = useStore((s) => s.settings);
@@ -312,19 +317,19 @@ export function ComposeScreen({ onCreated }: { onCreated: (id: string) => void }
       </ScrollView>
 
       <Popover open={pickingPlace} onClose={() => setPickingPlace(false)}>
-        {workspaces.filter((entry) => !entry.virtual).map((entry) => (
+        {groupedWorkspaces.map(({ id, workspace: entry, copies }) => (
           <MenuItem
-            key={`${entry.serverId}:${entry.id}`}
+            key={id}
             leading={<WorkspaceMark home={false} workspace={entry} size="sm" />}
             label={entry.name}
-            selected={selectedPlace === entry.id}
+            selected={copies.some((copy) => copy.id === selectedPlace)}
             onPress={() => {
               pickWorkspace(entry.id);
               setPickingPlace(false);
             }}
           />
         ))}
-        {workspaces.some((entry) => !entry.virtual) && servers.some((entry) => !entry.workspaceOnly) ? <MenuSeparator /> : null}
+        {groupedWorkspaces.length > 0 && servers.some((entry) => !entry.workspaceOnly) ? <MenuSeparator /> : null}
         {servers.filter((entry) => !entry.workspaceOnly).map((entry) => {
           const Icon = deviceIcon(entry.icon);
           const value = deviceValue(entry.id);

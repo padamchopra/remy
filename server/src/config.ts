@@ -62,6 +62,10 @@ export interface Config {
   deviceName: string;
   deviceIcon: string;
   deviceTint: string;
+  /// Whether this machine should keep its daemon exposed through Tailscale
+  /// Serve. The observed mapping can disappear or point at an older port, so
+  /// the preference has to outlive the mapping it asks for.
+  tailscaleServeEnabled: boolean;
   /// What Remy puts in front of a branch it creates for a worktree. Seeded
   /// from the GitHub login at boot, so a branch someone else sees says who
   /// made it.
@@ -218,6 +222,15 @@ function deviceNameValue(value: unknown): string {
   return typeof value === "string" ? value.trim().slice(0, 80) : "";
 }
 
+let tailscaleServePreferenceStored = false;
+
+/// Older installs persisted the Tailscale mapping itself, but not the intent
+/// behind it. Startup uses this distinction once to adopt an existing Remy
+/// mapping without turning a deliberately disabled one back on later.
+export function hasTailscaleServePreference(): boolean {
+  return tailscaleServePreferenceStored;
+}
+
 /// A GitHub login, held to what GitHub itself allows. It ends up on the right
 /// of an `@` in every commit an agent signs, so anything else is dropped rather
 /// than passed through.
@@ -243,6 +256,7 @@ export function branchPrefix(value: unknown): string | undefined {
 
 function load(): Config {
   const parsed = getKv<Partial<Config> & { preventSleepWhileBusy?: boolean }>("config") ?? {};
+  tailscaleServePreferenceStored = typeof parsed.tailscaleServeEnabled === "boolean";
   const enabled = enabledProviders(parsed.enabledProviders);
   const parsedDefaultProvider = providerId(parsed.defaultProvider);
   const defaultProvider = enabled.includes(parsedDefaultProvider) ? parsedDefaultProvider : enabled[0];
@@ -275,10 +289,16 @@ function load(): Config {
     deviceName: deviceNameValue(parsed.deviceName),
     deviceIcon: deviceAppearanceValue(parsed.deviceIcon, DEVICE_ICONS),
     deviceTint: deviceAppearanceValue(parsed.deviceTint, DEVICE_TINTS),
+    tailscaleServeEnabled: parsed.tailscaleServeEnabled === true,
     // Absent means this is the only device, so it is the one to buzz.
     notifySelf: parsed.notifySelf !== false,
   };
-  setKv("config", config);
+  if (tailscaleServePreferenceStored) {
+    setKv("config", config);
+  } else {
+    const { tailscaleServeEnabled: _tailscaleServeEnabled, ...withoutUnchosenTailnetPreference } = config;
+    setKv("config", withoutUnchosenTailnetPreference);
+  }
   return config;
 }
 
@@ -304,6 +324,7 @@ export interface PublicSettings {
   deviceName: string;
   deviceIcon: string;
   deviceTint: string;
+  tailscaleServeEnabled: boolean;
   defaultGitIdentity: GitIdentity;
   notifySelf: boolean;
 }
@@ -329,6 +350,7 @@ export function publicSettings(): PublicSettings {
     deviceName: config.deviceName,
     deviceIcon: config.deviceIcon,
     deviceTint: config.deviceTint,
+    tailscaleServeEnabled: config.tailscaleServeEnabled,
     defaultGitIdentity: config.defaultGitIdentity,
     notifySelf: config.notifySelf,
   };
@@ -403,6 +425,10 @@ export function patchSettings(patch: Record<string, unknown>): PublicSettings {
   }
   if (patch.deviceTint !== undefined) {
     set("deviceTint", deviceAppearanceValue(patch.deviceTint, DEVICE_TINTS));
+  }
+  if (patch.tailscaleServeEnabled !== undefined) {
+    set("tailscaleServeEnabled", patch.tailscaleServeEnabled === true);
+    tailscaleServePreferenceStored = true;
   }
   if (patch.notifySelf !== undefined) {
     set("notifySelf", patch.notifySelf === true);

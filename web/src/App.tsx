@@ -48,7 +48,7 @@ import { deviceIcon } from "@/lib/devices";
 import { apiError } from "@/lib/api-error";
 import { agentConversation } from "@/lib/inbox";
 import { notificationsEnabled } from "@/lib/notify";
-import { devicesForWorkspace, isProjectIconFile } from "@/lib/projects";
+import { devicesForWorkspace, isProjectIconFile, workspaceGroups } from "@/lib/projects";
 import { sectionOf, type Route } from "@/lib/route";
 import { WorkspaceIcon } from "@/components/WorkspaceIcon";
 import { tintOf } from "@/lib/tints";
@@ -128,6 +128,9 @@ export function App() {
   const analyticsTab: AnalyticsTab = route.name === "settings" && route.tab === "analytics"
     ? route.analyticsTab ?? "general"
     : "general";
+  const providerDeviceId = route.name === "settings" && route.tab === "providers"
+    ? route.deviceId
+    : undefined;
   const selected = route.name === "threads" ? (route.threadId ?? null) : null;
   const workspaceSettingsId = route.name === "workspaces" ? (route.workspaceId ?? null) : null;
 
@@ -204,6 +207,10 @@ export function App() {
   // device mark says, not something to filter the list down to.
   const scoped = allChats;
   const chats = scoped;
+  const groupedWorkspaces = useMemo(
+    () => workspaceGroups(allWorkspaces, servers),
+    [allWorkspaces, servers],
+  );
   const workspaces = allWorkspaces;
 
   // Remy leads the roster; the rest keep the order they were written in. It
@@ -286,7 +293,8 @@ export function App() {
   } : null;
   const needsYou = scoped.filter((chat) => chat.state === "needs_input").length;
   const working = scoped.filter((chat) => chat.state === "working").length;
-  const anyOnline = servers.some((s) => s.online);
+  const onlineDevices = servers.filter((server) => server.online).length;
+  const anyOnline = onlineDevices > 0;
   const openWorkspace = allWorkspaces.find((workspace) => workspace.id === workspaceSettingsId) ?? null;
   // Tickets are addressed by key, which is what someone pastes into a message.
   const openTicket = route.name === "ticket" ? tickets.find((ticket) => ticket.key === route.key) : undefined;
@@ -387,7 +395,7 @@ export function App() {
         <div className="app-no-drag ml-auto flex items-center gap-2">
           <Badge variant={anyOnline ? "success" : "secondary"}>
             <span className="size-1.5 rounded-full bg-current" />
-            {servers.length} device{servers.length === 1 ? "" : "s"}
+            {onlineDevices} device{onlineDevices === 1 ? "" : "s"}
           </Badge>
           <Button variant="outline" size="sm" onClick={() => setPaletteOpen(true)}>
             <Search />
@@ -436,6 +444,8 @@ export function App() {
             tab={settingsTab}
             analyticsTab={analyticsTab}
             onAnalyticsTab={(tab) => go({ name: "settings", tab: "analytics", analyticsTab: tab }, true)}
+            providerDeviceId={providerDeviceId}
+            onProviderDevice={(deviceId) => go({ name: "settings", tab: "providers", deviceId })}
             release={release}
           />
         ) : route.name === "board" ? (
@@ -531,7 +541,7 @@ export function App() {
             </PaneHeader>
 
             {section === "workspaces" ? (
-              workspaces.length === 0 ? (
+              groupedWorkspaces.length === 0 ? (
                 <EmptyState
                   section={section as Exclude<Section, "inbox">}
                   loading={loading}
@@ -543,12 +553,13 @@ export function App() {
               ) : (
                 <ScrollArea className="min-h-0 flex-1">
                   <div className="flex flex-col gap-2 p-4">
-                    {workspaces.map((workspace) => {
+                    {groupedWorkspaces.map((group) => {
+                      const workspace = group.workspace;
                       const colors = tintOf(workspace.tint);
-                      const devices = devicesForWorkspace(workspace, allWorkspaces, servers);
+                      const devices = devicesForWorkspace(workspace, group.copies, servers);
                       return (
                       <Card
-                        key={workspace.id}
+                        key={group.id}
                         role="button"
                         tabIndex={0}
                         onClick={() => go({ name: "workspaces", workspaceId: workspace.id })}

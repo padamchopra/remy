@@ -26,7 +26,7 @@ import { WorkspaceWorktrees } from "@/components/WorkspaceWorktrees";
 import { apiError } from "@/lib/api-error";
 import { deviceIcon } from "@/lib/devices";
 import { displayPath } from "@/lib/path";
-import { devicesForWorkspace, PROJECT_ICON_IDS, isProjectIcon, isProjectIconFile, projectIcon } from "@/lib/projects";
+import { devicesForWorkspace, PROJECT_ICON_IDS, isProjectIcon, isProjectIconFile, projectIcon, workspaceCopies } from "@/lib/projects";
 import { tintOf } from "@/lib/tints";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -50,7 +50,9 @@ function TicketSlugField({ workspace }: { workspace: Workspace }) {
     });
   }, [loadBoard]);
 
-  const project = projects.find((entry) => entry.workspaceIds.includes(workspace.id));
+  const project = projects.find((entry) =>
+    entry.workspaceIds.includes(workspace.id)
+      || Boolean(workspace.origin && entry.origin === workspace.origin));
   const [draft, setDraft] = useState("");
   useEffect(() => setDraft(project?.keyPrefix ?? ""), [project?.keyPrefix]);
 
@@ -147,7 +149,8 @@ export function WorkspaceSettings({
   const allWorkspaces = useStore((s) => s.workspaces);
   const updateWorkspace = useStore((s) => s.updateWorkspace);
   const removeWorkspace = useStore((s) => s.removeWorkspace);
-  const devices = devicesForWorkspace(workspace, allWorkspaces, servers);
+  const copies = workspaceCopies(workspace, allWorkspaces);
+  const devices = devicesForWorkspace(workspace, copies, servers);
 
   const remove = async () => {
     await removeWorkspace(workspace.id);
@@ -210,11 +213,7 @@ export function WorkspaceSettings({
               devices.map((server) => {
                 const DeviceIcon = deviceIcon(server.icon);
                 const colors = tintOf(server.tint);
-                const copy = allWorkspaces.find(
-                  (entry) =>
-                    entry.serverId === server.id
-                    && (entry.id === workspace.id || (workspace.origin && entry.origin === workspace.origin)),
-                );
+                const copy = copies.find((entry) => entry.serverId === server.id);
                 return (
                   <div
                     key={server.id}

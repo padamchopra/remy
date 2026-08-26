@@ -8,9 +8,12 @@ import { run as exec } from "./run.js";
 export interface ToolStatus {
   available: boolean;
   version?: string;
-  /// Only `gh` sets this: installed is not the same as signed in.
+  /// Installed is not the same as signed in.
   authenticated?: boolean;
   account?: string;
+  /// The billing or subscription source the provider itself reports.
+  plan?: string;
+  organization?: string;
   /// Why the tool could not be used, when it could not.
   error?: string;
 }
@@ -69,6 +72,84 @@ export function readGhAuth(output: string): { authenticated: boolean; account?: 
   return { authenticated: /Logged in to/.test(output) };
 }
 
+function planLabel(value: unknown): string | undefined {
+  const plan = typeof value === "string" ? value.trim() : "";
+  if (!plan || plan.length > 80) return undefined;
+  return `${plan.charAt(0).toUpperCase()}${plan.slice(1)} plan`;
+}
+
+function jsonObject(output: string): Record<string, unknown> | undefined {
+  const start = output.indexOf("{");
+  const end = output.lastIndexOf("}");
+  if (start < 0 || end <= start) return undefined;
+  try {
+    const parsed = JSON.parse(output.slice(start, end + 1)) as unknown;
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/// Claude distinguishes a claude.ai subscription from API billing, which is
+/// the difference someone needs to see before an unexpected bill lands.
+export function readClaudeAuth(output: string): Partial<ToolStatus> {
+  const parsed = jsonObject(output);
+  if (!parsed) return {};
+  if (parsed.loggedIn !== true) return { authenticated: false };
+  const subscription = planLabel(parsed.subscriptionType);
+  const authMethod = typeof parsed.authMethod === "string" ? parsed.authMethod : "";
+  const apiKeySource = typeof parsed.apiKeySource === "string" && parsed.apiKeySource.trim();
+  const organization = typeof parsed.orgName === "string" && parsed.orgName.trim()
+    ? parsed.orgName.trim().slice(0, 120)
+    : undefined;
+  return {
+    authenticated: true,
+    ...(apiKeySource || (authMethod && authMethod !== "claude.ai")
+      ? { plan: "API billing" }
+      : subscription ? { plan: subscription } : {}),
+    ...(organization ? { organization } : {}),
+  };
+}
+
+/// Codex currently names the sign-in source but not the person's ChatGPT tier.
+export function readCodexAuth(output: string): Partial<ToolStatus> {
+  if (/Logged in using ChatGPT/i.test(output)) return { authenticated: true, plan: "ChatGPT sign-in" };
+  if (/Logged in using (?:an )?API key|API key authentication/i.test(output)) {
+    return { authenticated: true, plan: "API billing" };
+  }
+  if (/not logged in|logged out/i.test(output)) return { authenticated: false };
+  return {};
+}
+
+/// Cursor's structured `about` response includes its exact subscription tier.
+export function readCursorAbout(output: string): Partial<ToolStatus> {
+  const parsed = jsonObject(output);
+  if (!parsed) return {};
+  const plan = planLabel(parsed.subscriptionTier);
+  const authenticated = typeof parsed.userEmail === "string" || Boolean(plan);
+  return {
+    ...(authenticated ? { authenticated: true } : {}),
+    ...(plan ? { plan } : {}),
+  };
+}
+
+async function providerStatus(
+  file: string,
+  statusArgs: string[],
+  read: (output: string) => Partial<ToolStatus>,
+): Promise<ToolStatus> {
+  const base = await probe(file, ["--version"]);
+  if (!base.available) return base;
+  try {
+    const { stdout, stderr } = await exec(file, statusArgs, { cwd: homedir(), timeout: 10_000 });
+    return { ...base, ...read(`${stdout}\n${stderr}`) };
+  } catch (error) {
+    const output = String((error as { stdout?: unknown })?.stdout ?? "")
+      + String((error as { stderr?: unknown })?.stderr ?? "");
+    return { ...base, ...read(output) };
+  }
+}
+
 /// The GitHub account this machine is signed in as, which is what a branch
 /// someone else reads should be prefixed with. Absent when `gh` is missing or
 /// signed out, and the caller falls back to Remy's own name.
@@ -107,9 +188,9 @@ export async function tooling(): Promise<Tooling> {
   const [git, gh, claude, codex, cursor] = await Promise.all([
     probe("git", ["--version"]),
     ghStatus(),
-    probe("claude", ["--version"]),
-    probe("codex", ["--version"]),
-    probe("agent", ["--version"]),
+    providerStatus("claude", ["auth", "status", "--json"], readClaudeAuth),
+    providerStatus("codex", ["login", "status"], readCodexAuth),
+    providerStatus("agent", ["about", "--format", "json"], readCursorAbout),
   ]);
   return { git, gh, claude, codex, cursor };
 }

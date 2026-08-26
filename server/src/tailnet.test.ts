@@ -90,3 +90,45 @@ test("lists only your own machines that could hold a repository", () => {
     ],
   );
 });
+
+test("recognises only the Serve rule that fronts this daemon", () => {
+  const status = {
+    Web: {
+      "mini.tail.ts.net:443": {
+        Handlers: {
+          "/": { Proxy: "http://127.0.0.1:8420" },
+        },
+      },
+    },
+  };
+  assert.deepEqual(tailnet.serveTargetFromStatus(status, 8420), { https: true });
+  assert.equal(
+    tailnet.serveTargetFromStatus(status, 5173),
+    undefined,
+    "a stale or unrelated proxy is not Remy's reachable endpoint",
+  );
+});
+
+test("recognises the tailnet HTTP fallback for this daemon", () => {
+  assert.deepEqual(
+    tailnet.serveTargetFromStatus({
+      Web: {
+        "mini.tail.ts.net:8420": {
+          Handlers: { "/": { Proxy: "http://127.0.0.1:8420/" } },
+        },
+      },
+    }, 8420),
+    { https: false },
+  );
+});
+
+test("matches a paired URL to its tailnet machine while Remy is down", () => {
+  assert.equal(
+    tailnet.sameTailnetHost("https://padams-mac-mini.tail91cfc.ts.net", "padams-mac-mini.tail91cfc.ts.net."),
+    true,
+  );
+  assert.equal(
+    tailnet.sameTailnetHost("https://another-machine.tail91cfc.ts.net", "padams-mac-mini.tail91cfc.ts.net"),
+    false,
+  );
+});

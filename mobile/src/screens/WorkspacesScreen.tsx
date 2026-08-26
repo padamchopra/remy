@@ -5,15 +5,16 @@ import { displayPath } from "../lib/path";
 import { useStore } from "../state/store";
 import { EmptyState } from "../components/Empty";
 import { WorkspaceMark } from "../components/WorkspaceMark";
+import { workspaceGroups } from "../lib/projects";
 
 export function WorkspacesScreen({ onWorkspace }: { onWorkspace: (id: string) => void }) {
   const workspaces = useStore((s) => s.workspaces);
   const servers = useStore((s) => s.servers);
-  const many = servers.length > 1;
+  const groups = workspaceGroups(workspaces, servers);
 
   return (
     <ScrollView style={styles.wrap} contentContainerStyle={styles.content}>
-      {workspaces.length === 0 ? (
+      {groups.length === 0 ? (
         <EmptyState
           compact
           icon={<Folder size={22} color={color.mutedForeground} />}
@@ -21,11 +22,15 @@ export function WorkspacesScreen({ onWorkspace }: { onWorkspace: (id: string) =>
           detail="Add a folder on a Mac to run threads in."
         />
       ) : (
-        workspaces.map((workspace) => {
-          const machine = many ? servers.find((server) => server.id === workspace.serverId)?.name : undefined;
+        groups.map((group) => {
+          const workspace = group.workspace;
+          const machines = group.copies.flatMap((copy) => {
+            const server = servers.find((entry) => entry.id === copy.serverId);
+            return server ? [server.name] : [];
+          });
           return (
             <Pressable
-              key={`${workspace.serverId}:${workspace.id}`}
+              key={group.id}
               onPress={() => onWorkspace(workspace.id)}
               style={({ pressed }) => [styles.card, pressed && { backgroundColor: color.accent }]}
             >
@@ -33,7 +38,7 @@ export function WorkspacesScreen({ onWorkspace }: { onWorkspace: (id: string) =>
               <View style={{ flex: 1 }}>
                 <Text style={type.callout}>{workspace.name}</Text>
                 <Text style={type.mono} numberOfLines={1}>
-                  {machine ? `${machine} · ${displayPath(workspace.path)}` : displayPath(workspace.path)}
+                  {machines.join(" · ") || displayPath(workspace.path)}
                 </Text>
               </View>
             </Pressable>
