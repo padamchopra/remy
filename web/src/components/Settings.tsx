@@ -1,4 +1,4 @@
-import { Boxes, ChartNoAxesCombined, Check, Cloud, Copy, Folder, GitBranch, Github, ImagePlus, Laptop, Monitor, Plus, RefreshCw, Smartphone, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Boxes, ChartNoAxesCombined, Check, Cloud, Copy, Folder, GitBranch, Github, ImagePlus, Laptop, Monitor, Plus, RefreshCw, Smartphone, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import remyMark from "@/assets/remy-mark.png";
 import { Badge } from "@/components/ui/badge";
@@ -1391,6 +1391,7 @@ function DevicesPane() {
 
   return (
     <div className="flex flex-col gap-6">
+      <DevicePreferenceField servers={servers} />
       {servers.filter((server) => !server.cloud).map((server) => (
         <DeviceCard
           key={server.id}
@@ -1411,6 +1412,88 @@ function DevicesPane() {
       <DiscoveredDevices homeId={home?.id} reachable={homeReachable} />
       <AddDevice onAdd={addServer} />
     </div>
+  );
+}
+
+function DevicePreferenceField({ servers }: { servers: Server[] }) {
+  const settings = useStore((s) => s.settings);
+  const saveSettings = useStore((s) => s.saveSettings);
+  const [saving, setSaving] = useState(false);
+  const preference = settings?.devicePreferenceOrder ?? [];
+  const rank = new Map(preference.map((id, index) => [id, index]));
+  const ordered = servers
+    .filter((server) => !server.cloud && !server.workspaceOnly)
+    .sort((a, b) => {
+      const aRank = rank.get(a.id);
+      const bRank = rank.get(b.id);
+      if (aRank !== undefined || bRank !== undefined) {
+        return (aRank ?? Number.MAX_SAFE_INTEGER) - (bRank ?? Number.MAX_SAFE_INTEGER);
+      }
+      return Number(b.local ?? false) - Number(a.local ?? false);
+    });
+
+  const move = async (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= ordered.length) return;
+    const next = ordered.map((server) => server.id);
+    [next[index], next[target]] = [next[target], next[index]];
+    setSaving(true);
+    try {
+      await saveSettings({ devicePreferenceOrder: next });
+    } catch (caught) {
+      toast.error("Couldn't change the device order", { description: apiError(caught) });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (ordered.length < 2) return null;
+
+  return (
+    <Field>
+      <FieldContent>
+        <FieldLabel>Task device order</FieldLabel>
+        <FieldDescription className="text-xs">
+          Remy tries the first online device for work that has no workspace.
+        </FieldDescription>
+      </FieldContent>
+      <ItemGroup className="mt-2 gap-1.5">
+        {ordered.map((server, index) => {
+          const Icon = deviceIcon(server.icon);
+          return (
+            <Item key={server.id} variant="outline" size="sm">
+              <ItemMedia variant="icon"><Icon /></ItemMedia>
+              <ItemContent>
+                <ItemTitle>{index + 1}. {server.name}</ItemTitle>
+                <ItemDescription className="text-xs">
+                  {server.online ? "Available" : "Skipped while offline"}
+                </ItemDescription>
+              </ItemContent>
+              <ItemActions>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={`Move ${server.name} up`}
+                  disabled={saving || index === 0}
+                  onClick={() => void move(index, -1)}
+                >
+                  <ArrowUp />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={`Move ${server.name} down`}
+                  disabled={saving || index === ordered.length - 1}
+                  onClick={() => void move(index, 1)}
+                >
+                  <ArrowDown />
+                </Button>
+              </ItemActions>
+            </Item>
+          );
+        })}
+      </ItemGroup>
+    </Field>
   );
 }
 

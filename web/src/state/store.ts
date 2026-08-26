@@ -670,7 +670,10 @@ export const useStore = create<State>((set, get) => ({
     const title = text.split("\n")[0]?.slice(0, 80) || "New thread";
 
     if (useFixture) {
-      const serverId = input.serverId ?? get().servers.find((server) => server.local)?.id ?? get().servers[0]?.id ?? "studio";
+      const serverId = input.serverId
+        ?? availableAgentServers(get().servers, get().settings?.devicePreferenceOrder)[0]?.id
+        ?? get().servers[0]?.id
+        ?? "studio";
       const chat: Chat = {
         id: crypto.randomUUID(),
         serverId,
@@ -684,7 +687,9 @@ export const useStore = create<State>((set, get) => ({
       return { id: chat.id, serverId };
     }
 
-    const server = get().servers.find((entry) => entry.id === input.serverId) ?? localServer(get().servers);
+    const server = get().servers.find((entry) => entry.id === input.serverId)
+      ?? availableAgentServers(get().servers, get().settings?.devicePreferenceOrder)[0]
+      ?? localServer(get().servers);
     if (!server) throw new Error("This machine isn't connected.");
     const created = await transport.request<{ chat?: RawChat }>(server.id, "/chats", {
       method: "POST",
@@ -1254,9 +1259,10 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async openDm(agent) {
-    const servers = availableAgentServers(get().servers);
+    const preferenceOrder = get().settings?.devicePreferenceOrder ?? [];
+    const servers = availableAgentServers(get().servers, preferenceOrder);
     const available = new Set(servers.map((server) => server.id));
-    const existing = agentConversation(agent.id, get().dms, get().servers);
+    const existing = agentConversation(agent.id, get().dms, get().servers, preferenceOrder);
     if (existing && available.has(existing.serverId)) return existing;
 
     let failure: unknown;

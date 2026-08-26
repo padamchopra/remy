@@ -35,6 +35,7 @@ import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { CLOUD_MODES, cloudModeOf, PERMISSIONS, permissionOf, type PermissionValue } from "@/lib/chat-options";
 import { apiError } from "@/lib/api-error";
 import { deviceIcon } from "@/lib/devices";
+import { availableAgentServers } from "@/lib/inbox";
 import { devicesForWorkspace, workspaceGroups } from "@/lib/projects";
 import type { ModelChoice } from "@/lib/providers";
 import { useStore } from "@/state/store";
@@ -80,6 +81,7 @@ export function ChatComposer({
   const settings = useStore((s) => s.settings);
   const [target, setTarget] = useState(workspaces[0]?.id ?? HOME);
   const [serverId, setServerId] = useState(() => preferredServer(servers)?.id ?? "");
+  const [devicePicked, setDevicePicked] = useState(false);
   const [choice, setChoice] = useState<ModelChoice>({ provider: "claude", model: "", effort: "" });
   const [modelPicked, setModelPicked] = useState(false);
   const [permissionMode, setPermissionMode] = useState<PermissionValue>("default");
@@ -102,7 +104,7 @@ export function ChatComposer({
     ? devicesForWorkspace(workspace, workspaces, servers).filter((entry) => !entry.cloud || entry.cloudConnected)
     : [];
   const server = home
-    ? servers.find((entry) => entry.id === serverId) ?? preferredServer(servers)
+    ? servers.find((entry) => entry.id === serverId) ?? preferredServer(servers, settings?.devicePreferenceOrder)
     : servers.find((entry) => entry.id === workspace.serverId) ?? preferredServer(servers);
   const cloud = server?.cloud === true;
   const git = Boolean(!home && workspace && workspace.worktrees.length > 0);
@@ -123,6 +125,12 @@ export function ChatComposer({
   const CheckoutIcon = checkout === "worktree" ? FolderGit2 : Folder;
   const branchName = branch ?? mainBranch;
   const checkoutDefaults = `${workspace?.id ?? HOME}\0${settings?.defaultCheckout ?? "main"}\0${settings?.worktreeBase ?? "remote"}`;
+
+  useEffect(() => {
+    if (!home || devicePicked) return;
+    const preferred = preferredServer(servers, settings?.devicePreferenceOrder);
+    if (preferred) setServerId(preferred.id);
+  }, [devicePicked, home, servers, settings?.devicePreferenceOrder]);
 
   // The workspace's own choice if it has one, this machine's otherwise, until
   // you pick something — and then yours for as long as the composer is open.
@@ -177,6 +185,7 @@ export function ChatComposer({
     if (id) {
       setTarget(HOME);
       setServerId(id);
+      setDevicePicked(true);
       return;
     }
     setTarget(value);
@@ -211,6 +220,7 @@ export function ChatComposer({
 
   const pickDevice = (id: string) => {
     setServerId(id);
+    setDevicePicked(true);
     if (!workspace || workspace.serverId === id) return;
     const sibling = workspaces.find(
       (entry) =>
@@ -562,8 +572,10 @@ function WorkspaceMenu({
   );
 }
 
-function preferredServer(servers: Server[]): Server | undefined {
-  return servers.find((server) => server.local) ?? servers.find((server) => server.online) ?? servers[0];
+function preferredServer(servers: Server[], preferenceOrder: string[] = []): Server | undefined {
+  return availableAgentServers(servers, preferenceOrder)[0]
+    ?? servers.find((server) => server.local)
+    ?? servers[0];
 }
 
 function mainPath(workspace?: Workspace): string {

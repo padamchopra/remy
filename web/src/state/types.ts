@@ -290,6 +290,8 @@ export interface ServerSettings {
   deviceName: string;
   deviceIcon: string;
   deviceTint: string;
+  /// Preferred devices for work that is not tied to a workspace.
+  devicePreferenceOrder: string[];
   tailscaleServeEnabled: boolean;
   /// What every agent set to Remy default signs with.
   defaultGitIdentity: "off" | "author";

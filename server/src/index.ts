@@ -160,6 +160,7 @@ import {
 } from "./git.js";
 import { buildInbox } from "./inbox.js";
 import { listAuthoredPullRequests, markPullRequestRead, pullRequestTimeline } from "./pull-requests.js";
+import { startPullRequestMonitor } from "./pull-request-monitor.js";
 import {
   createRecurrence,
   deleteRecurrence,
@@ -2181,6 +2182,9 @@ seedPresetAgents();
 // Remy's own agent is seeded separately: its name and instructions come from
 // this build rather than from the row, so they are re-synced on every boot.
 seedRemyAgent();
+// GitHub state belongs to registered workspaces. The monitor nudges the thread
+// already working on a PR, or lets the default GitHub agent open one there.
+startPullRequestMonitor();
 // Then whatever this release gave Remy to say, said once.
 deliverAnnouncements();
 // An agent deleted while this machine was shut leaves its conversation behind.
