@@ -153,11 +153,17 @@ test("a paused recurrence writes nothing, and one that is due writes exactly one
 
 test("changing the cadence moves when the next ticket is due", () => {
   const project = projects.createProject({ name: "Cadence" });
+  const now = new Date();
+  // Two calendar days ahead when the monthly day can hold it, otherwise the
+  // second of next month. Either stays later than the same daily wall clock.
+  const monthlyDay = now.getDate() <= 26 ? now.getDate() + 2 : 2;
   const recurrence = recurring.createRecurrence({
     projectId: project.id,
     title: "Read the diff",
     cadence: "monthly",
-    day: 28,
+    day: monthlyDay,
+    hour: now.getHours(),
+    minute: now.getMinutes(),
   });
   const monthly = recurrence.nextRunAt;
   const daily = recurring.updateRecurrence(recurrence.id, { cadence: "daily" }).nextRunAt;
