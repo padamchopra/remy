@@ -564,12 +564,13 @@ test("the built-in agents seed once and stay editable", () => {
   const first = agents.listAgents().filter((agent) => agent.preset).length;
   agents.seedPresetAgents();
   assert.equal(agents.listAgents().filter((agent) => agent.preset).length, first);
-  assert.equal(first, 3, "PM, Builder, and QA should be there");
+  assert.equal(first, 4, "GitHub, PM, Builder, and QA should be there");
   assert.deepEqual(
     agents.listAgents().filter((agent) => agent.preset).map((agent) => agent.id).sort(),
-    ["remy-preset-builder", "remy-preset-critic", "remy-preset-scout"],
+    ["remy-preset-builder", "remy-preset-critic", "remy-preset-github", "remy-preset-scout"],
   );
 
+  const github = agents.agentByHandle("github");
   const pm = agents.agentByHandle("pm");
   const qa = agents.agentByHandle("qa");
   assert.equal(pm?.handoffTo[0], "builder");
@@ -579,6 +580,7 @@ test("the built-in agents seed once and stay editable", () => {
   assert.ok(builder, "builder should be seeded");
   // An agent runs while you are not watching, so there are two modes it can be
   // in and `auto` is where every one of them starts.
+  assert.equal(github?.permissionMode, "auto");
   assert.equal(pm?.permissionMode, "auto");
   assert.equal(qa?.permissionMode, "auto");
   assert.equal(builder.permissionMode, "auto");

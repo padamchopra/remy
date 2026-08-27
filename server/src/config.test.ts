@@ -12,6 +12,7 @@ process.env.HOME = stateDir;
 
 const {
   hasTailscaleServePreference,
+  devicePreferenceOrder,
   patchSettings,
   publicSettings,
   setProviderEnabled,
@@ -44,6 +45,7 @@ test("starts on the defaults a fresh install should have", () => {
   assert.equal(settings.deviceName, "");
   assert.equal(settings.deviceIcon, "");
   assert.equal(settings.deviceTint, "");
+  assert.deepEqual(settings.devicePreferenceOrder, []);
   assert.equal(settings.tailscaleServeEnabled, false);
   assert.deepEqual(settings.favoriteModels, []);
   assert.deepEqual(settings.enabledProviders, ["claude", "codex", "cursor"]);
@@ -95,6 +97,14 @@ test("stores only a usable device identity", () => {
   settings = patchSettings({ deviceIcon: "spaceship", deviceTint: "ultraviolet" });
   assert.equal(settings.deviceIcon, "");
   assert.equal(settings.deviceTint, "");
+});
+
+test("keeps a unique bounded device preference order", () => {
+  assert.deepEqual(devicePreferenceOrder([" mac ", "mini", "mac", "", 42]), ["mac", "mini"]);
+  assert.deepEqual(
+    patchSettings({ devicePreferenceOrder: ["peer-2", "local", "peer-2"] }).devicePreferenceOrder,
+    ["peer-2", "local"],
+  );
 });
 
 test("starts a thread on Ask until the machine is told otherwise", () => {

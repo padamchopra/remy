@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent, type WheelEvent } from "react";
-import { ArrowRight, ChartNoAxesCombined, Gauge, Globe2, LoaderCircle, Maximize2, Monitor, MousePointer2, PanelRightClose, PanelRightOpen, Plus, Smartphone, X } from "lucide-react";
+import { ArrowRight, ChartNoAxesCombined, Gauge, GitPullRequest, Globe2, LoaderCircle, Maximize2, Monitor, MousePointer2, PanelRightClose, PanelRightOpen, Plus, Smartphone, X } from "lucide-react";
 import { toast } from "sonner";
 import { ThreadAnalyticsTool, ThreadPerformanceTool } from "@/components/ThreadInsights";
+import { PullRequestView } from "@/components/PullRequestView";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -18,6 +19,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { apiError } from "@/lib/api-error";
 import { transport } from "@/lib/transport";
 import { cn } from "@/lib/utils";
+import type { ChatCodeReference } from "@/state/types";
 
 export interface SharedBrowserView {
   browserId?: string;
@@ -36,7 +38,7 @@ export interface SharedBrowserView {
 
 export interface ThreadToolTab {
   id: string;
-  type: "browser" | "analytics" | "performance";
+  type: "browser" | "analytics" | "performance" | "pull-request";
 }
 
 function browserPath(chatId: string, browserId: string, action?: string): string {
@@ -124,6 +126,12 @@ export function useThreadTools(chatId: string, serverId: string, enabled = true)
     setShown(true);
   };
 
+  const addPullRequest = () => {
+    setTabs((current) => current.some((tab) => tab.type === "pull-request") ? current : [...current, { id: "pull-request", type: "pull-request" }]);
+    setActiveTab("pull-request");
+    setShown(true);
+  };
+
   const closeTab = async (tab: ThreadToolTab) => {
     const browserId = tab.id;
     setTabs((current) => {
@@ -154,6 +162,7 @@ export function useThreadTools(chatId: string, serverId: string, enabled = true)
     addBrowser,
     addAnalytics: () => addInsight("analytics"),
     addPerformance: () => addInsight("performance"),
+    addPullRequest,
     canAddBrowser: supportsInstances || !tabs.some((tab) => tab.type === "browser"),
     closeTab,
     shown,
@@ -202,6 +211,10 @@ export function ThreadToolsSidebar({
   addBrowser,
   addAnalytics,
   addPerformance,
+  addPullRequest,
+  codeReferences,
+  onAddReference,
+  onRemoveReference,
   canAddBrowser,
   closeTab,
   visible,
@@ -216,6 +229,10 @@ export function ThreadToolsSidebar({
   addBrowser: () => void;
   addAnalytics: () => void;
   addPerformance: () => void;
+  addPullRequest: () => void;
+  codeReferences: ChatCodeReference[];
+  onAddReference: (reference: ChatCodeReference) => void;
+  onRemoveReference: (id: string) => void;
   canAddBrowser: boolean;
   closeTab: (tab: ThreadToolTab) => Promise<void>;
   visible: boolean;
@@ -273,6 +290,10 @@ export function ThreadToolsSidebar({
                     <Gauge />
                     Performance
                   </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={addPullRequest}>
+                    <GitPullRequest />
+                    Pull request
+                  </DropdownMenuItem>
                 </DropdownMenuGroup>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -289,8 +310,16 @@ export function ThreadToolsSidebar({
                 />
               ) : tab.type === "analytics" ? (
                 <ThreadAnalyticsTool chatId={chatId} serverId={serverId} enabled={visible && activeTab === tab.id} />
-              ) : (
+              ) : tab.type === "performance" ? (
                 <ThreadPerformanceTool chatId={chatId} serverId={serverId} enabled={visible && activeTab === tab.id} />
+              ) : (
+                <PullRequestView
+                  chatId={chatId}
+                  serverId={serverId}
+                  codeReferences={codeReferences}
+                  onAddReference={onAddReference}
+                  onRemoveReference={onRemoveReference}
+                />
               )}
             </TabsContent>
           ))}
@@ -313,6 +342,7 @@ export function ThreadToolsSidebar({
                   <DropdownMenuItem onSelect={addBrowser}><Globe2 />Browser</DropdownMenuItem>
                   <DropdownMenuItem onSelect={addAnalytics}><ChartNoAxesCombined />Analytics</DropdownMenuItem>
                   <DropdownMenuItem onSelect={addPerformance}><Gauge />Performance</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={addPullRequest}><GitPullRequest />Pull request</DropdownMenuItem>
                 </DropdownMenuGroup>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -324,13 +354,14 @@ export function ThreadToolsSidebar({
 }
 
 function toolLabel(tab: ThreadToolTab, typeIndex: number): string {
-  const label = tab.type === "analytics" ? "Analytics" : tab.type === "performance" ? "Performance" : "Browser";
+  const label = tab.type === "analytics" ? "Analytics" : tab.type === "performance" ? "Performance" : tab.type === "pull-request" ? "Pull request" : "Browser";
   return typeIndex > 0 ? `${label} ${typeIndex + 1}` : label;
 }
 
 function toolIcon(type: ThreadToolTab["type"]) {
   if (type === "analytics") return ChartNoAxesCombined;
   if (type === "performance") return Gauge;
+  if (type === "pull-request") return GitPullRequest;
   return Globe2;
 }
 

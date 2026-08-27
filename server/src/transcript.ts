@@ -16,6 +16,20 @@ export interface ChatImageAttachment {
   sizeBytes: number;
 }
 
+export interface ChatCodeReference {
+  id: string;
+  path: string;
+  startLine: number;
+  endLine: number;
+  comment: string;
+  lines: Array<{
+    kind: "add" | "del" | "ctx";
+    oldLine: number | null;
+    newLine: number | null;
+    text: string;
+  }>;
+}
+
 // A single rendered item in the conversation feed. `kind` picks the renderer on
 // the client; the other fields are populated per kind.
 export interface ConvEntry {
@@ -43,6 +57,8 @@ export interface ConvEntry {
   /// Images sent with a user message, retained so every client renders the
   /// same inline references after a refresh.
   attachments?: ChatImageAttachment[];
+  /// Review comments attached from the thread's Changes tool.
+  codeReferences?: ChatCodeReference[];
 }
 
 /// Records a tool's result on its feed entry, lifting out anything a Remy tool

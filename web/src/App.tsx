@@ -41,6 +41,7 @@ import { SettingsPane, type SettingsTab } from "@/components/Settings";
 import type { AnalyticsTab } from "@/components/AnalyticsSettings";
 import { Inbox as InboxPane } from "@/components/Inbox";
 import { WorkspaceSettings } from "@/components/WorkspaceSettings";
+import { PullRequests } from "@/components/PullRequests";
 import { useNotifications } from "@/hooks/use-notifications";
 import { useAppLocation } from "@/hooks/use-location";
 import { useRelease } from "@/hooks/use-release";
@@ -177,6 +178,7 @@ export function App() {
   const saveAgent = useStore((s) => s.saveAgent);
   const loadBoard = useStore((s) => s.loadBoard);
   const release = useRelease();
+  const settings = useStore((s) => s.settings);
   const openProviderSettings = useCallback(() => {
     const local = servers.find((server) => server.local);
     navigate({
@@ -235,7 +237,7 @@ export function App() {
     ? roster.find((entry) => entry.handle === inboxHandle)
     : roster[0];
   const inboxDm = inboxAgent
-    ? agentConversation(inboxAgent.id, dms, servers)
+    ? agentConversation(inboxAgent.id, dms, servers, settings?.devicePreferenceOrder)
     : undefined;
   const unread = roster.filter((agent) =>
     dms.some((chat) => chat.agentId === agent.id && chat.unread),
@@ -487,6 +489,14 @@ export function App() {
           ) : (
             <MissingTicket ticketKey={route.key} onBack={() => go({ name: "board" })} />
           )
+        ) : route.name === "prs" ? (
+          <PullRequests
+            servers={servers}
+            workspaces={allWorkspaces}
+            chats={allChats}
+            onOpenThread={openChat}
+            onOpenWorkspace={(workspaceId) => go({ name: "workspaces", workspaceId })}
+          />
         ) : route.name === "inbox" ? (
           <InboxPane
             agents={roster}

@@ -80,8 +80,10 @@ import {
   type ConvQuestion,
   type ConvTodo,
   type Conversation,
+  type ChatCodeReference,
   type ChatImageAttachment,
 } from "./transcript.js";
+import { codeReferencePrompt } from "./chat-references.js";
 import { claudeTicketMcpServer, ticketPromptContext } from "./ticket-tools.js";
 import { remyToolToken } from "./ticket-tool-auth.js";
 import { forgetChat, linkTicketFromWorkPrompt, syncTicketFromThread } from "./tickets.js";
@@ -488,10 +490,22 @@ class Chat {
 
   // ── sending ──────────────────────────────────────────────────────────────
 
-  async send(text: string, attachments: ChatImageAttachment[] = []): Promise<void> {
+  async send(
+    text: string,
+    attachments: ChatImageAttachment[] = [],
+    codeReferences: ChatCodeReference[] = [],
+  ): Promise<void> {
     const trimmed = text.trim();
-    if (!trimmed) return;
-    const safeText = await redactForCwd(this.record.cwd, trimmed);
+    if (!trimmed && codeReferences.length === 0) return;
+    const safeText = await redactForCwd(this.record.cwd, trimmed || "Review these comments.");
+    const safeReferences = await Promise.all(codeReferences.map(async (reference) => ({
+      ...reference,
+      comment: await redactForCwd(this.record.cwd, reference.comment),
+      lines: await Promise.all(reference.lines.map(async (line) => ({
+        ...line,
+        text: await redactForCwd(this.record.cwd, line.text),
+      }))),
+    })));
     const first = this.record.entries.length === 0;
     // A DM is called after the agent you are talking to, and stays called that
     // however the conversation opens.
@@ -503,14 +517,16 @@ class Chat {
     if (first && !this.record.dm) void this.rename(safeText);
     linkTicketFromWorkPrompt(this.record.id, safeText, this.record.agentId);
     const ticketContext = ticketPromptContext(this.record.id);
+    const referenceContext = codeReferencePrompt(safeReferences);
     const remembered = this.record.agentId ? await memoryPrompt(this.record.agentId, this.record.cwd) : undefined;
-    const agentText = [remembered, ticketContext, safeText].filter(Boolean).join("\n\n");
+    const agentText = [remembered, ticketContext, referenceContext, safeText].filter(Boolean).join("\n\n");
     const agentPrompt: ChatPrompt = { text: agentText, attachments };
     this.append({
       id: `u-${randomUUID()}`,
       kind: "user",
       text: clip(safeText, MAX_TEXT),
       ...(attachments.length > 0 ? { attachments } : {}),
+      ...(safeReferences.length > 0 ? { codeReferences: safeReferences } : {}),
     });
     this.record.error = undefined;
     // A prompt typed while Claude is blocked on a permission is queued behind
@@ -1797,6 +1813,10 @@ export function redactEntry(entry: ConvEntry): ConvEntry {
   if (entry.arg !== undefined) entry.arg = redactKnownSecrets(entry.arg);
   if (entry.output !== undefined) entry.output = redactKnownSecrets(entry.output);
   for (const line of entry.diff ?? []) line.text = redactKnownSecrets(line.text);
+  for (const reference of entry.codeReferences ?? []) {
+    reference.comment = redactKnownSecrets(reference.comment);
+    for (const line of reference.lines) line.text = redactKnownSecrets(line.text);
+  }
   for (const question of entry.questions ?? []) {
     question.question = redactKnownSecrets(question.question);
     if (question.answer !== undefined) question.answer = redactKnownSecrets(question.answer);
@@ -2158,8 +2178,9 @@ export async function sendChatMessage(
   id: string,
   text: string,
   attachments: ChatImageAttachment[] = [],
+  codeReferences: ChatCodeReference[] = [],
 ): Promise<void> {
-  await mustGet(id).send(text, attachments);
+  await mustGet(id).send(text, attachments, codeReferences);
 }
 
 export async function runChatEnvironmentCommand(

@@ -62,6 +62,9 @@ export interface Config {
   deviceName: string;
   deviceIcon: string;
   deviceTint: string;
+  /// The order this client should try paired devices for work with no
+  /// workspace. Unknown devices stay at the end until someone places them.
+  devicePreferenceOrder: string[];
   /// Whether this machine should keep its daemon exposed through Tailscale
   /// Serve. The observed mapping can disappear or point at an older port, so
   /// the preference has to outlive the mapping it asks for.
@@ -222,6 +225,15 @@ function deviceNameValue(value: unknown): string {
   return typeof value === "string" ? value.trim().slice(0, 80) : "";
 }
 
+export function devicePreferenceOrder(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.flatMap((entry) => {
+    if (typeof entry !== "string") return [];
+    const id = entry.trim().slice(0, 128);
+    return id ? [id] : [];
+  }))].slice(0, 100);
+}
+
 let tailscaleServePreferenceStored = false;
 
 /// Older installs persisted the Tailscale mapping itself, but not the intent
@@ -289,6 +301,7 @@ function load(): Config {
     deviceName: deviceNameValue(parsed.deviceName),
     deviceIcon: deviceAppearanceValue(parsed.deviceIcon, DEVICE_ICONS),
     deviceTint: deviceAppearanceValue(parsed.deviceTint, DEVICE_TINTS),
+    devicePreferenceOrder: devicePreferenceOrder(parsed.devicePreferenceOrder),
     tailscaleServeEnabled: parsed.tailscaleServeEnabled === true,
     // Absent means this is the only device, so it is the one to buzz.
     notifySelf: parsed.notifySelf !== false,
@@ -324,6 +337,7 @@ export interface PublicSettings {
   deviceName: string;
   deviceIcon: string;
   deviceTint: string;
+  devicePreferenceOrder: string[];
   tailscaleServeEnabled: boolean;
   defaultGitIdentity: GitIdentity;
   notifySelf: boolean;
@@ -350,6 +364,7 @@ export function publicSettings(): PublicSettings {
     deviceName: config.deviceName,
     deviceIcon: config.deviceIcon,
     deviceTint: config.deviceTint,
+    devicePreferenceOrder: config.devicePreferenceOrder,
     tailscaleServeEnabled: config.tailscaleServeEnabled,
     defaultGitIdentity: config.defaultGitIdentity,
     notifySelf: config.notifySelf,
@@ -425,6 +440,9 @@ export function patchSettings(patch: Record<string, unknown>): PublicSettings {
   }
   if (patch.deviceTint !== undefined) {
     set("deviceTint", deviceAppearanceValue(patch.deviceTint, DEVICE_TINTS));
+  }
+  if (patch.devicePreferenceOrder !== undefined) {
+    set("devicePreferenceOrder", devicePreferenceOrder(patch.devicePreferenceOrder));
   }
   if (patch.tailscaleServeEnabled !== undefined) {
     set("tailscaleServeEnabled", patch.tailscaleServeEnabled === true);

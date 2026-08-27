@@ -161,6 +161,7 @@ export interface ConvEntry {
   /// What a Remy tool made on this call, drawn as a card under the tool row.
   artifacts?: ConvArtifact[];
   attachments?: ChatImageAttachment[];
+  codeReferences?: ChatCodeReference[];
 }
 
 export interface ChatImageAttachment {
@@ -168,6 +169,64 @@ export interface ChatImageAttachment {
   name: string;
   mimeType: "image/gif" | "image/jpeg" | "image/png" | "image/webp";
   sizeBytes: number;
+}
+
+export interface ChatCodeReference {
+  id: string;
+  path: string;
+  startLine: number;
+  endLine: number;
+  comment: string;
+  lines: PullRequestDiffLine[];
+}
+
+export interface PullRequestDiffLine {
+  kind: "add" | "del" | "ctx";
+  text: string;
+  oldLine: number | null;
+  newLine: number | null;
+}
+
+export interface PullRequestDiffHunk {
+  header: string;
+  lines: PullRequestDiffLine[];
+}
+
+export interface PullRequestDiffFile {
+  path: string;
+  previousPath?: string;
+  hunks: PullRequestDiffHunk[];
+}
+
+export interface PullRequestDiff {
+  url: string;
+  repository: string;
+  number: number;
+  title: string;
+  body: string;
+  baseRefName: string;
+  headRefName: string;
+  state: string;
+  isDraft: boolean;
+  reviewDecision: string;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  checks: { name: string; state: "pass" | "fail" | "pending" | "skipping" }[];
+  files: PullRequestDiffFile[];
+}
+
+export interface PullRequestTimelineItem {
+  id: string;
+  kind: "commit" | "comment" | "review" | "review_comment";
+  author: string;
+  body: string;
+  createdAt: string;
+  url: string;
+  sha?: string | null;
+  state?: string | null;
+  path?: string | null;
+  line?: number | null;
 }
 
 /// Something a Remy tool made — a ticket, a thread, a workspace — with enough
@@ -290,6 +349,8 @@ export interface ServerSettings {
   deviceName: string;
   deviceIcon: string;
   deviceTint: string;
+  /// Preferred devices for work that is not tied to a workspace.
+  devicePreferenceOrder: string[];
   tailscaleServeEnabled: boolean;
   /// What every agent set to Remy default signs with.
   defaultGitIdentity: "off" | "author";

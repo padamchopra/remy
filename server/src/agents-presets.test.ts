@@ -21,6 +21,7 @@ test("untouched legacy defaults upgrade to the PM, Builder, and QA chain", () =>
   assert.equal(agents.agentByHandle("pm")?.handoffTo[0], "builder");
   assert.equal(agents.agentByHandle("builder")?.handoffTo[0], "qa");
   assert.equal(agents.agentByHandle("qa")?.handoffTo[0], "builder");
+  assert.equal(agents.agentByHandle("github")?.role, "Keeps your pull requests moving");
   assert.ok(agents.agentByHandle("triager"), "an existing Triager should not be deleted");
 });
 

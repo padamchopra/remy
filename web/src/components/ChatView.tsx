@@ -9,6 +9,7 @@ import {
   CircleAlert,
   CircleStop,
   Copy,
+  FileCode2,
   Folder,
   GitBranch,
   MessagesSquare,
@@ -16,7 +17,18 @@ import {
   SquareKanban,
   Ticket as TicketIcon,
   Wrench,
+  X,
 } from "lucide-react";
+import {
+  Attachment,
+  AttachmentAction,
+  AttachmentActions,
+  AttachmentContent,
+  AttachmentDescription,
+  AttachmentGroup,
+  AttachmentMedia,
+  AttachmentTitle,
+} from "@/components/ui/attachment";
 import { toast } from "sonner";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -96,6 +108,7 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { Markdown } from "@/components/Markdown";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { ThreadToolsButton, ThreadToolsSidebar, useThreadTools } from "@/components/SharedBrowser";
+import { referenceLabel } from "@/components/PullRequestView";
 import { ThreadToolsLayout } from "@/components/ThreadToolsLayout";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -108,7 +121,7 @@ import { workspaceForPath } from "@/lib/projects";
 import { PROVIDERS } from "@/lib/providers";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
-import type { Agent, ArchivedThread, Chat, ChatApproval, ChatQuestionRequest, ConvArtifact, ConvDiffLine, ConvEntry } from "@/state/types";
+import type { Agent, ArchivedThread, Chat, ChatApproval, ChatCodeReference, ChatQuestionRequest, ConvArtifact, ConvDiffLine, ConvEntry } from "@/state/types";
 
 interface ThreadCheckpoint {
   id: string;
@@ -169,6 +182,7 @@ export function ChatView({
     uploading: false,
   });
   const [busy, setBusy] = useState(false);
+  const [codeReferences, setCodeReferences] = useState<ChatCodeReference[]>([]);
   const composerRef = useRef<InlineImageComposerHandle>(null);
   const threadTools = useThreadTools(chat.id, chat.serverId, !archived);
 
@@ -183,6 +197,7 @@ export function ChatView({
   useEffect(() => {
     composerRef.current?.clear();
     composerRef.current?.focus();
+    setCodeReferences([]);
   }, [chat.id]);
 
   // Which project this chat is in, so the breadcrumb reads as a place rather
@@ -255,11 +270,12 @@ export function ChatView({
 
   const submit = async () => {
     const trimmed = draft.text.trim();
-    if (!trimmed || draft.uploading || busy || archived) return;
+    if ((!trimmed && codeReferences.length === 0) || draft.uploading || busy || archived) return;
     setBusy(true);
     try {
-      await sendMessage(trimmed, draft.attachments);
+      await sendMessage(trimmed, draft.attachments, codeReferences);
       composerRef.current?.clear();
+      setCodeReferences([]);
     } catch (caught) {
       toast.error("Couldn't send that message", { description: apiError(caught) });
     } finally {
@@ -359,6 +375,10 @@ export function ChatView({
             addBrowser={threadTools.addBrowser}
             addAnalytics={threadTools.addAnalytics}
             addPerformance={threadTools.addPerformance}
+            addPullRequest={threadTools.addPullRequest}
+            codeReferences={codeReferences}
+            onAddReference={(reference) => setCodeReferences((current) => [...current, reference])}
+            onRemoveReference={(id) => setCodeReferences((current) => current.filter((reference) => reference.id !== id))}
             canAddBrowser={threadTools.canAddBrowser}
             closeTab={threadTools.closeTab}
             visible={!conversational && !archived && threadTools.shown}
@@ -544,6 +564,30 @@ export function ChatView({
               onUpload={uploadMessageImage}
               onError={(message) => toast.error(message)}
             />
+            {codeReferences.length > 0 && (
+              <InputGroupAddon align="block-start" className="border-b pb-2 pt-2">
+                <AttachmentGroup className="w-full py-0">
+                  {codeReferences.map((reference) => (
+                    <Attachment key={reference.id} size="xs">
+                      <AttachmentMedia><FileCode2 /></AttachmentMedia>
+                      <AttachmentContent><AttachmentTitle>{referenceLabel(reference)}</AttachmentTitle></AttachmentContent>
+                      <AttachmentActions>
+                        <AttachmentAction
+                          type="button"
+                          aria-label={`Remove ${referenceLabel(reference)}`}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            setCodeReferences((current) => current.filter((candidate) => candidate.id !== reference.id));
+                          }}
+                        >
+                          <X />
+                        </AttachmentAction>
+                      </AttachmentActions>
+                    </Attachment>
+                  ))}
+                </AttachmentGroup>
+              </InputGroupAddon>
+            )}
             {/* The controls share one strip while they fit. At the smallest
                 split-pane widths, the critical action cluster wraps intact
                 instead of spilling beyond the composer. */}
@@ -605,7 +649,7 @@ export function ChatView({
                   variant="default"
                   size="icon-sm"
                   className="rounded-full"
-                  disabled={!draft.text.trim() || draft.uploading || busy || Boolean(archived)}
+                  disabled={(!draft.text.trim() && codeReferences.length === 0) || draft.uploading || busy || Boolean(archived)}
                   aria-label="Send"
                 >
                   <ArrowUp />
@@ -1154,6 +1198,19 @@ function Entry({
               ) : entry.text}
             </BubbleContent>
           </Bubble>
+          {entry.codeReferences && entry.codeReferences.length > 0 && (
+            <AttachmentGroup className="max-w-full justify-end py-0">
+              {entry.codeReferences.map((reference) => (
+                <Attachment key={reference.id} size="sm" className="max-w-80">
+                  <AttachmentMedia><FileCode2 /></AttachmentMedia>
+                  <AttachmentContent>
+                    <AttachmentTitle>{referenceLabel(reference)}</AttachmentTitle>
+                    <AttachmentDescription>{reference.comment}</AttachmentDescription>
+                  </AttachmentContent>
+                </Attachment>
+              ))}
+            </AttachmentGroup>
+          )}
           {entry.text && (
             <MessageFooter className="max-h-6 overflow-hidden group-data-[stuck]/message:opacity-0">
               <CopyPrompt text={entry.text} />

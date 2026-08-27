@@ -12,6 +12,7 @@ import type {
   Chat,
   ChatApproval,
   ChatDetail,
+  ChatCodeReference,
   ChatImageAttachment,
   ChatQuestionRequest,
   ChatState,
@@ -181,7 +182,7 @@ interface State {
   openChat(id: string): Promise<void>;
   closeChat(): void;
   uploadMessageImage(file: File): Promise<ChatImageAttachment>;
-  sendMessage(text: string, attachments?: ChatImageAttachment[]): Promise<void>;
+  sendMessage(text: string, attachments?: ChatImageAttachment[], codeReferences?: ChatCodeReference[]): Promise<void>;
   answerApproval(requestId: string, decision: "allow" | "allowAlways" | "deny"): Promise<void>;
   answerQuestion(requestId: string, answers: Record<string, unknown>): Promise<void>;
   interrupt(): Promise<void>;
@@ -670,7 +671,10 @@ export const useStore = create<State>((set, get) => ({
     const title = text.split("\n")[0]?.slice(0, 80) || "New thread";
 
     if (useFixture) {
-      const serverId = input.serverId ?? get().servers.find((server) => server.local)?.id ?? get().servers[0]?.id ?? "studio";
+      const serverId = input.serverId
+        ?? availableAgentServers(get().servers, get().settings?.devicePreferenceOrder)[0]?.id
+        ?? get().servers[0]?.id
+        ?? "studio";
       const chat: Chat = {
         id: crypto.randomUUID(),
         serverId,
@@ -684,7 +688,9 @@ export const useStore = create<State>((set, get) => ({
       return { id: chat.id, serverId };
     }
 
-    const server = get().servers.find((entry) => entry.id === input.serverId) ?? localServer(get().servers);
+    const server = get().servers.find((entry) => entry.id === input.serverId)
+      ?? availableAgentServers(get().servers, get().settings?.devicePreferenceOrder)[0]
+      ?? localServer(get().servers);
     if (!server) throw new Error("This machine isn't connected.");
     const created = await transport.request<{ chat?: RawChat }>(server.id, "/chats", {
       method: "POST",
@@ -865,13 +871,13 @@ export const useStore = create<State>((set, get) => ({
     return body.attachment;
   },
 
-  async sendMessage(text, attachments = []) {
+  async sendMessage(text, attachments = [], codeReferences = []) {
     const detail = get().detail;
     const trimmed = text.trim();
-    if (!detail || !trimmed) return;
+    if (!detail || (!trimmed && codeReferences.length === 0)) return;
     await transport.request(detail.serverId, `/chats/${encodeURIComponent(detail.id)}/message`, {
       method: "POST",
-      body: { text: trimmed, attachments },
+      body: { text: trimmed, attachments, codeReferences },
     });
     // The server echoes the message back as a `chat` frame. With the socket
     // down there is no frame coming, so read the feed once instead.
@@ -1254,9 +1260,10 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async openDm(agent) {
-    const servers = availableAgentServers(get().servers);
+    const preferenceOrder = get().settings?.devicePreferenceOrder ?? [];
+    const servers = availableAgentServers(get().servers, preferenceOrder);
     const available = new Set(servers.map((server) => server.id));
-    const existing = agentConversation(agent.id, get().dms, get().servers);
+    const existing = agentConversation(agent.id, get().dms, get().servers, preferenceOrder);
     if (existing && available.has(existing.serverId)) return existing;
 
     let failure: unknown;

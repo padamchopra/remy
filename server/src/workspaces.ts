@@ -775,10 +775,13 @@ export function isLegacyManagedWorktreePath(workspacePath: string, worktreePath:
   return pathFromLegacyRoot.length > 0 && !pathFromLegacyRoot.startsWith("..") && !isAbsolute(pathFromLegacyRoot);
 }
 
-// Opens a PR-aware shell. Reuse the branch's linked worktree when it already
-// exists; otherwise materialize the exact GitHub PR head into a new worktree
-// before starting tmux. The primary checkout is never repurposed or switched.
-export async function openPullRequestSession(id: string, branchValue: string, pullRequestNumber: number): Promise<string> {
+/// Reuses a pull request branch's linked worktree, or materializes its exact
+/// GitHub head in a managed one. The primary checkout is never repurposed.
+export async function checkoutPullRequestWorktree(
+  id: string,
+  branchValue: string,
+  pullRequestNumber: number,
+): Promise<{ workspace: Workspace; path: string }> {
   const workspace = await workspaceByID(id);
   const branch = branchValue.trim();
   if (!Number.isSafeInteger(pullRequestNumber) || pullRequestNumber <= 0) throw new Error("invalid pull request number");
@@ -827,6 +830,12 @@ export async function openPullRequestSession(id: string, branchValue: string, pu
     invalidateWorkspacesCache();
   }
 
+  return { workspace, path };
+}
+
+// Opens a PR-aware shell at the same checkout an agent thread would use.
+export async function openPullRequestSession(id: string, branchValue: string, pullRequestNumber: number): Promise<string> {
+  const { path } = await checkoutPullRequestWorktree(id, branchValue, pullRequestNumber);
   const name = `pr-${pullRequestNumber}-${randomUUID().slice(0, 4)}`;
   assertValidName(name);
   await newShellSession({ name, path, agent: "shell" });

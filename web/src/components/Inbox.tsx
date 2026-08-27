@@ -65,7 +65,8 @@ export function Inbox({
 }) {
   const dms = useStore((s) => s.dms);
   const servers = useStore((s) => s.servers);
-  const online = availableAgentServers(servers).length > 0;
+  const preferenceOrder = useStore((s) => s.settings?.devicePreferenceOrder);
+  const online = availableAgentServers(servers, preferenceOrder).length > 0;
 
   return (
     <main className="flex min-w-0 flex-1">
@@ -81,7 +82,7 @@ export function Inbox({
                   <AgentRow
                     agent={agent}
                     active={selected?.id === agent.id}
-                    dm={agentConversation(agent.id, dms, servers)}
+                    dm={agentConversation(agent.id, dms, servers, preferenceOrder)}
                     online={online}
                     onSelect={() => onSelectAgent(agent.handle)}
                   />
@@ -225,7 +226,7 @@ function Conversation({
   const [failed, setFailed] = useState<string | undefined>();
   const [editing, setEditing] = useState(false);
 
-  const chat = agentConversation(agent.id, dms, servers);
+  const chat = agentConversation(agent.id, dms, servers, settings?.devicePreferenceOrder);
   const headerLabel = (
     <span className="flex min-w-0 items-center gap-2">
       <AgentMark agent={agent} animate="always" className="size-6" />
