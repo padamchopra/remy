@@ -66,7 +66,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PaneHeader } from "@/components/PaneHeader";
 import { ProjectScope, chosenPrefixes, scopedProjects } from "@/components/ProjectScope";
-import { TaskTabs, type TaskTab } from "@/components/TaskTabs";
 import { deviceIcon } from "@/lib/devices";
 import { localWorkspace } from "@/lib/projects";
 import { AssigneeAvatar, StatusIcon, SubTicketProgress } from "@/components/TicketGlyphs";
@@ -91,11 +90,9 @@ const DONE_PREVIEW_COUNT = 5;
 
 /// The board: one column per status, cards in rank order.
 ///
-/// One of the two tabs in Tasks; the other lists the tickets that come back.
 /// Every project at once by default — work does not arrive one repository at a
 /// time — with a filter for narrowing it. The filter lives in the URL as the
-/// key prefixes it kept, so `#/board/REMY,ATLAS` is a view you can send someone,
-/// and it is the same segment the Recurring tab carries.
+/// key prefixes it kept, so `#/board/REMY,ATLAS` is a view you can send someone.
 ///
 /// Cards drag between columns and also move by menu. The menu is not a fallback:
 /// it is the keyboard path, and both call the same move.
@@ -103,14 +100,12 @@ const DONE_PREVIEW_COUNT = 5;
 export function Board({
   scope,
   onScope,
-  onTab,
   onOpenTicket,
   onAddWorkspace,
 }: {
   /// Comma-joined key prefixes from the URL. Empty means every project.
   scope?: string;
   onScope: (scope?: string) => void;
-  onTab: (tab: TaskTab) => void;
   onOpenTicket: (key: string) => void;
   onAddWorkspace: () => void;
 }) {
@@ -164,7 +159,7 @@ export function Board({
   if (projects.length === 0) {
     return (
       <main className="flex min-w-0 flex-1 flex-col">
-        <PaneHeader crumbs={[{ label: "Tasks" }]} tabs={<TaskTabs tab="board" onTab={onTab} />} />
+        <PaneHeader crumbs={[{ label: "Tasks" }]} />
         <Empty>
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -194,7 +189,7 @@ export function Board({
 
   return (
     <main className="flex min-w-0 flex-1 flex-col">
-      <PaneHeader crumbs={[{ label: "Tasks" }]} tabs={<TaskTabs tab="board" onTab={onTab} />}>
+      <PaneHeader crumbs={[{ label: "Tasks" }]}>
         <span className="text-xs text-muted-foreground tabular-nums">
           {open} ticket{open === 1 ? "" : "s"}
         </span>

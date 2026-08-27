@@ -39,6 +39,7 @@ export function isRemyToolRoute(method: string | undefined, pathname: string): b
   if ((method === "PATCH" || method === "DELETE") && /^\/agents\/[^/]+\/memories\/[^/]+$/.test(pathname)) return true;
   if ((method === "GET" || method === "POST") && pathname === "/workspaces") return true;
   if ((method === "GET" || method === "POST") && pathname === "/chats") return true;
+  if (method === "POST" && pathname === "/routines") return true;
   if (method === "POST" && pathname === "/runtime/environment-command") return true;
   if (method === "GET" && /^\/chats\/[^/]+$/.test(pathname)) return true;
   if (method === "POST" && /^\/chats\/[^/]+\/(message|stop)$/.test(pathname)) return true;

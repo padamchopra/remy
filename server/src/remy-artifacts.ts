@@ -9,7 +9,7 @@
 /// exactly what it just made.
 
 export interface ConvArtifact {
-  kind: "ticket" | "thread" | "workspace";
+  kind: "ticket" | "thread" | "workspace" | "routine";
   /// A ticket is addressed by key, a thread and a workspace by id. Whichever
   /// one this has is what opens it.
   key?: string;
@@ -34,7 +34,7 @@ function parse(json: string): ConvArtifact | undefined {
   try {
     const value = JSON.parse(json) as Record<string, unknown>;
     const kind = value.kind;
-    if (kind !== "ticket" && kind !== "thread" && kind !== "workspace") return undefined;
+    if (kind !== "ticket" && kind !== "thread" && kind !== "workspace" && kind !== "routine") return undefined;
     const title = typeof value.title === "string" ? value.title.slice(0, 200) : "";
     if (!title) return undefined;
     return {

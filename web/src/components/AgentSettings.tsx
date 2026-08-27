@@ -28,6 +28,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { AgentIconPicker } from "@/components/AgentIconPicker";
 import { AgentMark } from "@/components/AgentAvatar";
+import { AgentRoutines } from "@/components/AgentRoutines";
 import { EditableName } from "@/components/EditableName";
 import { ModelPickerButton, REMY_DEFAULT } from "@/components/ModelPicker";
 import { apiError } from "@/lib/api-error";
@@ -211,6 +212,10 @@ export function AgentSettings({
       <FieldDescription className="-mt-3 text-xs">
         {PERMISSIONS.find((option) => option.value === agent.permissionMode)?.detail}
       </FieldDescription>
+
+      <Separator />
+
+      <AgentRoutines agent={agent} />
 
       {!locked && (
       <>

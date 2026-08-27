@@ -76,6 +76,7 @@ const token = process.env.REMY_API_TOKEN
 const chatId = process.env.REMY_CHAT_ID ?? "";
 const threadDeviceId = process.env.REMY_DEVICE_ID ?? "";
 const agentId = process.env.REMY_AGENT_ID ?? "";
+const chatDm = process.env.REMY_CHAT_DM === "1";
 
 async function request<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
   const response = await fetch(`${apiUrl}${path}`, {
@@ -504,6 +505,30 @@ server.registerTool("stop_thread", {
   if (thread_id === chatId) throw new Error("The current thread cannot stop itself through Remy.");
   await request(`/chats/${encodeURIComponent(thread_id)}/stop`, { method: "POST" });
   return ok(`Stopped thread ${thread_id}.`);
+});
+
+if (chatDm && agentId) server.registerTool("create_routine", {
+  description: "Create a routine for this agent when the person asks for work to happen repeatedly.",
+  inputSchema: {
+    name: z.string().min(1).max(200).describe("A short name for the routine"),
+    prompt: z.string().min(1).max(20000).describe("The complete instruction to send this agent each time"),
+    cadence: z.enum(["daily", "weekdays", "weekly", "monthly"]),
+    hour: z.number().int().min(0).max(23).describe("Local hour on the routine's clock device"),
+    minute: z.number().int().min(0).max(59).default(0),
+    weekday: z.number().int().min(0).max(6).optional().describe("Sunday is 0; required for weekly routines"),
+    day: z.number().int().min(1).max(28).optional().describe("Day of month; required for monthly routines"),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+}, async ({ name, prompt, cadence, hour, minute, weekday, day }) => {
+  const created = await request<{ routine: { id: string; name: string } }>("/routines", {
+    method: "POST",
+    body: { name, prompt, cadence, hour, minute, weekday, day },
+  });
+  return ok(`Created ${created.routine.name}.`, {
+    kind: "routine",
+    id: created.routine.id,
+    title: created.routine.name,
+  });
 });
 
 server.registerTool("create_ticket", {

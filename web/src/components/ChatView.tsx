@@ -8,6 +8,7 @@ import {
   ChevronDown,
   CircleAlert,
   CircleStop,
+  Clock3,
   Copy,
   FileCode2,
   Folder,
@@ -140,6 +141,7 @@ export function ChatView({
   onOpenTicket,
   onOpenThread,
   onOpenWorkspace,
+  onOpenRoutine,
   onRestored,
   crumbs,
   persona,
@@ -152,6 +154,7 @@ export function ChatView({
   /// a workspace. Without these the card is still drawn; it just does not open.
   onOpenThread?: (id: string) => void;
   onOpenWorkspace?: (workspaceId: string) => void;
+  onOpenRoutine?: () => void;
   onRestored?: (id: string) => void;
   /// Replaces the workspace-and-title trail. An inbox conversation is placed by
   /// who you are talking to, not by the folder it happens to run in.
@@ -241,7 +244,7 @@ export function ChatView({
   const visibleEntries = useMemo(
     () => entries.filter(
       (entry) => conversational
-        ? entry.kind === "user" || entry.kind === "assistant"
+        ? entry.kind === "user" || entry.kind === "assistant" || Boolean(entry.artifacts?.length)
         : entry.kind !== "thinking" || Boolean(entry.text?.trim()),
     ),
     [conversational, entries],
@@ -421,6 +424,7 @@ export function ChatView({
                   onOpenTicket={onOpenTicket}
                   onOpenThread={onOpenThread}
                   onOpenWorkspace={onOpenWorkspace}
+                  onOpenRoutine={onOpenRoutine}
                 />
               ) : (
                 <Entry
@@ -1281,6 +1285,7 @@ const ARTIFACT_ICON = {
   ticket: SquareKanban,
   thread: MessagesSquare,
   workspace: Folder,
+  routine: Clock3,
 } as const;
 
 /// What a Remy tool just made, as a thing rather than a sentence.
@@ -1477,11 +1482,13 @@ function ToolGroup({
   onOpenTicket,
   onOpenThread,
   onOpenWorkspace,
+  onOpenRoutine,
 }: {
   entries: ConvEntry[];
   onOpenTicket?: (key: string) => void;
   onOpenThread?: (id: string) => void;
   onOpenWorkspace?: (workspaceId: string) => void;
+  onOpenRoutine?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const failed = entries.filter((entry) => toolStatus(entry) === "error").length;
@@ -1522,6 +1529,8 @@ function ToolGroup({
                 ? () => onOpenThread(artifact.id!)
                 : artifact.kind === "workspace" && artifact.id && onOpenWorkspace
                   ? () => onOpenWorkspace(artifact.id!)
+                  : artifact.kind === "routine" && onOpenRoutine
+                    ? onOpenRoutine
                   : undefined
           }
         />

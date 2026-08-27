@@ -6,6 +6,7 @@ import { agentByHandle, getAgent, listAgents } from "./agents.js";
 import { forgetMemory, listMemories, projectIdForCwd, saveMemory } from "./agent-memories.js";
 import { listProjects, projectForWorkspace } from "./projects.js";
 import { artifactMarker, type ConvArtifact } from "./remy-artifacts.js";
+import { createRoutine } from "./routines.js";
 import {
   explicitlyRequestedTicketStatus,
   REMY_TOOL_INSTRUCTIONS,
@@ -161,7 +162,12 @@ function describeThread(thread: ThreadDetail): string {
   ].filter(Boolean).join("\n");
 }
 
-export function claudeTicketMcpServer(chatId: string, agentId: string | undefined, threads: RemyThreadControl) {
+export function claudeTicketMcpServer(
+  chatId: string,
+  agentId: string | undefined,
+  dm: boolean,
+  threads: RemyThreadControl,
+) {
   const key = z.string().optional().describe("Ticket key. Omit it for this thread's linked ticket.");
   return createSdkMcpServer({
     name: "remy",
@@ -453,6 +459,24 @@ export function claudeTicketMcpServer(chatId: string, agentId: string | undefine
         },
         { annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
       ),
+      ...(dm && agentId ? [tool(
+        "create_routine",
+        "Create a routine for this agent when the person asks for work to happen repeatedly.",
+        {
+          name: z.string().min(1).max(200).describe("A short name for the routine"),
+          prompt: z.string().min(1).max(20000).describe("The complete instruction to send this agent each time"),
+          cadence: z.enum(["daily", "weekdays", "weekly", "monthly"]),
+          hour: z.number().int().min(0).max(23).describe("Local hour on the routine's clock device"),
+          minute: z.number().int().min(0).max(59).default(0),
+          weekday: z.number().int().min(0).max(6).optional().describe("Sunday is 0; required for weekly routines"),
+          day: z.number().int().min(1).max(28).optional().describe("Day of month; required for monthly routines"),
+        },
+        async ({ name, prompt, cadence, hour, minute, weekday, day }) => {
+          const routine = createRoutine({ agentId, name, prompt, cadence, hour, minute, weekday, day });
+          return ok(`Created ${routine.name}.`, { kind: "routine", id: routine.id, title: routine.name });
+        },
+        { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
+      )] : []),
       tool(
         "create_ticket",
         "Write a new ticket on a workspace's board.",
