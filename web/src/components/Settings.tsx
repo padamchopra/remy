@@ -1338,10 +1338,13 @@ function Unreachable({ deviceName }: { deviceName?: string } = {}) {
 
 function DevicesPane() {
   const servers = useStore((s) => s.servers);
+  const settings = useStore((s) => s.settings);
+  const saveSettings = useStore((s) => s.saveSettings);
   const addServer = useStore((s) => s.addServer);
   const removeServer = useStore((s) => s.removeServer);
   const updateServer = useStore((s) => s.updateServer);
   const [busy, setBusy] = useState(false);
+  const [savingOrder, setSavingOrder] = useState(false);
   const [latestRelease, setLatestRelease] = useState<RemyRelease>();
   const hasPeer = servers.some((server) => server.peer);
   // Pairing lives in the daemon on this machine rather than in any one window,
@@ -1349,7 +1352,20 @@ function DevicesPane() {
   const home = servers.find((server) => server.local) ?? servers.find((server) => !server.cloud);
   // Nothing can pair with a machine nothing can reach, so the list below says
   // so rather than offering buttons that cannot work.
-  const homeReachable = useIdentity(home?.id)?.exposed === true;
+  const homeIdentity = useIdentity(home?.id);
+  const homeReachable = homeIdentity?.exposed === true;
+  const preference = settings?.devicePreferenceOrder ?? [];
+  const rank = new Map(preference.map((id, index) => [id, index]));
+  const ordered = servers
+    .filter((server) => !server.cloud && !server.workspaceOnly)
+    .sort((a, b) => {
+      const aRank = rank.get(a.id);
+      const bRank = rank.get(b.id);
+      if (aRank !== undefined || bRank !== undefined) {
+        return (aRank ?? Number.MAX_SAFE_INTEGER) - (bRank ?? Number.MAX_SAFE_INTEGER);
+      }
+      return Number(b.local ?? false) - Number(a.local ?? false);
+    });
 
   useEffect(() => {
     if (!hasPeer) return;
@@ -1378,6 +1394,21 @@ function DevicesPane() {
     }
   };
 
+  const move = async (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= ordered.length) return;
+    const next = ordered.map((server) => server.id);
+    [next[index], next[target]] = [next[target], next[index]];
+    setSavingOrder(true);
+    try {
+      await saveSettings({ devicePreferenceOrder: next });
+    } catch (caught) {
+      toast.error("Couldn't change the device order", { description: apiError(caught) });
+    } finally {
+      setSavingOrder(false);
+    }
+  };
+
   if (servers.length === 0) {
     return (
       <Empty>
@@ -1391,109 +1422,44 @@ function DevicesPane() {
 
   return (
     <div className="flex flex-col gap-6">
-      <DevicePreferenceField servers={servers} />
-      {servers.filter((server) => !server.cloud).map((server) => (
-        <DeviceCard
-          key={server.id}
-          server={server}
-          latestRelease={latestRelease}
-          homeId={home?.id}
-          busy={busy}
-          onUnpair={() => void unpair(server)}
-          onUpdate={async (patch) => {
-            if (server.local) {
-              await transport.request(server.id, "/server/identity", { method: "PATCH", body: patch });
-            }
-            await updateServer(server.id, patch);
-          }}
-        />
-      ))}
+      <Field>
+        <FieldContent>
+          <FieldLabel>Devices</FieldLabel>
+          <FieldDescription className="text-xs">
+            Remy tries them in this order for work without a workspace.
+          </FieldDescription>
+        </FieldContent>
+        <div className="flex items-center justify-end px-3 text-xs text-muted-foreground">
+          On this device, receive notifications from
+        </div>
+        <ItemGroup className="gap-2">
+          {ordered.map((server, index) => (
+            <DeviceCard
+              key={server.id}
+              server={server}
+              latestRelease={latestRelease}
+              homeId={home?.id}
+              homeDeviceId={homeIdentity?.deviceId}
+              busy={busy}
+              savingOrder={savingOrder}
+              index={index}
+              count={ordered.length}
+              onMove={(direction) => void move(index, direction)}
+              onUnpair={() => void unpair(server)}
+              onUpdate={async (patch) => {
+                if (server.local) {
+                  await transport.request(server.id, "/server/identity", { method: "PATCH", body: patch });
+                }
+                await updateServer(server.id, patch);
+              }}
+            />
+          ))}
+        </ItemGroup>
+      </Field>
       {home ? <PhonesField serverId={home.id} /> : null}
       <DiscoveredDevices homeId={home?.id} reachable={homeReachable} />
       <AddDevice onAdd={addServer} />
     </div>
-  );
-}
-
-function DevicePreferenceField({ servers }: { servers: Server[] }) {
-  const settings = useStore((s) => s.settings);
-  const saveSettings = useStore((s) => s.saveSettings);
-  const [saving, setSaving] = useState(false);
-  const preference = settings?.devicePreferenceOrder ?? [];
-  const rank = new Map(preference.map((id, index) => [id, index]));
-  const ordered = servers
-    .filter((server) => !server.cloud && !server.workspaceOnly)
-    .sort((a, b) => {
-      const aRank = rank.get(a.id);
-      const bRank = rank.get(b.id);
-      if (aRank !== undefined || bRank !== undefined) {
-        return (aRank ?? Number.MAX_SAFE_INTEGER) - (bRank ?? Number.MAX_SAFE_INTEGER);
-      }
-      return Number(b.local ?? false) - Number(a.local ?? false);
-    });
-
-  const move = async (index: number, direction: -1 | 1) => {
-    const target = index + direction;
-    if (target < 0 || target >= ordered.length) return;
-    const next = ordered.map((server) => server.id);
-    [next[index], next[target]] = [next[target], next[index]];
-    setSaving(true);
-    try {
-      await saveSettings({ devicePreferenceOrder: next });
-    } catch (caught) {
-      toast.error("Couldn't change the device order", { description: apiError(caught) });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  if (ordered.length < 2) return null;
-
-  return (
-    <Field>
-      <FieldContent>
-        <FieldLabel>Task device order</FieldLabel>
-        <FieldDescription className="text-xs">
-          Remy tries the first online device for work that has no workspace.
-        </FieldDescription>
-      </FieldContent>
-      <ItemGroup className="mt-2 gap-1.5">
-        {ordered.map((server, index) => {
-          const Icon = deviceIcon(server.icon);
-          return (
-            <Item key={server.id} variant="outline" size="sm">
-              <ItemMedia variant="icon"><Icon /></ItemMedia>
-              <ItemContent>
-                <ItemTitle>{index + 1}. {server.name}</ItemTitle>
-                <ItemDescription className="text-xs">
-                  {server.online ? "Available" : "Skipped while offline"}
-                </ItemDescription>
-              </ItemContent>
-              <ItemActions>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={`Move ${server.name} up`}
-                  disabled={saving || index === 0}
-                  onClick={() => void move(index, -1)}
-                >
-                  <ArrowUp />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={`Move ${server.name} down`}
-                  disabled={saving || index === ordered.length - 1}
-                  onClick={() => void move(index, 1)}
-                >
-                  <ArrowDown />
-                </Button>
-              </ItemActions>
-            </Item>
-          );
-        })}
-      </ItemGroup>
-    </Field>
   );
 }
 
@@ -1634,14 +1600,24 @@ function DeviceCard({
   server,
   latestRelease,
   homeId,
+  homeDeviceId,
   busy,
+  savingOrder,
+  index,
+  count,
+  onMove,
   onUnpair,
   onUpdate,
 }: {
   server: Server;
   latestRelease?: RemyRelease;
   homeId?: string;
+  homeDeviceId?: string;
   busy: boolean;
+  savingOrder: boolean;
+  index: number;
+  count: number;
+  onMove: (direction: -1 | 1) => void;
   onUnpair: () => void;
   onUpdate: (patch: { name?: string; icon?: DeviceIconId; tint?: TintId }) => Promise<void>;
 }) {
@@ -1659,8 +1635,8 @@ function DeviceCard({
   }, [identity, onUpdate, server.icon, server.local, server.name, server.tint]);
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-3.5 py-3">
+    <Item variant="outline" className="overflow-hidden p-0">
+      <div className="flex w-full flex-wrap items-center gap-3 px-3.5 py-3">
         <IconPicker
           label={`Change icon for ${server.name}`}
           icon={server.icon}
@@ -1678,21 +1654,44 @@ function DeviceCard({
           }
         />
 
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-2">
+        <ItemContent className="min-w-0">
+          <ItemTitle>
             <EditableName value={server.name} label="device name" onCommit={(name) => void onUpdate({ name })} />
-          </span>
-          <span className="block truncate text-xs text-muted-foreground">
+          </ItemTitle>
+          <ItemDescription className="truncate text-xs">
             {server.local
               ? identity?.tailnetHost
                 ? `This machine · ${identity.tailnetHost}`
                 : "This machine"
               : `${server.code} · ${hostLabel(server.url)}`}
-          </span>
-        </span>
+          </ItemDescription>
+        </ItemContent>
 
+        <ItemActions className="shrink-0 gap-1 max-sm:w-full max-sm:basis-full max-sm:justify-end">
+          <NotificationSourceSwitch server={server} homeId={homeId} homeDeviceId={homeDeviceId} />
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={`Move ${server.name} up`}
+            disabled={savingOrder || index === 0}
+            onClick={() => onMove(-1)}
+          >
+            <ArrowUp />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={`Move ${server.name} down`}
+            disabled={savingOrder || index === count - 1}
+            onClick={() => onMove(1)}
+          >
+            <ArrowDown />
+          </Button>
+        </ItemActions>
+      </div>
+      <div className="flex basis-full flex-col gap-3 border-t border-border bg-muted/20 px-3.5 py-3">
         {!server.local && (
-          <span className="flex shrink-0 items-center gap-1.5">
+          <div className="flex flex-wrap items-center justify-end gap-1.5">
             <RemoteUpdateAction server={server} latestRelease={latestRelease} />
             <AlertDialog>
               <AlertDialogTrigger asChild>
@@ -1715,13 +1714,12 @@ function DeviceCard({
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
-          </span>
+          </div>
         )}
+        {server.local ? <ReachableField serverId={server.id} identity={identity} /> : null}
+        {server.online ? <StayAwakeField serverId={server.id} /> : null}
       </div>
-      <NotifyField server={server} homeId={homeId} />
-      {server.local ? <ReachableField serverId={server.id} identity={identity} /> : null}
-      {server.online ? <StayAwakeField serverId={server.id} /> : null}
-    </div>
+    </Item>
   );
 }
 
@@ -1837,84 +1835,84 @@ function RemoteUpdateAction({ server, latestRelease }: { server: Server; latestR
   );
 }
 
-/// Where notifications raised on this machine go.
-///
-/// One switch per device, which is the whole answer: the machine running the
-/// thread, the machine you are sitting at, several of them, or none. A paired
-/// machine decides for itself what its own threads do — this is about the work
-/// happening here.
-function NotifyField({ server, homeId }: { server: Server; homeId?: string }) {
-  const refresh = useStore((s) => s.refresh);
+/// Whether work on this source device can notify the device showing Settings.
+/// A peer stores its outgoing route, so a remote choice is written on that
+/// peer's record for this device rather than on the record shown locally.
+function NotificationSourceSwitch({
+  server,
+  homeId,
+  homeDeviceId,
+}: {
+  server: Server;
+  homeId?: string;
+  homeDeviceId?: string;
+}) {
   const [on, setOn] = useState<boolean>();
   const [saving, setSaving] = useState(false);
-  const switchId = `notify-${server.id}`;
+  const switchId = `notify-from-${server.id}`;
 
   useEffect(() => {
-    if (server.peer) {
-      setOn(server.notify === true);
-      return;
-    }
     let cancelled = false;
-    void transport
-      .request<{ notifySelf?: boolean }>(server.id, "/server/settings")
-      .then((settings) => {
-        if (!cancelled) setOn(settings.notifySelf !== false);
+    const request = server.local
+      ? transport
+        .request<{ notifySelf?: boolean }>(server.id, "/server/settings")
+        .then((settings) => settings.notifySelf !== false)
+      : homeDeviceId
+        ? transport
+          .request<{ peers?: { id: string; notify?: boolean }[] }>(server.id, "/peers")
+          .then((answer) => answer.peers?.find((peer) => peer.id === homeDeviceId)?.notify === true)
+        : Promise.reject(new Error("This device is still starting."));
+
+    setOn(undefined);
+    void request
+      .then((next) => {
+        if (!cancelled) setOn(next);
       })
       .catch(() => {
-        // A daemon from before routing landed has no say in where these go.
+        // An offline or older device cannot say whether it routes here.
       });
     return () => {
       cancelled = true;
     };
-  }, [server.id, server.peer, server.notify]);
-
-  if (on === undefined) return null;
+  }, [homeDeviceId, server.id, server.local, server.online]);
 
   const toggle = async (next: boolean) => {
+    if (on === undefined) return;
     const previous = on;
     setOn(next);
     setSaving(true);
     try {
-      if (server.peer) {
-        if (!homeId) throw new Error("Remy is still starting on this machine.");
-        await transport.request(homeId, `/peers/${encodeURIComponent(server.id)}`, {
-          method: "PATCH",
-          body: { notify: next },
-        });
-        await refresh();
-      } else {
+      if (server.local) {
         await transport.request(server.id, "/server/settings", {
           method: "PATCH",
           body: { notifySelf: next },
         });
+      } else {
+        if (!homeId || !homeDeviceId) throw new Error("This device is still starting.");
+        await transport.request(server.id, `/peers/${encodeURIComponent(homeDeviceId)}`, {
+          method: "PATCH",
+          body: { notify: next },
+        });
       }
     } catch (caught) {
       setOn(previous);
-      toast.error("Couldn't change where notifications go", { description: apiError(caught) });
+      toast.error("Couldn't change notifications on this device", { description: apiError(caught) });
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div className="rounded-lg border border-border bg-muted/40 px-3.5 py-3">
-      <Field orientation="horizontal" className="items-center">
-        <FieldContent>
-          <FieldLabel htmlFor={switchId}>Notifications</FieldLabel>
-          <FieldDescription className="text-xs">
-            {server.local
-              ? "A thread on this machine reaches you here."
-              : `A thread on this machine also reaches you on ${server.name}.`}
-          </FieldDescription>
-        </FieldContent>
-        <Switch
-          id={switchId}
-          checked={on}
-          disabled={saving}
-          onCheckedChange={(next) => void toggle(next)}
-        />
-      </Field>
-    </div>
+    <Field orientation="horizontal" data-disabled={on === undefined || undefined} className="w-auto">
+      <FieldLabel htmlFor={switchId} className="sr-only">Receive notifications from {server.name}</FieldLabel>
+      <Switch
+        id={switchId}
+        checked={on === true}
+        disabled={saving || on === undefined}
+        aria-label={`Receive notifications from ${server.name} on this device`}
+        onCheckedChange={(next) => void toggle(next)}
+      />
+    </Field>
   );
 }
 
@@ -1968,7 +1966,7 @@ function ReachableField({ serverId, identity }: { serverId: string; identity?: I
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/40 px-3.5 py-3">
-      <Field orientation="horizontal" data-disabled={!hasTailscale || undefined} className="items-center">
+      <Field orientation="horizontal" data-disabled={!hasTailscale || undefined} className="items-center max-sm:flex-col max-sm:items-stretch">
         <FieldContent>
           <FieldLabel htmlFor={switchId}>Reachable from your other machines</FieldLabel>
           <FieldDescription className="text-xs">
@@ -1985,6 +1983,7 @@ function ReachableField({ serverId, identity }: { serverId: string; identity?: I
           id={switchId}
           checked={shown.exposed}
           disabled={saving || !hasTailscale}
+          className="max-sm:self-end"
           onCheckedChange={(next) => void toggle(next)}
         />
       </Field>
@@ -2382,7 +2381,7 @@ function StayAwakeField({ serverId }: { serverId: string }) {
 
   return (
     <div className="rounded-lg border border-border bg-muted/40 px-3.5 py-3">
-      <Field orientation="horizontal" data-disabled={disabled || undefined} className="items-center">
+      <Field orientation="horizontal" data-disabled={disabled || undefined} className="items-center max-sm:flex-col max-sm:items-stretch">
         <FieldContent>
           <FieldLabel htmlFor={selectId}>Stay awake</FieldLabel>
           <FieldDescription className="text-xs">
@@ -2390,7 +2389,7 @@ function StayAwakeField({ serverId }: { serverId: string }) {
           </FieldDescription>
         </FieldContent>
         <Select value={mode} onValueChange={(value) => void pick(value)} disabled={disabled}>
-          <SelectTrigger id={selectId} size="sm" className="w-44 shrink-0">
+          <SelectTrigger id={selectId} size="sm" className="w-44 shrink-0 max-sm:w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent align="end">
