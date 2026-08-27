@@ -56,6 +56,33 @@ export interface AuthoredPullRequest {
   worktreePath: string | null;
 }
 
+export interface PullRequestDiffLine {
+  kind: "add" | "del" | "ctx";
+  text: string;
+  oldLine: number | null;
+  newLine: number | null;
+}
+
+export interface PullRequestDiffHunk {
+  header: string;
+  lines: PullRequestDiffLine[];
+}
+
+export interface PullRequestDiffFile {
+  path: string;
+  previousPath?: string;
+  hunks: PullRequestDiffHunk[];
+}
+
+export interface PullRequestDiff {
+  repository: string;
+  number: number;
+  title: string;
+  baseRefName: string;
+  headRefName: string;
+  files: PullRequestDiffFile[];
+}
+
 const CACHE_TTL_MS = 60_000;
 let cache: { at: number; pullRequests: AuthoredPullRequest[] } | null = null;
 
@@ -307,6 +334,77 @@ export async function pullRequestTimeline(repository: string, number: number): P
     timelineRequest(`${base}/pulls/${number}/comments`),
   ]);
   return parsePullRequestTimeline(commits, comments, reviews, reviewComments);
+}
+
+export async function pullRequestDiff(repository: string, number: number, cwd?: string): Promise<PullRequestDiff> {
+  const fields = "number,title,url,baseRefName,headRefName";
+  const options = { ...(cwd ? { cwd } : {}), timeout: 30_000 };
+  const [view, patch] = await Promise.all([
+    exec("gh", ["pr", "view", String(number), "--repo", repository, "--json", fields], options),
+    exec("gh", ["pr", "diff", String(number), "--repo", repository, "--patch"], options),
+  ]);
+  const metadata = asRecord(JSON.parse(view.stdout || "{}"));
+  return {
+    repository,
+    number,
+    title: stringValue(metadata.title) || `Pull request #${number}`,
+    baseRefName: stringValue(metadata.baseRefName),
+    headRefName: stringValue(metadata.headRefName),
+    files: parsePullRequestPatch(patch.stdout),
+  };
+}
+
+export async function pullRequestDiffForCwd(cwd: string): Promise<PullRequestDiff> {
+  const fields = "number,title,url,baseRefName,headRefName";
+  const { stdout } = await exec("gh", ["pr", "view", "--json", fields], { cwd, timeout: 30_000 });
+  const metadata = asRecord(JSON.parse(stdout || "{}"));
+  const url = stringValue(metadata.url);
+  const match = url.match(/^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
+  if (!match) throw new Error("this branch does not have a pull request");
+  return pullRequestDiff(match[1], Number(match[2]), cwd);
+}
+
+export function parsePullRequestPatch(raw: string): PullRequestDiffFile[] {
+  const files: PullRequestDiffFile[] = [];
+  let file: PullRequestDiffFile | undefined;
+  let hunk: PullRequestDiffHunk | undefined;
+  let oldLine = 0;
+  let newLine = 0;
+
+  for (const line of raw.split(/\r?\n/)) {
+    const fileMatch = line.match(/^diff --git a\/(.+) b\/(.+)$/);
+    if (fileMatch) {
+      file = {
+        path: fileMatch[2],
+        ...(fileMatch[1] !== fileMatch[2] ? { previousPath: fileMatch[1] } : {}),
+        hunks: [],
+      };
+      files.push(file);
+      hunk = undefined;
+      continue;
+    }
+    const hunkMatch = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/);
+    if (file && hunkMatch) {
+      oldLine = Number(hunkMatch[1]);
+      newLine = Number(hunkMatch[2]);
+      hunk = { header: line, lines: [] };
+      file.hunks.push(hunk);
+      continue;
+    }
+    if (!hunk || line === "\\ No newline at end of file") continue;
+    if (line.startsWith("+")) {
+      hunk.lines.push({ kind: "add", text: line.slice(1), oldLine: null, newLine });
+      newLine += 1;
+    } else if (line.startsWith("-")) {
+      hunk.lines.push({ kind: "del", text: line.slice(1), oldLine, newLine: null });
+      oldLine += 1;
+    } else if (line.startsWith(" ")) {
+      hunk.lines.push({ kind: "ctx", text: line.slice(1), oldLine, newLine });
+      oldLine += 1;
+      newLine += 1;
+    }
+  }
+  return files;
 }
 
 async function timelineRequest(endpoint: string): Promise<string> {

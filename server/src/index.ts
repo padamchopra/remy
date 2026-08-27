@@ -159,7 +159,8 @@ import {
   worktreeInfo,
 } from "./git.js";
 import { buildInbox } from "./inbox.js";
-import { listAuthoredPullRequests, markPullRequestRead, pullRequestTimeline } from "./pull-requests.js";
+import { listAuthoredPullRequests, markPullRequestRead, pullRequestDiff, pullRequestDiffForCwd, pullRequestTimeline } from "./pull-requests.js";
+import { validateChatCodeReferences } from "./chat-references.js";
 import { startPullRequestMonitor } from "./pull-request-monitor.js";
 import {
   createRecurrence,
@@ -900,6 +901,18 @@ const server = createServer(async (req, res) => {
       }
       return json(res, 200, { timeline: await pullRequestTimeline(repository, number) });
     }
+    if (req.method === "GET" && url.pathname === "/pull-requests/diff") {
+      const repository = String(url.searchParams.get("repository") ?? "").trim();
+      const number = Number(url.searchParams.get("number"));
+      if (!/^[^/\s]+\/[^/\s]+$/.test(repository) || !Number.isInteger(number) || number <= 0) {
+        return json(res, 400, { error: "repository and pull request number are required" });
+      }
+      try {
+        return json(res, 200, { diff: await pullRequestDiff(repository, number) });
+      } catch (error) {
+        return json(res, 502, { error: (error as Error).message || "could not load those changes" });
+      }
+    }
 
     // ── the board ───────────────────────────────────────────────────────────
     // Tickets, agents and projects are folds of `board_log`, so every write
@@ -1500,10 +1513,18 @@ const server = createServer(async (req, res) => {
         const body = await readJson(req);
         try {
           const attachments = validateChatImages(id, body.attachments);
-          await sendChatMessage(id, String(body.text ?? ""), attachments);
+          const codeReferences = validateChatCodeReferences(body.codeReferences);
+          await sendChatMessage(id, String(body.text ?? ""), attachments, codeReferences);
           return json(res, 200, { ok: true });
         } catch (error) {
           return json(res, 409, { error: (error as Error).message || "could not send the message" });
+        }
+      }
+      if (req.method === "GET" && parts[2] === "pull-request-diff") {
+        try {
+          return json(res, 200, { diff: await pullRequestDiffForCwd(chatCwd(id)) });
+        } catch (error) {
+          return json(res, 404, { error: (error as Error).message || "this branch does not have a pull request" });
         }
       }
       if (req.method === "POST" && parts[2] === "interrupt") {

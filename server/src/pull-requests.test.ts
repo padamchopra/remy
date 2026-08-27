@@ -9,7 +9,7 @@ import type { Workspace } from "./workspaces.js";
 // test-only config isolated from the user's real Remy installation.
 process.env.HOME = mkdtempSync(join(tmpdir(), "remy-pr-test-"));
 
-const { parseAuthoredPullRequests, parsePullRequestTimeline, parseUnreadReviewComments } = await import("./pull-requests.js");
+const { parseAuthoredPullRequests, parsePullRequestPatch, parsePullRequestTimeline, parseUnreadReviewComments } = await import("./pull-requests.js");
 
 const workspace: Workspace = {
   id: "workspace-1",
@@ -163,4 +163,33 @@ test("pull request timeline interleaves commits and GitHub activity", () => {
   assert.equal(result[1].body, "Keep this stable.");
   assert.equal(result[1].path, "Sources/Timeline.swift");
   assert.equal(result[3].sha, "abc123456789");
+});
+
+test("pull request patches retain file paths and both line-number spaces", () => {
+  const result = parsePullRequestPatch([
+    "diff --git a/src/old.ts b/src/new.ts",
+    "similarity index 90%",
+    "rename from src/old.ts",
+    "rename to src/new.ts",
+    "--- a/src/old.ts",
+    "+++ b/src/new.ts",
+    "@@ -13,3 +14,4 @@ export function greet() {",
+    " const name = getName();",
+    "-return `Hi ${name}`;",
+    "+return `Hello ${name}`;",
+    "+return name;",
+    " }",
+  ].join("\n"));
+
+  assert.equal(result.length, 1);
+  assert.equal(result[0].path, "src/new.ts");
+  assert.equal(result[0].previousPath, "src/old.ts");
+  assert.equal(result[0].hunks[0].header, "@@ -13,3 +14,4 @@ export function greet() {");
+  assert.deepEqual(result[0].hunks[0].lines.map((line) => [line.kind, line.oldLine, line.newLine]), [
+    ["ctx", 13, 14],
+    ["del", 14, null],
+    ["add", null, 15],
+    ["add", null, 16],
+    ["ctx", 15, 17],
+  ]);
 });

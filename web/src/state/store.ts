@@ -12,6 +12,7 @@ import type {
   Chat,
   ChatApproval,
   ChatDetail,
+  ChatCodeReference,
   ChatImageAttachment,
   ChatQuestionRequest,
   ChatState,
@@ -181,7 +182,7 @@ interface State {
   openChat(id: string): Promise<void>;
   closeChat(): void;
   uploadMessageImage(file: File): Promise<ChatImageAttachment>;
-  sendMessage(text: string, attachments?: ChatImageAttachment[]): Promise<void>;
+  sendMessage(text: string, attachments?: ChatImageAttachment[], codeReferences?: ChatCodeReference[]): Promise<void>;
   answerApproval(requestId: string, decision: "allow" | "allowAlways" | "deny"): Promise<void>;
   answerQuestion(requestId: string, answers: Record<string, unknown>): Promise<void>;
   interrupt(): Promise<void>;
@@ -870,13 +871,13 @@ export const useStore = create<State>((set, get) => ({
     return body.attachment;
   },
 
-  async sendMessage(text, attachments = []) {
+  async sendMessage(text, attachments = [], codeReferences = []) {
     const detail = get().detail;
     const trimmed = text.trim();
-    if (!detail || !trimmed) return;
+    if (!detail || (!trimmed && codeReferences.length === 0)) return;
     await transport.request(detail.serverId, `/chats/${encodeURIComponent(detail.id)}/message`, {
       method: "POST",
-      body: { text: trimmed, attachments },
+      body: { text: trimmed, attachments, codeReferences },
     });
     // The server echoes the message back as a `chat` frame. With the socket
     // down there is no frame coming, so read the feed once instead.

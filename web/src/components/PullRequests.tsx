@@ -4,6 +4,7 @@ import {
   CircleDot,
   CircleX,
   ExternalLink,
+  FileDiff,
   GitBranch,
   GitPullRequest,
   MessageSquare,
@@ -30,6 +31,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { PaneHeader } from "@/components/PaneHeader";
+import { PullRequestDiff } from "@/components/PullRequestDiff";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { transport } from "@/lib/transport";
 import type { Chat, Server, Workspace } from "@/state/types";
@@ -118,6 +120,7 @@ export function PullRequests({
   const [filter, setFilter] = useState<PullRequestFilter>("all");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [selected, setSelected] = useState<AuthoredPullRequest>();
 
   const load = useCallback(async (refresh = false) => {
     if (refresh) setRefreshing(true);
@@ -150,6 +153,34 @@ export function PullRequests({
   }), [pullRequests]);
   const visible = pullRequests.filter((pullRequest) =>
     filter === "all" || (filter === "draft" ? pullRequest.isDraft : !pullRequest.isDraft));
+
+  if (selected) {
+    return (
+      <main className="flex min-w-0 flex-1 flex-col">
+        <PaneHeader
+          crumbs={[
+            { label: "Pull requests", onClick: () => setSelected(undefined) },
+            { label: `#${selected.number}` },
+            { label: "Changes" },
+          ]}
+        >
+          <Button asChild size="sm" variant="outline">
+            <a href={selected.url} target="_blank" rel="noreferrer" data-link>
+              <ExternalLink />
+              Open on GitHub
+            </a>
+          </Button>
+        </PaneHeader>
+        <div className="min-h-0 flex-1">
+          <PullRequestDiff
+            serverId={selected.serverId}
+            repository={selected.repository}
+            number={selected.number}
+          />
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="flex min-w-0 flex-1 flex-col">
@@ -250,6 +281,10 @@ export function PullRequests({
                     </span>
                   </ItemContent>
                   <ItemActions className="shrink-0 flex-wrap justify-end">
+                    <Button variant="outline" size="sm" data-link onClick={() => setSelected(pullRequest)}>
+                      <FileDiff />
+                      Changes
+                    </Button>
                     {workspace && (
                       <Button
                         variant="ghost"

@@ -161,6 +161,7 @@ export interface ConvEntry {
   /// What a Remy tool made on this call, drawn as a card under the tool row.
   artifacts?: ConvArtifact[];
   attachments?: ChatImageAttachment[];
+  codeReferences?: ChatCodeReference[];
 }
 
 export interface ChatImageAttachment {
@@ -168,6 +169,42 @@ export interface ChatImageAttachment {
   name: string;
   mimeType: "image/gif" | "image/jpeg" | "image/png" | "image/webp";
   sizeBytes: number;
+}
+
+export interface ChatCodeReference {
+  id: string;
+  path: string;
+  startLine: number;
+  endLine: number;
+  comment: string;
+  lines: PullRequestDiffLine[];
+}
+
+export interface PullRequestDiffLine {
+  kind: "add" | "del" | "ctx";
+  text: string;
+  oldLine: number | null;
+  newLine: number | null;
+}
+
+export interface PullRequestDiffHunk {
+  header: string;
+  lines: PullRequestDiffLine[];
+}
+
+export interface PullRequestDiffFile {
+  path: string;
+  previousPath?: string;
+  hunks: PullRequestDiffHunk[];
+}
+
+export interface PullRequestDiff {
+  repository: string;
+  number: number;
+  title: string;
+  baseRefName: string;
+  headRefName: string;
+  files: PullRequestDiffFile[];
 }
 
 /// Something a Remy tool made — a ticket, a thread, a workspace — with enough
