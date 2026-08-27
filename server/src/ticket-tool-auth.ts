@@ -35,6 +35,8 @@ export function remyToolChatId(authorization: string | undefined): string | unde
 export function isRemyToolRoute(method: string | undefined, pathname: string): boolean {
   if (method === "GET" && pathname === "/board") return true;
   if (method === "GET" && pathname === "/agents") return true;
+  if ((method === "GET" || method === "POST") && /^\/agents\/[^/]+\/memories$/.test(pathname)) return true;
+  if ((method === "PATCH" || method === "DELETE") && /^\/agents\/[^/]+\/memories\/[^/]+$/.test(pathname)) return true;
   if ((method === "GET" || method === "POST") && pathname === "/workspaces") return true;
   if ((method === "GET" || method === "POST") && pathname === "/chats") return true;
   if (method === "POST" && pathname === "/runtime/environment-command") return true;

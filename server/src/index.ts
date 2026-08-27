@@ -5,6 +5,7 @@ import { answerMentions } from "./mentions.js";
 import { config, patchSettings, publicSettings } from "./config.js";
 import { AgentStartupError, AgentUnavailableError, agentKind, inferAgent, type AgentKind } from "./agent.js";
 import { createAgent, deleteAgent, getAgent, listAgents, seedPresetAgents, seedRemyAgent, updateAgent } from "./agents.js";
+import { forgetMemory, listMemories, saveMemory } from "./agent-memories.js";
 import { deliverAnnouncements } from "./announcements.js";
 import { appUpdateStatus, reportAppUpdate, requestAppUpdate } from "./app-update.js";
 import { localAnalytics } from "./analytics.js";
@@ -916,6 +917,52 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { agent });
       } catch (error) {
         return json(res, 400, { error: (error as Error).message || "could not create that agent" });
+      }
+    }
+    if (parts[0] === "agents" && parts[1] && parts[2] === "memories") {
+      const agentId = decodeURIComponent(parts[1]);
+      if (!fullAccess && scopedAgentId !== agentId) {
+        return json(res, 403, { error: "an agent can change only its own memories" });
+      }
+      if (!getAgent(agentId)) return json(res, 404, { error: "no such agent" });
+      try {
+        if (parts.length === 3 && req.method === "GET") {
+          return json(res, 200, {
+            memories: listMemories(agentId, {
+              projectId: url.searchParams.get("project") ?? undefined,
+              query: url.searchParams.get("query") ?? undefined,
+            }),
+          });
+        }
+        if (parts.length === 3 && req.method === "POST") {
+          const body = await readJson(req);
+          const memory = saveMemory({
+            agentId,
+            content: body.content,
+            scope: body.scope,
+            projectId: body.projectId,
+          });
+          broadcast({ type: "board" });
+          return json(res, 201, { memory });
+        }
+        if (parts[3] && parts.length === 4 && req.method === "PATCH") {
+          const body = await readJson(req);
+          const memory = saveMemory({
+            agentId,
+            id: decodeURIComponent(parts[3]),
+            content: body.content,
+          });
+          broadcast({ type: "board" });
+          return json(res, 200, { memory });
+        }
+        if (parts[3] && parts.length === 4 && req.method === "DELETE") {
+          forgetMemory(agentId, decodeURIComponent(parts[3]));
+          broadcast({ type: "board" });
+          return json(res, 200, { ok: true });
+        }
+      } catch (error) {
+        const message = (error as Error).message || "could not change that memory";
+        return json(res, /no such/.test(message) ? 404 : 400, { error: message });
       }
     }
     if (parts[0] === "agents" && parts[1] && parts.length === 2) {

@@ -14,6 +14,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { agentCommand } from "./agent.js";
 import { getAgent, gitIdentityEnv, resolvedAgentModel, type Agent } from "./agents.js";
+import { memoryPrompt } from "./agent-memories.js";
 import { deviceId } from "./board-log.js";
 import {
   redactForCwd,
@@ -502,7 +503,8 @@ class Chat {
     if (first && !this.record.dm) void this.rename(safeText);
     linkTicketFromWorkPrompt(this.record.id, safeText, this.record.agentId);
     const ticketContext = ticketPromptContext(this.record.id);
-    const agentText = ticketContext ? `${ticketContext}\n\n${safeText}` : safeText;
+    const remembered = this.record.agentId ? await memoryPrompt(this.record.agentId, this.record.cwd) : undefined;
+    const agentText = [remembered, ticketContext, safeText].filter(Boolean).join("\n\n");
     const agentPrompt: ChatPrompt = { text: agentText, attachments };
     this.append({
       id: `u-${randomUUID()}`,
