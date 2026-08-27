@@ -129,6 +129,18 @@ function migrate(database: DatabaseSync): void {
       updated_at integer not null,
       deleted integer not null default 0
     );
+    create table if not exists agent_memories (
+      id text primary key,
+      agent_id text not null,
+      scope text not null default 'global',
+      project_id text,
+      content text not null,
+      created_at integer not null,
+      updated_at integer not null,
+      deleted integer not null default 0
+    );
+    create index if not exists agent_memories_agent
+      on agent_memories(agent_id, scope, project_id, deleted, updated_at);
     create table if not exists tickets (
       id text primary key,
       -- The number is what a ticket owns; the key is that number behind its
@@ -360,7 +372,7 @@ function migrate(database: DatabaseSync): void {
   // replaced them, and a table nothing reads is worth dropping rather than
   // carrying.
   database.exec("drop table if exists loops");
-  database.exec("pragma user_version = 5");
+  database.exec("pragma user_version = 6");
 }
 
 export function getKv<T>(key: string): T | undefined {

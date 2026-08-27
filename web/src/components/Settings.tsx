@@ -1296,10 +1296,15 @@ function ToolRow({
             : (detail ?? (status.available ? "Ready." : (status.error ?? `Remy can't run ${name} here.`)))}
         </ItemDescription>
       </ItemContent>
-      <ItemActions className="gap-2">
+      <ItemActions className="basis-full flex-wrap justify-end gap-2 sm:basis-auto sm:flex-nowrap">
         {status !== undefined && !ok && <Badge variant="secondary">Not ready</Badge>}
+        {status?.updateAvailable && <Badge variant="secondary">Update available</Badge>}
         {status?.version && (
-          <span className="font-mono text-xs text-muted-foreground tabular-nums">{status.version}</span>
+          <span className="font-mono text-xs text-muted-foreground tabular-nums">
+            {status.updateAvailable && status.latestVersion
+              ? `${status.version} → ${status.latestVersion}`
+              : status.version}
+          </span>
         )}
         {onMcpChange && status?.available && mcp && (
           <Button

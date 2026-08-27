@@ -3,6 +3,7 @@ import { basename } from "node:path";
 import { homedir } from "node:os";
 import { z } from "zod";
 import { agentByHandle, getAgent, listAgents } from "./agents.js";
+import { forgetMemory, listMemories, projectIdForCwd, saveMemory } from "./agent-memories.js";
 import { listProjects, projectForWorkspace } from "./projects.js";
 import { artifactMarker, type ConvArtifact } from "./remy-artifacts.js";
 import {
@@ -195,7 +196,7 @@ export function claudeTicketMcpServer(chatId: string, agentId: string | undefine
             detail: workspace.path,
           });
         },
-        { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+        { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
       ),
       tool(
         "run_with_environment",
@@ -318,6 +319,62 @@ export function claudeTicketMcpServer(chatId: string, agentId: string | undefine
             : "No custom agents are available. Use the workspace agent.");
         },
         { annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false } },
+      ),
+      tool(
+        "list_memories",
+        "Read this agent's durable memories for the current workspace.",
+        { query: z.string().max(500).optional() },
+        async ({ query }) => {
+          if (!agentId) throw new Error("This thread has no agent memory.");
+          const memories = listMemories(agentId, {
+            projectId: await projectIdForCwd(threads.currentCwd),
+            query,
+          });
+          return ok(memories.length
+            ? memories.map((memory) => `${memory.id} [${memory.scope}]\n${memory.content}`).join("\n\n")
+            : "You have no matching memories.");
+        },
+        { annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false } },
+      ),
+      tool(
+        "save_memory",
+        "Save or replace a durable fact that should follow this agent between devices.",
+        {
+          content: z.string().min(1).max(4000),
+          scope: z.enum(["global", "workspace"]).optional(),
+          workspace: z.string().optional().describe("Registered workspace name, id, path, or origin. Required only when this thread is not already in that workspace."),
+          memory_id: z.string().optional().describe("Existing memory id to replace."),
+        },
+        async ({ content, scope, workspace, memory_id }) => {
+          if (!agentId) throw new Error("This thread has no agent memory.");
+          let projectId: string | undefined;
+          if (scope === "workspace") {
+            const path = await workspacePath(workspace, threads.currentCwd);
+            const held = (await listWorkspaces()).find((entry) =>
+              entry.path === path || entry.worktrees.some((worktree) => worktree.path === path));
+            projectId = held ? projectForWorkspace(held.id)?.id : undefined;
+          }
+          const memory = saveMemory({
+            agentId,
+            content,
+            scope,
+            projectId,
+            ...(memory_id ? { id: memory_id } : {}),
+          });
+          return ok(`${memory_id ? "Updated" : "Saved"} memory ${memory.id}.`);
+        },
+        { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+      ),
+      tool(
+        "forget_memory",
+        "Forget one of this agent's durable memories.",
+        { memory_id: z.string() },
+        async ({ memory_id }) => {
+          if (!agentId) throw new Error("This thread has no agent memory.");
+          forgetMemory(agentId, memory_id);
+          return ok(`Forgot memory ${memory_id}.`);
+        },
+        { annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false } },
       ),
       tool(
         "list_threads",

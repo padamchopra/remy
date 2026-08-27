@@ -14,6 +14,7 @@ process.env.MC_CONFIG_DIR = stateDir;
 const { db } = await import("./db.js");
 const log = await import("./board-log.js");
 const projects = await import("./projects.js");
+const memories = await import("./agent-memories.js");
 const tickets = await import("./tickets.js");
 const peers = await import("./peers.js");
 
@@ -179,6 +180,25 @@ test("a peer's events fold into a ticket on this machine", () => {
   assert.equal(ticket?.title, "Wire the peers");
   assert.equal(ticket?.status, "in_progress", "later events fold over earlier ones");
   assert.equal(projects.getProject("p-shared")?.name, "Shared");
+});
+
+test("a peer's memory event becomes durable agent context on this machine", () => {
+  const events = [
+    remoteEvent("alpha", 20, {
+      id: "alpha-memory",
+      entity: "memory",
+      entityId: "memory-shared",
+      kind: "create",
+      payload: {
+        agentId: "agent-shared",
+        scope: "global",
+        content: "Prefer direct progress updates.",
+      },
+    }),
+  ];
+
+  assert.equal(peers.acceptEvents({ events }), 1);
+  assert.equal(memories.getMemory("memory-shared")?.content, "Prefer direct progress updates.");
 });
 
 // ── the peer list ───────────────────────────────────────────────────────────
