@@ -327,30 +327,23 @@ export function ChatView({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <PaneHeader
-        crumbs={crumbs ?? [
-          {
-            label: (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    <WorkspaceMark home={!workspace} workspace={workspace} server={server} size="sm" />
-                    <span className="truncate">{workspace?.name ?? server?.name ?? "This machine"}</span>
-                  </span>
-                </TooltipTrigger>
-                {/* The path is what the name stands for, so it stays one hover away. */}
-                <TooltipContent className="font-mono">{displayPath(chat.cwd)}</TooltipContent>
-              </Tooltip>
-            ),
-          },
-          {
-            label: persona ? (
-              <span className="flex min-w-0 items-center gap-1.5">
-                <AgentMark agent={persona} className="size-4" />
-                <span className="truncate">{open?.title ?? chat.title}</span>
-              </span>
-            ) : (open?.title ?? chat.title),
-          },
-        ]}
+        crumbs={crumbs ?? [{
+          label: (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="flex min-w-0 items-center gap-2">
+                  <WorkspaceMark home={!workspace} workspace={workspace} server={server} size="sm" />
+                  <span className="truncate">{open?.title ?? chat.title}</span>
+                </span>
+              </TooltipTrigger>
+              {/* The workspace and path stay available without crowding the title. */}
+              <TooltipContent>
+                <span className="font-medium">{workspace?.name ?? server?.name ?? "This machine"}</span>
+                <span className="ml-1.5 font-mono text-muted-foreground">{displayPath(chat.cwd)}</span>
+              </TooltipContent>
+            </Tooltip>
+          ),
+        }]}
       >
         {onOpenTicket && !persona && !archived && <ThreadTicket chatId={chat.id} onOpenTicket={onOpenTicket} />}
         {headerEnd}
@@ -397,7 +390,7 @@ export function ChatView({
             checkpoints={checkpoints}
             className="min-h-0 flex-1"
           >
-            <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-5 py-6 [overflow-anchor:none]">
+            <div className="mx-auto flex w-full max-w-[44rem] flex-col gap-5 px-6 py-7 [overflow-anchor:none]">
           {loading && visibleEntries.length === 0 ? (
             <FeedSkeleton />
           ) : visibleEntries.length === 0 ? (
@@ -434,6 +427,7 @@ export function ChatView({
                   name={persona?.name ?? provider?.label ?? "Claude"}
                   persona={persona}
                   lead={item.lead}
+                  showIdentity={conversational}
                   checkpoint={sticky ? checkpoint?.id : undefined}
                 />
               );
@@ -516,12 +510,12 @@ export function ChatView({
             </div>
           </ScrollFeed>
 
-          <div className="min-w-0 shrink-0 border-t border-border px-5 py-3">
+          <div className="min-w-0 shrink-0 bg-linear-to-t from-background via-background to-transparent px-6 pt-2 pb-4">
             {archived && (
               <Item
                 variant="outline"
                 size="sm"
-                className="mx-auto mb-3 w-full max-w-3xl bg-muted/30"
+                className="mx-auto mb-3 w-full max-w-[44rem] bg-muted/30"
               >
                 <ItemMedia variant="icon">
                   <ArchiveRestore />
@@ -545,13 +539,13 @@ export function ChatView({
             <form
           // The toolbar drops labels by how wide the composer is, not the
           // window: the sidebar takes a fixed slice, so the two differ.
-          className="@container mx-auto min-w-0 w-full max-w-3xl"
+          className="@container mx-auto min-w-0 w-full max-w-[44rem]"
           onSubmit={(event) => {
             event.preventDefault();
             void submit();
           }}
         >
-          <InputGroup className="items-stretch rounded-xl">
+          <InputGroup className="items-stretch rounded-2xl border-border/80 bg-card/95 shadow-sm">
             <InlineImageComposer
               ref={composerRef}
               ariaLabel="Message"
@@ -1128,6 +1122,7 @@ function Entry({
   provider,
   name,
   persona,
+  showIdentity,
   checkpoint,
 }: {
   entry: ConvEntry;
@@ -1135,6 +1130,7 @@ function Entry({
   provider: string;
   name: string;
   persona?: Agent;
+  showIdentity: boolean;
   checkpoint?: string;
 }) {
   const switched = modelSwitch(entry);
@@ -1163,28 +1159,35 @@ function Entry({
           ],
         )}
       >
-        {/* The slot is its own muted disc at `min-w-8`. A smaller avatar inside
-            leaves that disc showing as a ring, so the avatar fills it and the
-            slot carries no colour of its own. */}
-        <MessageAvatar
-          data-sequential-avatar={!lead ? "" : undefined}
-          className={cn(
-            "bg-transparent translate-y-[var(--checkpoint-avatar-y)]!",
-            !lead && "opacity-0",
-          )}
-        >
-          <UserAvatar />
-        </MessageAvatar>
+        {showIdentity && (
+          /* The slot is its own muted disc at `min-w-8`. A smaller avatar inside
+              leaves that disc showing as a ring, so the avatar fills it and the
+              slot carries no colour of its own. */
+          <MessageAvatar
+            data-sequential-avatar={!lead ? "" : undefined}
+            className={cn(
+              "bg-transparent translate-y-[var(--checkpoint-avatar-y)]!",
+              !lead && "opacity-0",
+            )}
+          >
+            <UserAvatar />
+          </MessageAvatar>
+        )}
         <MessageContent>
-          {lead && (
+          {showIdentity && lead && (
             <MessageHeader className="max-h-5 overflow-hidden">
               You
             </MessageHeader>
           )}
-          <Bubble align="end">
+          <Bubble align="end" variant={showIdentity ? "default" : "muted"}>
             <BubbleContent
               asChild={checkpoint !== undefined}
-              className="whitespace-pre-wrap transition-[background-color] duration-150 group-data-[compacted]/message:truncate group-data-[stuck]/message:bg-primary/45! group-data-[stuck]/message:backdrop-blur-sm motion-reduce:transition-none"
+              className={cn(
+                "whitespace-pre-wrap transition-[background-color] duration-150 group-data-[compacted]/message:truncate group-data-[stuck]/message:backdrop-blur-sm motion-reduce:transition-none",
+                showIdentity
+                  ? "group-data-[stuck]/message:bg-primary/45!"
+                  : "group-data-[stuck]/message:bg-muted/95!",
+              )}
             >
               {checkpoint !== undefined ? (
                 <Button
@@ -1228,11 +1231,11 @@ function Entry({
   if (entry.kind === "assistant") {
     return (
       <Message>
-        <AgentAvatar provider={provider} persona={persona} lead={lead} />
+        {showIdentity && <AgentAvatar provider={provider} persona={persona} lead={lead} />}
         <MessageContent>
           {/* The provider, not the model: which Claude or which Codex answered
               is a setting of the thread, and it is on the toolbar. */}
-          {lead && <MessageHeader>{name}</MessageHeader>}
+          {showIdentity && lead && <MessageHeader>{name}</MessageHeader>}
           <Bubble variant="ghost">
             <BubbleContent>
               <Markdown text={entry.text ?? ""} />
@@ -1246,9 +1249,9 @@ function Entry({
   if (entry.kind === "thinking") {
     return (
       <Message>
-        <AgentAvatar provider={provider} persona={persona} lead={lead} />
+        {showIdentity && <AgentAvatar provider={provider} persona={persona} lead={lead} />}
         <MessageContent>
-          {lead && <MessageHeader>{name}</MessageHeader>}
+          {showIdentity && lead && <MessageHeader>{name}</MessageHeader>}
           <Bubble variant="ghost">
             <BubbleContent className="text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground italic">
               {entry.text}
@@ -1397,6 +1400,7 @@ function CopyPrompt({ text }: { text: string }) {
           type="button"
           variant="ghost"
           size="icon-xs"
+          className="opacity-0 transition-opacity group-hover/message:opacity-100 focus-visible:opacity-100 motion-reduce:transition-none"
           aria-label="Copy prompt"
           onClick={() => void copy()}
         >
@@ -1496,7 +1500,7 @@ function ToolGroup({
 
   return (
     // Tool work is the agent's too, so it stays under the agent's text column.
-    <div className="flex flex-col gap-1.5 pl-10">
+    <div className="flex flex-col gap-1.5">
       <Collapsible open={expanded} onOpenChange={setExpanded}>
         <Marker asChild className="w-fit">
           <CollapsibleTrigger className="group/tool-group rounded-sm py-0.5 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">

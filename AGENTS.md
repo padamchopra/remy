@@ -105,6 +105,7 @@ A server module opens its database at import time, so a test that touches state 
   sidebar over, and never behind a step that hides what is running. Anything
   that would make a thread harder to reach is the wrong shape, however good the
   new thing is.
+- **A desktop thread is a focused work log beside a work surface.** Its transcript is a narrow, identity-light reading column; its tools open beside it by default on a wide screen, in a larger resizable pane with a quiet launcher when nothing is open. Inbox conversations keep their agent identity because the person is the point there.
 - **Inbox is the agents.** Every agent has one conversation with you, made the
   first time you open it (`dmChatFor`), listed by `listDms` and never by
   `listChats` — a thread is work in a repository, and this is not. It opens in

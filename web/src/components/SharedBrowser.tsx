@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
+import { Item, ItemContent, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -41,20 +42,33 @@ export interface ThreadToolTab {
   type: "browser" | "analytics" | "performance" | "pull-request";
 }
 
+const WIDE_THREAD_TOOLS = "(min-width: 1024px)";
+
 function browserPath(chatId: string, browserId: string, action?: string): string {
   const base = `/chats/${encodeURIComponent(chatId)}/browser${action ? `/${action}` : ""}`;
   return `${base}?instance=${encodeURIComponent(browserId)}`;
 }
 
 export function useThreadTools(chatId: string, serverId: string, enabled = true) {
-  const [tabs, setTabs] = useState<ThreadToolTab[]>([{ id: "default", type: "browser" }]);
-  const [activeTab, setActiveTab] = useState("default");
+  const [tabs, setTabs] = useState<ThreadToolTab[]>([]);
+  const [activeTab, setActiveTab] = useState("");
   const [views, setViews] = useState<Record<string, SharedBrowserView | undefined>>({});
-  const [shown, setShown] = useState(false);
+  const [shown, setShown] = useState(() =>
+    typeof window !== "undefined" && window.matchMedia(WIDE_THREAD_TOOLS).matches,
+  );
   const [supportsInstances, setSupportsInstances] = useState(false);
   const refreshTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const nextBrowser = useRef(2);
   const nextInsight = useRef(2);
+
+  useEffect(() => {
+    const media = window.matchMedia(WIDE_THREAD_TOOLS);
+    const closeOnNarrow = () => {
+      if (!media.matches) setShown(false);
+    };
+    media.addEventListener("change", closeOnNarrow);
+    return () => media.removeEventListener("change", closeOnNarrow);
+  }, []);
 
   const refresh = useCallback(async (browserId = "default") => {
     if (!enabled) return;
@@ -325,31 +339,40 @@ export function ThreadToolsSidebar({
           ))}
         </Tabs>
       ) : (
-        <Empty className="min-h-0 flex-1">
-          <EmptyHeader>
-            <EmptyMedia variant="icon"><Globe2 /></EmptyMedia>
-            <EmptyTitle>No tools open</EmptyTitle>
-            <EmptyDescription>Add a tool when you need it beside this thread.</EmptyDescription>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button type="button" size="sm">
-                  <Plus data-icon="inline-start" />
-                  Add tool
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="center">
-                <DropdownMenuGroup>
-                  <DropdownMenuItem onSelect={addBrowser}><Globe2 />Browser</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={addAnalytics}><ChartNoAxesCombined />Analytics</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={addPerformance}><Gauge />Performance</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={addPullRequest}><GitPullRequest />Pull request</DropdownMenuItem>
-                </DropdownMenuGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </EmptyHeader>
-        </Empty>
+        <div className="flex min-h-0 flex-1 items-center justify-center p-6">
+          <div className="w-full max-w-md">
+            <p className="mb-3 px-1 text-xs font-medium text-muted-foreground">Open beside this thread</p>
+            <ItemGroup className="gap-1.5">
+              <ToolLaunchItem icon={Globe2} label="Browser" onClick={addBrowser} />
+              <ToolLaunchItem icon={GitPullRequest} label="Pull request" onClick={addPullRequest} />
+              <ToolLaunchItem icon={ChartNoAxesCombined} label="Analytics" onClick={addAnalytics} />
+              <ToolLaunchItem icon={Gauge} label="Performance" onClick={addPerformance} />
+            </ItemGroup>
+          </div>
+        </div>
       )}
     </section>
+  );
+}
+
+function ToolLaunchItem({
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  icon: typeof Globe2;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <Item asChild variant="muted" size="sm" className="rounded-lg hover:bg-accent/70">
+      <button type="button" onClick={onClick}>
+        <ItemMedia><Icon className="size-4 text-muted-foreground" /></ItemMedia>
+        <ItemContent>
+          <ItemTitle className="font-normal">{label}</ItemTitle>
+        </ItemContent>
+      </button>
+    </Item>
   );
 }
 
