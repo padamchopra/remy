@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { readClaudeAuth, readCodexAuth, readCursorAbout, readGhAuth } from "./tooling.js";
+import { isNewerToolVersion, readClaudeAuth, readCodexAuth, readCursorAbout, readGhAuth } from "./tooling.js";
+
+test("compares provider CLI versions", () => {
+  assert.equal(isNewerToolVersion("2.1.50", "2.1.49"), true);
+  assert.equal(isNewerToolVersion("0.140.0", "0.140.0"), false);
+  assert.equal(isNewerToolVersion("0.139.9", "0.140.0"), false);
+  assert.equal(isNewerToolVersion("v1.2.1", "1.2"), true);
+  assert.equal(isNewerToolVersion("latest", "1.2.0"), false);
+});
 
 test("reads the signed-in account out of gh auth status", () => {
   const output = [
