@@ -5,6 +5,7 @@ import { config, hasTailscaleServePreference, patchSettings } from "./config.js"
 import { db } from "./db.js";
 import { exportEnvironmentSync, mergeEnvironmentSync } from "./environments.js";
 import { reprojectAll as reprojectAgents, seedPresetAgents } from "./agents.js";
+import { reprojectAll as reprojectMemories } from "./agent-memories.js";
 import { reprojectAll as reprojectProjects } from "./projects.js";
 import { reprojectAll as reprojectRecurrences } from "./recurring.js";
 import { reprojectAll as reprojectTickets } from "./tickets.js";
@@ -627,6 +628,7 @@ export function acceptEvents(body: Record<string, unknown>): number {
 function reprojectBoard(): void {
   reprojectProjects();
   reprojectAgents();
+  reprojectMemories();
   reprojectTickets();
   reprojectRecurrences();
   seedPresetAgents();

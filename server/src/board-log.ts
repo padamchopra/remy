@@ -14,7 +14,7 @@ import { db, getKv, runTransaction, setKv } from "./db.js";
 /// device id breaks the tie the counter cannot. `at` is wall clock, and is only
 /// ever shown to a person.
 
-export type LogEntity = "project" | "agent" | "ticket" | "recurrence";
+export type LogEntity = "project" | "agent" | "memory" | "ticket" | "recurrence";
 
 export type LogKind =
   | "create"
@@ -208,7 +208,7 @@ export function eventsSince(vector: Record<string, number>, limit = 500): LogEve
   return rows.map(toEvent);
 }
 
-const LOG_ENTITIES: LogEntity[] = ["project", "agent", "ticket", "recurrence"];
+const LOG_ENTITIES: LogEntity[] = ["project", "agent", "memory", "ticket", "recurrence"];
 const LOG_KINDS: LogKind[] = [
   "create",
   "field",

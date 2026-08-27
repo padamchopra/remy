@@ -33,6 +33,14 @@ interface ApiWorkspace {
   name: string;
   path: string;
   origin?: string | null;
+  worktrees?: { path: string }[];
+}
+
+interface ApiMemory {
+  id: string;
+  scope: "global" | "workspace";
+  projectId?: string;
+  content: string;
 }
 
 interface ApiThread {
@@ -147,7 +155,8 @@ async function workspaceFor(reference?: string): Promise<ApiWorkspace | undefine
   const listed = await workspaces();
   if (!reference?.trim()) {
     const current = await request<ApiThread>(`/chats/${encodeURIComponent(chatId)}`);
-    return listed.find((workspace) => workspace.path === current.cwd);
+    return listed.find((workspace) =>
+      workspace.path === current.cwd || workspace.worktrees?.some((worktree) => worktree.path === current.cwd));
   }
   const asked = reference.trim();
   const matches = listed.filter((workspace) =>
@@ -215,7 +224,7 @@ server.registerTool("register_workspace", {
     path: z.string().describe("Absolute or home-relative path to the repository folder"),
     name: z.string().max(80).optional().describe("Workspace name. Defaults to the folder name."),
   },
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
 }, async ({ path, name }) => {
   const result = await request<{ workspace: ApiWorkspace }>("/workspaces", {
     method: "POST",
@@ -345,6 +354,70 @@ server.registerTool("list_agents", {
   return ok(listed.length
     ? listed.map((agent) => `@${agent.handle}: ${agent.role || agent.name}`).join("\n")
     : "No custom agents are available. Use the workspace agent.");
+});
+
+server.registerTool("list_memories", {
+  description: "Read this agent's durable memories for the current workspace.",
+  inputSchema: { query: z.string().max(500).optional() },
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+}, async ({ query }) => {
+  if (!agentId) throw new Error("This thread has no agent memory.");
+  const held = await workspaceFor();
+  const snapshot = held ? await board() : undefined;
+  const projectId = held
+    ? snapshot?.projects?.find((project) => project.workspaceIds?.includes(held.id))?.id
+    : undefined;
+  const params = new URLSearchParams();
+  if (projectId) params.set("project", projectId);
+  if (query?.trim()) params.set("query", query.trim());
+  const suffix = params.size > 0 ? `?${params.toString()}` : "";
+  const memories = (await request<{ memories?: ApiMemory[] }>(
+    `/agents/${encodeURIComponent(agentId)}/memories${suffix}`,
+  )).memories ?? [];
+  return ok(memories.length
+    ? memories.map((memory) => `${memory.id} [${memory.scope}]\n${memory.content}`).join("\n\n")
+    : "You have no matching memories.");
+});
+
+server.registerTool("save_memory", {
+  description: "Save or replace a durable fact that should follow this agent between devices.",
+  inputSchema: {
+    content: z.string().min(1).max(4000),
+    scope: z.enum(["global", "workspace"]).optional(),
+    workspace: z.string().optional().describe("Registered workspace name, id, path, or origin. Required only when this thread is not already in that workspace."),
+    memory_id: z.string().optional().describe("Existing memory id to replace."),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+}, async ({ content, scope, workspace, memory_id }) => {
+  if (!agentId) throw new Error("This thread has no agent memory.");
+  let projectId: string | undefined;
+  if (scope === "workspace") {
+    const held = await workspaceFor(workspace);
+    const snapshot = held ? await board() : undefined;
+    projectId = held
+      ? snapshot?.projects?.find((project) => project.workspaceIds?.includes(held.id))?.id
+      : undefined;
+  }
+  const path = memory_id
+    ? `/agents/${encodeURIComponent(agentId)}/memories/${encodeURIComponent(memory_id)}`
+    : `/agents/${encodeURIComponent(agentId)}/memories`;
+  const saved = await request<{ memory: ApiMemory }>(path, {
+    method: memory_id ? "PATCH" : "POST",
+    body: { content, scope, projectId },
+  });
+  return ok(`${memory_id ? "Updated" : "Saved"} memory ${saved.memory.id}.`);
+});
+
+server.registerTool("forget_memory", {
+  description: "Forget one of this agent's durable memories.",
+  inputSchema: { memory_id: z.string() },
+  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+}, async ({ memory_id }) => {
+  if (!agentId) throw new Error("This thread has no agent memory.");
+  await request(`/agents/${encodeURIComponent(agentId)}/memories/${encodeURIComponent(memory_id)}`, {
+    method: "DELETE",
+  });
+  return ok(`Forgot memory ${memory_id}.`);
 });
 
 server.registerTool("list_threads", {
