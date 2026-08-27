@@ -21,7 +21,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -50,7 +50,9 @@ import {
   ItemContent,
   ItemDescription,
   ItemGroup,
+  ItemHeader,
   ItemMedia,
+  ItemSeparator,
   ItemTitle,
 } from "@/components/ui/item";
 import { ModelPickerButton } from "@/components/ModelPicker";
@@ -1429,10 +1431,7 @@ function DevicesPane() {
             Remy tries them in this order for work without a workspace.
           </FieldDescription>
         </FieldContent>
-        <div className="flex items-center justify-end px-3 text-xs text-muted-foreground">
-          On this device, receive notifications from
-        </div>
-        <ItemGroup className="gap-2">
+        <ItemGroup className="gap-3">
           {ordered.map((server, index) => (
             <DeviceCard
               key={server.id}
@@ -1440,6 +1439,7 @@ function DevicesPane() {
               latestRelease={latestRelease}
               homeId={home?.id}
               homeDeviceId={homeIdentity?.deviceId}
+              homeName={home?.name ?? "this device"}
               busy={busy}
               savingOrder={savingOrder}
               index={index}
@@ -1601,6 +1601,7 @@ function DeviceCard({
   latestRelease,
   homeId,
   homeDeviceId,
+  homeName,
   busy,
   savingOrder,
   index,
@@ -1613,6 +1614,7 @@ function DeviceCard({
   latestRelease?: RemyRelease;
   homeId?: string;
   homeDeviceId?: string;
+  homeName: string;
   busy: boolean;
   savingOrder: boolean;
   index: number;
@@ -1635,24 +1637,26 @@ function DeviceCard({
   }, [identity, onUpdate, server.icon, server.local, server.name, server.tint]);
 
   return (
-    <Item variant="outline" className="overflow-hidden p-0">
-      <div className="flex w-full flex-wrap items-center gap-3 px-3.5 py-3">
-        <IconPicker
-          label={`Change icon for ${server.name}`}
-          icon={server.icon}
-          tint={server.tint}
-          icons={DEVICE_ICON_IDS}
-          renderIcon={deviceIcon}
-          onChange={(patch) => void onUpdate(patch)}
-          badge={
-            <span
-              className={cn(
-                "absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2 ring-card",
-                server.online ? "bg-success" : "bg-muted-foreground",
-              )}
-            />
-          }
-        />
+    <Item variant="outline" className="flex-col items-stretch gap-0 overflow-hidden p-0">
+      <ItemHeader className="px-4 py-3">
+        <ItemMedia>
+          <IconPicker
+            label={`Change icon for ${server.name}`}
+            icon={server.icon}
+            tint={server.tint}
+            icons={DEVICE_ICON_IDS}
+            renderIcon={deviceIcon}
+            onChange={(patch) => void onUpdate(patch)}
+            badge={
+              <span
+                className={cn(
+                  "absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2 ring-card",
+                  server.online ? "bg-success" : "bg-muted-foreground",
+                )}
+              />
+            }
+          />
+        </ItemMedia>
 
         <ItemContent className="min-w-0">
           <ItemTitle>
@@ -1661,14 +1665,13 @@ function DeviceCard({
           <ItemDescription className="truncate text-xs">
             {server.local
               ? identity?.tailnetHost
-                ? `This machine · ${identity.tailnetHost}`
-                : "This machine"
-              : `${server.code} · ${hostLabel(server.url)}`}
+                ? `This device · ${identity.tailnetHost}`
+                : "This device"
+              : `${server.online ? "Online" : "Offline"} · ${hostLabel(server.url)}`}
           </ItemDescription>
         </ItemContent>
 
-        <ItemActions className="shrink-0 gap-1 max-sm:w-full max-sm:basis-full max-sm:justify-end">
-          <NotificationSourceSwitch server={server} homeId={homeId} homeDeviceId={homeDeviceId} />
+        <ItemActions className="shrink-0 gap-1">
           <Button
             variant="ghost"
             size="icon-xs"
@@ -1688,37 +1691,69 @@ function DeviceCard({
             <ArrowDown />
           </Button>
         </ItemActions>
-      </div>
-      <div className="flex basis-full flex-col gap-3 border-t border-border bg-muted/20 px-3.5 py-3">
-        {!server.local && (
-          <div className="flex flex-wrap items-center justify-end gap-1.5">
+      </ItemHeader>
+      <ItemSeparator />
+      <FieldGroup className="gap-0">
+        <NotificationSourceSwitch
+          server={server}
+          homeId={homeId}
+          homeDeviceId={homeDeviceId}
+          homeName={homeName}
+        />
+        {!server.local && server.online && (
+          <>
+            <ItemSeparator />
             <RemoteUpdateAction server={server} latestRelease={latestRelease} />
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="ghost" size="icon-xs" disabled={busy} aria-label={`Unpair ${server.name}`}>
-                  <Trash2 />
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Unpair {server.name}?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Its threads and board stop syncing here. Pair it again from its link.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction variant="destructive" onClick={onUnpair}>
-                    Unpair device
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </div>
+          </>
         )}
-        {server.local ? <ReachableField serverId={server.id} identity={identity} /> : null}
-        {server.online ? <StayAwakeField serverId={server.id} /> : null}
-      </div>
+        {server.local ? (
+          <>
+            <ItemSeparator />
+            <ReachableField serverId={server.id} identity={identity} />
+          </>
+        ) : null}
+        {server.online ? (
+          <>
+            <ItemSeparator />
+            <StayAwakeField serverId={server.id} />
+          </>
+        ) : null}
+        {!server.local && (
+          <>
+            <ItemSeparator />
+            <Field orientation="horizontal" className="items-center px-4 py-3 max-sm:flex-col max-sm:items-stretch">
+              <FieldContent>
+                <FieldLabel>Connection</FieldLabel>
+                <FieldDescription className="text-xs">
+                  Unpair it to stop syncing threads and tickets with this device.
+                </FieldDescription>
+              </FieldContent>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" size="sm" disabled={busy}>
+                    <Trash2 data-icon="inline-start" />
+                    Unpair
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Unpair {server.name}?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Its threads and tickets stop syncing here. Pair it again from its link.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction variant="destructive" onClick={onUnpair}>
+                      Unpair device
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </Field>
+          </>
+        )}
+      </FieldGroup>
     </Item>
   );
 }
@@ -1783,55 +1818,65 @@ function RemoteUpdateAction({ server, latestRelease }: { server: Server; latestR
   };
 
   if (!server.online) return null;
-  if (olderBuild) {
-    return <span className="max-w-36 text-right text-xs text-muted-foreground">Update Remy there once to enable this.</span>;
-  }
-  if (!status) return null;
-  if (!status.supported) return <span className="max-w-32 text-right text-xs text-muted-foreground">Open Remy there to update it.</span>;
 
-  const active = starting || status.state === "starting" || status.state === "downloading" || status.state === "installing";
-  const available = Boolean(latestRelease && status.version && isNewer(latestRelease.version, status.version));
-
-  if (active) {
-    return (
-      <Button size="xs" variant="outline" disabled>
-        <RefreshCw className="animate-spin" />
-        Updating…
-      </Button>
-    );
-  }
-
-  if (!available || !latestRelease) {
-    return status.version ? (
-      <span className="font-mono text-xs text-muted-foreground tabular-nums">Remy {status.version}</span>
-    ) : null;
-  }
+  const active = Boolean(status && (starting || status.state === "starting" || status.state === "downloading" || status.state === "installing"));
+  const available = Boolean(status && latestRelease && status.version && isNewer(latestRelease.version, status.version));
+  const detail = olderBuild
+    ? "Open Remy on this device once to enable remote updates."
+    : !status
+      ? "Checking for updates…"
+      : !status.supported
+        ? "Open Remy on this device to install updates."
+        : active
+          ? "Remy is installing the update on this device."
+          : available && latestRelease
+            ? `Remy ${latestRelease.version} is ready for this device.`
+            : status.version
+              ? `Remy ${status.version} is up to date.`
+              : "Remy is up to date.";
 
   return (
-    <AlertDialog>
-      <AlertDialogTrigger asChild>
-        <Button size="xs" variant="outline">
-          <RefreshCw />
-          Update to {latestRelease.version}
+    <Field orientation="horizontal" className="items-center px-4 py-3 max-sm:flex-col max-sm:items-stretch">
+      <FieldContent>
+        <FieldLabel>Updates</FieldLabel>
+        <FieldDescription className="text-xs">{detail}</FieldDescription>
+      </FieldContent>
+      {olderBuild || status?.supported === false ? (
+        <Badge variant="secondary">Unavailable</Badge>
+      ) : active ? (
+        <Button size="sm" variant="outline" disabled>
+          <RefreshCw data-icon="inline-start" className="animate-spin" />
+          Updating…
         </Button>
-      </AlertDialogTrigger>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Update {server.name}?</AlertDialogTitle>
-          <AlertDialogDescription>
-            {status.busyThreads > 0
-              ? `Stop ${status.busyThreads === 1 ? "the running thread" : `${status.busyThreads} running threads`} on that device first.`
-              : "Remy closes, installs the update, and reopens on that device."}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction disabled={status.busyThreads > 0 || starting} onClick={() => void start()}>
-            Update device
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+      ) : available && latestRelease && status ? (
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button size="sm" variant="outline">
+              <RefreshCw data-icon="inline-start" />
+              Update
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Update {server.name}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {status.busyThreads > 0
+                  ? `Stop ${status.busyThreads === 1 ? "the running thread" : `${status.busyThreads} running threads`} on that device first.`
+                  : "Remy closes, installs the update, and reopens on that device."}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction disabled={status.busyThreads > 0 || starting} onClick={() => void start()}>
+                Update device
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : status?.version ? (
+        <Badge variant="outline">Current</Badge>
+      ) : null}
+    </Field>
   );
 }
 
@@ -1842,10 +1887,12 @@ function NotificationSourceSwitch({
   server,
   homeId,
   homeDeviceId,
+  homeName,
 }: {
   server: Server;
   homeId?: string;
   homeDeviceId?: string;
+  homeName: string;
 }) {
   const [on, setOn] = useState<boolean>();
   const [saving, setSaving] = useState(false);
@@ -1903,13 +1950,17 @@ function NotificationSourceSwitch({
   };
 
   return (
-    <Field orientation="horizontal" data-disabled={on === undefined || undefined} className="w-auto">
-      <FieldLabel htmlFor={switchId} className="sr-only">Receive notifications from {server.name}</FieldLabel>
+    <Field orientation="horizontal" data-disabled={on === undefined || undefined} className="items-center px-4 py-3 max-sm:flex-col max-sm:items-stretch">
+      <FieldContent>
+        <FieldLabel htmlFor={switchId}>Notifications</FieldLabel>
+        <FieldDescription className="text-xs">Receive them on {homeName}.</FieldDescription>
+      </FieldContent>
       <Switch
         id={switchId}
         checked={on === true}
         disabled={saving || on === undefined}
-        aria-label={`Receive notifications from ${server.name} on this device`}
+        className="max-sm:self-end"
+        aria-label={`Receive notifications from ${server.name} on ${homeName}`}
         onCheckedChange={(next) => void toggle(next)}
       />
     </Field>
@@ -1965,8 +2016,8 @@ function ReachableField({ serverId, identity }: { serverId: string; identity?: I
   };
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/40 px-3.5 py-3">
-      <Field orientation="horizontal" data-disabled={!hasTailscale || undefined} className="items-center max-sm:flex-col max-sm:items-stretch">
+    <div className="flex flex-col">
+      <Field orientation="horizontal" data-disabled={!hasTailscale || undefined} className="items-center px-4 py-3 max-sm:flex-col max-sm:items-stretch">
         <FieldContent>
           <FieldLabel htmlFor={switchId}>Reachable from your other machines</FieldLabel>
           <FieldDescription className="text-xs">
@@ -1989,8 +2040,9 @@ function ReachableField({ serverId, identity }: { serverId: string; identity?: I
       </Field>
 
       {shown.exposed && (
-        <div className="flex flex-col gap-3 border-t border-border pt-3">
-          <Field orientation="horizontal" className="items-center">
+        <>
+          <ItemSeparator />
+          <Field orientation="horizontal" className="items-center px-4 py-3">
             <FieldContent>
               <FieldLabel>Pairing link</FieldLabel>
               <FieldDescription className="text-xs">
@@ -1998,14 +2050,16 @@ function ReachableField({ serverId, identity }: { serverId: string; identity?: I
               </FieldDescription>
             </FieldContent>
             <Button variant="outline" size="sm" className="shrink-0" onClick={() => void copy()}>
-              <Copy />
+              <Copy data-icon="inline-start" />
               Copy link
             </Button>
           </Field>
-          <PairingQr
-            value={`remy://configure?url=${encodeURIComponent(shown.url)}&token=${encodeURIComponent(shown.token)}`}
-          />
-        </div>
+          <div className="px-4 pb-4">
+            <PairingQr
+              value={`remy://configure?url=${encodeURIComponent(shown.url)}&token=${encodeURIComponent(shown.token)}`}
+            />
+          </div>
+        </>
       )}
     </div>
   );
@@ -2380,30 +2434,28 @@ function StayAwakeField({ serverId }: { serverId: string }) {
   };
 
   return (
-    <div className="rounded-lg border border-border bg-muted/40 px-3.5 py-3">
-      <Field orientation="horizontal" data-disabled={disabled || undefined} className="items-center max-sm:flex-col max-sm:items-stretch">
-        <FieldContent>
-          <FieldLabel htmlFor={selectId}>Stay awake</FieldLabel>
-          <FieldDescription className="text-xs">
-            {supported ? stayAwakeDetail(mode) : "Sleep prevention isn't available on this machine."}
-          </FieldDescription>
-        </FieldContent>
-        <Select value={mode} onValueChange={(value) => void pick(value)} disabled={disabled}>
-          <SelectTrigger id={selectId} size="sm" className="w-44 shrink-0 max-sm:w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent align="end">
-            <SelectGroup>
-              {STAY_AWAKE.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-      </Field>
-    </div>
+    <Field orientation="horizontal" data-disabled={disabled || undefined} className="items-center px-4 py-3 max-sm:flex-col max-sm:items-stretch">
+      <FieldContent>
+        <FieldLabel htmlFor={selectId}>Stay awake</FieldLabel>
+        <FieldDescription className="text-xs">
+          {supported ? stayAwakeDetail(mode) : "Sleep prevention isn't available on this machine."}
+        </FieldDescription>
+      </FieldContent>
+      <Select value={mode} onValueChange={(value) => void pick(value)} disabled={disabled}>
+        <SelectTrigger id={selectId} size="sm" className="w-44 shrink-0 max-sm:w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent align="end">
+          <SelectGroup>
+            {STAY_AWAKE.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+    </Field>
   );
 }
 
