@@ -108,7 +108,7 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { Markdown } from "@/components/Markdown";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { ThreadToolsButton, ThreadToolsSidebar, useThreadTools } from "@/components/SharedBrowser";
-import { referenceLabel } from "@/components/PullRequestDiff";
+import { referenceLabel } from "@/components/PullRequestView";
 import { ThreadToolsLayout } from "@/components/ThreadToolsLayout";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -375,7 +375,7 @@ export function ChatView({
             addBrowser={threadTools.addBrowser}
             addAnalytics={threadTools.addAnalytics}
             addPerformance={threadTools.addPerformance}
-            addChanges={threadTools.addChanges}
+            addPullRequest={threadTools.addPullRequest}
             codeReferences={codeReferences}
             onAddReference={(reference) => setCodeReferences((current) => [...current, reference])}
             onRemoveReference={(id) => setCodeReferences((current) => current.filter((reference) => reference.id !== id))}

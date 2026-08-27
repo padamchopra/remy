@@ -9,7 +9,7 @@ import type { Workspace } from "./workspaces.js";
 // test-only config isolated from the user's real Remy installation.
 process.env.HOME = mkdtempSync(join(tmpdir(), "remy-pr-test-"));
 
-const { parseAuthoredPullRequests, parsePullRequestPatch, parsePullRequestTimeline, parseUnreadReviewComments } = await import("./pull-requests.js");
+const { parseAuthoredPullRequests, parsePullRequestPatch, parsePullRequestTimeline, parsePullRequestView, parseUnreadReviewComments } = await import("./pull-requests.js");
 
 const workspace: Workspace = {
   id: "workspace-1",
@@ -192,4 +192,37 @@ test("pull request patches retain file paths and both line-number spaces", () =>
     ["add", null, 16],
     ["ctx", 15, 17],
   ]);
+});
+
+test("pull request view combines review state, checks, and files", () => {
+  const result = parsePullRequestView(JSON.stringify({
+    url: "https://github.com/acme/control/pull/42",
+    title: "Add the flight deck",
+    body: "## Summary\nAdds the flight deck.",
+    baseRefName: "main",
+    headRefName: "feature/flight-deck",
+    state: "OPEN",
+    isDraft: false,
+    reviewDecision: "CHANGES_REQUESTED",
+    additions: 12,
+    deletions: 3,
+    changedFiles: 1,
+    statusCheckRollup: [
+      { name: "build", status: "COMPLETED", conclusion: "SUCCESS" },
+      { name: "lint", status: "COMPLETED", conclusion: "FAILURE" },
+    ],
+  }), [
+    "diff --git a/src/old.ts b/src/new.ts",
+    "--- a/src/old.ts",
+    "+++ b/src/new.ts",
+    "@@ -1 +1 @@",
+    "-old",
+    "+new",
+  ].join("\n"), "acme/control", 42);
+
+  assert.equal(result.url, "https://github.com/acme/control/pull/42");
+  assert.equal(result.body, "## Summary\nAdds the flight deck.");
+  assert.equal(result.reviewDecision, "CHANGES_REQUESTED");
+  assert.deepEqual(result.checks.map((check) => check.state), ["pass", "fail"]);
+  assert.equal(result.files[0].path, "src/new.ts");
 });

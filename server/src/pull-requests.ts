@@ -75,11 +75,20 @@ export interface PullRequestDiffFile {
 }
 
 export interface PullRequestDiff {
+  url: string;
   repository: string;
   number: number;
   title: string;
+  body: string;
   baseRefName: string;
   headRefName: string;
+  state: string;
+  isDraft: boolean;
+  reviewDecision: string;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  checks: PullRequestCheck[];
   files: PullRequestDiffFile[];
 }
 
@@ -337,20 +346,43 @@ export async function pullRequestTimeline(repository: string, number: number): P
 }
 
 export async function pullRequestDiff(repository: string, number: number, cwd?: string): Promise<PullRequestDiff> {
-  const fields = "number,title,url,baseRefName,headRefName";
+  const fields = [
+    "number", "title", "url", "body", "baseRefName", "headRefName", "state", "isDraft",
+    "reviewDecision", "additions", "deletions", "changedFiles", "statusCheckRollup",
+  ].join(",");
   const options = { ...(cwd ? { cwd } : {}), timeout: 30_000 };
   const [view, patch] = await Promise.all([
     exec("gh", ["pr", "view", String(number), "--repo", repository, "--json", fields], options),
-    exec("gh", ["pr", "diff", String(number), "--repo", repository, "--patch"], options),
+    // The default is the aggregate PR diff. `--patch` emits one patch per
+    // commit, repeating files and giving comments the wrong line space.
+    exec("gh", ["pr", "diff", String(number), "--repo", repository], options),
   ]);
-  const metadata = asRecord(JSON.parse(view.stdout || "{}"));
+  return parsePullRequestView(view.stdout, patch.stdout, repository, number);
+}
+
+export function parsePullRequestView(
+  raw: string,
+  patch: string,
+  repository: string,
+  number: number,
+): PullRequestDiff {
+  const metadata = asRecord(JSON.parse(raw || "{}"));
   return {
+    url: stringValue(metadata.url) || `https://github.com/${repository}/pull/${number}`,
     repository,
     number,
     title: stringValue(metadata.title) || `Pull request #${number}`,
+    body: stringValue(metadata.body),
     baseRefName: stringValue(metadata.baseRefName),
     headRefName: stringValue(metadata.headRefName),
-    files: parsePullRequestPatch(patch.stdout),
+    state: stringValue(metadata.state).toUpperCase() || "OPEN",
+    isDraft: Boolean(metadata.isDraft),
+    reviewDecision: stringValue(metadata.reviewDecision).toUpperCase(),
+    additions: numberValue(metadata.additions),
+    deletions: numberValue(metadata.deletions),
+    changedFiles: numberValue(metadata.changedFiles),
+    checks: parseChecks(metadata.statusCheckRollup),
+    files: parsePullRequestPatch(patch),
   };
 }
 

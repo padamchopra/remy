@@ -4,7 +4,6 @@ import {
   CircleDot,
   CircleX,
   ExternalLink,
-  FileDiff,
   GitBranch,
   GitPullRequest,
   MessageSquare,
@@ -31,7 +30,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { PaneHeader } from "@/components/PaneHeader";
-import { PullRequestDiff } from "@/components/PullRequestDiff";
+import { PullRequestView } from "@/components/PullRequestView";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { transport } from "@/lib/transport";
 import type { Chat, Server, Workspace } from "@/state/types";
@@ -161,18 +160,10 @@ export function PullRequests({
           crumbs={[
             { label: "Pull requests", onClick: () => setSelected(undefined) },
             { label: `#${selected.number}` },
-            { label: "Changes" },
           ]}
-        >
-          <Button asChild size="sm" variant="outline">
-            <a href={selected.url} target="_blank" rel="noreferrer" data-link>
-              <ExternalLink />
-              Open on GitHub
-            </a>
-          </Button>
-        </PaneHeader>
+        />
         <div className="min-h-0 flex-1">
-          <PullRequestDiff
+          <PullRequestView
             serverId={selected.serverId}
             repository={selected.repository}
             number={selected.number}
@@ -282,8 +273,8 @@ export function PullRequests({
                   </ItemContent>
                   <ItemActions className="shrink-0 flex-wrap justify-end">
                     <Button variant="outline" size="sm" data-link onClick={() => setSelected(pullRequest)}>
-                      <FileDiff />
-                      Changes
+                      <GitPullRequest />
+                      Open pull request
                     </Button>
                     {workspace && (
                       <Button

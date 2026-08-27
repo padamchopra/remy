@@ -199,12 +199,34 @@ export interface PullRequestDiffFile {
 }
 
 export interface PullRequestDiff {
+  url: string;
   repository: string;
   number: number;
   title: string;
+  body: string;
   baseRefName: string;
   headRefName: string;
+  state: string;
+  isDraft: boolean;
+  reviewDecision: string;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  checks: { name: string; state: "pass" | "fail" | "pending" | "skipping" }[];
   files: PullRequestDiffFile[];
+}
+
+export interface PullRequestTimelineItem {
+  id: string;
+  kind: "commit" | "comment" | "review" | "review_comment";
+  author: string;
+  body: string;
+  createdAt: string;
+  url: string;
+  sha?: string | null;
+  state?: string | null;
+  path?: string | null;
+  line?: number | null;
 }
 
 /// Something a Remy tool made — a ticket, a thread, a workspace — with enough
