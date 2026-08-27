@@ -451,7 +451,7 @@ const server = createServer(async (req, res) => {
     // machine actually has installed, so a picker can say what is missing
     // rather than offering something that fails at spawn time.
     if (url.pathname === "/server/providers" && req.method === "GET") {
-      const status = await tooling();
+      const status = await tooling({ providerUpdates: false });
       const providers = await discoveredProviders();
       return json(res, 200, {
         providers: providers.map((entry) => ({

@@ -8,6 +8,9 @@ import { run as exec } from "./run.js";
 export interface ToolStatus {
   available: boolean;
   version?: string;
+  /// The newest published CLI version, when its package registry answered.
+  latestVersion?: string;
+  updateAvailable?: boolean;
   /// Installed is not the same as signed in.
   authenticated?: boolean;
   account?: string;
@@ -26,11 +29,81 @@ export interface Tooling {
   cursor: ToolStatus;
 }
 
+const PROVIDER_PACKAGES = {
+  claude: "@anthropic-ai/claude-code",
+  codex: "@openai/codex",
+} as const;
+const LATEST_VERSION_TTL_MS = 60 * 60_000;
+const LATEST_VERSION_TIMEOUT_MS = 4_000;
+const latestVersions = new Map<string, { expiresAt: number; version?: string }>();
+const latestVersionRequests = new Map<string, Promise<string | undefined>>();
+
 /// Version output is one line of prose (`git version 2.39.5`, `gh version 2.62.0
 /// (2024-11-14)`), so keep the first version-looking number and drop the rest.
 function versionFrom(output: string): string | undefined {
   const line = output.split("\n").find((entry) => entry.trim()) ?? "";
   return /\d+\.\d+[^\s]*/.exec(line)?.[0] ?? (line.trim() || undefined);
+}
+
+function versionParts(version: string): number[] | undefined {
+  const match = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?/.exec(version.trim());
+  if (!match) return undefined;
+  return match.slice(1).map((part) => Number.parseInt(part ?? "0", 10));
+}
+
+export function isNewerToolVersion(latest: string, current: string): boolean {
+  const left = versionParts(latest);
+  const right = versionParts(current);
+  if (!left || !right) return false;
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const delta = (left[index] ?? 0) - (right[index] ?? 0);
+    if (delta !== 0) return delta > 0;
+  }
+  return false;
+}
+
+async function latestPackageVersion(packageName: string): Promise<string | undefined> {
+  const cached = latestVersions.get(packageName);
+  if (cached && cached.expiresAt > Date.now()) return cached.version;
+
+  const pending = latestVersionRequests.get(packageName);
+  if (pending) return pending;
+
+  const request = (async () => {
+    let version: string | undefined;
+    try {
+      const response = await fetch(
+        `https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`,
+        {
+          headers: { Accept: "application/json", "User-Agent": "Remy" },
+          signal: AbortSignal.timeout(LATEST_VERSION_TIMEOUT_MS),
+        },
+      );
+      if (response.ok) {
+        const body = await response.json() as { version?: unknown };
+        const candidate = typeof body.version === "string" ? body.version.trim() : "";
+        if (candidate && candidate.length <= 80) version = candidate;
+      }
+    } catch {
+      // Provider availability is still useful when the update feed is offline.
+    }
+    latestVersions.set(packageName, { expiresAt: Date.now() + LATEST_VERSION_TTL_MS, version });
+    return version;
+  })().finally(() => latestVersionRequests.delete(packageName));
+
+  latestVersionRequests.set(packageName, request);
+  return request;
+}
+
+async function withLatestVersion(status: ToolStatus, packageName: string): Promise<ToolStatus> {
+  if (!status.available || !status.version) return status;
+  const latestVersion = await latestPackageVersion(packageName);
+  if (!latestVersion) return status;
+  return {
+    ...status,
+    latestVersion,
+    updateAvailable: isNewerToolVersion(latestVersion, status.version),
+  };
 }
 
 async function probe(file: string, args: string[]): Promise<ToolStatus> {
@@ -184,7 +257,7 @@ export async function githubAvatar(): Promise<string> {
   return `data:${type.split(";")[0]};base64,${body.toString("base64")}`;
 }
 
-export async function tooling(): Promise<Tooling> {
+export async function tooling(options: { providerUpdates?: boolean } = {}): Promise<Tooling> {
   const [git, gh, claude, codex, cursor] = await Promise.all([
     probe("git", ["--version"]),
     ghStatus(),
@@ -192,5 +265,10 @@ export async function tooling(): Promise<Tooling> {
     providerStatus("codex", ["login", "status"], readCodexAuth),
     providerStatus("agent", ["about", "--format", "json"], readCursorAbout),
   ]);
-  return { git, gh, claude, codex, cursor };
+  if (options.providerUpdates === false) return { git, gh, claude, codex, cursor };
+  const [claudeWithUpdate, codexWithUpdate] = await Promise.all([
+    withLatestVersion(claude, PROVIDER_PACKAGES.claude),
+    withLatestVersion(codex, PROVIDER_PACKAGES.codex),
+  ]);
+  return { git, gh, claude: claudeWithUpdate, codex: codexWithUpdate, cursor };
 }

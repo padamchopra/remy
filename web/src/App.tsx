@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowUpRight,
   Folder,
@@ -44,6 +44,7 @@ import { WorkspaceSettings } from "@/components/WorkspaceSettings";
 import { useNotifications } from "@/hooks/use-notifications";
 import { useAppLocation } from "@/hooks/use-location";
 import { useRelease } from "@/hooks/use-release";
+import { useProviderUpdateToasts } from "@/hooks/use-provider-update-toasts";
 import { deviceIcon } from "@/lib/devices";
 import { apiError } from "@/lib/api-error";
 import { agentConversation } from "@/lib/inbox";
@@ -176,6 +177,13 @@ export function App() {
   const saveAgent = useStore((s) => s.saveAgent);
   const loadBoard = useStore((s) => s.loadBoard);
   const release = useRelease();
+  const openProviderSettings = useCallback(() => {
+    const local = servers.find((server) => server.local);
+    navigate({
+      route: { name: "settings", tab: "providers", ...(local ? { deviceId: local.id } : {}) },
+    });
+  }, [navigate, servers]);
+  useProviderUpdateToasts(openProviderSettings);
 
   // Opens the connection and holds it for the life of the app.
   useEffect(() => start(), [start]);

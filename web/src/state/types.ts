@@ -319,6 +319,8 @@ export interface UpdateRun {
 export interface ToolStatus {
   available: boolean;
   version?: string;
+  latestVersion?: string;
+  updateAvailable?: boolean;
   authenticated?: boolean;
   account?: string;
   plan?: string;
