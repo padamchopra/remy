@@ -84,6 +84,10 @@ export interface Config {
   /// git identity; `author` credits the agent while leaving you as committer.
   /// Attribution only — a git identity says who wrote a commit, never proves it.
   defaultGitIdentity: GitIdentity;
+  /// The machine-wide policy inherited by workspaces and individual pull
+  /// requests until either says otherwise.
+  pullRequestMonitoringEnabled: boolean;
+  pullRequestMonitoringAgentId: string;
   /// Whether notifications raised on this machine are shown on this machine.
   /// Off routes them only to the paired devices that asked for them, which is
   /// the setting for a machine that runs the work while you watch from another.
@@ -225,6 +229,10 @@ function deviceNameValue(value: unknown): string {
   return typeof value === "string" ? value.trim().slice(0, 80) : "";
 }
 
+function agentIdValue(value: unknown): string {
+  return typeof value === "string" ? value.trim().slice(0, 128) : "";
+}
+
 export function devicePreferenceOrder(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return [...new Set(value.flatMap((entry) => {
@@ -295,6 +303,8 @@ function load(): Config {
     favoriteModels: favoriteModels(parsed.favoriteModels),
     repoUpdate: oneOf(REPO_UPDATES, parsed.repoUpdate, "off"),
     defaultGitIdentity: gitIdentity(parsed.defaultGitIdentity, "author"),
+    pullRequestMonitoringEnabled: parsed.pullRequestMonitoringEnabled === true,
+    pullRequestMonitoringAgentId: agentIdValue(parsed.pullRequestMonitoringAgentId),
     worktreeBranchPrefix: branchPrefix(parsed.worktreeBranchPrefix) ?? "",
     githubLogin: githubAccount(parsed.githubLogin),
     avatar: avatarValue(parsed.avatar),
@@ -340,6 +350,8 @@ export interface PublicSettings {
   devicePreferenceOrder: string[];
   tailscaleServeEnabled: boolean;
   defaultGitIdentity: GitIdentity;
+  pullRequestMonitoringEnabled: boolean;
+  pullRequestMonitoringAgentId: string;
   notifySelf: boolean;
 }
 
@@ -367,6 +379,8 @@ export function publicSettings(): PublicSettings {
     devicePreferenceOrder: config.devicePreferenceOrder,
     tailscaleServeEnabled: config.tailscaleServeEnabled,
     defaultGitIdentity: config.defaultGitIdentity,
+    pullRequestMonitoringEnabled: config.pullRequestMonitoringEnabled,
+    pullRequestMonitoringAgentId: config.pullRequestMonitoringAgentId,
     notifySelf: config.notifySelf,
   };
 }
@@ -428,6 +442,12 @@ export function patchSettings(patch: Record<string, unknown>): PublicSettings {
   }
   if (patch.defaultGitIdentity !== undefined) {
     set("defaultGitIdentity", gitIdentity(patch.defaultGitIdentity, config.defaultGitIdentity));
+  }
+  if (patch.pullRequestMonitoringEnabled !== undefined) {
+    set("pullRequestMonitoringEnabled", patch.pullRequestMonitoringEnabled === true);
+  }
+  if (patch.pullRequestMonitoringAgentId !== undefined) {
+    set("pullRequestMonitoringAgentId", agentIdValue(patch.pullRequestMonitoringAgentId));
   }
   if (patch.avatar !== undefined) {
     set("avatar", avatarValue(patch.avatar));

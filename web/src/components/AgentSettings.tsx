@@ -324,22 +324,6 @@ export function AgentSettings({
         </Field>
       )}
 
-      {agent.preset === "github" && (
-        <Field orientation="horizontal" className="items-center">
-          <FieldContent>
-            <FieldLabel htmlFor="agent-monitor-pull-requests">Monitor pull requests</FieldLabel>
-            <FieldDescription className="text-xs">
-              Starts work when one of your pull requests needs attention.
-            </FieldDescription>
-          </FieldContent>
-          <Switch
-            id="agent-monitor-pull-requests"
-            checked={agent.monitorPullRequests}
-            onCheckedChange={(next) => void save({ monitorPullRequests: next }, "pull request monitoring")}
-          />
-        </Field>
-      )}
-
       <Field orientation="horizontal" className="items-center">
         <FieldContent>
           <FieldLabel htmlFor="agent-autostart">Start unattended</FieldLabel>

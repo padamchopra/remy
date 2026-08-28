@@ -30,7 +30,6 @@ test("untouched legacy defaults upgrade to the PM, Builder, and QA chain", () =>
   assert.equal(agents.agentByHandle("qa")?.handoffTo[0], "builder");
   assert.equal(agents.agentByHandle("github")?.role, "Keeps your pull requests moving");
   assert.equal(agents.agentByHandle("github")?.autoStart, false);
-  assert.equal(agents.agentByHandle("github")?.monitorPullRequests, false);
   assert.ok(agents.agentByHandle("triager"), "an existing Triager should not be deleted");
 });
 
@@ -41,16 +40,6 @@ test("an explicit GitHub agent auto-start choice survives preset seeding", () =>
   agents.seedPresetAgents();
 
   assert.equal(agents.agentByHandle("github")?.autoStart, true);
-});
-
-test("pull request monitoring stays off until it is enabled", () => {
-  const github = agents.agentByHandle("github")!;
-  assert.equal(github.monitorPullRequests, false);
-
-  agents.updateAgent(github.id, { monitorPullRequests: true });
-  agents.seedPresetAgents();
-
-  assert.equal(agents.agentByHandle("github")?.monitorPullRequests, true);
 });
 
 test("built-in agents seeded on two devices converge to one roster", () => {

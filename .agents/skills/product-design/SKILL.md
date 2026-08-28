@@ -20,6 +20,14 @@ A setting lives with the thing whose behavior it controls. The actor that carrie
 
 Put the control where someone looks for the capability. Do not put it on the current implementation of that capability merely because the code already has that object in hand.
 
+## Scope overrides
+
+A broad owner supplies the default and a narrower owner may override it. The most specific explicit choice wins: Remy-wide → workspace → one pull request or thread.
+
+Use the same controls at every scope, show which broader scope is being inherited, and provide a way back to that default after an override. A lower scope starts from the effective values above it rather than from unrelated hard-coded defaults.
+
+The surface that exposes a control is not automatically the setting's owner. A pull request tool inside a thread edits that pull request's policy, keyed by the pull request identity, so opening the same pull request in another thread does not create a second conflicting policy.
+
 ## Presets are templates
 
 An agent preset supplies creation-time defaults. After creation, the agent is an ordinary editable and deletable agent; runtime behavior never branches on its preset, handle, name, or seeded id.
@@ -41,11 +49,19 @@ This makes a machine integration look intrinsic to one deletable preset, prevent
 GOOD
 ```text
 Settings → Version control
-Monitor pull requests  [off]
+Monitor pull requests  [off]          Remy-wide default
 Handled by             [Agent picker]
+
+Workspace settings
+Monitor pull requests  [default]      Workspace override
+Handled by             [default]
+
+Thread → Pull request tool → Monitor
+Monitor pull requests  [default]      This pull request
+Handled by             [default]
 ```
 
-The machine setting owns whether monitoring runs and stores the selected agent id. Any agent can be chosen. Deleting the selected agent turns monitoring off until another is chosen. The GitHub preset remains an optional starting point with no privileged runtime behavior.
+The machine setting owns the default. A workspace can override every pull request it contains, and one pull request can override its workspace from the tool already showing it. An overridden scope stores an explicit agent id rather than a preset identity; any agent can be chosen. Deleting the selected agent turns that policy off until another is chosen. The GitHub preset remains an optional starting point with no privileged runtime behavior.
 
 ## Review the lifecycle
 

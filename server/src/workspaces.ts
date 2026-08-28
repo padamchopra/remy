@@ -25,7 +25,13 @@ export interface Workspace {
   provider: string | null;
   model: string | null;
   effort: string | null;
+  pullRequestMonitoring?: PullRequestMonitoringOverride | null;
   worktrees: GitWorktree[];
+}
+
+export interface PullRequestMonitoringOverride {
+  enabled: boolean;
+  agentId: string | null;
 }
 
 export interface GitWorktree {
@@ -50,6 +56,7 @@ interface StoredWorkspace {
   provider: string | null;
   model: string | null;
   effort: string | null;
+  pullRequestMonitoring: PullRequestMonitoringOverride | null;
 }
 
 interface ParsedWorktree {
@@ -59,7 +66,7 @@ interface ParsedWorktree {
 
 function load(): StoredWorkspace[] {
   return (
-    db.prepare("select id, name, path, icon, tint, provider, model, effort from workspaces").all() as {
+    db.prepare("select id, name, path, icon, tint, provider, model, effort, pr_monitoring_override, pr_monitoring_enabled, pr_monitoring_agent_id from workspaces").all() as {
       id: string;
       name: string;
       path: string;
@@ -68,6 +75,9 @@ function load(): StoredWorkspace[] {
       provider: string | null;
       model: string | null;
       effort: string | null;
+      pr_monitoring_override: number;
+      pr_monitoring_enabled: number;
+      pr_monitoring_agent_id: string | null;
     }[]
   ).map((row) => ({
     id: row.id,
@@ -78,6 +88,9 @@ function load(): StoredWorkspace[] {
     provider: row.provider,
     model: row.model,
     effort: row.effort,
+    pullRequestMonitoring: row.pr_monitoring_override === 1
+      ? { enabled: row.pr_monitoring_enabled === 1, agentId: row.pr_monitoring_agent_id }
+      : null,
   }));
 }
 
@@ -85,7 +98,7 @@ function save(workspaces: StoredWorkspace[]): void {
   runTransaction(() => {
     db.exec("delete from workspaces");
     const insert = db.prepare(
-      "insert into workspaces (id, name, path, icon, tint, provider, model, effort) values (?, ?, ?, ?, ?, ?, ?, ?)",
+      "insert into workspaces (id, name, path, icon, tint, provider, model, effort, pr_monitoring_override, pr_monitoring_enabled, pr_monitoring_agent_id) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
     for (const workspace of workspaces) {
       insert.run(
@@ -97,6 +110,9 @@ function save(workspaces: StoredWorkspace[]): void {
         workspace.provider,
         workspace.model,
         workspace.effort,
+        workspace.pullRequestMonitoring ? 1 : 0,
+        workspace.pullRequestMonitoring?.enabled ? 1 : 0,
+        workspace.pullRequestMonitoring?.agentId ?? null,
       );
     }
   });
@@ -323,9 +339,9 @@ async function computeWorkspaces(): Promise<Workspace[]> {
   const migrated = resolved.flatMap((item) => item ? [item.workspace] : []);
   if (resolved.some((item) => item?.migrated)) {
     const byID = new Map(
-      migrated.map(({ id, name, path, icon, tint, provider, model, effort }) => [
+      migrated.map(({ id, name, path, icon, tint, provider, model, effort, pullRequestMonitoring }) => [
         id,
-        { id, name, path, icon, tint, provider, model, effort },
+        { id, name, path, icon, tint, provider, model, effort, pullRequestMonitoring: pullRequestMonitoring ?? null },
       ]),
     );
     save(stored.map((workspace) => byID.get(workspace.id) ?? workspace));
@@ -345,6 +361,7 @@ export async function addWorkspace(name: string, rawPath: string): Promise<Works
     provider: null,
     model: null,
     effort: null,
+    pullRequestMonitoring: null,
   });
   const workspaces = load();
   const existing = workspaces.find((entry) => entry.path === workspace.path);
@@ -364,6 +381,7 @@ export async function addWorkspace(name: string, rawPath: string): Promise<Works
     provider: workspace.provider,
     model: workspace.model,
     effort: workspace.effort,
+    pullRequestMonitoring: workspace.pullRequestMonitoring ?? null,
   });
   save(workspaces);
   invalidateWorkspacesCache();
@@ -379,6 +397,7 @@ export async function updateWorkspace(
     provider?: string | null;
     model?: string | null;
     effort?: string | null;
+    pullRequestMonitoring?: PullRequestMonitoringOverride | null;
   },
 ): Promise<Workspace> {
   const stored = load();
@@ -412,6 +431,14 @@ export async function updateWorkspace(
       entry.model = model || null;
       entry.effort = providerEffort(provider, model, patch.effort === undefined ? entry.effort : patch.effort) || null;
     }
+  }
+  if (patch.pullRequestMonitoring !== undefined) {
+    entry.pullRequestMonitoring = patch.pullRequestMonitoring
+      ? {
+          enabled: patch.pullRequestMonitoring.enabled === true,
+          agentId: patch.pullRequestMonitoring.agentId?.trim().slice(0, 128) || null,
+        }
+      : null;
   }
   save(stored);
   invalidateWorkspacesCache();
@@ -642,6 +669,29 @@ function seedPathSuggestions(home: string): PathSuggestion[] {
 
 export function removeWorkspace(id: string): void {
   save(load().filter((workspace) => workspace.id !== id));
+  invalidateWorkspacesCache();
+}
+
+export function workspaceMonitoringOverride(id: string): PullRequestMonitoringOverride | null {
+  const workspace = load().find((entry) => entry.id === id);
+  if (!workspace) throw new Error("workspace not found");
+  return workspace.pullRequestMonitoring;
+}
+
+export function hasWorkspacePullRequestMonitoring(): boolean {
+  return load().some((workspace) => workspace.pullRequestMonitoring?.enabled && workspace.pullRequestMonitoring.agentId);
+}
+
+export function clearWorkspaceMonitoringAgent(agentId: string): void {
+  const stored = load();
+  let changed = false;
+  for (const workspace of stored) {
+    if (workspace.pullRequestMonitoring?.agentId !== agentId) continue;
+    workspace.pullRequestMonitoring = { enabled: false, agentId: null };
+    changed = true;
+  }
+  if (!changed) return;
+  save(stored);
   invalidateWorkspacesCache();
 }
 

@@ -61,7 +61,10 @@ function migrate(database: DatabaseSync): void {
       name text not null,
       path text not null,
       icon text,
-      tint text
+      tint text,
+      pr_monitoring_override integer not null default 0,
+      pr_monitoring_enabled integer not null default 0,
+      pr_monitoring_agent_id text
     );
     create table if not exists archives (
       id text primary key,
@@ -122,7 +125,6 @@ function migrate(database: DatabaseSync): void {
       avatar text,
       tint text,
       auto_start integer not null default 1,
-      monitor_pull_requests integer not null default 0,
       handoff_to text,
       git_identity text not null default 'author',
       git_name text,
@@ -360,7 +362,17 @@ function migrate(database: DatabaseSync): void {
     // Column already exists on databases created after this migration.
   }
   try {
-    database.exec("alter table agents add column monitor_pull_requests integer not null default 0");
+    database.exec("alter table workspaces add column pr_monitoring_override integer not null default 0");
+  } catch {
+    // Column already exists on databases created after this migration.
+  }
+  try {
+    database.exec("alter table workspaces add column pr_monitoring_enabled integer not null default 0");
+  } catch {
+    // Column already exists on databases created after this migration.
+  }
+  try {
+    database.exec("alter table workspaces add column pr_monitoring_agent_id text");
   } catch {
     // Column already exists on databases created after this migration.
   }
@@ -390,7 +402,7 @@ function migrate(database: DatabaseSync): void {
   // replaced them, and a table nothing reads is worth dropping rather than
   // carrying.
   database.exec("drop table if exists loops");
-  database.exec("pragma user_version = 6");
+  database.exec("pragma user_version = 7");
 }
 
 export function getKv<T>(key: string): T | undefined {
