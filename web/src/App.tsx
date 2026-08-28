@@ -140,6 +140,16 @@ export function App() {
   const [addTicketOpen, setAddTicketOpen] = useState(false);
   const [creatingAgent, setCreatingAgent] = useState(false);
   const [sidebarShown, setSidebarShown] = useState(initialSidebarShown);
+  const [threadToolsShown, setThreadToolsShown] = useState<Record<string, boolean>>({});
+
+  const setThreadToolsVisibility = useCallback((threadId: string, shown: boolean) => {
+    setThreadToolsShown((current) => current[threadId] === shown
+      ? current
+      : { ...current, [threadId]: shown });
+  }, []);
+  const setSelectedThreadToolsVisibility = useCallback((shown: boolean) => {
+    if (selected) setThreadToolsVisibility(selected, shown);
+  }, [selected, setThreadToolsVisibility]);
 
   const toggleSidebar = () => {
     setSidebarShown((shown) => {
@@ -508,6 +518,8 @@ export function App() {
               <ChatView
                 key={active.id}
                 chat={active}
+                toolsShown={threadToolsShown[active.id] === true}
+                onToolsShownChange={setSelectedThreadToolsVisibility}
                 persona={agents.find(
                   (agent) => agent.id === active.agentId && agent.serverId === active.serverId,
                 )}

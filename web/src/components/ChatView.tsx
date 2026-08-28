@@ -145,6 +145,8 @@ export function ChatView({
   onRestored,
   crumbs,
   persona,
+  toolsShown,
+  onToolsShownChange,
 }: {
   chat: Chat;
   archived?: ArchivedThread;
@@ -164,6 +166,8 @@ export function ChatView({
   /// mark; which model is behind it is on the composer, where it is a setting.
   /// It also has no work of its own, so it carries no ticket.
   persona?: Agent;
+  toolsShown?: boolean;
+  onToolsShownChange?: (shown: boolean) => void;
 }) {
   const detail = useStore((s) => s.detail);
   const loading = useStore((s) => s.detailLoading);
@@ -186,8 +190,15 @@ export function ChatView({
   });
   const [busy, setBusy] = useState(false);
   const [codeReferences, setCodeReferences] = useState<ChatCodeReference[]>([]);
+  const [localToolsShown, setLocalToolsShown] = useState(false);
   const composerRef = useRef<InlineImageComposerHandle>(null);
-  const threadTools = useThreadTools(chat.id, chat.serverId, !archived);
+  const threadTools = useThreadTools(
+    chat.id,
+    chat.serverId,
+    toolsShown ?? localToolsShown,
+    onToolsShownChange ?? setLocalToolsShown,
+    !archived,
+  );
 
   useEffect(() => {
     if (archived) return;
