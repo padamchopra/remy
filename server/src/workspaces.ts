@@ -32,6 +32,7 @@ export interface Workspace {
 export interface PullRequestMonitoringOverride {
   enabled: boolean;
   agentId: string | null;
+  chatId?: string | null;
 }
 
 export interface GitWorktree {

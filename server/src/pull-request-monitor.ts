@@ -1,6 +1,6 @@
 import { isAbsolute, relative } from "node:path";
 import { getAgent } from "./agents.js";
-import { createChat, listChats, sendChatMessage, type ChatSummary } from "./chat.js";
+import { createChat, getChat, listChats, sendChatMessage, type ChatSummary } from "./chat.js";
 import { getKv, setKv } from "./db.js";
 import { listAuthoredPullRequests, type AuthoredPullRequest } from "./pull-requests.js";
 import { hasPullRequestMonitoring, pullRequestMonitoring } from "./pull-request-monitoring.js";
@@ -85,9 +85,10 @@ export async function monitorPullRequests(): Promise<void> {
     const pullRequests = await listAuthoredPullRequests(true);
     for (const pullRequest of pullRequests) {
       const policy = pullRequestMonitoring(pullRequest.workspaceId, pullRequest.repository, pullRequest.number);
-      if (!policy.enabled || !policy.agentId) continue;
-      const agent = getAgent(policy.agentId);
-      if (!agent) continue;
+      if (!policy.enabled || (!policy.agentId && !policy.chatId)) continue;
+      const agent = policy.agentId ? getAgent(policy.agentId) : undefined;
+      const targetThread = policy.chatId ? getChat(policy.chatId) : undefined;
+      if (!agent && !targetThread) continue;
       const issue = pullRequestIssue(pullRequest);
       if (!issue) continue;
       const key = pullRequestKey(pullRequest);
@@ -99,7 +100,7 @@ export async function monitorPullRequests(): Promise<void> {
 
       try {
         const prompt = workPrompt(pullRequest, issue);
-        const active = activePullRequestThread(pullRequest, listChats(), agent.id);
+        const active = targetThread ?? activePullRequestThread(pullRequest, listChats(), agent?.id);
         if (active) {
           await sendChatMessage(active.id, prompt);
         } else {
@@ -111,7 +112,7 @@ export async function monitorPullRequests(): Promise<void> {
           const thread = createChat({
             cwd: path,
             title: `PR #${pullRequest.number}: ${pullRequest.title}`,
-            agentId: agent.id,
+            agentId: agent?.id,
             workspaceDefault: {
               provider: workspace.provider,
               model: workspace.model,

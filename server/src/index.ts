@@ -167,6 +167,7 @@ import { validateChatCodeReferences } from "./chat-references.js";
 import { startPullRequestMonitor } from "./pull-request-monitor.js";
 import {
   clearAgentPullRequestMonitoring,
+  clearThreadPullRequestMonitoring,
   pullRequestMonitoring,
   resetPullRequestMonitoring,
   resetWorkspacePullRequestMonitoring,
@@ -1548,6 +1549,7 @@ const server = createServer(async (req, res) => {
       if (req.method === "DELETE" && parts.length === 2) {
         try {
           void closeBrowser(id);
+          clearThreadPullRequestMonitoring(id);
           deleteChat(id);
           return json(res, 200, { ok: true });
         } catch (error) {
@@ -1570,6 +1572,7 @@ const server = createServer(async (req, res) => {
           conversation: archiveConversation(chat.id),
         });
         void closeBrowser(id);
+        clearThreadPullRequestMonitoring(id);
         deleteChat(id);
         return json(res, 200, { archive });
       }
@@ -1729,7 +1732,11 @@ const server = createServer(async (req, res) => {
         }
         if (req.method === "PATCH") {
           const body = await readJson(req);
-          const value = { enabled: body.enabled === true, agentId: String(body.agentId ?? "") || null };
+          const value = {
+            enabled: body.enabled === true,
+            agentId: String(body.agentId ?? "") || null,
+            chatId: String(body.chatId ?? "") || null,
+          };
           const policy = isPullRequest
             ? setPullRequestMonitoring(workspaceId, repository, number, value)
             : await setWorkspacePullRequestMonitoring(workspaceId, value);

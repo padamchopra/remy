@@ -6,6 +6,7 @@ import test from "node:test";
 
 process.env.MC_CONFIG_DIR = mkdtempSync(join(tmpdir(), "remy-pr-monitoring-"));
 const agents = await import("./agents.js");
+const chats = await import("./chat.js");
 const config = await import("./config.js");
 const monitoring = await import("./pull-request-monitoring.js");
 const workspaces = await import("./workspaces.js");
@@ -20,6 +21,7 @@ test("monitoring inherits from Remy through workspace and pull request scopes", 
   assert.deepEqual(monitoring.workspacePullRequestMonitoring(workspace.id), {
     enabled: true,
     agentId: first.id,
+    chatId: null,
     source: "default",
     explicit: false,
   });
@@ -28,10 +30,11 @@ test("monitoring inherits from Remy through workspace and pull request scopes", 
   assert.equal(monitoring.pullRequestMonitoring(workspace.id, "owner/repo", 42).agentId, second.id);
   assert.equal(monitoring.pullRequestMonitoring(workspace.id, "owner/repo", 42).explicit, false);
 
-  monitoring.setPullRequestMonitoring(workspace.id, "owner/repo", 42, { enabled: false, agentId: first.id });
+  monitoring.setPullRequestMonitoring(workspace.id, "owner/repo", 42, { enabled: false, agentId: null });
   assert.deepEqual(monitoring.pullRequestMonitoring(workspace.id, "OWNER/REPO", 42), {
     enabled: false,
-    agentId: first.id,
+    agentId: null,
+    chatId: null,
     source: "pull-request",
     explicit: true,
   });
@@ -55,6 +58,34 @@ test("deleting a selected agent turns every matching policy off", async () => {
   assert.deepEqual(monitoring.pullRequestMonitoring(workspace.id, "owner/repo", 9), {
     enabled: false,
     agentId: null,
+    chatId: null,
+    source: "pull-request",
+    explicit: true,
+  });
+});
+
+test("one pull request can monitor inside its current thread", () => {
+  const thread = chats.createChat({ cwd: folder, title: "Review this pull request" });
+  assert.deepEqual(
+    monitoring.setPullRequestMonitoring(workspace.id, "owner/repo", 17, {
+      enabled: true,
+      agentId: null,
+      chatId: thread.id,
+    }),
+    {
+      enabled: true,
+      agentId: null,
+      chatId: thread.id,
+      source: "pull-request",
+      explicit: true,
+    },
+  );
+
+  monitoring.clearThreadPullRequestMonitoring(thread.id);
+  assert.deepEqual(monitoring.pullRequestMonitoring(workspace.id, "owner/repo", 17), {
+    enabled: false,
+    agentId: null,
+    chatId: null,
     source: "pull-request",
     explicit: true,
   });

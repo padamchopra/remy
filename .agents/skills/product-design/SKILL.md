@@ -24,7 +24,9 @@ Put the control where someone looks for the capability. Do not put it on the cur
 
 A broad owner supplies the default and a narrower owner may override it. The most specific explicit choice wins: Remy-wide → workspace → one pull request or thread.
 
-Use the same controls at every scope, show which broader scope is being inherited, and provide a way back to that default after an override. A lower scope starts from the effective values above it rather than from unrelated hard-coded defaults.
+Keep the same capability and state model at every scope, but use the choices the current context makes possible. Show which broader scope is being inherited and provide a way back to that default after an override. A lower scope starts from the effective values above it rather than from unrelated hard-coded defaults.
+
+Treat useful context as a first-class option. A pull request shown inside a thread can be monitored in that thread, assigned to an agent, turned off, or returned to its inherited default. A machine or workspace setting cannot offer “this thread” because no thread is present there.
 
 The surface that exposes a control is not automatically the setting's owner. A pull request tool inside a thread edits that pull request's policy, keyed by the pull request identity, so opening the same pull request in another thread does not create a second conflicting policy.
 
@@ -57,11 +59,15 @@ Monitor pull requests  [default]      Workspace override
 Handled by             [default]
 
 Thread → Pull request tool → Monitor
-Monitor pull requests  [default]      This pull request
-Handled by             [default]
+Use workspace default
+Off
+In this thread
+With an agent
+  Builder
+  QA
 ```
 
-The machine setting owns the default. A workspace can override every pull request it contains, and one pull request can override its workspace from the tool already showing it. An overridden scope stores an explicit agent id rather than a preset identity; any agent can be chosen. Deleting the selected agent turns that policy off until another is chosen. The GitHub preset remains an optional starting point with no privileged runtime behavior.
+The machine setting owns the default. A workspace can override every pull request it contains, and one pull request can override its workspace from the tool already showing it. The pull request override may target its current thread or an explicit agent id. Deleting the target thread or agent turns that policy off until another destination is chosen. The GitHub preset remains an optional starting point with no privileged runtime behavior.
 
 ## Review the lifecycle
 

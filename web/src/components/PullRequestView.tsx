@@ -197,6 +197,7 @@ export function PullRequestView({
               workspaceId={pullRequest.workspaceId}
               repository={pullRequest.repository}
               number={pullRequest.number}
+              chatId={chatId}
             />
           )}
           <Button asChild variant="ghost" size="icon-sm">
