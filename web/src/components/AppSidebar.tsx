@@ -276,7 +276,7 @@ function ThreadState({ state }: { state: ChatState }) {
 const threadActionLeftClass = "z-20 right-6 translate-x-1 !bg-transparent transition-[opacity,transform] duration-150 group-focus-within/menu-item:translate-x-0 group-hover/menu-item:translate-x-0 hover:!bg-transparent motion-reduce:transition-none";
 const threadActionRightClass = "z-20 translate-x-1 !bg-transparent transition-[opacity,transform] duration-150 group-focus-within/menu-item:translate-x-0 group-hover/menu-item:translate-x-0 hover:!bg-transparent motion-reduce:transition-none";
 const threadRowHoverClass = "group-focus-within/menu-item:!bg-sidebar-row-hover group-hover/menu-item:!bg-sidebar-row-hover";
-const threadRowActionSpaceClass = "pr-12 [@media(hover:hover)]:pr-2 group-focus-within/menu-item:!pr-12 group-hover/menu-item:!pr-12";
+const threadRowActionSpaceClass = "pr-12 [@media(hover:hover)]:!pr-2 group-focus-within/menu-item:!pr-12 group-hover/menu-item:!pr-12";
 
 function ThreadActionFade({ compact = false }: { compact?: boolean }) {
   return (
