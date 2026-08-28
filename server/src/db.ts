@@ -122,6 +122,7 @@ function migrate(database: DatabaseSync): void {
       avatar text,
       tint text,
       auto_start integer not null default 1,
+      monitor_pull_requests integer not null default 0,
       handoff_to text,
       git_identity text not null default 'author',
       git_name text,
@@ -355,6 +356,11 @@ function migrate(database: DatabaseSync): void {
   }
   try {
     database.exec("alter table agents add column effort text");
+  } catch {
+    // Column already exists on databases created after this migration.
+  }
+  try {
+    database.exec("alter table agents add column monitor_pull_requests integer not null default 0");
   } catch {
     // Column already exists on databases created after this migration.
   }

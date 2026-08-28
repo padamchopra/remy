@@ -77,7 +77,7 @@ export async function monitorPullRequests(): Promise<void> {
   running = true;
   try {
     const github = agentByHandle(GITHUB_AGENT_HANDLE);
-    if (!github?.autoStart) return;
+    if (!github?.monitorPullRequests) return;
 
     const handled = getKv<HandledPullRequests>(HANDLED_KEY) ?? {};
     const next: HandledPullRequests = {};

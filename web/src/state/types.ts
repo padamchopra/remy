@@ -418,6 +418,7 @@ export interface Agent {
   avatar?: string;
   tint?: string;
   autoStart: boolean;
+  monitorPullRequests: boolean;
   handoffTo: string[];
   /// Who this agent's commits credit: `default` follows the machine, `off`
   /// keeps your identity, and `author` credits the agent while you commit it.

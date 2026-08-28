@@ -46,6 +46,7 @@ export interface Agent {
   avatar?: string;
   tint?: string;
   autoStart: boolean;
+  monitorPullRequests: boolean;
   /// Handles this agent may pass a ticket to. Empty means it may not hand off.
   handoffTo: string[];
   gitIdentity: GitIdentityMode;
@@ -84,6 +85,7 @@ const EDITABLE = [
   "avatar",
   "tint",
   "autoStart",
+  "monitorPullRequests",
   "handoffTo",
   "gitIdentity",
   "gitName",
@@ -170,6 +172,7 @@ function fold(id: string): Agent | undefined {
         provider: agentProvider(event.payload.provider),
         permissionMode: oneOf(PERMISSION_MODES, event.payload.permissionMode, "default"),
         autoStart: event.payload.autoStart !== false,
+        monitorPullRequests: event.payload.monitorPullRequests === true,
         handoffTo: Array.isArray(event.payload.handoffTo) ? (event.payload.handoffTo as string[]) : [],
         gitIdentity: gitIdentity(event.payload.gitIdentity, REMY_DEFAULT),
         // `preset` is not editable, so it is read from the create event rather
@@ -199,14 +202,15 @@ function write(agent: Agent): void {
   db.prepare(
     `insert into agents (
        id, name, handle, role, instructions, provider, model, effort, permission_mode,
-       avatar, tint, auto_start, handoff_to, git_identity, git_name, git_email,
+       avatar, tint, auto_start, monitor_pull_requests, handoff_to, git_identity, git_name, git_email,
        preset, created_at, updated_at, deleted
-     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
      on conflict(id) do update set
        name = excluded.name, handle = excluded.handle, role = excluded.role,
        instructions = excluded.instructions, provider = excluded.provider,
        model = excluded.model, effort = excluded.effort, permission_mode = excluded.permission_mode,
        avatar = excluded.avatar, tint = excluded.tint, auto_start = excluded.auto_start,
+       monitor_pull_requests = excluded.monitor_pull_requests,
        handoff_to = excluded.handoff_to, git_identity = excluded.git_identity,
        git_name = excluded.git_name, git_email = excluded.git_email,
        preset = excluded.preset, updated_at = excluded.updated_at, deleted = 0`,
@@ -223,6 +227,7 @@ function write(agent: Agent): void {
     agent.avatar ?? null,
     agent.tint ?? null,
     agent.autoStart ? 1 : 0,
+    agent.monitorPullRequests ? 1 : 0,
     JSON.stringify(agent.handoffTo),
     agent.gitIdentity,
     agent.gitName ?? null,
@@ -272,6 +277,7 @@ function toAgent(row: Record<string, unknown>): Agent {
     ...(row.avatar ? { avatar: String(row.avatar) } : {}),
     ...(row.tint ? { tint: String(row.tint) } : {}),
     autoStart: Number(row.auto_start) === 1,
+    monitorPullRequests: Number(row.monitor_pull_requests) === 1,
     handoffTo,
     gitIdentity: gitIdentity(row.git_identity, REMY_DEFAULT),
     ...(row.git_name ? { gitName: String(row.git_name) } : {}),
@@ -336,6 +342,7 @@ export function workspaceAgent(): Agent {
     ...(config.defaultEffort ? { effort: config.defaultEffort } : {}),
     permissionMode: "auto",
     autoStart: true,
+    monitorPullRequests: false,
     handoffTo: [],
     // Its commits are yours: there is no persona here to credit.
     gitIdentity: "off",
@@ -429,6 +436,7 @@ function validate(input: Record<string, unknown>, existing?: Agent): Record<stri
   if (input.avatar !== undefined) patch.avatar = text(input.avatar, 200) ?? "";
   if (input.tint !== undefined) patch.tint = text(input.tint, 24) ?? "";
   if (input.autoStart !== undefined) patch.autoStart = input.autoStart !== false;
+  if (input.monitorPullRequests !== undefined) patch.monitorPullRequests = input.monitorPullRequests === true;
   if (input.handoffTo !== undefined) {
     const list = Array.isArray(input.handoffTo) ? input.handoffTo : [];
     patch.handoffTo = [...new Set(list.map(agentHandle).filter((h): h is string => Boolean(h)))]
@@ -458,6 +466,7 @@ function createAgentWithId(id: string, input: Record<string, unknown>): Agent {
     provider: REMY_DEFAULT,
     permissionMode: "auto",
     autoStart: true,
+    monitorPullRequests: false,
     handoffTo: [],
     gitIdentity: REMY_DEFAULT,
     gitName: patch.name,
@@ -576,6 +585,8 @@ interface Preset {
   tint: string;
   model: string;
   permissionMode: ChatPermissionMode;
+  autoStart?: boolean;
+  monitorPullRequests?: boolean;
   gitIdentity: GitIdentityMode;
   handoffTo: string[];
   instructions: string;
@@ -590,6 +601,8 @@ const PRESETS: Preset[] = [
     tint: "green",
     model: "",
     permissionMode: "auto",
+    autoStart: false,
+    monitorPullRequests: false,
     gitIdentity: REMY_DEFAULT,
     handoffTo: [],
     instructions: [
@@ -694,6 +707,13 @@ export function seedPresetAgents(): void {
 
   const existing = listAgents().filter((agent) => agent.preset);
   const byPreset = new Map(existing.map((agent) => [agent.preset!, agent]));
+  const github = byPreset.get("github");
+  if (github) {
+    const autoStartWasPicked = eventsFor("agent", github.id).some(
+      (event) => event.kind === "field" && event.payload.autoStart !== undefined,
+    );
+    if (!autoStartWasPicked && github.autoStart) updateAgent(github.id, { autoStart: false });
+  }
   let criticMigrated = false;
   for (const preset of PRESETS) {
     const agent = byPreset.get(preset.preset);
