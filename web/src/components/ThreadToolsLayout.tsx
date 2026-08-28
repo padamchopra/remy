@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import {
   ResizableHandle,
@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 
 const WIDE_TOOLS = "(min-width: 1024px)";
 const LAYOUT_KEY = "remy.thread-tools.layout";
-const DEFAULT_LAYOUT = { thread: 38, tools: 62 };
+const DEFAULT_LAYOUT = { thread: 50, tools: 50 };
 
 function useWideTools(): boolean {
   const [wide, setWide] = useState(() => typeof window !== "undefined" && window.matchMedia(WIDE_TOOLS).matches);
@@ -49,13 +49,14 @@ export function ThreadToolsLayout({
 }) {
   const wide = useWideTools();
   const [layout] = useState(savedLayout);
+  const toolsSize = useRef(layout.tools);
   const toolsPanelRef = usePanelRef();
 
   useEffect(() => {
     if (!wide) return;
     const panel = toolsPanelRef.current;
     if (!panel) return;
-    if (open) panel.expand();
+    if (open) panel.resize(`${toolsSize.current}%`);
     else panel.collapse();
   }, [open, toolsPanelRef, wide]);
 
@@ -84,7 +85,10 @@ export function ThreadToolsLayout({
       defaultLayout={open ? layout : { thread: 100, tools: 0 }}
       className="min-h-0 flex-1 [&>[data-panel]]:transition-[flex-grow] [&>[data-panel]]:duration-200 [&>[data-panel]]:ease-out motion-reduce:[&>[data-panel]]:transition-none"
       onLayoutChanged={(next, meta) => {
-        if (meta.isUserInteraction) localStorage.setItem(LAYOUT_KEY, JSON.stringify(next));
+        if (meta.isUserInteraction && next.tools > 0) {
+          toolsSize.current = next.tools;
+          localStorage.setItem(LAYOUT_KEY, JSON.stringify(next));
+        }
       }}
     >
       <ResizablePanel id="thread" minSize="20rem" className="flex min-h-0 min-w-0 overflow-hidden">

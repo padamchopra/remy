@@ -27,6 +27,7 @@ export interface ThreadAnalyticsReport {
   turns: number;
   toolCalls: number;
   skillInvocations: number;
+  skills: Array<{ name: string; count: number }>;
   sessionSpanMs: number;
   measuredActiveMs: number;
   currentRunMs: number;
@@ -125,6 +126,13 @@ export function threadAnalytics(chatId: string, runtime: ThreadRuntime = {}, now
   usage.costUsd = Math.max(transcriptCost, chat.costUsd ?? 0);
   const measured = measureTurns(chat.entries, runtime.state === "working" || runtime.state === "needs_input", now);
   const currentRunMs = runtime.workingSince ? Math.max(0, now - runtime.workingSince) : 0;
+  const transcriptSkills = transcripts.flatMap((transcript) =>
+    transcript.tools.flatMap((entry) => entry.skill ? [entry.skill] : []),
+  );
+  const storedSkills = chat.entries.flatMap((entry) =>
+    entry.kind === "tool" && entry.skill ? [entry.skill] : [],
+  );
+  const skills = ranked(transcriptSkills.length > 0 ? transcriptSkills : storedSkills);
 
   return {
     chatId,
@@ -134,10 +142,8 @@ export function threadAnalytics(chatId: string, runtime: ThreadRuntime = {}, now
     turns: chat.turns,
     toolCalls: transcripts.reduce((total, transcript) => total + transcript.tools.length, 0)
       || chat.entries.filter((entry) => entry.kind === "tool").length,
-    skillInvocations: transcripts.reduce(
-      (total, transcript) => total + transcript.tools.filter((entry) => entry.skill).length,
-      0,
-    ) || chat.entries.filter((entry) => entry.kind === "tool" && entry.skill).length,
+    skillInvocations: skills.reduce((total, skill) => total + skill.count, 0),
+    skills,
     sessionSpanMs: sessionSpan(chat, runtime, now),
     measuredActiveMs: measured.activeMs,
     currentRunMs,
@@ -145,6 +151,14 @@ export function threadAnalytics(chatId: string, runtime: ThreadRuntime = {}, now
     ...((runtime.context ?? chat.context) ? { context: runtime.context ?? chat.context } : {}),
     models: [...models.values()].sort((a, b) => b.totalTokens - a.totalTokens),
   };
+}
+
+function ranked(names: string[]): Array<{ name: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1);
+  return [...counts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
 
 /// Responsiveness and reliability for one thread, never the rest of the app.

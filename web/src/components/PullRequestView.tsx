@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useState, type MouseEvent, type ReactNode } from "react";
+import { toast } from "sonner";
 import {
   ArrowRight,
   ChevronRight,
@@ -28,14 +29,20 @@ import {
   AttachmentTitle,
 } from "@/components/ui/attachment";
 import { Badge } from "@/components/ui/badge";
+import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupText, InputGroupTextarea } from "@/components/ui/input-group";
-import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
+import { Item, ItemContent, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
+import { Message, MessageContent, MessageGroup, MessageHeader } from "@/components/ui/message";
+import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { apiError } from "@/lib/api-error";
 import { transport } from "@/lib/transport";
 import { cn } from "@/lib/utils";
@@ -64,6 +71,7 @@ export function PullRequestView({
   codeReferences = [],
   onAddReference,
   onRemoveReference,
+  onPullRequestChanged,
   actions,
 }: {
   serverId: string;
@@ -73,6 +81,7 @@ export function PullRequestView({
   codeReferences?: ChatCodeReference[];
   onAddReference?: (reference: ChatCodeReference) => void;
   onRemoveReference?: (id: string) => void;
+  onPullRequestChanged?: () => void;
   actions?: ReactNode;
 }) {
   const [pullRequest, setPullRequest] = useState<PullRequestData>();
@@ -83,6 +92,9 @@ export function PullRequestView({
   const [timelineError, setTimelineError] = useState("");
   const [selection, setSelection] = useState<Selection>();
   const [comment, setComment] = useState("");
+  const [markingReady, setMarkingReady] = useState(false);
+  const [markingViewed, setMarkingViewed] = useState<Set<string>>(new Set());
+  const [reviewServerId, setReviewServerId] = useState(serverId);
 
   useEffect(() => {
     let current = true;
@@ -92,12 +104,33 @@ export function PullRequestView({
     setTimeline(undefined);
     setTimelineError("");
     setSelection(undefined);
+    setReviewServerId(serverId);
     const path = chatId
       ? `/chats/${encodeURIComponent(chatId)}/pull-request-diff`
       : `/pull-requests/diff?repository=${encodeURIComponent(repository ?? "")}&number=${number ?? ""}`;
     void transport.request<{ diff: PullRequestData }>(serverId, path)
       .then((response) => {
-        if (current) setPullRequest(response.diff);
+        if (!current) return;
+        setPullRequest(response.diff);
+        if (response.diff.nodeId) return;
+        void transport.servers()
+          .then((servers) => servers.find((candidate) => candidate.local)?.id)
+          .then(async (localServerId) => {
+            if (!localServerId || localServerId === serverId) return;
+            const reviewPath = `/pull-requests/file-views?repository=${encodeURIComponent(response.diff.repository)}&number=${response.diff.number}`;
+            const reviewResponse = await transport.request<{
+              review: { nodeId: string; files: Array<{ path: string; viewed: boolean }> };
+            }>(localServerId, reviewPath);
+            if (!current) return;
+            const viewed = new Map(reviewResponse.review.files.map((file) => [file.path, file.viewed]));
+            setReviewServerId(localServerId);
+            setPullRequest((loaded) => loaded ? {
+              ...loaded,
+              nodeId: reviewResponse.review.nodeId,
+              files: loaded.files.map((file) => ({ ...file, viewed: viewed.get(file.path) ?? false })),
+            } : loaded);
+          })
+          .catch(() => undefined);
       })
       .catch((caught) => {
         if (current) setError(apiError(caught));
@@ -156,6 +189,52 @@ export function PullRequestView({
     setSelection(undefined);
   };
 
+  const markReady = async () => {
+    if (!pullRequest || markingReady) return;
+    setMarkingReady(true);
+    try {
+      await transport.request(serverId, "/pull-requests/ready", {
+        method: "POST",
+        body: { repository: pullRequest.repository, number: pullRequest.number },
+      });
+      setPullRequest((current) => current ? { ...current, isDraft: false } : current);
+      onPullRequestChanged?.();
+      toast.success("Pull request is ready for review.");
+    } catch (caught) {
+      toast.error("Couldn't mark the pull request ready", { description: apiError(caught) });
+    } finally {
+      setMarkingReady(false);
+    }
+  };
+
+  const markFileViewed = async (path: string, viewed: boolean) => {
+    if (!pullRequest?.nodeId || markingViewed.has(path)) return;
+    const previous = pullRequest.files.find((file) => file.path === path)?.viewed ?? false;
+    setMarkingViewed((current) => new Set(current).add(path));
+    setPullRequest((current) => current ? {
+      ...current,
+      files: current.files.map((file) => file.path === path ? { ...file, viewed } : file),
+    } : current);
+    try {
+      await transport.request(reviewServerId, "/pull-requests/file-viewed", {
+        method: "POST",
+        body: { pullRequestId: pullRequest.nodeId, path, viewed },
+      });
+    } catch (caught) {
+      setPullRequest((current) => current ? {
+        ...current,
+        files: current.files.map((file) => file.path === path ? { ...file, viewed: previous } : file),
+      } : current);
+      toast.error("Couldn't update the file", { description: apiError(caught) });
+    } finally {
+      setMarkingViewed((current) => {
+        const next = new Set(current);
+        next.delete(path);
+        return next;
+      });
+    }
+  };
+
   if (loading) return <PullRequestLoading />;
   if (error || !pullRequest) {
     const title = chatId ? "No pull request yet" : "Couldn't load this pull request";
@@ -177,35 +256,55 @@ export function PullRequestView({
 
   return (
     <Tabs value={tab} onValueChange={(value) => setTab(value as PullRequestTab)} className="size-full min-h-0 gap-0">
-      <header className="flex min-h-12 shrink-0 items-center gap-3 border-b border-border px-3">
-        <span className="flex min-w-0 flex-1 items-center gap-2 text-xs text-muted-foreground">
-          <GitPullRequest className="size-4 shrink-0 text-primary" />
-          <span className="min-w-0 truncate">
-            <span className="text-foreground">{pullRequest.repository}</span>
-            <span> #{pullRequest.number}</span>
+      <header className="shrink-0 border-b border-border">
+        <div className="flex h-10 min-w-0 items-center gap-3 px-3">
+          <span className="flex min-w-0 flex-1 items-center gap-2 text-xs text-muted-foreground">
+            <GitPullRequest className="size-4 shrink-0" />
+            <span className="min-w-0 truncate">
+              <span className="font-medium text-foreground">{pullRequest.repository}</span>
+              <span> #{pullRequest.number}</span>
+            </span>
           </span>
-        </span>
-        <TabsList aria-label="Pull request views" className="h-8 shrink-0">
-          <TabsTrigger value="summary">Summary</TabsTrigger>
-          <TabsTrigger value="code">Code <span className="text-muted-foreground">{changedFiles}</span></TabsTrigger>
+          <span className="flex shrink-0 items-center justify-end gap-1">
+            {actions}
+            {chatId && pullRequest.workspaceId && (
+              <PullRequestMonitoringButton
+                serverId={serverId}
+                workspaceId={pullRequest.workspaceId}
+                repository={pullRequest.repository}
+                number={pullRequest.number}
+                chatId={chatId}
+              />
+            )}
+            {pullRequest.isDraft && (
+              <Button size="sm" disabled={markingReady} onClick={() => void markReady()}>
+                Mark ready
+              </Button>
+            )}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button asChild variant="ghost" size="icon-sm">
+                  <a href={pullRequest.url} target="_blank" rel="noreferrer" data-link aria-label="Open pull request on GitHub">
+                    <ExternalLink />
+                  </a>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Open on GitHub</TooltipContent>
+            </Tooltip>
+          </span>
+        </div>
+        <TabsList
+          variant="line"
+          aria-label="Pull request views"
+          className="h-9 w-full justify-start gap-0 rounded-none px-3 py-0"
+        >
+          <TabsTrigger value="summary" className="h-full flex-none rounded-none px-2 text-xs after:bottom-0">
+            Summary
+          </TabsTrigger>
+          <TabsTrigger value="code" className="h-full flex-none rounded-none px-2 text-xs after:bottom-0">
+            Code <span className="text-[11px] tabular-nums text-muted-foreground">{changedFiles}</span>
+          </TabsTrigger>
         </TabsList>
-        <span className="flex min-w-0 items-center justify-end gap-1">
-          {actions}
-          {chatId && pullRequest.workspaceId && (
-            <PullRequestMonitoringButton
-              serverId={serverId}
-              workspaceId={pullRequest.workspaceId}
-              repository={pullRequest.repository}
-              number={pullRequest.number}
-              chatId={chatId}
-            />
-          )}
-          <Button asChild variant="ghost" size="icon-sm">
-            <a href={pullRequest.url} target="_blank" rel="noreferrer" data-link aria-label="Open pull request on GitHub">
-              <ExternalLink />
-            </a>
-          </Button>
-        </span>
       </header>
 
       <TabsContent value="summary" className="min-h-0 overflow-hidden">
@@ -223,6 +322,8 @@ export function PullRequestView({
           onSelectLine={selectLine}
           onAddComment={addComment}
           onRemoveReference={onRemoveReference}
+          markingViewed={markingViewed}
+          onViewedChange={markFileViewed}
         />
       </TabsContent>
     </Tabs>
@@ -232,9 +333,15 @@ export function PullRequestView({
 function PullRequestLoading() {
   return (
     <div className="size-full">
-      <div className="flex h-12 items-center gap-3 border-b border-border px-3">
-        <Skeleton className="h-3 w-40" />
-        <Skeleton className="ml-auto h-8 w-36" />
+      <div className="border-b border-border">
+        <div className="flex h-10 items-center gap-3 px-3">
+          <Skeleton className="h-3 w-40" />
+          <Skeleton className="ml-auto h-8 w-36" />
+        </div>
+        <div className="flex h-9 items-center gap-3 px-3">
+          <Skeleton className="h-3 w-14" />
+          <Skeleton className="h-3 w-14" />
+        </div>
       </div>
       <div className="mx-auto flex max-w-4xl flex-col gap-5 px-8 py-8">
         <Skeleton className="h-8 w-4/5" />
@@ -314,12 +421,17 @@ function PullRequestSummary({
           </div>
         </section>
 
+        <section className="mt-8 border-t border-border pt-5">
+          <h2 className="text-sm font-medium">Recent activity</h2>
+          <PullRequestActivity timeline={timeline} error={timelineError} />
+        </section>
+
         {pullRequest.checks.length > 0 && (
           <section className="mt-8 border-t border-border pt-5">
             <h2 className="text-sm font-medium">Checks</h2>
             <ItemGroup className="mt-2 gap-0">
-              {pullRequest.checks.map((check) => (
-                <Item key={check.name} size="sm" className="min-h-0 rounded-none px-0 py-1.5">
+              {pullRequest.checks.map((check, index) => (
+                <Item key={`${check.name}:${index}`} size="sm" className="min-h-0 rounded-none px-0 py-1.5">
                   <ItemMedia className="text-muted-foreground">{checkIcon(check.state)}</ItemMedia>
                   <ItemContent><ItemTitle className="text-xs font-normal">{check.name}</ItemTitle></ItemContent>
                   <span className={cn(
@@ -333,11 +445,6 @@ function PullRequestSummary({
             </ItemGroup>
           </section>
         )}
-
-        <section className="mt-8 border-t border-border pt-5">
-          <h2 className="text-sm font-medium">Recent activity</h2>
-          <PullRequestActivity timeline={timeline} error={timelineError} />
-        </section>
       </div>
     </ScrollArea>
   );
@@ -360,26 +467,41 @@ function PullRequestActivity({ timeline, error }: { timeline?: PullRequestTimeli
     return <p className="mt-3 text-sm text-muted-foreground">No activity yet.</p>;
   }
   return (
-    <ItemGroup className="relative mt-2 gap-0 before:absolute before:bottom-3 before:left-[0.4375rem] before:top-3 before:w-px before:bg-border">
+    <MessageGroup className="relative mt-2 gap-0 before:absolute before:bottom-3 before:left-[0.4375rem] before:top-3 before:w-px before:bg-border">
       {timeline.map((item) => (
-        <Item key={item.id} asChild size="sm" className="min-h-0 items-start rounded-none px-0 py-2 hover:bg-transparent">
-          <a href={item.url} target="_blank" rel="noreferrer" data-link>
-            <ItemMedia className="relative z-10 bg-background py-0.5 text-muted-foreground">
-              {activityIcon(item)}
-            </ItemMedia>
-            <ItemContent className="min-w-0 gap-0.5">
-              <ItemTitle className="max-w-full gap-2 text-xs font-normal">
-                <span className="truncate text-foreground">{activityTitle(item)}</span>
-                <span className="shrink-0 text-[11px] font-normal text-muted-foreground">{item.author} · {relativeDate(item.createdAt)}</span>
-              </ItemTitle>
-              {item.kind !== "commit" && item.body && (
-                <ItemDescription className="line-clamp-2 whitespace-pre-wrap text-[11px] leading-relaxed">{item.body}</ItemDescription>
-              )}
-            </ItemContent>
-          </a>
-        </Item>
+        <Message key={item.id} className="items-start gap-2.5 py-2">
+          <span className="relative z-10 flex shrink-0 bg-background py-0.5 text-muted-foreground">
+            {activityIcon(item)}
+          </span>
+          <MessageContent className="gap-1.5">
+            <MessageHeader className="flex-wrap gap-x-2 gap-y-0.5 px-0">
+              <a
+                href={item.url}
+                target="_blank"
+                rel="noreferrer"
+                data-link
+                className="min-w-0 truncate text-foreground hover:underline"
+              >
+                {activityTitle(item)}
+              </a>
+              <span className="shrink-0 text-[11px] font-normal text-muted-foreground">
+                {item.author} · {relativeDate(item.createdAt)}
+              </span>
+            </MessageHeader>
+            {item.kind !== "commit" && item.body && (
+              <Bubble variant="ghost" className="w-full">
+                <BubbleContent className="w-full">
+                  <Markdown
+                    text={item.body}
+                    className="text-xs text-muted-foreground [&_[data-slot=collapsible]]:overflow-visible [&_[data-slot=collapsible]]:rounded-none [&_[data-slot=collapsible]]:border-0 [&_[data-slot=collapsible-trigger]]:px-0 [&_[data-slot=collapsible-trigger]]:py-1 [&_[data-slot=collapsible-content]]:border-0 [&_[data-slot=collapsible-content]]:border-l [&_[data-slot=collapsible-content]]:border-border [&_[data-slot=collapsible-content]]:py-2 [&_[data-slot=collapsible-content]]:pr-0 [&_[data-slot=collapsible-content]]:pl-3"
+                  />
+                </BubbleContent>
+              </Bubble>
+            )}
+          </MessageContent>
+        </Message>
       ))}
-    </ItemGroup>
+    </MessageGroup>
   );
 }
 
@@ -419,6 +541,8 @@ function PullRequestFiles({
   onSelectLine,
   onAddComment,
   onRemoveReference,
+  markingViewed,
+  onViewedChange,
 }: {
   pullRequest: PullRequestData;
   selection?: Selection;
@@ -430,7 +554,33 @@ function PullRequestFiles({
   onSelectLine: (event: MouseEvent, fileIndex: number, hunkIndex: number, lineIndex: number) => void;
   onAddComment: () => void;
   onRemoveReference?: (id: string) => void;
+  markingViewed: ReadonlySet<string>;
+  onViewedChange: (path: string, viewed: boolean) => void;
 }) {
+  const [openFiles, setOpenFiles] = useState<Set<string>>(() => new Set(pullRequest.files.map((file) => file.path)));
+  const allOpen = pullRequest.files.every((file) => openFiles.has(file.path));
+  const lineProgress = pullRequest.files.reduce((progress, file) => {
+    const stat = pullRequestFileStat(file);
+    const lines = stat.additions + stat.deletions;
+    return {
+      reviewed: progress.reviewed + (file.viewed ? lines : 0),
+      total: progress.total + lines,
+    };
+  }, { reviewed: 0, total: 0 });
+
+  useEffect(() => {
+    setOpenFiles(new Set(pullRequest.files.map((file) => file.path)));
+  }, [pullRequest.number, pullRequest.repository]);
+
+  const setFileOpen = (path: string, open: boolean) => {
+    setOpenFiles((current) => {
+      const next = new Set(current);
+      if (open) next.add(path);
+      else next.delete(path);
+      return next;
+    });
+  };
+
   return (
     <div className="flex size-full min-h-0 flex-col">
       {codeReferences.length > 0 && (
@@ -456,29 +606,69 @@ function PullRequestFiles({
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3 text-xs text-muted-foreground">
         <Files className="size-3.5" />
         <span>{pullRequest.files.length} {pullRequest.files.length === 1 ? "file" : "files"}</span>
-        <span className="ml-auto font-mono"><span className="text-success-foreground">+{pullRequest.additions}</span> <span className="text-destructive">−{pullRequest.deletions}</span></span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          className="ml-auto"
+          onClick={() => setOpenFiles(allOpen ? new Set() : new Set(pullRequest.files.map((file) => file.path)))}
+        >
+          {allOpen ? "Collapse all" : "Expand all"}
+        </Button>
+        <span className="shrink-0 font-mono"><span className="text-success-foreground">+{pullRequest.additions}</span> <span className="text-destructive">−{pullRequest.deletions}</span></span>
       </div>
-      <ScrollArea className="min-h-0 flex-1">
-        {pullRequest.files.length === 0 ? (
-          <Empty className="min-h-60">
-            <EmptyHeader><EmptyTitle>No changed files</EmptyTitle><EmptyDescription>This pull request has no text changes.</EmptyDescription></EmptyHeader>
-          </Empty>
-        ) : (
-          <div>
-            {pullRequest.files.map((file, fileIndex) => (
-              <PullRequestFile
-                key={`${file.previousPath ?? ""}:${file.path}`}
-                file={file}
-                fileIndex={fileIndex}
-                defaultOpen={fileIndex === 0}
-                selection={selection}
-                interactive={interactive}
-                onSelectLine={onSelectLine}
+      <div className="relative min-h-0 flex-1">
+        <ScrollArea className="size-full">
+          {pullRequest.files.length === 0 ? (
+            <Empty className="min-h-60">
+              <EmptyHeader><EmptyTitle>No changed files</EmptyTitle><EmptyDescription>This pull request has no text changes.</EmptyDescription></EmptyHeader>
+            </Empty>
+          ) : (
+            <div className="pb-20">
+              {pullRequest.files.map((file, fileIndex) => (
+                <PullRequestFile
+                  key={`${file.previousPath ?? ""}:${file.path}`}
+                  file={file}
+                  fileIndex={fileIndex}
+                  open={openFiles.has(file.path)}
+                  selection={selection}
+                  interactive={interactive}
+                  onSelectLine={onSelectLine}
+                  onOpenChange={(open) => setFileOpen(file.path, open)}
+                  markingViewed={markingViewed.has(file.path)}
+                  canMarkViewed={Boolean(pullRequest.nodeId)}
+                  onViewedChange={(viewed) => {
+                    if (viewed) setFileOpen(file.path, false);
+                    onViewedChange(file.path, viewed);
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </ScrollArea>
+        {pullRequest.files.length > 0 && (
+          <Item
+            variant="floating"
+            size="sm"
+            role="status"
+            aria-live="polite"
+            className="pointer-events-none absolute inset-x-3 bottom-3 mx-auto w-auto max-w-sm flex-nowrap"
+          >
+            <ItemContent className="gap-1.5">
+              <ItemTitle className="w-full justify-between text-xs">
+                <span>Review progress</span>
+                <span className="tabular-nums text-muted-foreground">
+                  {lineProgress.reviewed.toLocaleString()} of {lineProgress.total.toLocaleString()} lines reviewed
+                </span>
+              </ItemTitle>
+              <Progress
+                value={lineProgress.total > 0 ? (lineProgress.reviewed / lineProgress.total) * 100 : 0}
+                aria-label="Lines reviewed"
               />
-            ))}
-          </div>
+            </ItemContent>
+          </Item>
         )}
-      </ScrollArea>
+      </div>
       {interactive && selected && (
         <div className="shrink-0 border-t border-border bg-background p-3">
           <InputGroup>
@@ -512,35 +702,59 @@ function PullRequestFiles({
 function PullRequestFile({
   file,
   fileIndex,
-  defaultOpen,
+  open,
   selection,
   interactive,
   onSelectLine,
+  onOpenChange,
+  markingViewed,
+  canMarkViewed,
+  onViewedChange,
 }: {
   file: PullRequestDiffFile;
   fileIndex: number;
-  defaultOpen: boolean;
+  open: boolean;
   selection?: Selection;
   interactive: boolean;
   onSelectLine: (event: MouseEvent, fileIndex: number, hunkIndex: number, lineIndex: number) => void;
+  onOpenChange: (open: boolean) => void;
+  markingViewed: boolean;
+  canMarkViewed: boolean;
+  onViewedChange: (viewed: boolean) => void;
 }) {
-  const stat = file.hunks.flatMap((hunk) => hunk.lines).reduce((result, line) => ({
-    additions: result.additions + Number(line.kind === "add"),
-    deletions: result.deletions + Number(line.kind === "del"),
-  }), { additions: 0, deletions: 0 });
+  const stat = pullRequestFileStat(file);
+  const compact = compactFilePath(file.path);
+  const checkboxId = useId();
 
   return (
-    <Collapsible defaultOpen={defaultOpen} className="group/file border-b border-border">
-      <CollapsibleTrigger asChild>
-        <Button variant="ghost" className="h-auto w-full justify-start rounded-none px-3 py-2 text-xs">
-          <ChevronRight className="transition-transform group-data-[state=open]/file:rotate-90" />
-          <FileCode2 />
-          <span className="min-w-0 flex-1 truncate text-left font-mono">{file.path}</span>
-          <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
-            <span className="text-success-foreground">+{stat.additions}</span> <span className="text-destructive">−{stat.deletions}</span>
-          </span>
-        </Button>
-      </CollapsibleTrigger>
+    <Collapsible open={open} onOpenChange={onOpenChange} className="group/file border-b border-border">
+      <div className="flex min-w-0 items-center">
+        <CollapsibleTrigger asChild>
+          <Button variant="ghost" className="h-auto min-w-0 flex-1 justify-start rounded-none px-3 py-2 text-xs">
+            <ChevronRight className="transition-transform group-data-[state=open]/file:rotate-90" />
+            <FileCode2 />
+            <span
+              title={file.path}
+              className="grid min-w-0 flex-1 grid-cols-[minmax(0,2fr)_minmax(0,1fr)] items-baseline gap-2 text-left font-mono"
+            >
+              <span className="truncate text-foreground">{compact.name}</span>
+              <span className="truncate text-[10px] text-muted-foreground">{compact.directory}</span>
+            </span>
+            <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+              <span className="text-success-foreground">+{stat.additions}</span> <span className="text-destructive">−{stat.deletions}</span>
+            </span>
+          </Button>
+        </CollapsibleTrigger>
+        <Field orientation="horizontal" className="w-auto shrink-0 gap-1.5 px-3">
+          <Checkbox
+            id={checkboxId}
+            checked={Boolean(file.viewed)}
+            disabled={!canMarkViewed || markingViewed}
+            onCheckedChange={(checked) => onViewedChange(checked === true)}
+          />
+          <FieldLabel htmlFor={checkboxId} className="text-[11px] font-normal text-muted-foreground">Viewed</FieldLabel>
+        </Field>
+      </div>
       <CollapsibleContent>
         {file.previousPath && <p className="border-t border-border px-3 py-1.5 text-[11px] text-muted-foreground">Renamed from {file.previousPath}</p>}
         {file.hunks.length === 0 ? (
@@ -571,6 +785,25 @@ function PullRequestFile({
       </CollapsibleContent>
     </Collapsible>
   );
+}
+
+function pullRequestFileStat(file: PullRequestDiffFile): { additions: number; deletions: number } {
+  return file.hunks.flatMap((hunk) => hunk.lines).reduce((result, line) => ({
+    additions: result.additions + Number(line.kind === "add"),
+    deletions: result.deletions + Number(line.kind === "del"),
+  }), { additions: 0, deletions: 0 });
+}
+
+export function compactFilePath(path: string): { name: string; directory: string } {
+  const segments = path.split("/").filter(Boolean);
+  const name = segments.at(-1) ?? path;
+  const directories = segments.slice(0, -1);
+  if (directories.length === 0) return { name, directory: "" };
+  if (directories.length <= 3) return { name, directory: `${directories.join("/")}/` };
+  return {
+    name,
+    directory: `${directories.slice(0, 2).join("/")}/…/${directories.at(-1)}/`,
+  };
 }
 
 function PullRequestLine({

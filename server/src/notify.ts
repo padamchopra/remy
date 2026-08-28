@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { WebSocket } from "ws";
 import { config } from "./config.js";
 import { forwardNotification } from "./peers.js";
@@ -35,24 +36,51 @@ const lastSent = new Map<string, number>();
 // banners arrive via APNs, so it must not count as a delivery target.
 const subscribers = new Set<WebSocket>();
 const notifyTargets = new Set<WebSocket>();
+const relaySubscribers = new Set<WebSocket>();
+const livePeerStreams = new Set<string>();
 const alive = new WeakSet<WebSocket>();
+const streamId = randomUUID();
+const history: { sequence: number; text: string }[] = [];
+const HISTORY_LIMIT = 1_000;
+let sequence = 0;
 
 export function attachNotifyStream(ws: WebSocket, notifies: boolean, params = new URLSearchParams()): void {
   subscribers.add(ws);
   if (notifies) notifyTargets.add(ws);
+  const relay = params.get("relay") === "1";
+  if (relay) relaySubscribers.add(ws);
   attachAppUpdateHost(ws, params);
   alive.add(ws);
   ws.on("pong", () => alive.add(ws));
   const drop = () => {
     subscribers.delete(ws);
     notifyTargets.delete(ws);
+    relaySubscribers.delete(ws);
   };
   ws.on("close", drop);
   ws.on("error", drop);
   // Announce that this server pushes state. A client talking to an older
   // server never hears this and keeps polling fast, so it degrades instead of
   // going quietly stale.
-  if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: "hello", push: true }));
+  if (ws.readyState === ws.OPEN) {
+    const askedAfter = params.get("afterSequence");
+    const after = Number(askedAfter);
+    const resumable = relay && askedAfter !== null && Number.isSafeInteger(after) && after >= 0;
+    const reset = resumable && history.length > 0 && after < history[0].sequence - 1;
+    ws.send(JSON.stringify({
+      type: "hello",
+      push: true,
+      streamId,
+      sequence,
+      peerStreams: [...livePeerStreams],
+      ...(reset ? { reset: true } : {}),
+    }));
+    if (resumable && !reset) {
+      for (const entry of history) {
+        if (entry.sequence > after) ws.send(entry.text);
+      }
+    }
+  }
 }
 
 // Push an arbitrary message to every connected client. Used for live state and
@@ -60,11 +88,34 @@ export function attachNotifyStream(ws: WebSocket, notifies: boolean, params = ne
 // without a poll. Unlike notifications this never falls back to APNs — a client
 // that isn't connected just picks it up on its next refresh.
 export function broadcast(payload: unknown): void {
-  if (subscribers.size === 0) return;
-  const text = JSON.stringify(payload);
+  sequence += 1;
+  const frame = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? { ...(payload as Record<string, unknown>), sequence }
+    : { type: "message", payload, sequence };
+  const text = JSON.stringify(frame);
+  history.push({ sequence, text });
+  if (history.length > HISTORY_LIMIT) history.splice(0, history.length - HISTORY_LIMIT);
   for (const ws of subscribers) {
     if (ws.readyState === ws.OPEN) ws.send(text);
   }
+}
+
+/// Delivers a peer's frame to local clients without sending it back out through
+/// another peer relay.
+export function broadcastPeer(serverId: string, payload: unknown): void {
+  if (subscribers.size === 0) return;
+  const text = JSON.stringify({ type: "peer-frame", serverId, payload });
+  for (const ws of subscribers) {
+    if (!relaySubscribers.has(ws) && ws.readyState === ws.OPEN) ws.send(text);
+  }
+}
+
+/// Keeps late-arriving local clients aware of peer streams that were already
+/// connected before their own socket opened.
+export function setPeerStreamStatus(serverId: string, connected: boolean): void {
+  if (connected) livePeerStreams.add(serverId);
+  else livePeerStreams.delete(serverId);
+  broadcastPeer(serverId, { type: connected ? "hello" : "peer-disconnected", push: connected });
 }
 
 // A session's hook-driven state changed. Clients patch the session in place —
@@ -98,6 +149,7 @@ setInterval(() => {
     if (!alive.has(ws)) {
       subscribers.delete(ws);
       notifyTargets.delete(ws);
+      relaySubscribers.delete(ws);
       ws.terminate();
       continue;
     }

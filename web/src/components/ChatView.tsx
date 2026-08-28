@@ -124,6 +124,8 @@ import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
 import type { Agent, ArchivedThread, Chat, ChatApproval, ChatCodeReference, ChatQuestionRequest, ConvArtifact, ConvDiffLine, ConvEntry } from "@/state/types";
 
+const INITIAL_FEED_ENTRIES = 80;
+
 interface ThreadCheckpoint {
   id: string;
   userText: string;
@@ -191,6 +193,7 @@ export function ChatView({
   const [busy, setBusy] = useState(false);
   const [codeReferences, setCodeReferences] = useState<ChatCodeReference[]>([]);
   const [localToolsShown, setLocalToolsShown] = useState(false);
+  const [fullFeed, setFullFeed] = useState(false);
   const composerRef = useRef<InlineImageComposerHandle>(null);
   const threadTools = useThreadTools(
     chat.id,
@@ -252,13 +255,29 @@ export function ChatView({
   const working = state === "working";
   const conversational = chat.dm === true;
   const entries = open?.entries ?? [];
+  useEffect(() => {
+    if (fullFeed || entries.length <= INITIAL_FEED_ENTRIES) return;
+    const reveal = () => setFullFeed(true);
+    if (typeof window.requestIdleCallback === "function") {
+      const idle = window.requestIdleCallback(reveal, { timeout: 1_500 });
+      return () => window.cancelIdleCallback(idle);
+    }
+    const timer = setTimeout(reveal, 0);
+    return () => clearTimeout(timer);
+  }, [entries.length, fullFeed]);
+  const renderedEntries = useMemo(
+    () => fullFeed || entries.length <= INITIAL_FEED_ENTRIES
+      ? entries
+      : entries.slice(-INITIAL_FEED_ENTRIES),
+    [entries, fullFeed],
+  );
   const visibleEntries = useMemo(
-    () => entries.filter(
+    () => renderedEntries.filter(
       (entry) => conversational
         ? entry.kind === "user" || entry.kind === "assistant" || Boolean(entry.artifacts?.length)
         : entry.kind !== "thinking" || Boolean(entry.text?.trim()),
     ),
-    [conversational, entries],
+    [conversational, renderedEntries],
   );
   const feedItems = useMemo(() => groupToolEntries(visibleEntries), [visibleEntries]);
   const feedTurns = useMemo(() => groupFeedTurns(feedItems), [feedItems]);
@@ -439,6 +458,7 @@ export function ChatView({
                   persona={persona}
                   lead={item.lead}
                   checkpoint={sticky ? checkpoint?.id : undefined}
+                  onOpenLink={!conversational && !archived ? threadTools.openLink : undefined}
                 />
               );
 
@@ -489,6 +509,7 @@ export function ChatView({
           {approval && (
             <ApprovalCard
               approval={approval}
+              onOpenLink={!conversational && !archived ? threadTools.openLink : undefined}
               onDecide={async (decision) => {
                 try {
                   await answerApproval(approval.requestId, decision);
@@ -1137,6 +1158,7 @@ function Entry({
   name,
   persona,
   checkpoint,
+  onOpenLink,
 }: {
   entry: ConvEntry;
   lead: boolean;
@@ -1144,6 +1166,7 @@ function Entry({
   name: string;
   persona?: Agent;
   checkpoint?: string;
+  onOpenLink?: (href: string) => void;
 }) {
   const switched = modelSwitch(entry);
   if (switched) {
@@ -1246,7 +1269,7 @@ function Entry({
           {lead && <MessageHeader>{name}</MessageHeader>}
           <Bubble variant="ghost">
             <BubbleContent>
-              <Markdown text={entry.text ?? ""} />
+              <Markdown text={entry.text ?? ""} onOpenLink={onOpenLink} />
             </BubbleContent>
           </Bubble>
         </MessageContent>
@@ -1608,9 +1631,11 @@ function Diff({ lines }: { lines: ConvDiffLine[] }) {
 function ApprovalCard({
   approval,
   onDecide,
+  onOpenLink,
 }: {
   approval: ChatApproval;
   onDecide: (decision: "allow" | "allowAlways" | "deny") => Promise<void>;
+  onOpenLink?: (href: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const decide = async (decision: "allow" | "allowAlways" | "deny") => {
@@ -1630,7 +1655,7 @@ function ApprovalCard({
       </div>
       {approval.plan && (
         <div className="min-w-0 max-w-full max-h-72 overflow-auto rounded-md bg-muted/50 p-3">
-          <Markdown text={approval.plan} className="min-w-0 max-w-full text-xs" />
+          <Markdown text={approval.plan} className="min-w-0 max-w-full text-xs" onOpenLink={onOpenLink} />
         </div>
       )}
       {approval.diff && approval.diff.length > 0 && <Diff lines={approval.diff} />}

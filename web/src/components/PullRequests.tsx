@@ -8,6 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { PullRequestView } from "@/components/PullRequestView";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
+import { workspaceGroups, type WorkspaceGroup } from "@/lib/projects";
 import { transport } from "@/lib/transport";
 import { cn } from "@/lib/utils";
 import type { Chat, Server, Workspace } from "@/state/types";
@@ -39,6 +40,7 @@ interface AuthoredPullRequest {
   workspacePath: string;
   worktreePath: string | null;
   serverId: string;
+  sourceServerIds?: string[];
 }
 
 const PULL_REQUEST_CACHE_KEY = "remy.pull-requests.v1";
@@ -114,7 +116,18 @@ function mergePullRequests(pullRequests: AuthoredPullRequest[]): AuthoredPullReq
   const byURL = new Map<string, AuthoredPullRequest>();
   for (const pullRequest of pullRequests) {
     const current = byURL.get(pullRequest.url);
-    if (!current || (!current.worktreePath && pullRequest.worktreePath)) byURL.set(pullRequest.url, pullRequest);
+    if (!current) {
+      byURL.set(pullRequest.url, { ...pullRequest, sourceServerIds: [pullRequest.serverId] });
+      continue;
+    }
+    const preferred = !current.worktreePath && pullRequest.worktreePath ? pullRequest : current;
+    byURL.set(pullRequest.url, {
+      ...preferred,
+      sourceServerIds: [...new Set([
+        ...(current.sourceServerIds ?? [current.serverId]),
+        ...(pullRequest.sourceServerIds ?? [pullRequest.serverId]),
+      ])],
+    });
   }
   return [...byURL.values()].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
 }
@@ -255,6 +268,13 @@ export function PullRequests({
     });
   }, [filter, pullRequests, query]);
   const selected = visible.find((pullRequest) => pullRequest.url === selectedURL);
+  const groupedWorkspaces = useMemo(() => workspaceGroups(workspaces, servers), [servers, workspaces]);
+  const workspaceGroupByCopy = useMemo(() => new Map<string, WorkspaceGroup>(
+    groupedWorkspaces.flatMap((group) => group.copies.map((workspace) => [
+      `${workspace.serverId}:${workspace.id}`,
+      group,
+    ] as const)),
+  ), [groupedWorkspaces]);
   const sections = useMemo(() => {
     const grouped = new Map<string, {
       key: string;
@@ -264,16 +284,18 @@ export function PullRequests({
       pullRequests: AuthoredPullRequest[];
     }>();
     for (const pullRequest of visible) {
-      const key = `${pullRequest.serverId}:${pullRequest.workspaceId}`;
+      const workspaceKey = `${pullRequest.serverId}:${pullRequest.workspaceId}`;
+      const group = workspaceGroupByCopy.get(workspaceKey);
+      const key = group?.id ?? workspaceKey;
       let section = grouped.get(key);
       if (!section) {
-        const workspace = workspaces.find((entry) =>
+        const workspace = group?.workspace ?? workspaces.find((entry) =>
           entry.serverId === pullRequest.serverId && entry.id === pullRequest.workspaceId);
         section = {
           key,
           label: workspace?.name ?? pullRequest.workspaceName,
           workspace,
-          server: servers.find((entry) => entry.id === pullRequest.serverId),
+          server: servers.find((entry) => entry.id === (workspace?.serverId ?? pullRequest.serverId)),
           pullRequests: [],
         };
         grouped.set(key, section);
@@ -281,10 +303,15 @@ export function PullRequests({
       section.pullRequests.push(pullRequest);
     }
     return [...grouped.values()];
-  }, [servers, visible, workspaces]);
+  }, [servers, visible, workspaceGroupByCopy, workspaces]);
   const selectedWorkspace = selected && workspaces.find((entry) =>
     entry.serverId === selected.serverId && entry.id === selected.workspaceId);
+  const selectedWorkspaceGroup = selected && workspaceGroupByCopy.get(`${selected.serverId}:${selected.workspaceId}`);
   const selectedServer = selected && servers.find((entry) => entry.id === selected.serverId);
+  const selectedDetailServerId = selected && (
+    servers.find((entry) => entry.local && entry.online && selected.sourceServerIds?.includes(entry.id))?.id
+    ?? selected.serverId
+  );
   const selectedThread = selected && activeThread(selected, chats);
 
   return (
@@ -356,15 +383,16 @@ export function PullRequests({
         {selected ? (
           <PullRequestView
             key={selected.url}
-            serverId={selected.serverId}
+            serverId={selectedDetailServerId ?? selected.serverId}
             repository={selected.repository}
             number={selected.number}
+            onPullRequestChanged={() => void load({ refresh: true })}
             actions={(
               <>
                 {selectedWorkspace && (
                   <Button variant="ghost" size="sm" data-link className="max-w-48" onClick={() => onOpenWorkspace(selectedWorkspace.id)}>
                     <WorkspaceMark home={false} workspace={selectedWorkspace} server={selectedServer} size="sm" />
-                    <span className="truncate">{selected.workspaceName}</span>
+                    <span className="truncate">{selectedWorkspaceGroup?.workspace.name ?? selected.workspaceName}</span>
                   </Button>
                 )}
                 {selectedThread && (

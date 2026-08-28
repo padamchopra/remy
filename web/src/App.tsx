@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/empty";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AppActionsProvider } from "@/actions/context";
@@ -176,6 +177,7 @@ export function App() {
   const archived = useStore((s) => s.archived);
   const allWorkspaces = useStore((s) => s.workspaces);
   const loading = useStore((s) => s.loading);
+  const catalogLoading = useStore((s) => s.catalogLoading);
   const error = useStore((s) => s.error);
   const start = useStore((s) => s.start);
   const loadSettings = useStore((s) => s.loadSettings);
@@ -319,7 +321,7 @@ export function App() {
   const openTicket = route.name === "ticket" ? tickets.find((ticket) => ticket.key === route.key) : undefined;
   // Chats live in the sidebar, so the main pane is either the chat you opened or
   // the composer for the next one. There is no list of them here.
-  const canCompose = !loading && !error && servers.length > 0;
+  const canCompose = !selected && !loading && !error && servers.length > 0;
 
   const draftChat = () => go({ name: "threads" });
 
@@ -364,13 +366,13 @@ export function App() {
   // A thread can be deleted from another window, or the URL can name one that
   // never existed. Fall back to the composer rather than showing an empty pane.
   useEffect(() => {
-    if (!selected || loading) return;
+    if (!selected || catalogLoading) return;
     if (
       allChats.some((chat) => chat.id === selected)
       || archived.some((thread) => thread.id === selected)
     ) return;
     go({ name: "threads" }, true);
-  }, [selected, loading, allChats, archived]);
+  }, [selected, catalogLoading, allChats, archived]);
 
   const chatCounts = (
     <div className="flex items-center gap-4 text-xs text-muted-foreground">
@@ -539,6 +541,15 @@ export function App() {
                 onOpenThread={openChat}
                 onOpenWorkspace={(workspaceId) => go({ name: "workspaces", workspaceId })}
               />
+            ) : section === "chats" && selected && catalogLoading ? (
+              <>
+                <PaneHeader crumbs={[{ label: <Skeleton className="h-4 w-48" /> }]} />
+                <div className="mx-auto flex w-full max-w-[44rem] flex-1 flex-col gap-5 px-6 py-7">
+                  <Skeleton className="h-20 w-3/4 self-end rounded-xl" />
+                  <Skeleton className="h-36 w-full rounded-xl" />
+                  <Skeleton className="h-24 w-5/6 rounded-xl" />
+                </div>
+              </>
             ) : section === "chats" && canCompose ? (
               <ChatComposer
                 workspaces={workspaces}

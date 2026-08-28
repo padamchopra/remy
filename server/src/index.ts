@@ -90,6 +90,7 @@ import {
 } from "./cursor-cloud.js";
 import { handleHookEvent } from "./events.js";
 import { attachNotifyStream, broadcast, deliverFromPeer, pushSession, pushSessionList } from "./notify.js";
+import { startPeerStreamRelay } from "./peer-stream.js";
 import {
   browserSnapshotText,
   browserView,
@@ -162,7 +163,7 @@ import {
   worktreeInfo,
 } from "./git.js";
 import { buildInbox } from "./inbox.js";
-import { listAuthoredPullRequests, markPullRequestRead, pullRequestDiff, pullRequestDiffForCwd, pullRequestTimeline } from "./pull-requests.js";
+import { listAuthoredPullRequests, markPullRequestFileViewed, markPullRequestRead, markPullRequestReady, pullRequestDiff, pullRequestDiffForCwd, pullRequestFileReviewState, pullRequestTimeline } from "./pull-requests.js";
 import { validateChatCodeReferences } from "./chat-references.js";
 import { startPullRequestMonitor } from "./pull-request-monitor.js";
 import {
@@ -903,6 +904,47 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { error: "repository and pull request number are required" });
       }
       return json(res, 200, { marked: await markPullRequestRead(repository, number) });
+    }
+    if (req.method === "POST" && url.pathname === "/pull-requests/ready") {
+      const body = await readJson(req);
+      const repository = String(body.repository ?? "").trim();
+      const number = Number(body.number);
+      if (!/^[^/\s]+\/[^/\s]+$/.test(repository) || !Number.isInteger(number) || number <= 0) {
+        return json(res, 400, { error: "repository and pull request number are required" });
+      }
+      try {
+        await markPullRequestReady(repository, number);
+        return json(res, 200, { ready: true });
+      } catch (error) {
+        return json(res, 502, { error: (error as Error).message || "could not mark that pull request ready" });
+      }
+    }
+    if (req.method === "POST" && url.pathname === "/pull-requests/file-viewed") {
+      const body = await readJson(req);
+      const pullRequestId = String(body.pullRequestId ?? "").trim();
+      const path = String(body.path ?? "").trim();
+      const viewed = body.viewed === true;
+      if (!pullRequestId || pullRequestId.length > 200 || !path || path.length > 4_000 || typeof body.viewed !== "boolean") {
+        return json(res, 400, { error: "pull request, file, and viewed state are required" });
+      }
+      try {
+        await markPullRequestFileViewed(pullRequestId, path, viewed);
+        return json(res, 200, { viewed });
+      } catch (error) {
+        return json(res, 502, { error: (error as Error).message || "could not update that file" });
+      }
+    }
+    if (req.method === "GET" && url.pathname === "/pull-requests/file-views") {
+      const repository = String(url.searchParams.get("repository") ?? "").trim();
+      const number = Number(url.searchParams.get("number"));
+      if (!/^[^/\s]+\/[^/\s]+$/.test(repository) || !Number.isInteger(number) || number <= 0) {
+        return json(res, 400, { error: "repository and pull request number are required" });
+      }
+      try {
+        return json(res, 200, { review: await pullRequestFileReviewState(repository, number) });
+      } catch (error) {
+        return json(res, 502, { error: (error as Error).message || "could not load file review state" });
+      }
     }
     if (req.method === "GET" && url.pathname === "/pull-requests/timeline") {
       const repository = String(url.searchParams.get("repository") ?? "").trim();
@@ -2374,3 +2416,4 @@ startPeerSync(() => {
   syncActiveTicketThreads();
   broadcast({ type: "board" });
 });
+startPeerStreamRelay();

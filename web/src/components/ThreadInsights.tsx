@@ -43,6 +43,7 @@ interface ThreadAnalyticsReport {
   turns: number;
   toolCalls: number;
   skillInvocations: number;
+  skills?: Array<{ name: string; count: number }>;
   sessionSpanMs: number;
   measuredActiveMs: number;
   currentRunMs: number;
@@ -197,14 +198,11 @@ export function ThreadAnalyticsTool({ chatId, serverId, enabled }: { chatId: str
         />
       ) : null}
 
-      <StatListCard
-        title="Activity"
-        description="Only work recorded in this thread."
-        rows={[
-          { label: "Tool calls", value: formatNumber(report.toolCalls) },
-          { label: "Skill invocations", value: formatNumber(report.skillInvocations) },
-          { label: "Turns", value: formatNumber(report.turns) },
-        ]}
+      <ActivityCard
+        toolCalls={report.toolCalls}
+        skillInvocations={report.skillInvocations}
+        turns={report.turns}
+        skills={report.skills}
       />
 
       {report.models.length > 0 ? (
@@ -428,6 +426,66 @@ function StatListCard({
             </div>
           ))}
         </ItemGroup>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ActivityCard({
+  toolCalls,
+  skillInvocations,
+  turns,
+  skills,
+}: {
+  toolCalls: number;
+  skillInvocations: number;
+  turns: number;
+  skills?: Array<{ name: string; count: number }>;
+}) {
+  const rows = [
+    { label: "Tool calls", value: formatNumber(toolCalls) },
+    { label: "Skill invocations", value: formatNumber(skillInvocations) },
+    { label: "Turns", value: formatNumber(turns) },
+  ];
+  return (
+    <Card className="gap-3 py-4">
+      <CardHeader className="px-4">
+        <CardTitle className="text-sm">Activity</CardTitle>
+        <CardDescription>Only work recorded in this thread.</CardDescription>
+      </CardHeader>
+      <CardContent className="px-2">
+        <ItemGroup>
+          {rows.map((row, index) => (
+            <div key={row.label}>
+              {index > 0 ? <ItemSeparator /> : null}
+              <Item size="sm">
+                <ItemContent><ItemTitle className="font-normal">{row.label}</ItemTitle></ItemContent>
+                <ItemActions><span className="tabular-nums text-muted-foreground">{row.value}</span></ItemActions>
+              </Item>
+            </div>
+          ))}
+        </ItemGroup>
+        <div className="mx-2 mt-3 border-t pt-3">
+          <p className="mb-1 px-2 text-xs font-medium text-muted-foreground">Skills</p>
+          {skills === undefined ? (
+            <p className="px-2 py-2 text-sm text-muted-foreground">Update this device to see skill names.</p>
+          ) : skills.length > 0 ? (
+            <ItemGroup>
+              {skills.map((skill) => (
+                <Item key={skill.name} size="sm">
+                  <ItemContent className="min-w-0">
+                    <ItemTitle className="truncate font-mono text-xs font-normal">{skill.name}</ItemTitle>
+                  </ItemContent>
+                  <ItemActions>
+                    <span className="tabular-nums text-muted-foreground">{formatNumber(skill.count)}</span>
+                  </ItemActions>
+                </Item>
+              ))}
+            </ItemGroup>
+          ) : (
+            <p className="px-2 py-2 text-sm text-muted-foreground">No skills were invoked.</p>
+          )}
+        </div>
       </CardContent>
     </Card>
   );

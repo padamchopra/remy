@@ -131,6 +131,10 @@ interface State {
   /// this client's pairing and means nothing to another client.
   boardDevices: { deviceId: string; serverId: string }[];
   boardLoading: boolean;
+  /// A fleet catalogue read is still waiting on at least one device. This is
+  /// separate from `loading`, which clears as soon as there is anything useful
+  /// to paint.
+  catalogLoading: boolean;
   loading: boolean;
   /// Set when every configured server failed, so the UI can say why rather than
   /// showing an empty list as though nothing were running.
@@ -242,6 +246,46 @@ interface State {
 /// How often to poll. Long while pushes are arriving, short while they aren't.
 const POLL_CONNECTED_MS = 15_000;
 const POLL_DISCONNECTED_MS = 4_000;
+const PEER_DETAIL_POLL_VISIBLE_MS = 1_000;
+const PEER_DETAIL_POLL_HIDDEN_MS = 5_000;
+const DETAIL_CACHE_LIMIT = 12;
+const detailCache = new Map<string, ChatDetail>();
+const pendingDetails = new Map<string, Promise<ChatDetail>>();
+const pushPeerServers = new Set<string>();
+let refreshRun = 0;
+let pendingRefresh: Promise<void> | undefined;
+
+function detailKey(id: string, serverId: string): string {
+  return `${serverId}:${id}`;
+}
+
+function cacheDetail(detail: ChatDetail): void {
+  const key = detailKey(detail.id, detail.serverId);
+  detailCache.delete(key);
+  detailCache.set(key, detail);
+  while (detailCache.size > DETAIL_CACHE_LIMIT) {
+    const oldest = detailCache.keys().next().value;
+    if (oldest === undefined) break;
+    detailCache.delete(oldest);
+  }
+}
+
+async function readChatDetail(id: string, serverId: string): Promise<ChatDetail> {
+  const key = detailKey(id, serverId);
+  const existing = pendingDetails.get(key);
+  if (existing) return existing;
+  const pending = transport.request<RawChatDetail>(serverId, `/chats/${encodeURIComponent(id)}`)
+    .then((raw) => {
+      const detail = toDetail(raw, serverId);
+      cacheDetail(detail);
+      return detail;
+    })
+    .finally(() => {
+      if (pendingDetails.get(key) === pending) pendingDetails.delete(key);
+    });
+  pendingDetails.set(key, pending);
+  return pending;
+}
 
 export const useStore = create<State>((set, get) => ({
   servers: useFixture ? fixtureServers : [],
@@ -256,6 +300,7 @@ export const useStore = create<State>((set, get) => ({
   pairRequests: [],
   boardDevices: [],
   boardLoading: false,
+  catalogLoading: !useFixture,
   detailLoading: false,
   loading: !useFixture,
   connected: useFixture,
@@ -271,8 +316,27 @@ export const useStore = create<State>((set, get) => ({
       .then(() => get().loadPairRequests())
       .catch(() => {});
 
-    const offPush = transport.subscribe((_serverId, payload) => {
+    const offPush = transport.subscribe((serverId, payload) => {
       const frame = payload as ChatFrame;
+      if (frame.type === "hello") {
+        pushPeerServers.add(serverId);
+        for (const peerId of frame.peerStreams ?? []) pushPeerServers.add(peerId);
+        return;
+      }
+      if (frame.type === "peer-disconnected") {
+        pushPeerServers.delete(serverId);
+        return;
+      }
+      if (frame.type === "peer-reset") {
+        pushPeerServers.add(serverId);
+        const detail = get().detail;
+        if (detail?.serverId === serverId && get().openId === detail.id) {
+          void readChatDetail(detail.id, serverId).then((next) => {
+            if (get().openId === next.id) set({ detail: next, detailLoading: false });
+          }).catch(() => {});
+        }
+        return;
+      }
       if (frame.type === "chats") {
         void get().refresh();
         return;
@@ -315,6 +379,8 @@ export const useStore = create<State>((set, get) => ({
     // Re-armed after each run rather than a fixed interval, so a slow refresh
     // cannot stack requests on a struggling server.
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let detailTimer: ReturnType<typeof setTimeout> | undefined;
+    let detailPolling = false;
     let stopped = false;
     const poll = async () => {
       if (stopped) return;
@@ -330,9 +396,48 @@ export const useStore = create<State>((set, get) => ({
     };
     timer = setTimeout(() => void poll(), POLL_CONNECTED_MS);
 
+    // A daemon from before peer streaming landed cannot relay another
+    // machine's live frames. Keep the open feed fresh for that compatibility
+    // case, and stop as soon as this daemon announces a peer stream.
+    const pollOpenPeer = async () => {
+      if (stopped || detailPolling) return;
+      detailPolling = true;
+      try {
+        const current = get();
+        const detail = current.detail;
+        const peer = detail && current.servers.find((server) => server.id === detail.serverId)?.peer;
+        if (detail && current.openId === detail.id && peer && !pushPeerServers.has(detail.serverId)) {
+          const next = await readChatDetail(detail.id, detail.serverId);
+          if (get().openId === detail.id) set({ detail: next, detailLoading: false });
+        }
+      } catch {
+        // The existing feed remains useful through a transient peer failure.
+      } finally {
+        detailPolling = false;
+        if (!stopped) {
+          detailTimer = setTimeout(
+            () => void pollOpenPeer(),
+            document.visibilityState === "visible"
+              ? PEER_DETAIL_POLL_VISIBLE_MS
+              : PEER_DETAIL_POLL_HIDDEN_MS,
+          );
+        }
+      }
+    };
+    const wakePeerPoll = () => {
+      if (document.visibilityState !== "visible") return;
+      if (detailTimer) clearTimeout(detailTimer);
+      detailTimer = undefined;
+      void pollOpenPeer();
+    };
+    detailTimer = setTimeout(() => void pollOpenPeer(), PEER_DETAIL_POLL_VISIBLE_MS);
+    document.addEventListener("visibilitychange", wakePeerPoll);
+
     return () => {
       stopped = true;
       if (timer) clearTimeout(timer);
+      if (detailTimer) clearTimeout(detailTimer);
+      document.removeEventListener("visibilitychange", wakePeerPoll);
       offPush();
       offStatus();
     };
@@ -340,104 +445,131 @@ export const useStore = create<State>((set, get) => ({
 
   async refresh() {
     if (useFixture) return;
-    if (get().servers.length === 0) set({ loading: true });
+    if (pendingRefresh) return pendingRefresh;
+    const pending = (async () => {
+      const run = ++refreshRun;
+      set({ catalogLoading: true });
+      if (get().servers.length === 0) set({ loading: true });
 
-    const servers = await transport.servers();
-    if (servers.length === 0) {
-      set({ servers: [], chats: [], archived: [], dms: [], workspaces: [], loading: false, error: undefined });
-      return;
-    }
+      let servers: Server[];
+      try {
+        servers = await transport.servers();
+      } catch (error) {
+        if (run === refreshRun) set({ catalogLoading: false });
+        throw error;
+      }
+      if (servers.length === 0) {
+        set({
+          servers: [],
+          chats: [],
+          archived: [],
+          dms: [],
+          workspaces: [],
+          loading: false,
+          catalogLoading: run === refreshRun ? false : get().catalogLoading,
+          error: undefined,
+        });
+        return;
+      }
 
-    // The device list itself is known now, so it lands before anything is
-    // asked of any of them. A machine that has gone away takes its threads and
-    // its workspaces with it rather than leaving them behind.
-    const known = new Set(servers.map((server) => server.id));
-    set((current) => ({
-      servers,
-      chats: current.chats.filter((chat) => known.has(chat.serverId)),
-      archived: current.archived.filter((chat) => known.has(chat.serverId)),
-      dms: current.dms.filter((chat) => known.has(chat.serverId)),
-      workspaces: current.workspaces.filter((workspace) => known.has(workspace.serverId)),
-    }));
+      // The device list itself is known now, so it lands before anything is
+      // asked of any of them. A machine that has gone away takes its threads and
+      // its workspaces with it rather than leaving them behind.
+      const known = new Set(servers.map((server) => server.id));
+      set((current) => ({
+        servers,
+        chats: current.chats.filter((chat) => known.has(chat.serverId)),
+        archived: current.archived.filter((chat) => known.has(chat.serverId)),
+        dms: current.dms.filter((chat) => known.has(chat.serverId)),
+        workspaces: current.workspaces.filter((workspace) => known.has(workspace.serverId)),
+      }));
 
-    // Every machine is asked in parallel and each one paints as it answers,
-    // rather than the round landing all at once at the end. The threads on this
-    // machine come back in a millisecond; waiting for a device that is asleep
-    // to give up first is what kept them off the screen for seconds.
-    const failures = new Map<string, string>();
-    await Promise.all(
-      servers.map(async (server) => {
-        try {
-          const [chats, archives, workspaces] = await Promise.all([
-            transport.request<{ chats?: RawChat[]; dms?: RawChat[] }>(server.id, "/chats").catch((error: unknown) => {
-              // An older server has no /chats; that is not an error worth showing.
-              const message = error instanceof Error ? error.message : String(error);
-              if (!/\b404\b/.test(message)) throw error;
-              return { chats: [] } as { chats?: RawChat[]; dms?: RawChat[] };
-            }),
-            transport
-              .request<{ archives?: RawArchive[] }>(server.id, "/archives")
-              .then((listed) => listed.archives ?? [])
-              .catch(() => []),
-            transport
-              .request<{ workspaces?: RawWorkspace[] }>(server.id, "/workspaces")
-              .then((listed) => listed.workspaces ?? [])
-              .catch(() => undefined),
-          ]);
-          set((current) => {
-            const nextWorkspaces = workspaces === undefined
-              ? current.workspaces
-              : [
-                  ...current.workspaces.filter((workspace) => workspace.serverId !== server.id),
-                  ...workspaces.map((raw) => toWorkspace(raw, server.id)),
-                ];
-            return {
-              // One machine answering is enough to stop saying "Connecting…":
-              // there is something to show, and there is somewhere to type.
-              loading: false,
+      // Every machine is asked in parallel and each one paints as it answers,
+      // rather than the round landing all at once at the end. The threads on this
+      // machine come back in a millisecond; waiting for a device that is asleep
+      // to give up first is what kept them off the screen for seconds.
+      const failures = new Map<string, string>();
+      await Promise.all(
+        servers.map(async (server) => {
+          try {
+            const [chats, archives, workspaces] = await Promise.all([
+              transport.request<{ chats?: RawChat[]; dms?: RawChat[] }>(server.id, "/chats").catch((error: unknown) => {
+                // An older server has no /chats; that is not an error worth showing.
+                const message = error instanceof Error ? error.message : String(error);
+                if (!/\b404\b/.test(message)) throw error;
+                return { chats: [] } as { chats?: RawChat[]; dms?: RawChat[] };
+              }),
+              transport
+                .request<{ archives?: RawArchive[] }>(server.id, "/archives")
+                .then((listed) => listed.archives ?? [])
+                .catch(() => []),
+              transport
+                .request<{ workspaces?: RawWorkspace[] }>(server.id, "/workspaces")
+                .then((listed) => listed.workspaces ?? [])
+                .catch(() => undefined),
+            ]);
+            set((current) => {
+              const nextWorkspaces = workspaces === undefined
+                ? current.workspaces
+                : [
+                    ...current.workspaces.filter((workspace) => workspace.serverId !== server.id),
+                    ...workspaces.map((raw) => toWorkspace(raw, server.id)),
+                  ];
+              return {
+                // One machine answering is enough to stop saying "Connecting…":
+                // there is something to show, and there is somewhere to type.
+                loading: false,
+                servers: current.servers.map((entry) =>
+                  entry.id === server.id ? { ...entry, online: entry.cloud ? entry.online : true } : entry),
+                chats: [
+                  ...current.chats.filter((chat) => chat.serverId !== server.id),
+                  ...(chats.chats ?? []).map((raw) => toChat(raw, server.id)),
+                ].sort(byAttention),
+                archived: [
+                  ...current.archived.filter((chat) => chat.serverId !== server.id),
+                  ...archives.map((raw) => toArchivedThread(raw, server.id)),
+                ].sort((a, b) => b.archivedAt - a.archivedAt),
+                // The inbox comes back in the same answer, so it lands with the
+                // threads rather than costing a second round trip.
+                dms: [
+                  ...current.dms.filter((chat) => chat.serverId !== server.id),
+                  ...(chats.dms ?? []).map((raw) => toChat(raw, server.id)),
+                ],
+                // Keep the last catalogue when a paired machine is asleep. Its
+                // folders still exist there, and the device chip already says the
+                // machine is offline. A successful empty answer still clears it.
+                workspaces: applyProjectIdentity(nextWorkspaces, current.projects),
+              };
+            });
+          } catch (error) {
+            failures.set(server.id, `${server.name}: ${error instanceof Error ? error.message : String(error)}`);
+            set((current) => ({
               servers: current.servers.map((entry) =>
-                entry.id === server.id ? { ...entry, online: entry.cloud ? entry.online : true } : entry),
-              chats: [
-                ...current.chats.filter((chat) => chat.serverId !== server.id),
-                ...(chats.chats ?? []).map((raw) => toChat(raw, server.id)),
-              ].sort(byAttention),
-              archived: [
-                ...current.archived.filter((chat) => chat.serverId !== server.id),
-                ...archives.map((raw) => toArchivedThread(raw, server.id)),
-              ].sort((a, b) => b.archivedAt - a.archivedAt),
-              // The inbox comes back in the same answer, so it lands with the
-              // threads rather than costing a second round trip.
-              dms: [
-                ...current.dms.filter((chat) => chat.serverId !== server.id),
-                ...(chats.dms ?? []).map((raw) => toChat(raw, server.id)),
-              ],
-              // Keep the last catalogue when a paired machine is asleep. Its
-              // folders still exist there, and the device chip already says the
-              // machine is offline. A successful empty answer still clears it.
-              workspaces: applyProjectIdentity(nextWorkspaces, current.projects),
-            };
-          });
-        } catch (error) {
-          failures.set(server.id, `${server.name}: ${error instanceof Error ? error.message : String(error)}`);
-          set((current) => ({
-            servers: current.servers.map((entry) =>
-              entry.id === server.id ? { ...entry, online: false } : entry),
-            chats: current.chats.filter((chat) => chat.serverId !== server.id),
-            archived: current.archived.filter((chat) => chat.serverId !== server.id),
-            dms: current.dms.filter((chat) => chat.serverId !== server.id),
-            // A transient connection failure must not make that machine's
-            // workspaces disappear from the fleet catalogue.
-            workspaces: current.workspaces,
-          }));
-        }
-      }),
-    );
+                entry.id === server.id ? { ...entry, online: false } : entry),
+              chats: current.chats.filter((chat) => chat.serverId !== server.id),
+              archived: current.archived.filter((chat) => chat.serverId !== server.id),
+              dms: current.dms.filter((chat) => chat.serverId !== server.id),
+              // A transient connection failure must not make that machine's
+              // workspaces disappear from the fleet catalogue.
+              workspaces: current.workspaces,
+            }));
+          }
+        }),
+      );
 
-    set((current) => ({
-      loading: false,
-      error: failures.size === servers.length ? [...failures.values()].join("; ") : undefined,
-      connected: current.servers.some((server) => server.online),
-    }));
+      set((current) => ({
+        loading: false,
+        catalogLoading: run === refreshRun ? false : current.catalogLoading,
+        error: failures.size === servers.length ? [...failures.values()].join("; ") : undefined,
+        connected: current.servers.some((server) => server.online),
+      }));
+    })();
+    pendingRefresh = pending;
+    try {
+      await pending;
+    } finally {
+      if (pendingRefresh === pending) pendingRefresh = undefined;
+    }
   },
 
   async addServer(input) {
@@ -829,10 +961,16 @@ export const useStore = create<State>((set, get) => ({
     const chat = get().chats.find((entry) => entry.id === id)
       ?? get().dms.find((entry) => entry.id === id);
     if (!chat) return;
+    const cached = detailCache.get(detailKey(id, chat.serverId));
+    if (cached) cacheDetail(cached);
     // Keep whatever is already on screen for this chat, so reopening it does
     // not blank the feed while the fetch is in flight.
     const same = get().detail?.id === id;
-    set({ openId: id, detailLoading: !same, ...(same ? {} : { detail: undefined }) });
+    set({
+      openId: id,
+      detailLoading: !same && !cached,
+      ...(same ? {} : { detail: cached }),
+    });
 
     if (useFixture) {
       set({ detail: { ...chat, entries: [], todos: [] }, detailLoading: false });
@@ -840,14 +978,11 @@ export const useStore = create<State>((set, get) => ({
     }
 
     try {
-      const raw = await transport.request<RawChatDetail>(
-        chat.serverId,
-        `/chats/${encodeURIComponent(id)}`,
-      );
+      const next = await readChatDetail(id, chat.serverId);
       // A slow fetch for a chat that has since been closed must not paint over
       // the one that is open now.
       if (get().openId !== id) return;
-      set({ detail: toDetail(raw, chat.serverId), detailLoading: false });
+      set({ detail: next, detailLoading: false });
     } catch (error) {
       if (get().openId !== id) return;
       set({ detailLoading: false });
@@ -909,6 +1044,7 @@ export const useStore = create<State>((set, get) => ({
       method: "POST",
       body: {},
     });
+    detailCache.delete(detailKey(id, chat.serverId));
     await get().refresh();
   },
 
@@ -941,6 +1077,7 @@ export const useStore = create<State>((set, get) => ({
     const chat = get().chats.find((entry) => entry.id === id);
     if (!chat) return;
     await transport.request(chat.serverId, `/chats/${encodeURIComponent(id)}`, { method: "DELETE" });
+    detailCache.delete(detailKey(id, chat.serverId));
     await get().refresh();
     // The thread let go of any ticket it was on, so the board is stale.
     await get().loadBoard().catch(() => {});
@@ -1359,6 +1496,7 @@ export const useStore = create<State>((set, get) => ({
 /// fields are always sent whole, so `null` means cleared rather than unchanged.
 interface ChatFrame {
   type?: string;
+  peerStreams?: string[];
   chatId?: string;
   unread?: boolean;
   entries?: ConvEntry[];
@@ -1454,7 +1592,7 @@ function mergeDetail(detail: ChatDetail, frame: ChatFrame): ChatDetail {
     }
     entries = next;
   }
-  return {
+  const next = {
     ...detail,
     entries,
     state: frame.state ?? detail.state,
@@ -1469,6 +1607,8 @@ function mergeDetail(detail: ChatDetail, frame: ChatFrame): ChatDetail {
     workingSince:
       frame.workingSince === undefined ? detail.workingSince : (frame.workingSince ?? undefined),
   };
+  cacheDetail(next);
+  return next;
 }
 
 function toChat(raw: RawChat, serverId: string): Chat {

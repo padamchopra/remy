@@ -44,6 +44,22 @@ Read state back from the server rather than trusting the screen: the endpoints u
 
 Anything you create while testing — a thread, a workspace, a changed setting — you delete or restore before you finish.
 
+## Remote live state
+
+Use this scenario after changing peer transport, subscriptions, caching, remote detail loading, reconnect behavior, or a view whose state can be owned by another device.
+
+- Open a real thread owned by another available device and keep its hash route visible.
+- Record catalogue and detail request counts before judging the paint.
+- Observe a remote turn while it changes; the feed updates without switching threads, changing sections, or reloading.
+- In an isolated paired test, disconnect and reconnect the peer stream; missed entries arrive once, in order, without replacing useful cached content during the gap.
+- In an isolated paired test, restart or reset the remote stream; the open detail performs a full read when it cannot resume.
+- Reload the remote thread's deep link; it stays on that route while the remote catalogue answers and does not flash the composer for a different thread.
+- Hide and show the window; foregrounding does not create overlapping detail reads.
+
+Do not send, interrupt, restart, or otherwise mutate somebody's active production thread merely to create an update. Observe existing safe activity, use disposable paired instances, or report that live interaction proof is unavailable.
+
+A UI preview against the packaged daemon does not prove current server relay code. Pair it with the relay integration test or an isolated current-server run, and state which boundary each result covers.
+
 ## Named things lead somewhere
 
 Wherever a surface names something that lives elsewhere in Remy — a workspace, a device, an agent, a thread, a ticket, a branch's checkout — it carries that thing's own mark and it opens it. A bare word is a dead end, and the person reading it came to that pane precisely because they wanted the thing behind the word.
