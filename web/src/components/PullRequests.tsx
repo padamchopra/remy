@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { CircleDot, GitPullRequest, RefreshCw, Search } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CircleDot, Folder, GitPullRequest, RefreshCw, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
@@ -39,6 +39,75 @@ interface AuthoredPullRequest {
   workspacePath: string;
   worktreePath: string | null;
   serverId: string;
+}
+
+const PULL_REQUEST_CACHE_KEY = "remy.pull-requests.v1";
+const PULL_REQUEST_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
+const PULL_REQUEST_POLL_MS = 60_000;
+
+function isCachedPullRequest(value: unknown): value is AuthoredPullRequest {
+  if (!value || typeof value !== "object") return false;
+  const pullRequest = value as Partial<AuthoredPullRequest>;
+  return typeof pullRequest.url === "string"
+    && typeof pullRequest.number === "number"
+    && typeof pullRequest.title === "string"
+    && typeof pullRequest.repository === "string"
+    && typeof pullRequest.headRefName === "string"
+    && typeof pullRequest.updatedAt === "string"
+    && typeof pullRequest.isDraft === "boolean"
+    && typeof pullRequest.reviewDecision === "string"
+    && typeof pullRequest.additions === "number"
+    && typeof pullRequest.deletions === "number"
+    && Array.isArray(pullRequest.checks)
+    && pullRequest.checks.every((check) => check && typeof check.state === "string")
+    && typeof pullRequest.hasUnreadActivity === "boolean"
+    && typeof pullRequest.workspaceId === "string"
+    && typeof pullRequest.workspaceName === "string"
+    && typeof pullRequest.workspacePath === "string"
+    && typeof pullRequest.serverId === "string";
+}
+
+function readPullRequestCache(): Map<string, AuthoredPullRequest[]> {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PULL_REQUEST_CACHE_KEY) ?? "null") as {
+      savedAt?: unknown;
+      byServer?: unknown;
+    } | null;
+    if (
+      !parsed
+      || typeof parsed.savedAt !== "number"
+      || Date.now() - parsed.savedAt > PULL_REQUEST_CACHE_MAX_AGE_MS
+      || !parsed.byServer
+      || typeof parsed.byServer !== "object"
+    ) return new Map();
+    return new Map(Object.entries(parsed.byServer as Record<string, unknown>).flatMap(([serverId, value]) =>
+      Array.isArray(value) ? [[serverId, value.filter(isCachedPullRequest)]] : [],
+    ));
+  } catch {
+    return new Map();
+  }
+}
+
+const pullRequestCache = readPullRequestCache();
+
+function cachedPullRequests(serverIds: string[]): AuthoredPullRequest[] {
+  return mergePullRequests(serverIds.flatMap((serverId) => pullRequestCache.get(serverId) ?? []));
+}
+
+function hasCachedPullRequests(serverIds: string[]): boolean {
+  return serverIds.some((serverId) => pullRequestCache.has(serverId));
+}
+
+function cachePullRequests(serverId: string, pullRequests: AuthoredPullRequest[]) {
+  pullRequestCache.set(serverId, pullRequests);
+  try {
+    localStorage.setItem(PULL_REQUEST_CACHE_KEY, JSON.stringify({
+      savedAt: Date.now(),
+      byServer: Object.fromEntries(pullRequestCache),
+    }));
+  } catch {
+    // The in-memory snapshot still keeps navigation and refreshes stable.
+  }
 }
 
 function mergePullRequests(pullRequests: AuthoredPullRequest[]): AuthoredPullRequest[] {
@@ -86,13 +155,6 @@ function needsAttention(pullRequest: AuthoredPullRequest): boolean {
     || pullRequest.checks.some((check) => check.state === "fail");
 }
 
-function statusTone(pullRequest: AuthoredPullRequest): string {
-  if (pullRequest.checks.some((check) => check.state === "fail")) return "bg-destructive";
-  if (pullRequest.reviewDecision === "APPROVED") return "bg-success-foreground";
-  if (pullRequest.isDraft) return "bg-muted-foreground";
-  return "bg-warning-foreground";
-}
-
 export function PullRequests({
   servers,
   workspaces,
@@ -106,36 +168,76 @@ export function PullRequests({
   onOpenThread: (id: string) => void;
   onOpenWorkspace: (id: string) => void;
 }) {
-  const [pullRequests, setPullRequests] = useState<AuthoredPullRequest[]>([]);
+  const serverIds = servers.filter((server) => !server.workspaceOnly).map((server) => server.id).sort();
+  const serverKey = servers
+    .filter((server) => !server.workspaceOnly)
+    .map((server) => `${server.id}:${server.online ? "online" : "offline"}`)
+    .sort()
+    .join("\u0000");
+  const serversRef = useRef(servers);
+  serversRef.current = servers;
+  const [pullRequests, setPullRequests] = useState<AuthoredPullRequest[]>(() => cachedPullRequests(serverIds));
   const [filter, setFilter] = useState<PullRequestFilter>("all");
   const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!hasCachedPullRequests(serverIds));
   const [refreshing, setRefreshing] = useState(false);
   const [selectedURL, setSelectedURL] = useState("");
+  const requestId = useRef(0);
+  const progressRequestId = useRef<number | undefined>(undefined);
 
-  const load = useCallback(async (refresh = false) => {
-    if (refresh) setRefreshing(true);
-    else setLoading(true);
-    const available = servers.filter((server) => server.online && !server.workspaceOnly);
+  const load = useCallback(async ({ refresh = false, showProgress = false } = {}) => {
+    const currentRequest = ++requestId.current;
+    if (showProgress) {
+      progressRequestId.current = currentRequest;
+      setRefreshing(true);
+    }
+    const eligible = serversRef.current.filter((server) => !server.workspaceOnly);
+    const available = eligible.filter((server) => server.online);
+    const eligibleIds = eligible.map((server) => server.id);
+    const cached = cachedPullRequests(eligibleIds);
+    if (hasCachedPullRequests(eligibleIds)) {
+      setPullRequests(cached);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     const batches = await Promise.all(available.map(async (server) => {
       try {
         const response = await transport.request<{ pullRequests?: Omit<AuthoredPullRequest, "serverId">[] }>(
           server.id,
           `/pull-requests${refresh ? "?refresh=1" : ""}`,
         );
-        return (response.pullRequests ?? []).map((pullRequest) => ({ ...pullRequest, serverId: server.id }));
+        return {
+          serverId: server.id,
+          pullRequests: (response.pullRequests ?? []).map((pullRequest) => ({ ...pullRequest, serverId: server.id })),
+        };
       } catch {
-        return [];
+        return undefined;
       }
     }));
-    setPullRequests(mergePullRequests(batches.flat()));
+    if (currentRequest !== requestId.current) {
+      if (progressRequestId.current === currentRequest) {
+        progressRequestId.current = undefined;
+        setRefreshing(false);
+      }
+      return;
+    }
+    for (const batch of batches) {
+      if (batch) cachePullRequests(batch.serverId, batch.pullRequests);
+    }
+    setPullRequests(cachedPullRequests(eligibleIds));
     setLoading(false);
-    setRefreshing(false);
-  }, [servers]);
+    if (progressRequestId.current === currentRequest) {
+      progressRequestId.current = undefined;
+      setRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
     void load();
-  }, [load]);
+    const timer = window.setInterval(() => void load(), PULL_REQUEST_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [load, serverKey]);
 
   const counts = useMemo(() => ({
     all: pullRequests.length,
@@ -153,10 +255,33 @@ export function PullRequests({
     });
   }, [filter, pullRequests, query]);
   const selected = visible.find((pullRequest) => pullRequest.url === selectedURL);
-  const sections = [
-    { label: "Needs attention", pullRequests: visible.filter(needsAttention) },
-    { label: "Pull requests", pullRequests: visible.filter((pullRequest) => !needsAttention(pullRequest)) },
-  ].filter((section) => section.pullRequests.length > 0);
+  const sections = useMemo(() => {
+    const grouped = new Map<string, {
+      key: string;
+      label: string;
+      workspace?: Workspace;
+      server?: Server;
+      pullRequests: AuthoredPullRequest[];
+    }>();
+    for (const pullRequest of visible) {
+      const key = `${pullRequest.serverId}:${pullRequest.workspaceId}`;
+      let section = grouped.get(key);
+      if (!section) {
+        const workspace = workspaces.find((entry) =>
+          entry.serverId === pullRequest.serverId && entry.id === pullRequest.workspaceId);
+        section = {
+          key,
+          label: workspace?.name ?? pullRequest.workspaceName,
+          workspace,
+          server: servers.find((entry) => entry.id === pullRequest.serverId),
+          pullRequests: [],
+        };
+        grouped.set(key, section);
+      }
+      section.pullRequests.push(pullRequest);
+    }
+    return [...grouped.values()];
+  }, [servers, visible, workspaces]);
   const selectedWorkspace = selected && workspaces.find((entry) =>
     entry.serverId === selected.serverId && entry.id === selected.workspaceId);
   const selectedServer = selected && servers.find((entry) => entry.id === selected.serverId);
@@ -178,7 +303,7 @@ export function PullRequests({
             <ToggleGroupItem value="ready" className="px-2.5">Ready <span className="text-muted-foreground">{counts.ready}</span></ToggleGroupItem>
             <ToggleGroupItem value="draft" className="px-2.5">Drafts <span className="text-muted-foreground">{counts.draft}</span></ToggleGroupItem>
           </ToggleGroup>
-          <Button variant="ghost" size="icon-sm" className="ml-auto" disabled={refreshing} onClick={() => void load(true)} aria-label="Refresh pull requests">
+          <Button variant="ghost" size="icon-sm" className="ml-auto" disabled={refreshing} onClick={() => void load({ refresh: true, showProgress: true })} aria-label="Refresh pull requests">
             <RefreshCw className={refreshing ? "animate-spin" : undefined} />
           </Button>
         </div>
@@ -206,8 +331,15 @@ export function PullRequests({
           <ScrollArea className="min-h-0 flex-1">
             <div className="pb-3">
               {sections.map((section) => (
-                <section key={section.label} aria-label={section.label}>
-                  <h2 className="px-4 pb-1 pt-3 text-[11px] font-medium text-muted-foreground">{section.label}</h2>
+                <section key={section.key} aria-label={section.label}>
+                  <h2 className="flex items-center gap-2 px-4 pb-1 pt-3 text-[11px] font-medium text-muted-foreground">
+                    {section.workspace ? (
+                      <WorkspaceMark home={false} workspace={section.workspace} server={section.server} size="sm" />
+                    ) : (
+                      <Folder className="size-4 shrink-0" />
+                    )}
+                    <span className="truncate">{section.label}</span>
+                  </h2>
                   <ItemGroup className="gap-0 px-2">
                     {section.pullRequests.map((pullRequest) => (
                       <PullRequestListItem key={pullRequest.url} pullRequest={pullRequest} selected={selected?.url === pullRequest.url} onSelect={() => setSelectedURL(pullRequest.url)} />
@@ -271,10 +403,15 @@ function PullRequestListItem({ pullRequest, selected, onSelect }: { pullRequest:
       <button type="button" data-link aria-pressed={selected} onClick={onSelect}>
         <ItemMedia className="relative col-start-1 row-start-1 self-start text-muted-foreground">
           <GitPullRequest className="size-4" />
-          <span className={cn("absolute -bottom-0.5 -right-0.5 size-2 rounded-full border-2 border-background", statusTone(pullRequest))} />
+          {needsAttention(pullRequest) && (
+            <span aria-hidden="true" className="absolute -bottom-0.5 -right-0.5 size-2 rounded-full border-2 border-background bg-destructive" />
+          )}
         </ItemMedia>
         <ItemContent className="col-start-2 row-start-1 min-w-0 gap-1">
-          <ItemTitle className="w-full min-w-0 font-normal"><span className="truncate">{pullRequest.title}</span></ItemTitle>
+          <ItemTitle className="w-full min-w-0 font-normal">
+            <span className="truncate">{pullRequest.title}</span>
+            {needsAttention(pullRequest) && <span className="sr-only">Needs attention</span>}
+          </ItemTitle>
           <ItemDescription className="block min-w-0 truncate text-left text-[11px] text-nowrap">
             {pullRequest.repository} · {pullRequest.headRefName}
           </ItemDescription>
