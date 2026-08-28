@@ -157,7 +157,7 @@ export function AppSidebar({
           <SidebarContent>
             {/* Threads, in every section. They are the work; whatever else you
                 are looking at, one is always a click away. */}
-            <SidebarGroup className="min-h-0">
+            <SidebarGroup>
               <SidebarGroupLabel>
                 Threads
               </SidebarGroupLabel>
@@ -276,13 +276,14 @@ function ThreadState({ state }: { state: ChatState }) {
 const threadActionLeftClass = "z-20 right-6 translate-x-1 !bg-transparent transition-[opacity,transform] duration-150 group-focus-within/menu-item:translate-x-0 group-hover/menu-item:translate-x-0 hover:!bg-transparent motion-reduce:transition-none";
 const threadActionRightClass = "z-20 translate-x-1 !bg-transparent transition-[opacity,transform] duration-150 group-focus-within/menu-item:translate-x-0 group-hover/menu-item:translate-x-0 hover:!bg-transparent motion-reduce:transition-none";
 const threadRowHoverClass = "group-focus-within/menu-item:!bg-sidebar-row-hover group-hover/menu-item:!bg-sidebar-row-hover";
+const threadRowActionSpaceClass = "pr-12 [@media(hover:hover)]:pr-2 group-focus-within/menu-item:!pr-12 group-hover/menu-item:!pr-12";
 
 function ThreadActionFade({ compact = false }: { compact?: boolean }) {
   return (
     <span
       aria-hidden
       className={cn(
-        "pointer-events-none absolute right-1 z-10 h-5 w-[72px] bg-[linear-gradient(to_right,transparent_0,var(--sidebar-row-hover)_32px,var(--sidebar-row-hover)_100%)] transition-opacity duration-150 group-focus-within/menu-item:opacity-100 group-hover/menu-item:opacity-100 md:opacity-0 motion-reduce:transition-none",
+        "pointer-events-none absolute right-1 z-10 h-5 w-[72px] bg-[linear-gradient(to_right,transparent_0,var(--sidebar-row-hover)_32px,var(--sidebar-row-hover)_100%)] transition-opacity duration-150 [@media(hover:hover)]:opacity-0 group-focus-within/menu-item:!opacity-100 group-hover/menu-item:!opacity-100 motion-reduce:transition-none",
         compact ? "top-1" : "top-1.5",
       )}
     />
@@ -406,7 +407,8 @@ function ArchivedThreadItem({
         data-link
         size="sm"
         className={cn(
-          "text-muted-foreground group-has-data-[sidebar=menu-action]/menu-item:pr-2 group-focus-within/menu-item:pr-12 group-hover/menu-item:pr-12",
+          "text-muted-foreground",
+          threadRowActionSpaceClass,
           threadRowHoverClass,
         )}
         disabled={busy}
@@ -500,7 +502,8 @@ function ThreadRow({
       data-link
       isActive={active}
       className={cn(
-        "h-auto flex-col items-stretch gap-1 py-2 group-has-data-[sidebar=menu-action]/menu-item:pr-2 group-focus-within/menu-item:pr-12 group-hover/menu-item:pr-12",
+        "h-auto flex-col items-stretch gap-1 py-2",
+        threadRowActionSpaceClass,
         threadRowHoverClass,
       )}
       onClick={onSelect}
