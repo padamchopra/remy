@@ -134,6 +134,19 @@ function withPeers(base: LocalTransport): Transport {
       return listing;
     },
 
+    subscribe(handler) {
+      return base.subscribe((serverId, payload) => {
+        const frame = payload && typeof payload === "object" && !Array.isArray(payload)
+          ? payload as { type?: unknown; serverId?: unknown; payload?: unknown }
+          : undefined;
+        if (frame?.type === "peer-frame" && typeof frame.serverId === "string") {
+          handler(frame.serverId, frame.payload);
+          return;
+        }
+        handler(serverId, payload);
+      });
+    },
+
     request<T>(serverId: string, path: string, init?: { method?: string; body?: unknown }) {
       if (serverId === "cursor-cloud" && hasCursorCloud && localId) {
         return base.request<T>(localId, `/cursor-cloud/api${path}`, init);

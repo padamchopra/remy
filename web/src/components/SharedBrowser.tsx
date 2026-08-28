@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent, type WheelEvent } from "react";
-import { ArrowLeft, ArrowRight, ArrowUpRight, ChartNoAxesCombined, Gauge, GitPullRequest, Globe2, Maximize2, Monitor, MousePointer2, PanelRightClose, PanelRightOpen, Plus, RefreshCw, Smartphone, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, ArrowUpRight, ChartNoAxesCombined, Gauge, GitPullRequest, Globe2, Maximize2, Monitor, MousePointer2, PanelRight, Plus, RefreshCw, Smartphone, X } from "lucide-react";
 import { toast } from "sonner";
 import { ThreadAnalyticsTool, ThreadPerformanceTool } from "@/components/ThreadInsights";
 import { PullRequestView } from "@/components/PullRequestView";
@@ -41,6 +41,8 @@ export interface SharedBrowserView {
 export interface ThreadToolTab {
   id: string;
   type: "browser" | "analytics" | "performance" | "pull-request";
+  repository?: string;
+  pullRequestNumber?: number;
 }
 
 const WIDE_THREAD_TOOLS = "(min-width: 1024px)";
@@ -48,6 +50,19 @@ const WIDE_THREAD_TOOLS = "(min-width: 1024px)";
 function browserPath(chatId: string, browserId: string, action?: string): string {
   const base = `/chats/${encodeURIComponent(chatId)}/browser${action ? `/${action}` : ""}`;
   return `${base}?instance=${encodeURIComponent(browserId)}`;
+}
+
+export function githubPullRequestTarget(href: string): { repository: string; number: number } | undefined {
+  try {
+    const url = new URL(href);
+    if (url.hostname !== "github.com" && url.hostname !== "www.github.com") return undefined;
+    const [owner, repository, kind, rawNumber] = url.pathname.split("/").filter(Boolean);
+    const number = Number(rawNumber);
+    if (!owner || !repository || kind !== "pull" || !Number.isSafeInteger(number) || number <= 0) return undefined;
+    return { repository: `${decodeURIComponent(owner)}/${decodeURIComponent(repository)}`, number };
+  } catch {
+    return undefined;
+  }
 }
 
 export function useThreadTools(
@@ -144,11 +159,53 @@ export function useThreadTools(
     setShown(true);
   };
 
-  const addPullRequest = () => {
-    setTabs((current) => current.some((tab) => tab.type === "pull-request") ? current : [...current, { id: "pull-request", type: "pull-request" }]);
+  const showPullRequest = useCallback((target?: { repository: string; number: number }) => {
+    setTabs((current) => {
+      const tab: ThreadToolTab = {
+        id: "pull-request",
+        type: "pull-request",
+        ...(target ? { repository: target.repository, pullRequestNumber: target.number } : {}),
+      };
+      return current.some((candidate) => candidate.type === "pull-request")
+        ? current.map((candidate) => candidate.type === "pull-request" ? tab : candidate)
+        : [...current, tab];
+    });
     setActiveTab("pull-request");
     setShown(true);
-  };
+  }, [setShown]);
+
+  const openBrowserLink = useCallback(async (url: string) => {
+    const existing = tabs.find((tab) => tab.type === "browser" && tab.id === activeTab)
+      ?? tabs.find((tab) => tab.type === "browser");
+    const browserId = existing?.id ?? "default";
+    if (!existing) {
+      setTabs((current) => current.some((tab) => tab.id === browserId)
+        ? current
+        : [...current, { id: browserId, type: "browser" }]);
+    }
+    setActiveTab(browserId);
+    setShown(true);
+    try {
+      const next = await transport.request<SharedBrowserView>(
+        serverId,
+        browserPath(chatId, browserId, "open"),
+        { method: "POST", body: { url } },
+      );
+      if (typeof next.browserId === "string") setSupportsInstances(true);
+      setViews((current) => ({ ...current, [browserId]: next }));
+    } catch (caught) {
+      toast.error("The browser action failed", { description: apiError(caught) });
+    }
+  }, [activeTab, chatId, serverId, setShown, tabs]);
+
+  const openLink = useCallback((href: string) => {
+    const pullRequest = githubPullRequestTarget(href);
+    if (pullRequest) {
+      showPullRequest(pullRequest);
+      return;
+    }
+    void openBrowserLink(href);
+  }, [openBrowserLink, showPullRequest]);
 
   const closeTab = async (tab: ThreadToolTab) => {
     const browserId = tab.id;
@@ -180,7 +237,8 @@ export function useThreadTools(
     addBrowser,
     addAnalytics: () => addInsight("analytics"),
     addPerformance: () => addInsight("performance"),
-    addPullRequest,
+    addPullRequest: () => showPullRequest(),
+    openLink,
     canAddBrowser: supportsInstances || !tabs.some((tab) => tab.type === "browser"),
     closeTab,
     shown,
@@ -209,7 +267,7 @@ export function ThreadToolsButton({
           onClick={onClick}
           className="relative"
         >
-          {shown ? <PanelRightClose /> : <PanelRightOpen />}
+          <PanelRight />
           {active && <span className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-emerald-500" />}
         </Button>
       </TooltipTrigger>
@@ -332,8 +390,10 @@ export function ThreadToolsSidebar({
                 <ThreadPerformanceTool chatId={chatId} serverId={serverId} enabled={visible && activeTab === tab.id} />
               ) : (
                 <PullRequestView
-                  chatId={chatId}
+                  chatId={tab.repository && tab.pullRequestNumber ? undefined : chatId}
                   serverId={serverId}
+                  repository={tab.repository}
+                  number={tab.pullRequestNumber}
                   codeReferences={codeReferences}
                   onAddReference={onAddReference}
                   onRemoveReference={onRemoveReference}

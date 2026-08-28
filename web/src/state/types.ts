@@ -197,9 +197,11 @@ export interface PullRequestDiffFile {
   path: string;
   previousPath?: string;
   hunks: PullRequestDiffHunk[];
+  viewed?: boolean;
 }
 
 export interface PullRequestDiff {
+  nodeId?: string;
   workspaceId?: string;
   url: string;
   repository: string;

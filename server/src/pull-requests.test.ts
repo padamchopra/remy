@@ -9,7 +9,7 @@ import type { Workspace } from "./workspaces.js";
 // test-only config isolated from the user's real Remy installation.
 process.env.HOME = mkdtempSync(join(tmpdir(), "remy-pr-test-"));
 
-const { parseAuthoredPullRequests, parsePullRequestPatch, parsePullRequestTimeline, parsePullRequestView, parseUnreadReviewComments } = await import("./pull-requests.js");
+const { markPullRequestFileViewedArgs, markPullRequestReadyArgs, parseAuthoredPullRequests, parsePullRequestFileViewPage, parsePullRequestPatch, parsePullRequestTimeline, parsePullRequestView, parseUnreadReviewComments } = await import("./pull-requests.js");
 
 const workspace: Workspace = {
   id: "workspace-1",
@@ -26,6 +26,47 @@ const workspace: Workspace = {
     { path: "/code/control-pr", branch: "feature/flight-deck", isMain: false, dirty: false },
   ],
 };
+
+test("marking a pull request ready scopes GitHub CLI to its repository", () => {
+  assert.deepEqual(markPullRequestReadyArgs("acme/control", 42), ["pr", "ready", "42", "--repo", "acme/control"]);
+});
+
+test("file review state keeps GitHub's viewer progress and pagination", () => {
+  const result = parsePullRequestFileViewPage(JSON.stringify({
+    data: {
+      repository: {
+        pullRequest: {
+          id: "PR_42",
+          files: {
+            nodes: [
+              { path: "src/alpha.ts", viewerViewedState: "VIEWED" },
+              { path: "src/beta.ts", viewerViewedState: "UNVIEWED" },
+            ],
+            pageInfo: { hasNextPage: true, endCursor: "next-page" },
+          },
+        },
+      },
+    },
+  }));
+
+  assert.deepEqual(result, {
+    pullRequestId: "PR_42",
+    files: [
+      { path: "src/alpha.ts", viewed: true },
+      { path: "src/beta.ts", viewed: false },
+    ],
+    nextCursor: "next-page",
+  });
+});
+
+test("viewing and unviewing a file use GitHub's pull request mutations", () => {
+  const viewed = markPullRequestFileViewedArgs("PR_42", "src/alpha.ts", true);
+  const unviewed = markPullRequestFileViewedArgs("PR_42", "src/alpha.ts", false);
+  assert.ok(viewed.includes("pullRequestId=PR_42"));
+  assert.ok(viewed.includes("path=src/alpha.ts"));
+  assert.match(viewed.join(" "), /markFileAsViewed/);
+  assert.match(unviewed.join(" "), /unmarkFileAsViewed/);
+});
 
 test("pull request parsing resolves its branch worktree and attention state", () => {
   const raw = JSON.stringify([{
@@ -149,7 +190,7 @@ test("pull request timeline interleaves commits and GitHub activity", () => {
       id: 13,
       html_url: "https://github.com/acme/control/pull/42#discussion_r13",
       user: { login: "reviewer" },
-      body: "<!-- hidden --> **Keep this stable.**",
+      body: `<!-- hidden --> **Keep this stable.**\n\n${"Full review context. ".repeat(20)}`,
       created_at: "2026-08-02T10:15:00Z",
       commit_id: "abc123456789",
       path: "Sources/Timeline.swift",
@@ -160,7 +201,8 @@ test("pull request timeline interleaves commits and GitHub activity", () => {
   const result = parsePullRequestTimeline(commits, comments, reviews, reviewComments);
   assert.deepEqual(result.map((item) => item.kind), ["review", "review_comment", "comment", "commit"]);
   assert.equal(result[0].state, "APPROVED");
-  assert.equal(result[1].body, "Keep this stable.");
+  assert.equal(result[1].body, `**Keep this stable.**\n\n${"Full review context. ".repeat(20).trim()}`);
+  assert.ok(result[1].body.length > 240);
   assert.equal(result[1].path, "Sources/Timeline.swift");
   assert.equal(result[3].sha, "abc123456789");
 });

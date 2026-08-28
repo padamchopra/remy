@@ -115,6 +115,10 @@ test("keeps General Remy-specific while Usage scans the whole machine", async ()
   assert.equal(report.providers[0]?.provider, "claude");
   assert.equal(report.models[0]?.model, "claude-opus-4-1");
   assert.equal(report.sources.find((source) => source.provider === "claude")?.sessions, 2);
+
+  const thread = threadAnalytics("thread-1", { state: "idle" }, now);
+  assert.equal(thread?.skillInvocations, 1);
+  assert.deepEqual(thread?.skills, [{ name: "qa", count: 1 }]);
 });
 
 test("scans Codex history and includes Cursor live usage without inventing token totals", async () => {
@@ -211,6 +215,28 @@ test("reports usage and measured performance for one thread only", () => {
       at: createdAt + 1_600,
       completedAt: createdAt + 2_600,
     },
+    {
+      id: "tool-2",
+      kind: "tool" as const,
+      tool: "Skill",
+      verb: "Skill",
+      arg: "qa",
+      status: "ok" as const,
+      skill: "qa",
+      at: createdAt + 2_650,
+      completedAt: createdAt + 2_675,
+    },
+    {
+      id: "tool-3",
+      kind: "tool" as const,
+      tool: "Skill",
+      verb: "Skill",
+      arg: "ui",
+      status: "ok" as const,
+      skill: "ui",
+      at: createdAt + 2_680,
+      completedAt: createdAt + 2_690,
+    },
     { id: "assistant-2", kind: "assistant" as const, text: "Done", at: createdAt + 2_700, completedAt: createdAt + 3_000 },
   ];
   storage.saveChat({
@@ -242,14 +268,18 @@ test("reports usage and measured performance for one thread only", () => {
   assert.equal(analytics?.usage.costUsd, 0.12);
   assert.equal(analytics?.context?.tokens, 2_000);
   assert.equal(analytics?.context?.peakTokens, 3_000);
-  assert.equal(analytics?.toolCalls, 1);
-  assert.equal(analytics?.skillInvocations, 1);
+  assert.equal(analytics?.toolCalls, 3);
+  assert.equal(analytics?.skillInvocations, 3);
+  assert.deepEqual(analytics?.skills, [
+    { name: "qa", count: 2 },
+    { name: "ui", count: 1 },
+  ]);
   assert.equal(analytics?.measuredActiveMs, 2_000);
 
   const performance = threadPerformance("thread-metrics", { state: "idle", live: true }, createdAt + 5_000);
   assert.equal(performance?.firstOutput.medianMs, 300);
   assert.equal(performance?.turnDuration.medianMs, 2_000);
   assert.equal(performance?.toolDuration.p95Ms, 1_000);
-  assert.equal(performance?.tools.succeeded, 1);
+  assert.equal(performance?.tools.succeeded, 3);
   assert.equal(performance?.live, true);
 });

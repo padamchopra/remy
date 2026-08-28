@@ -1,6 +1,8 @@
-import { Fragment, memo, useMemo, type ReactNode } from "react";
+import { Children, Fragment, memo, useMemo, type MouseEvent, type ReactNode } from "react";
+import { ChevronRight, Square, SquareCheckBig } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 
 /// Someone the text may name, and where clicking their name goes.
@@ -16,9 +18,17 @@ const COMPONENTS: Components = {
   h2: ({ children }) => <h2 className="mt-2 text-base font-semibold first:mt-0">{children}</h2>,
   h3: ({ children }) => <h3 className="mt-1 text-sm font-semibold first:mt-0">{children}</h3>,
   h4: ({ children }) => <h4 className="mt-1 text-sm font-semibold first:mt-0">{children}</h4>,
-  ul: ({ children }) => <ul className="flex list-disc flex-col gap-1 pl-5">{children}</ul>,
+  ul: ({ children, className }) => (
+    <ul className={cn(
+      "flex list-disc flex-col gap-1 pl-5",
+      className,
+      className?.includes("contains-task-list") && "list-none pl-0",
+    )}>
+      {children}
+    </ul>
+  ),
   ol: ({ children }) => <ol className="flex list-decimal flex-col gap-1 pl-5">{children}</ol>,
-  li: ({ children }) => <li className="wrap-break-word">{children}</li>,
+  li: ({ children, className }) => <li className={cn("wrap-break-word", className)}>{children}</li>,
   strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
   em: ({ children }) => <em className="italic">{children}</em>,
   del: ({ children }) => <del className="line-through opacity-70">{children}</del>,
@@ -56,11 +66,110 @@ const COMPONENTS: Components = {
     <th className="border border-border bg-muted/40 px-2 py-1 text-left font-medium">{children}</th>
   ),
   td: ({ children }) => <td className="border border-border px-2 py-1 align-top">{children}</td>,
-  input: ({ checked, type }) =>
-    type === "checkbox" ? (
-      <input type="checkbox" checked={checked} readOnly className="mr-1 align-middle" />
-    ) : null,
+  input: ({ checked, type }) => type === "checkbox"
+    ? checked
+      ? <SquareCheckBig className="mr-2 inline-block size-3.5 align-[-0.125em] text-muted-foreground" />
+      : <Square className="mr-2 inline-block size-3.5 align-[-0.125em] text-muted-foreground" />
+    : null,
+  details: ({ children, open }) => {
+    const [summary, ...content] = Children.toArray(children);
+    return (
+      <Collapsible defaultOpen={open} className="group/details overflow-hidden rounded-lg border border-border">
+        {summary}
+        <CollapsibleContent className="border-t border-border px-3 py-3">
+          <div className="flex flex-col gap-3">{content}</div>
+        </CollapsibleContent>
+      </Collapsible>
+    );
+  },
+  summary: ({ children }) => (
+    <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none data-[state=open]:[&_svg]:rotate-90">
+      <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform" />
+      <span className="min-w-0 wrap-break-word">{children}</span>
+    </CollapsibleTrigger>
+  ),
 };
+
+interface MarkdownNode {
+  type: string;
+  value?: string;
+  url?: string;
+  children?: MarkdownNode[];
+  data?: {
+    hName?: string;
+    hProperties?: Record<string, unknown>;
+  };
+}
+
+const DETAILS_OPEN = /^<details(\s+open)?\s*>\s*<summary>([\s\S]*?)<\/summary>\s*(?:<p>\s*)?$/i;
+const DETAILS_CLOSE = /^(?:<\/p>\s*)?<\/details>\s*$/i;
+const LINK_PARAGRAPH = /^<p>\s*<a\s+href="(https?:\/\/[^"\s]+)"[^>]*>([\s\S]*?)<\/a>\s*<\/p>$/i;
+const INLINE_LINK = /^<a\s+href="(https?:\/\/[^"\s]+)"[^>]*>([\s\S]*?)<\/a>$/i;
+
+function htmlText(value: string): string {
+  return value
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#(?:39|x27);/gi, "'");
+}
+
+function safeInline(value: string): MarkdownNode[] {
+  const link = value.trim().match(INLINE_LINK);
+  if (!link) return [{ type: "text", value: htmlText(value.trim()) }];
+  return [{
+    type: "link",
+    url: link[1],
+    children: [{ type: "text", value: htmlText(link[2].replace(/<[^>]*>/g, "").trim()) }],
+  }];
+}
+
+function remarkDetails() {
+  return (tree: MarkdownNode) => {
+    if (!tree.children) return;
+    const output: MarkdownNode[] = [];
+    const stack: MarkdownNode[][] = [output];
+    for (const node of tree.children) {
+      const opening = node.type === "html" && node.value?.match(DETAILS_OPEN);
+      if (opening) {
+        const details: MarkdownNode = {
+          type: "details",
+          data: {
+            hName: "details",
+            hProperties: opening[1] ? { open: true } : {},
+          },
+          children: [{
+            type: "summary",
+            data: { hName: "summary" },
+            children: safeInline(opening[2]),
+          }],
+        };
+        stack.at(-1)!.push(details);
+        stack.push(details.children!);
+        continue;
+      }
+      if (node.type === "html" && node.value && DETAILS_CLOSE.test(node.value) && stack.length > 1) {
+        stack.pop();
+        continue;
+      }
+      const linkParagraph = node.type === "html" && node.value?.match(LINK_PARAGRAPH);
+      if (linkParagraph) {
+        stack.at(-1)!.push({
+          type: "paragraph",
+          children: [{
+            type: "link",
+            url: linkParagraph[1],
+            children: [{ type: "text", value: htmlText(linkParagraph[2].replace(/<[^>]*>/g, "").trim()) }],
+          }],
+        });
+        continue;
+      }
+      stack.at(-1)!.push(node);
+    }
+    tree.children = output;
+  };
+}
 
 /// `@handle` in a run of text, wrapped as a chip.
 ///
@@ -105,7 +214,31 @@ function withMentions(mentions: Mention[]): Components {
   return {
     ...COMPONENTS,
     p: ({ children }) => <p className="wrap-break-word whitespace-pre-wrap">{decorate(children)}</p>,
-    li: ({ children }) => <li className="wrap-break-word">{decorate(children)}</li>,
+    li: ({ children, className }) => (
+      <li className={cn("wrap-break-word", className)}>{decorate(children)}</li>
+    ),
+  };
+}
+
+function withLinkHandler(components: Components, onOpenLink?: (href: string) => void): Components {
+  if (!onOpenLink) return components;
+  return {
+    ...components,
+    a: ({ children, href }) => (
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer noopener"
+        className="underline underline-offset-2 hover:text-primary"
+        onClick={(event: MouseEvent<HTMLAnchorElement>) => {
+          if (!href || event.metaKey) return;
+          event.preventDefault();
+          onOpenLink(href);
+        }}
+      >
+        {children}
+      </a>
+    ),
   };
 }
 
@@ -113,27 +246,31 @@ function withMentions(mentions: Mention[]): Components {
 /// `##` and backticks raw.
 ///
 /// Every element is styled here because this project has no typography plugin,
-/// and chat prose wants tighter sizes than article prose anyway. Raw HTML stays
-/// off — the text comes from a model and from tool output, so it is only ever
-/// markdown, never markup.
+/// and chat prose wants tighter sizes than article prose anyway. Arbitrary raw
+/// HTML stays off; the exact `details` and `summary` shape GitHub emits becomes
+/// a safe disclosure before the HTML node reaches React.
 export const Markdown = memo(function Markdown({
   text,
   className,
   mentions,
+  onOpenLink,
 }: {
   text: string;
   className?: string;
   /// When given, `@handle` for anyone in this list renders as a chip that opens
   /// them. Everything else keeps the `@` it was typed with.
   mentions?: Mention[];
+  /// A thread keeps ordinary clicks in its own work surface. Command-click is
+  /// left to the anchor, which opens it outside Remy.
+  onOpenLink?: (href: string) => void;
 }) {
   const components = useMemo(
-    () => (mentions?.length ? withMentions(mentions) : COMPONENTS),
-    [mentions],
+    () => withLinkHandler(mentions?.length ? withMentions(mentions) : COMPONENTS, onOpenLink),
+    [mentions, onOpenLink],
   );
   return (
     <div className={cn("flex flex-col gap-3 text-sm leading-relaxed", className)}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkDetails]} components={components}>
         {text}
       </ReactMarkdown>
     </div>

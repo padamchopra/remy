@@ -72,9 +72,11 @@ export interface PullRequestDiffFile {
   path: string;
   previousPath?: string;
   hunks: PullRequestDiffHunk[];
+  viewed?: boolean;
 }
 
 export interface PullRequestDiff {
+  nodeId?: string;
   url: string;
   repository: string;
   number: number;
@@ -334,6 +336,92 @@ export async function markPullRequestRead(repository: string, number: number): P
   return true;
 }
 
+export function markPullRequestReadyArgs(repository: string, number: number): string[] {
+  return ["pr", "ready", String(number), "--repo", repository];
+}
+
+export async function markPullRequestReady(repository: string, number: number): Promise<void> {
+  await exec("gh", markPullRequestReadyArgs(repository, number), { timeout: 30_000 });
+  cache = null;
+}
+
+const PULL_REQUEST_FILES_QUERY = `query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){id files(first:100,after:$after){nodes{path viewerViewedState}pageInfo{hasNextPage endCursor}}}}}`;
+const MARK_FILE_VIEWED_MUTATION = `mutation($pullRequestId:ID!,$path:String!){markFileAsViewed(input:{pullRequestId:$pullRequestId,path:$path}){pullRequest{id}}}`;
+const UNMARK_FILE_VIEWED_MUTATION = `mutation($pullRequestId:ID!,$path:String!){unmarkFileAsViewed(input:{pullRequestId:$pullRequestId,path:$path}){pullRequest{id}}}`;
+
+interface PullRequestFileViewPage {
+  pullRequestId: string;
+  files: Array<{ path: string; viewed: boolean }>;
+  nextCursor?: string;
+}
+
+export function parsePullRequestFileViewPage(raw: string): PullRequestFileViewPage {
+  const data = asRecord(asRecord(JSON.parse(raw || "{}")).data);
+  const pullRequest = asRecord(asRecord(data.repository).pullRequest);
+  const files = asRecord(pullRequest.files);
+  const pageInfo = asRecord(files.pageInfo);
+  const nodes = Array.isArray(files.nodes) ? files.nodes : [];
+  return {
+    pullRequestId: stringValue(pullRequest.id),
+    files: nodes.flatMap((value): Array<{ path: string; viewed: boolean }> => {
+      const file = asRecord(value);
+      const path = stringValue(file.path);
+      return path ? [{ path, viewed: stringValue(file.viewerViewedState).toUpperCase() === "VIEWED" }] : [];
+    }),
+    ...(pageInfo.hasNextPage && stringValue(pageInfo.endCursor)
+      ? { nextCursor: stringValue(pageInfo.endCursor) }
+      : {}),
+  };
+}
+
+async function pullRequestFileViews(repository: string, number: number): Promise<{ pullRequestId: string; viewed: Map<string, boolean> }> {
+  const [owner, name] = repository.split("/");
+  if (!owner || !name) throw new Error("repository is required");
+  const viewed = new Map<string, boolean>();
+  let pullRequestId = "";
+  let after: string | undefined;
+  do {
+    const args = [
+      "api", "graphql",
+      "-f", `query=${PULL_REQUEST_FILES_QUERY}`,
+      "-F", `owner=${owner}`,
+      "-F", `name=${name}`,
+      "-F", `number=${number}`,
+      ...(after ? ["-F", `after=${after}`] : []),
+    ];
+    const page = parsePullRequestFileViewPage((await exec("gh", args, { timeout: 30_000 })).stdout);
+    pullRequestId ||= page.pullRequestId;
+    for (const file of page.files) viewed.set(file.path, file.viewed);
+    after = page.nextCursor;
+  } while (after);
+  if (!pullRequestId) throw new Error("pull request was not found");
+  return { pullRequestId, viewed };
+}
+
+export async function pullRequestFileReviewState(repository: string, number: number): Promise<{
+  nodeId: string;
+  files: Array<{ path: string; viewed: boolean }>;
+}> {
+  const result = await pullRequestFileViews(repository, number);
+  return {
+    nodeId: result.pullRequestId,
+    files: Array.from(result.viewed, ([path, viewed]) => ({ path, viewed })),
+  };
+}
+
+export function markPullRequestFileViewedArgs(pullRequestId: string, path: string, viewed: boolean): string[] {
+  return [
+    "api", "graphql",
+    "-f", `query=${viewed ? MARK_FILE_VIEWED_MUTATION : UNMARK_FILE_VIEWED_MUTATION}`,
+    "-F", `pullRequestId=${pullRequestId}`,
+    "-F", `path=${path}`,
+  ];
+}
+
+export async function markPullRequestFileViewed(pullRequestId: string, path: string, viewed: boolean): Promise<void> {
+  await exec("gh", markPullRequestFileViewedArgs(pullRequestId, path, viewed), { timeout: 30_000 });
+}
+
 export async function pullRequestTimeline(repository: string, number: number): Promise<PullRequestTimelineItem[]> {
   const base = `repos/${repository}`;
   const [commits, comments, reviews, reviewComments] = await Promise.all([
@@ -351,13 +439,20 @@ export async function pullRequestDiff(repository: string, number: number, cwd?: 
     "reviewDecision", "additions", "deletions", "changedFiles", "statusCheckRollup",
   ].join(",");
   const options = { ...(cwd ? { cwd } : {}), timeout: 30_000 };
-  const [view, patch] = await Promise.all([
+  const [view, patch, fileViews] = await Promise.all([
     exec("gh", ["pr", "view", String(number), "--repo", repository, "--json", fields], options),
     // The default is the aggregate PR diff. `--patch` emits one patch per
     // commit, repeating files and giving comments the wrong line space.
     exec("gh", ["pr", "diff", String(number), "--repo", repository], options),
+    pullRequestFileViews(repository, number).catch(() => undefined),
   ]);
-  return parsePullRequestView(view.stdout, patch.stdout, repository, number);
+  const result = parsePullRequestView(view.stdout, patch.stdout, repository, number);
+  if (!fileViews) return result;
+  return {
+    ...result,
+    nodeId: fileViews.pullRequestId,
+    files: result.files.map((file) => ({ ...file, viewed: fileViews.viewed.get(file.path) ?? false })),
+  };
 }
 
 export function parsePullRequestView(
@@ -478,7 +573,7 @@ export function parsePullRequestTimeline(
     const id = numberValue(entry.id);
     const user = asRecord(entry.user);
     const createdAt = stringValue(entry.created_at);
-    const body = reviewCommentExcerpt(stringValue(entry.body));
+    const body = reviewCommentBody(stringValue(entry.body));
     if (!id || !createdAt || !body) return [];
     return [{
       id: `comment:${id}`,
@@ -496,7 +591,7 @@ export function parsePullRequestTimeline(
     const user = asRecord(entry.user);
     const createdAt = stringValue(entry.submitted_at);
     const state = stringValue(entry.state).toUpperCase();
-    const body = reviewCommentExcerpt(stringValue(entry.body));
+    const body = reviewCommentBody(stringValue(entry.body));
     if (!id || !createdAt || (!body && !["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(state))) return [];
     return [{
       id: `review:${id}`,
@@ -515,7 +610,7 @@ export function parsePullRequestTimeline(
     const id = numberValue(entry.id);
     const user = asRecord(entry.user);
     const createdAt = stringValue(entry.created_at);
-    const body = reviewCommentExcerpt(stringValue(entry.body));
+    const body = reviewCommentBody(stringValue(entry.body));
     if (!id || !createdAt || !body) return [];
     return [{
       id: `review-comment:${id}`,
@@ -552,6 +647,10 @@ function reviewCommentExcerpt(body: string): string {
     .replace(/\s+/g, " ")
     .trim();
   return cleaned.length > 240 ? `${cleaned.slice(0, 240).trim()}…` : cleaned;
+}
+
+function reviewCommentBody(body: string): string {
+  return body.replace(/<!--[\s\S]*?-->/g, "").trim();
 }
 
 function repositoryName(workspace: Workspace): string {

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -192,15 +193,20 @@ export function PullRequestMonitoringButton({
     if (next === `thread:${chatId}`) save({ enabled: true, agentId: null, chatId });
     if (next.startsWith("agent:")) save({ enabled: true, agentId: next.slice("agent:".length), chatId: null });
   };
+  const label = policy?.enabled ? "Monitoring this pull request" : "Monitor this pull request";
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" aria-label="Monitor this pull request">
-          <Radio data-icon="inline-start" />
-          {policy?.enabled ? "Monitoring" : "Monitor"}
-        </Button>
-      </DropdownMenuTrigger>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button variant={policy?.enabled ? "secondary" : "ghost"} size="icon-sm" aria-label={label}>
+              <Radio />
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent>{label}</TooltipContent>
+      </Tooltip>
       <DropdownMenuContent align="end" className="w-64">
         <DropdownMenuLabel>Monitor pull request</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={value} onValueChange={choose}>
