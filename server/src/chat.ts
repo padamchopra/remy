@@ -25,6 +25,7 @@ import {
 } from "./environments.js";
 import {
   codexEntry,
+  codexErrorMessage,
   codexTodos,
   codexTokens,
   createCodexSession,
@@ -517,9 +518,14 @@ class Chat {
     if (first && !this.record.dm) void this.rename(safeText);
     linkTicketFromWorkPrompt(this.record.id, safeText, this.record.agentId);
     const ticketContext = ticketPromptContext(this.record.id);
+    const routineContext = this.record.dm
+      ? `<remy_routine_context>
+This is the agent's Inbox conversation. When the person signals that something should happen repeatedly, routinely, or on a cadence, use Remy's create_routine tool directly. Do not use a scheduling skill, shell command, cron, or an outside automation. The routine belongs to this agent and Remy runs it on the preferred available device.
+</remy_routine_context>`
+      : undefined;
     const referenceContext = codeReferencePrompt(safeReferences);
     const remembered = this.record.agentId ? await memoryPrompt(this.record.agentId, this.record.cwd) : undefined;
-    const agentText = [remembered, ticketContext, referenceContext, safeText].filter(Boolean).join("\n\n");
+    const agentText = [remembered, ticketContext, routineContext, referenceContext, safeText].filter(Boolean).join("\n\n");
     const agentPrompt: ChatPrompt = { text: agentText, attachments };
     this.append({
       id: `u-${randomUUID()}`,
@@ -756,7 +762,7 @@ class Chat {
       ...(this.record.claudeSessionId ? { resume: this.record.claudeSessionId } : {}),
       includePartialMessages: true,
       mcpServers: {
-        remy: claudeTicketMcpServer(this.record.id, this.record.agentId, {
+        remy: claudeTicketMcpServer(this.record.id, this.record.agentId, this.record.dm === true, {
           currentCwd: this.record.cwd,
           list: listChats,
           read: getChat,
@@ -1148,6 +1154,7 @@ class Chat {
             chatId: this.record.id,
             deviceId,
             agentId: this.record.agentId,
+            dm: this.record.dm,
           }),
           env: agentEnvironment(agent),
         },
@@ -1303,6 +1310,7 @@ class Chat {
             chatId: this.record.id,
             deviceId,
             agentId: this.record.agentId,
+            dm: this.record.dm,
           }),
           env: agentEnvironment(agent),
         },
@@ -1456,7 +1464,7 @@ class Chat {
       session: this.record.id,
       click: `remy://chat/${this.record.id}`,
       title: `${this.record.title} failed`,
-      message: clip(message, 200),
+      message: clip(this.record.error ?? message, 200),
       highPriority: true,
     });
   }
@@ -1464,8 +1472,7 @@ class Chat {
   private recordFailure(detail: string): void {
     if (/abort|interrupt|cancel|SIGTERM/i.test(detail)) return;
     const safeDetail = redactKnownSecrets(detail);
-    this.record.error = safeDetail;
-    this.append({ id: `e-${randomUUID()}`, kind: "assistant", text: `⚠️ ${clip(safeDetail, 400)}` });
+    this.record.error = this.record.provider === "codex" ? codexErrorMessage(safeDetail) : safeDetail;
   }
 
   // ── permissions ──────────────────────────────────────────────────────────

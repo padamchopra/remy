@@ -96,6 +96,8 @@ function migrate(database: DatabaseSync): void {
       name text not null,
       key_prefix text not null,
       origin text,
+      icon text,
+      tint text,
       counter integer not null default 0,
       created_at integer not null,
       updated_at integer not null,
@@ -176,8 +178,8 @@ function migrate(database: DatabaseSync): void {
       primary key (ticket_id, device_id, chat_id)
     );
     create index if not exists ticket_threads_chat on ticket_threads(chat_id);
-    -- Work that comes back: a ticket this machine writes again every day, week
-    -- or month, already handed to whoever is meant to do it.
+    -- Agent routines reuse the former recurrence projection so existing
+    -- databases need no destructive migration. project_id is empty for them.
     create table if not exists recurrences (
       id text primary key,
       project_id text not null,
@@ -286,6 +288,16 @@ function migrate(database: DatabaseSync): void {
   }
   try {
     database.exec("alter table workspaces add column tint text");
+  } catch {
+    // Column already exists on databases created after this migration.
+  }
+  try {
+    database.exec("alter table projects add column icon text");
+  } catch {
+    // Column already exists on databases created after this migration.
+  }
+  try {
+    database.exec("alter table projects add column tint text");
   } catch {
     // Column already exists on databases created after this migration.
   }

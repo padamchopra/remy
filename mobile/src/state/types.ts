@@ -229,6 +229,8 @@ export interface Project {
   name: string;
   keyPrefix: string;
   origin?: string;
+  icon?: string | null;
+  tint?: string | null;
   workspaceIds: string[];
 }
 

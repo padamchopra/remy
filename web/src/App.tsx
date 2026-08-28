@@ -35,7 +35,6 @@ import { Palette } from "@/components/Palette";
 import { AddWorkspaceDialog } from "@/components/AddWorkspace";
 import { PairRequestDialog } from "@/components/PairRequest";
 import { Board, NewTicketDialog } from "@/components/Board";
-import { Recurring } from "@/components/Recurring";
 import { MissingTicket, TicketView } from "@/components/TicketView";
 import { SettingsPane, type SettingsTab } from "@/components/Settings";
 import type { AnalyticsTab } from "@/components/AnalyticsSettings";
@@ -462,17 +461,7 @@ export function App() {
           <Board
             scope={route.scope}
             onScope={(scope) => go({ name: "board", ...(scope ? { scope } : {}) }, true)}
-            onTab={(tab) => go({ name: tab, ...(route.scope ? { scope: route.scope } : {}) })}
             onOpenTicket={(key) => go({ name: "ticket", key })}
-            onAddWorkspace={() => setAddWorkspaceOpen(true)}
-          />
-        ) : route.name === "recurring" ? (
-          <Recurring
-            scope={route.scope}
-            onScope={(scope) => go({ name: "recurring", ...(scope ? { scope } : {}) }, true)}
-            onTab={(tab) => go({ name: tab, ...(route.scope ? { scope: route.scope } : {}) })}
-            onOpenTicket={(key) => go({ name: "ticket", key })}
-            onOpenWorkspace={(workspaceId) => go({ name: "workspaces", workspaceId })}
             onAddWorkspace={() => setAddWorkspaceOpen(true)}
           />
         ) : route.name === "ticket" ? (

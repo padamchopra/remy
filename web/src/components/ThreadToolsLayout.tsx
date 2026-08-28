@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 
 const WIDE_TOOLS = "(min-width: 1024px)";
 const LAYOUT_KEY = "remy.thread-tools.layout";
-const DEFAULT_LAYOUT = { thread: 52, tools: 48 };
+const DEFAULT_LAYOUT = { thread: 38, tools: 62 };
 
 function useWideTools(): boolean {
   const [wide, setWide] = useState(() => typeof window !== "undefined" && window.matchMedia(WIDE_TOOLS).matches);

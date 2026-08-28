@@ -5,9 +5,10 @@ import { join } from "node:path";
 import test from "node:test";
 
 process.env.MC_CONFIG_DIR = mkdtempSync(join(tmpdir(), "remy-browser-tabs-"));
-const { browserView, browserViewportSize, closeBrowser } = await import("./browser.js");
+const { BROWSER_DEVICE_SCALE_FACTOR, browserView, browserViewportSize, closeBrowser } = await import("./browser.js");
 
 test("browser viewport presets use responsive QA dimensions", () => {
+  assert.equal(BROWSER_DEVICE_SCALE_FACTOR, 2);
   assert.deepEqual(browserViewportSize("fullscreen"), { width: 1920, height: 1080 });
   assert.deepEqual(browserViewportSize("fullscreen", { width: 913, height: 677 }), { width: 913, height: 677 });
   assert.deepEqual(browserViewportSize("desktop"), { width: 1280, height: 800 });

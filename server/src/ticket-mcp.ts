@@ -61,6 +61,13 @@ interface ApiThread {
   }[];
 }
 
+interface ApiBrowserView {
+  title?: string;
+  url?: string;
+  width: number;
+  height: number;
+}
+
 interface Board {
   tickets?: ApiTicket[];
   agents?: ApiAgent[];
@@ -76,6 +83,7 @@ const token = process.env.REMY_API_TOKEN
 const chatId = process.env.REMY_CHAT_ID ?? "";
 const threadDeviceId = process.env.REMY_DEVICE_ID ?? "";
 const agentId = process.env.REMY_AGENT_ID ?? "";
+const chatDm = process.env.REMY_CHAT_DM === "1";
 
 async function request<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
   const response = await fetch(`${apiUrl}${path}`, {
@@ -135,6 +143,10 @@ async function describe(key?: string): Promise<string> {
 /// in-process server uses, so a card looks the same on every provider.
 function ok(text: string, artifact?: ConvArtifact) {
   return { content: [{ type: "text" as const, text: artifact ? text + artifactMarker(artifact) : text }] };
+}
+
+function browserResult(action: string, view: ApiBrowserView): string {
+  return [action, `Page: ${view.title || "Untitled"}`, `URL: ${view.url || "about:blank"}`].join("\n");
 }
 
 function ticketCard(ticket: ApiTicket): ConvArtifact {
@@ -268,12 +280,12 @@ const browserTarget = {
 };
 
 server.registerTool("browser_open", {
-  description: "Open a page in this thread's shared browser so the person can watch and take control.",
+  description: "Open a page in this thread's shared browser. The result confirms the loaded title and URL.",
   inputSchema: { url: z.string().min(1).max(4000) },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
 }, async ({ url }) => {
-  await request(`${browserPath}/open`, { method: "POST", body: { url } });
-  return ok(`Opened ${url} in the shared browser.`);
+  const view = await request<ApiBrowserView>(`${browserPath}/open`, { method: "POST", body: { url } });
+  return ok(browserResult("Opened the page.", view));
 });
 
 server.registerTool("browser_viewport", {
@@ -286,6 +298,33 @@ server.registerTool("browser_viewport", {
     body: { viewport },
   });
   return ok(`Switched the shared browser to ${viewport} (${view.width} × ${view.height}).`);
+});
+
+server.registerTool("browser_back", {
+  description: "Go back in the shared browser and confirm the resulting page.",
+  inputSchema: {},
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+}, async () => {
+  const view = await request<ApiBrowserView>(`${browserPath}/back`, { method: "POST" });
+  return ok(browserResult("Went back.", view));
+});
+
+server.registerTool("browser_forward", {
+  description: "Go forward in the shared browser and confirm the resulting page.",
+  inputSchema: {},
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+}, async () => {
+  const view = await request<ApiBrowserView>(`${browserPath}/forward`, { method: "POST" });
+  return ok(browserResult("Went forward.", view));
+});
+
+server.registerTool("browser_reload", {
+  description: "Reload the shared browser and confirm the resulting page.",
+  inputSchema: {},
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+}, async () => {
+  const view = await request<ApiBrowserView>(`${browserPath}/reload`, { method: "POST" });
+  return ok(browserResult("Reloaded the page.", view));
 });
 
 server.registerTool("browser_snapshot", {
@@ -302,8 +341,8 @@ server.registerTool("browser_click", {
   inputSchema: browserTarget,
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
 }, async (target) => {
-  await request(`${browserPath}/click`, { method: "POST", body: target });
-  return ok("Clicked in the shared browser.");
+  const view = await request<ApiBrowserView>(`${browserPath}/click`, { method: "POST", body: target });
+  return ok(browserResult("Clicked the page.", view));
 });
 
 server.registerTool("browser_type", {
@@ -311,8 +350,8 @@ server.registerTool("browser_type", {
   inputSchema: { ...browserTarget, value: z.string().max(20000) },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
 }, async ({ value, ...target }) => {
-  await request(`${browserPath}/type`, { method: "POST", body: { ...target, value } });
-  return ok("Entered text in the shared browser.");
+  const view = await request<ApiBrowserView>(`${browserPath}/type`, { method: "POST", body: { ...target, value } });
+  return ok(browserResult("Entered the text.", view));
 });
 
 server.registerTool("browser_press", {
@@ -320,8 +359,8 @@ server.registerTool("browser_press", {
   inputSchema: { key: z.string().min(1).max(100) },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
 }, async ({ key }) => {
-  await request(`${browserPath}/press`, { method: "POST", body: { key } });
-  return ok(`Pressed ${key} in the shared browser.`);
+  const view = await request<ApiBrowserView>(`${browserPath}/press`, { method: "POST", body: { key } });
+  return ok(browserResult(`Pressed ${key}.`, view));
 });
 
 server.registerTool("browser_scroll", {
@@ -332,8 +371,8 @@ server.registerTool("browser_scroll", {
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
 }, async ({ delta_x, delta_y }) => {
-  await request(`${browserPath}/scroll`, { method: "POST", body: { deltaX: delta_x ?? 0, deltaY: delta_y } });
-  return ok("Scrolled the shared browser.");
+  const view = await request<ApiBrowserView>(`${browserPath}/scroll`, { method: "POST", body: { deltaX: delta_x ?? 0, deltaY: delta_y } });
+  return ok(browserResult("Scrolled the page.", view));
 });
 
 server.registerTool("browser_wait", {
@@ -341,8 +380,8 @@ server.registerTool("browser_wait", {
   inputSchema: { milliseconds: z.number().int().min(0).max(10000).optional() },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
 }, async ({ milliseconds }) => {
-  await request(`${browserPath}/wait`, { method: "POST", body: { milliseconds: milliseconds ?? 500 } });
-  return ok("The shared browser finished waiting.");
+  const view = await request<ApiBrowserView>(`${browserPath}/wait`, { method: "POST", body: { milliseconds: milliseconds ?? 500 } });
+  return ok(browserResult("Finished waiting.", view));
 });
 
 server.registerTool("list_agents", {
@@ -504,6 +543,30 @@ server.registerTool("stop_thread", {
   if (thread_id === chatId) throw new Error("The current thread cannot stop itself through Remy.");
   await request(`/chats/${encodeURIComponent(thread_id)}/stop`, { method: "POST" });
   return ok(`Stopped thread ${thread_id}.`);
+});
+
+if (chatDm && agentId) server.registerTool("create_routine", {
+  description: "Create a routine for this agent when the person asks for work to happen repeatedly.",
+  inputSchema: {
+    name: z.string().min(1).max(200).describe("A short name for the routine"),
+    prompt: z.string().min(1).max(20000).describe("The complete instruction to send this agent each time"),
+    cadence: z.enum(["daily", "weekdays", "weekly", "monthly"]),
+    hour: z.number().int().min(0).max(23).describe("Local hour on the routine's clock device"),
+    minute: z.number().int().min(0).max(59).default(0),
+    weekday: z.number().int().min(0).max(6).optional().describe("Sunday is 0; required for weekly routines"),
+    day: z.number().int().min(1).max(28).optional().describe("Day of month; required for monthly routines"),
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+}, async ({ name, prompt, cadence, hour, minute, weekday, day }) => {
+  const created = await request<{ routine: { id: string; name: string } }>("/routines", {
+    method: "POST",
+    body: { name, prompt, cadence, hour, minute, weekday, day },
+  });
+  return ok(`Created ${created.routine.name}.`, {
+    kind: "routine",
+    id: created.routine.id,
+    title: created.routine.name,
+  });
 });
 
 server.registerTool("create_ticket", {

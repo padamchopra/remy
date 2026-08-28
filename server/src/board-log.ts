@@ -26,8 +26,8 @@ export type LogKind =
   | "handoff"
   | "link"
   | "unlink"
-  /// A recurrence writing one of its tickets. On the log rather than in a row so
-  /// two machines cannot each believe they still owe today's ticket.
+  /// A routine completing one trigger. On the log rather than in a row so two
+  /// machines cannot each believe they still owe the same run.
   | "ran"
   | "tombstone";
 

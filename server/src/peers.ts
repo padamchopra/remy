@@ -7,7 +7,7 @@ import { exportEnvironmentSync, mergeEnvironmentSync } from "./environments.js";
 import { reprojectAll as reprojectAgents, seedPresetAgents } from "./agents.js";
 import { reprojectAll as reprojectMemories } from "./agent-memories.js";
 import { reprojectAll as reprojectProjects } from "./projects.js";
-import { reprojectAll as reprojectRecurrences } from "./recurring.js";
+import { reprojectAll as reprojectRoutines } from "./routines.js";
 import { reprojectAll as reprojectTickets } from "./tickets.js";
 import { serveTarget, tailnetSelf, tailscale, type TailnetState } from "./tailnet.js";
 
@@ -630,7 +630,7 @@ function reprojectBoard(): void {
   reprojectAgents();
   reprojectMemories();
   reprojectTickets();
-  reprojectRecurrences();
+  reprojectRoutines();
   seedPresetAgents();
 }
 

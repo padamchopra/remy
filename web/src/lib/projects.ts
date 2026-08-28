@@ -9,7 +9,7 @@ import {
   Terminal,
   type LucideIcon,
 } from "lucide-react";
-import type { Server, Workspace } from "@/state/types";
+import type { Project, Server, Workspace } from "@/state/types";
 
 /// Icons a workspace can wear in the list and in project settings.
 export const PROJECT_ICONS = {
@@ -61,6 +61,27 @@ export function workspaceCopies(workspace: Workspace, all: Workspace[]): Workspa
   return all.filter(
     (entry) => !entry.virtual && entry.serverId === workspace.serverId && entry.id === workspace.id,
   );
+}
+
+/// A repository's mark belongs to its synced project, while its path and model
+/// remain choices of the device-local checkout. Projecting the shared fields
+/// onto every copy keeps all existing workspace renderers honest.
+export function applyProjectIdentity(workspaces: Workspace[], projects: Project[]): Workspace[] {
+  const byOrigin = new Map(
+    projects.flatMap((project) => project.origin ? [[project.origin, project] as const] : []),
+  );
+  const byWorkspace = new Map(
+    projects.flatMap((project) => project.workspaceIds.map((id) => [id, project] as const)),
+  );
+  return workspaces.map((workspace) => {
+    const project = (workspace.origin ? byOrigin.get(workspace.origin) : undefined) ?? byWorkspace.get(workspace.id);
+    if (!project) return workspace;
+    return {
+      ...workspace,
+      ...(Object.hasOwn(project, "icon") ? { icon: project.icon ?? null } : {}),
+      ...(Object.hasOwn(project, "tint") ? { tint: project.tint ?? null } : {}),
+    };
+  });
 }
 
 /// One row per repository, or per device-local folder.

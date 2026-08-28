@@ -489,8 +489,8 @@ function validate(input: Record<string, unknown>): Record<string, unknown> {
 }
 
 /// Writes a ticket. `actor` is who the feed says wrote it, which is `you` for
-/// every ticket a client asks for and `remy` for the ones a recurrence mints —
-/// so it is a parameter rather than a field on the body a client sends.
+/// every ticket a client asks for, unless an internal caller names itself — so
+/// it is a parameter rather than a field on the body a client sends.
 export function createTicket(input: Record<string, unknown>, actor = "you"): TicketView {
   const projectId = String(input.projectId ?? "");
   const project = getProject(projectId);

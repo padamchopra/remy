@@ -15,6 +15,7 @@ import { deviceId, onLocalAppend, onRemoteMerge, type LogEvent } from "./board-l
 import {
   adoptWorkspace,
   listProjects,
+  projectForWorkspace,
   syncProjectBindings,
   unbindWorkspace,
   updateProject,
@@ -95,6 +96,7 @@ import {
   clickBrowser,
   closeBrowser,
   insertBrowser,
+  navigateBrowser,
   openBrowser,
   pressBrowser,
   scrollBrowser,
@@ -163,14 +165,8 @@ import { buildInbox } from "./inbox.js";
 import { listAuthoredPullRequests, markPullRequestRead, pullRequestDiff, pullRequestDiffForCwd, pullRequestTimeline } from "./pull-requests.js";
 import { validateChatCodeReferences } from "./chat-references.js";
 import { startPullRequestMonitor } from "./pull-request-monitor.js";
-import {
-  createRecurrence,
-  deleteRecurrence,
-  listRecurrences,
-  runRecurrence,
-  startRecurringTickets,
-  updateRecurrence,
-} from "./recurring.js";
+import { createRoutine, deleteRoutine, listRoutines, updateRoutine } from "./routines.js";
+import { runRoutine, startRoutines } from "./routine-runner.js";
 import { setSleepBusyCheck, sleepSupported, syncSleepAssertion } from "./sleep.js";
 import { highlightedIndex, parsePanePrompt } from "./prompt.js";
 import { questionBroker } from "./questions.js";
@@ -999,6 +995,7 @@ const server = createServer(async (req, res) => {
       if (req.method === "DELETE") {
         try {
           deleteAgent(id);
+          for (const routine of listRoutines(id)) deleteRoutine(routine.id);
           broadcast({ type: "board" });
           return json(res, 200, { ok: true });
         } catch (error) {
@@ -1097,52 +1094,58 @@ const server = createServer(async (req, res) => {
         projects: listProjects(),
         agents: listAgents(),
         tickets: listTickets(projectId),
-        recurring: listRecurrences(projectId),
+        routines: listRoutines(),
       });
     }
 
-    // Recurring tickets. Read with the board above rather than on their own, so
-    // the pane that lists them costs no second request.
-    if (req.method === "POST" && url.pathname === "/recurring") {
+    // A routine can be created conversationally only by the agent whose Inbox
+    // conversation is running. The full app token may manage existing routines
+    // in agent settings, but cannot create one outside that conversation.
+    if (req.method === "POST" && url.pathname === "/routines") {
+      if (externalProvider || !scopedChatId || !scopedChat?.dm || !scopedAgentId) {
+        return json(res, 403, { error: "routines can be created only in an agent conversation" });
+      }
       const body = await readJson(req);
       try {
-        const recurrence = createRecurrence(body);
+        const routine = createRoutine({
+          ...body,
+          ...(scopedAgentId ? { agentId: scopedAgentId } : {}),
+        });
         broadcast({ type: "board" });
-        return json(res, 200, { recurrence });
+        return json(res, 200, { routine });
       } catch (error) {
-        return json(res, 400, { error: (error as Error).message || "could not save that recurring ticket" });
+        return json(res, 400, { error: (error as Error).message || "could not create that routine" });
       }
     }
-    if (parts[0] === "recurring" && parts[1]) {
+    if (parts[0] === "routines" && parts[1]) {
       const id = decodeURIComponent(parts[1]);
       if (req.method === "PATCH" && parts.length === 2) {
         const body = await readJson(req);
         try {
-          const recurrence = updateRecurrence(id, body);
+          const routine = updateRoutine(id, body);
           broadcast({ type: "board" });
-          return json(res, 200, { recurrence });
+          return json(res, 200, { routine });
         } catch (error) {
-          const message = (error as Error).message || "could not save that recurring ticket";
+          const message = (error as Error).message || "could not save that routine";
           return json(res, /no such/.test(message) ? 404 : 400, { error: message });
         }
       }
       if (req.method === "DELETE" && parts.length === 2) {
         try {
-          deleteRecurrence(id);
+          deleteRoutine(id);
           broadcast({ type: "board" });
           return json(res, 200, { ok: true });
         } catch (error) {
-          return json(res, 404, { error: (error as Error).message || "no such recurring ticket" });
+          return json(res, 404, { error: (error as Error).message || "no such routine" });
         }
       }
-      // Writing today's ticket by hand, without waiting for the hour it is due.
       if (req.method === "POST" && parts[2] === "run") {
         try {
-          const written = runRecurrence(id);
+          const routine = await runRoutine(id);
           broadcast({ type: "board" });
-          return json(res, 200, written);
+          return json(res, 200, { routine });
         } catch (error) {
-          const message = (error as Error).message || "could not write that ticket";
+          const message = (error as Error).message || "could not run that routine";
           return json(res, /no such/.test(message) ? 404 : 400, { error: message });
         }
       }
@@ -1468,6 +1471,9 @@ const server = createServer(async (req, res) => {
               ));
             }
             if (parts[3] === "snapshot") return json(res, 200, { text: await browserSnapshotText(id, browserId) });
+            if (parts[3] === "back" || parts[3] === "forward" || parts[3] === "reload") {
+              return json(res, 200, await navigateBrowser(id, parts[3], controller, browserId));
+            }
             if (parts[3] === "click") return json(res, 200, await clickBrowser(id, target, controller, browserId));
             if (parts[3] === "type") return json(res, 200, await typeBrowser(id, target, String(body.value ?? ""), controller, browserId));
             if (parts[3] === "insert") return json(res, 200, await insertBrowser(id, String(body.value ?? ""), controller, browserId));
@@ -1755,7 +1761,12 @@ const server = createServer(async (req, res) => {
     }
 
     if (url.pathname === "/workspaces" && req.method === "GET") {
-      return json(res, 200, { workspaces: await listWorkspaces() });
+      await syncProjectBindings();
+      const workspaces = (await listWorkspaces()).map((workspace) => {
+        const project = projectForWorkspace(workspace.id);
+        return project ? { ...workspace, icon: project.icon, tint: project.tint } : workspace;
+      });
+      return json(res, 200, { workspaces });
     }
 
     if (url.pathname === "/paths" && req.method === "GET") {
@@ -1813,16 +1824,25 @@ const server = createServer(async (req, res) => {
       if (req.method === "PATCH" && parts.length === 2) {
         try {
           const body = await readJson(req);
+          const workspace = await updateWorkspace(id, {
+            name: body.name === undefined ? undefined : String(body.name),
+            icon: body.icon === undefined ? undefined : body.icon === null ? null : String(body.icon),
+            tint: body.tint === undefined ? undefined : body.tint === null ? null : String(body.tint),
+            // Null is how a workspace goes back to following the machine.
+            provider: body.provider === undefined ? undefined : body.provider === null ? null : String(body.provider),
+            model: body.model === undefined ? undefined : body.model === null ? null : String(body.model),
+            effort: body.effort === undefined ? undefined : body.effort === null ? null : String(body.effort),
+          });
+          let identity = projectForWorkspace(id);
+          if (body.icon !== undefined || body.tint !== undefined) {
+            identity = updateProject((identity ?? adoptWorkspace(workspace)).id, {
+              icon: body.icon,
+              tint: body.tint,
+            });
+            broadcast({ type: "board" });
+          }
           return json(res, 200, {
-            workspace: await updateWorkspace(id, {
-              name: body.name === undefined ? undefined : String(body.name),
-              icon: body.icon === undefined ? undefined : body.icon === null ? null : String(body.icon),
-              tint: body.tint === undefined ? undefined : body.tint === null ? null : String(body.tint),
-              // Null is how a workspace goes back to following the machine.
-              provider: body.provider === undefined ? undefined : body.provider === null ? null : String(body.provider),
-              model: body.model === undefined ? undefined : body.model === null ? null : String(body.model),
-              effort: body.effort === undefined ? undefined : body.effort === null ? null : String(body.effort),
-            }),
+            workspace: identity ? { ...workspace, icon: identity.icon, tint: identity.tint } : workspace,
           });
         } catch (error) {
           return json(res, 400, { error: (error as Error).message || "could not update workspace" });
@@ -2259,7 +2279,7 @@ deliverAnnouncements();
 pruneOrphanDms();
 
 // Board changes can originate outside an HTTP handler: a thread changes its
-// ticket status, a recurrence runs, or an agent uses a ticket tool. Keep every
+// ticket status, a routine runs, or an agent uses a ticket tool. Keep every
 // open window live without making each writer remember to send its own frame.
 function reconcileBoardEvent(event: LogEvent): void {
   if (event.entity === "ticket") void reconcileTicket(event.entityId);
@@ -2288,9 +2308,9 @@ if (!config.worktreeBranchPrefix || !config.githubLogin) {
     });
   });
 }
-// Recurring tickets are written by whichever machine owns them, so the clock
-// that mints them runs in the daemon rather than in a window that may be shut.
-startRecurringTickets(() => broadcast({ type: "board" }));
+// The routine's owning machine keeps its clock in the daemon rather than in a
+// window that may be shut.
+startRoutines(() => broadcast({ type: "board" }));
 
 // Board events flow between paired machines whether or not a window is open —
 // the daemon is what is paired, so the sync runs here rather than in a client.

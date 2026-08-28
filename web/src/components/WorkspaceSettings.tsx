@@ -147,10 +147,22 @@ export function WorkspaceSettings({
 }) {
   const servers = useStore((s) => s.servers);
   const allWorkspaces = useStore((s) => s.workspaces);
+  const projects = useStore((s) => s.projects);
   const updateWorkspace = useStore((s) => s.updateWorkspace);
+  const saveProject = useStore((s) => s.saveProject);
   const removeWorkspace = useStore((s) => s.removeWorkspace);
   const copies = workspaceCopies(workspace, allWorkspaces);
   const devices = devicesForWorkspace(workspace, copies, servers);
+  const project = projects.find((entry) =>
+    entry.workspaceIds.includes(workspace.id)
+      || Boolean(workspace.origin && entry.origin === workspace.origin));
+  const updateIdentity = (patch: { icon?: string; tint?: string }) => {
+    if (project) {
+      void saveProject(project.id, patch);
+      return;
+    }
+    void updateWorkspace(workspace.id, patch);
+  };
 
   const remove = async () => {
     await removeWorkspace(workspace.id);
@@ -182,9 +194,9 @@ export function WorkspaceSettings({
               }
               files={{
                 workspaceId: workspace.id,
-                onPick: (path) => void updateWorkspace(workspace.id, { icon: path }),
+                onPick: (path) => updateIdentity({ icon: path }),
               }}
-              onChange={(patch) => void updateWorkspace(workspace.id, patch)}
+              onChange={updateIdentity}
             />
             <div className="min-w-0 flex-1">
               <EditableName

@@ -3,6 +3,7 @@ import { codeFor, type DeviceIconId } from "~/lib/devices";
 import { agentConversation, availableAgentServers } from "~/lib/inbox";
 import type { TintId } from "~/lib/tints";
 import type { Provider } from "~/lib/providers";
+import { applyProjectIdentity } from "~/lib/projects";
 import { byRank } from "~/lib/tickets";
 import { transport } from "~/lib/transport";
 import { fixtureChats, fixtureServers, fixtureWorkspaces } from "./fixture";
@@ -25,7 +26,7 @@ import type {
   PathSuggestion,
   Project,
   ProviderMcpStatus,
-  Recurrence,
+  Routine,
   Server,
   ServerSettings,
   Ticket,
@@ -124,8 +125,7 @@ interface State {
   agents: Agent[];
   projects: Project[];
   tickets: Ticket[];
-  /// The tickets that come back. Read with the board, since they are part of it.
-  recurring: Recurrence[];
+  routines: Routine[];
   /// Which daemon each board device id belongs to. A ticket names the machine
   /// it runs on by that id rather than by a server row, because a server row is
   /// this client's pairing and means nothing to another client.
@@ -221,15 +221,9 @@ interface State {
   /// Turns a thread you are already in into a ticket, adopting its worktree and
   /// branch rather than opening new ones.
   ticketFromThread(chatId: string): Promise<Ticket>;
-  /// Writes a recurring ticket, or edits one. `projectId` says which machine
-  /// holds it, the way a ticket's project does.
-  saveRecurrence(
-    id: string | undefined,
-    patch: Record<string, unknown> & { projectId?: string },
-  ): Promise<Recurrence>;
-  deleteRecurrence(id: string): Promise<void>;
-  /// Writes this recurrence's ticket now, without waiting for its hour.
-  runRecurrence(id: string): Promise<Ticket>;
+  saveRoutine(id: string, patch: Record<string, unknown>): Promise<Routine>;
+  deleteRoutine(id: string): Promise<void>;
+  runRoutine(id: string): Promise<Routine>;
   saveAgent(id: string | undefined, patch: Record<string, unknown>): Promise<Agent>;
   deleteAgent(id: string): Promise<void>;
   /// Opens an agent's conversation, making it if this is the first time. The
@@ -239,7 +233,10 @@ interface State {
   readChat(id: string): Promise<void>;
   /// Renames a project, or the slug its tickets are keyed by. Changing the slug
   /// re-keys every ticket it has, so the whole board is read back after.
-  saveProject(id: string, patch: { name?: string; keyPrefix?: string }): Promise<Project>;
+  saveProject(
+    id: string,
+    patch: { name?: string; keyPrefix?: string; icon?: string | null; tint?: string | null },
+  ): Promise<Project>;
 }
 
 /// How often to poll. Long while pushes are arriving, short while they aren't.
@@ -255,7 +252,7 @@ export const useStore = create<State>((set, get) => ({
   agents: [],
   projects: [],
   tickets: [],
-  recurring: [],
+  routines: [],
   pairRequests: [],
   boardDevices: [],
   boardLoading: false,
@@ -387,36 +384,39 @@ export const useStore = create<State>((set, get) => ({
               .then((listed) => listed.workspaces ?? [])
               .catch(() => undefined),
           ]);
-          set((current) => ({
-            // One machine answering is enough to stop saying "Connecting…":
-            // there is something to show, and there is somewhere to type.
-            loading: false,
-            servers: current.servers.map((entry) =>
-              entry.id === server.id ? { ...entry, online: entry.cloud ? entry.online : true } : entry),
-            chats: [
-              ...current.chats.filter((chat) => chat.serverId !== server.id),
-              ...(chats.chats ?? []).map((raw) => toChat(raw, server.id)),
-            ].sort(byAttention),
-            archived: [
-              ...current.archived.filter((chat) => chat.serverId !== server.id),
-              ...archives.map((raw) => toArchivedThread(raw, server.id)),
-            ].sort((a, b) => b.archivedAt - a.archivedAt),
-            // The inbox comes back in the same answer, so it lands with the
-            // threads rather than costing a second round trip.
-            dms: [
-              ...current.dms.filter((chat) => chat.serverId !== server.id),
-              ...(chats.dms ?? []).map((raw) => toChat(raw, server.id)),
-            ],
-            // Keep the last catalogue when a paired machine is asleep. Its
-            // folders still exist there, and the device chip already says the
-            // machine is offline. A successful empty answer still clears it.
-            workspaces: workspaces === undefined
+          set((current) => {
+            const nextWorkspaces = workspaces === undefined
               ? current.workspaces
               : [
                   ...current.workspaces.filter((workspace) => workspace.serverId !== server.id),
                   ...workspaces.map((raw) => toWorkspace(raw, server.id)),
-                ],
-          }));
+                ];
+            return {
+              // One machine answering is enough to stop saying "Connecting…":
+              // there is something to show, and there is somewhere to type.
+              loading: false,
+              servers: current.servers.map((entry) =>
+                entry.id === server.id ? { ...entry, online: entry.cloud ? entry.online : true } : entry),
+              chats: [
+                ...current.chats.filter((chat) => chat.serverId !== server.id),
+                ...(chats.chats ?? []).map((raw) => toChat(raw, server.id)),
+              ].sort(byAttention),
+              archived: [
+                ...current.archived.filter((chat) => chat.serverId !== server.id),
+                ...archives.map((raw) => toArchivedThread(raw, server.id)),
+              ].sort((a, b) => b.archivedAt - a.archivedAt),
+              // The inbox comes back in the same answer, so it lands with the
+              // threads rather than costing a second round trip.
+              dms: [
+                ...current.dms.filter((chat) => chat.serverId !== server.id),
+                ...(chats.dms ?? []).map((raw) => toChat(raw, server.id)),
+              ],
+              // Keep the last catalogue when a paired machine is asleep. Its
+              // folders still exist there, and the device chip already says the
+              // machine is offline. A successful empty answer still clears it.
+              workspaces: applyProjectIdentity(nextWorkspaces, current.projects),
+            };
+          });
         } catch (error) {
           failures.set(server.id, `${server.name}: ${error instanceof Error ? error.message : String(error)}`);
           set((current) => ({
@@ -971,7 +971,7 @@ export const useStore = create<State>((set, get) => ({
     const servers = await transport.servers();
     // The board is read from the machines this window holds a daemon of, and a
     // paired one is not among them: daemons converge the board log between
-    // themselves, so a peer's tickets, agents and recurring tickets are already
+    // themselves, so a peer's tickets, agents and routines are already
     // in the answer here. Asking that machine for them again waits on a device
     // that may be asleep for something this one already knows — and its answer
     // carries `workspaceIds` for folders on *its* disk, which are not ours.
@@ -980,7 +980,7 @@ export const useStore = create<State>((set, get) => ({
     // replicate nowhere, so `refresh` does go and ask each one.
     const asked = servers.filter((server) => !server.peer && !server.cloud);
     if (asked.length === 0) {
-      set({ agents: [], projects: [], tickets: [], recurring: [], boardDevices: [], boardLoading: false });
+      set({ agents: [], projects: [], tickets: [], routines: [], boardDevices: [], boardLoading: false });
       return;
     }
     if (get().tickets.length === 0) set({ boardLoading: true });
@@ -992,7 +992,7 @@ export const useStore = create<State>((set, get) => ({
             agents?: RawAgent[];
             projects?: RawProject[];
             tickets?: RawTicket[];
-            recurring?: RawRecurrence[];
+            routines?: RawRoutine[];
           }>(server.id, "/board");
           return {
             devices: board.deviceId ? [{ deviceId: board.deviceId, serverId: server.id }] : [],
@@ -1007,11 +1007,11 @@ export const useStore = create<State>((set, get) => ({
               serverId: server.id,
               threads: raw.threads ?? [],
             }) as Ticket),
-            recurring: (board.recurring ?? []).map((raw) => ({ ...raw, serverId: server.id }) as Recurrence),
+            routines: (board.routines ?? []).map((raw) => ({ ...raw, serverId: server.id }) as Routine),
           };
         } catch {
           // An older server has no board, which is not worth an error banner.
-          return { devices: [], agents: [], projects: [], tickets: [], recurring: [] };
+          return { devices: [], agents: [], projects: [], tickets: [], routines: [] };
         }
       }),
     );
@@ -1024,13 +1024,17 @@ export const useStore = create<State>((set, get) => ({
     const paired = servers
       .filter((server) => server.peer)
       .map((server) => ({ deviceId: server.id, serverId: server.id }));
-    set({
-      agents: dedupe(results.flatMap((r) => r.agents)),
-      projects: dedupe(results.flatMap((r) => r.projects)),
-      tickets: dedupe(results.flatMap((r) => r.tickets)).sort(byRank),
-      recurring: dedupe(results.flatMap((r) => r.recurring)).sort((a, b) => a.nextRunAt - b.nextRunAt),
-      boardDevices: [...results.flatMap((r) => r.devices), ...paired],
-      boardLoading: false,
+    set((current) => {
+      const projects = dedupe(results.flatMap((r) => r.projects));
+      return {
+        agents: dedupe(results.flatMap((r) => r.agents)),
+        projects,
+        workspaces: applyProjectIdentity(current.workspaces, projects),
+        tickets: dedupe(results.flatMap((r) => r.tickets)).sort(byRank),
+        routines: dedupe(results.flatMap((r) => r.routines)).sort((a, b) => a.nextRunAt - b.nextRunAt),
+        boardDevices: [...results.flatMap((r) => r.devices), ...paired],
+        boardLoading: false,
+      };
     });
   },
 
@@ -1200,40 +1204,40 @@ export const useStore = create<State>((set, get) => ({
     return ticket;
   },
 
-  async saveRecurrence(id, patch) {
-    const existing = id ? get().recurring.find((entry) => entry.id === id) : undefined;
-    const server = existing?.serverId ?? boardServer(get().servers, get().projects, String(patch.projectId ?? ""));
-    const body = await transport.request<{ recurrence: RawRecurrence }>(
-      server,
-      id ? `/recurring/${encodeURIComponent(id)}` : "/recurring",
-      { method: id ? "PATCH" : "POST", body: patch },
+  async saveRoutine(id, patch) {
+    const existing = get().routines.find((entry) => entry.id === id);
+    if (!existing) throw new Error("That routine is gone.");
+    const body = await transport.request<{ routine: RawRoutine }>(
+      existing.serverId,
+      `/routines/${encodeURIComponent(id)}`,
+      { method: "PATCH", body: patch },
     );
-    const recurrence = { ...body.recurrence, serverId: server } as Recurrence;
-    set((current) => ({ recurring: withRecurrence(current.recurring, recurrence) }));
+    const routine = { ...body.routine, serverId: existing.serverId } as Routine;
+    set((current) => ({ routines: withRoutine(current.routines, routine) }));
     void get().loadBoard().catch(() => {});
-    return recurrence;
+    return routine;
   },
 
-  async deleteRecurrence(id) {
-    const recurrence = get().recurring.find((entry) => entry.id === id);
-    if (!recurrence) return;
-    await transport.request(recurrence.serverId, `/recurring/${encodeURIComponent(id)}`, { method: "DELETE" });
-    set((current) => ({ recurring: current.recurring.filter((entry) => entry.id !== id) }));
+  async deleteRoutine(id) {
+    const routine = get().routines.find((entry) => entry.id === id);
+    if (!routine) return;
+    await transport.request(routine.serverId, `/routines/${encodeURIComponent(id)}`, { method: "DELETE" });
+    set((current) => ({ routines: current.routines.filter((entry) => entry.id !== id) }));
     void get().loadBoard().catch(() => {});
   },
 
-  async runRecurrence(id) {
-    const recurrence = get().recurring.find((entry) => entry.id === id);
-    if (!recurrence) throw new Error("That recurring ticket is gone.");
-    const body = await transport.request<{ ticket: RawTicket }>(
-      recurrence.serverId,
-      `/recurring/${encodeURIComponent(id)}/run`,
+  async runRoutine(id) {
+    const routine = get().routines.find((entry) => entry.id === id);
+    if (!routine) throw new Error("That routine is gone.");
+    const body = await transport.request<{ routine: RawRoutine }>(
+      routine.serverId,
+      `/routines/${encodeURIComponent(id)}/run`,
       { method: "POST", body: {} },
     );
-    const ticket = toTicket(body.ticket, recurrence.serverId);
-    set((current) => ({ tickets: withTicket(current.tickets, ticket) }));
+    const updated = { ...body.routine, serverId: routine.serverId } as Routine;
+    set((current) => ({ routines: withRoutine(current.routines, updated) }));
     void get().loadBoard().catch(() => {});
-    return ticket;
+    return updated;
   },
 
   async saveAgent(id, patch) {
@@ -1554,7 +1558,7 @@ function boardServer(servers: Server[], projects: Project[], projectId: string):
 type RawAgent = Omit<Agent, "serverId">;
 type RawProject = Omit<Project, "serverId" | "workspaceIds"> & { workspaceIds?: string[] };
 type RawTicket = Omit<Ticket, "serverId" | "threads"> & { threads?: Ticket["threads"] };
-type RawRecurrence = Omit<Recurrence, "serverId">;
+type RawRoutine = Omit<Routine, "serverId">;
 
 function toTicket(raw: RawTicket, serverId: string): Ticket {
   return { ...raw, serverId, threads: raw.threads ?? [] } as Ticket;
@@ -1571,14 +1575,11 @@ function withRow<T extends { id: string }>(rows: T[], row: T): T[] {
     : [...rows, row];
 }
 
-// The board and the recurring tab paint their lists in the order they are held
-// in, so a row put back by hand is put back in that order — otherwise a card
-// lands at the bottom of its column and jumps when the read behind it returns.
 function withTicket(rows: Ticket[], row: Ticket): Ticket[] {
   return withRow(rows, row).sort(byRank);
 }
 
-function withRecurrence(rows: Recurrence[], row: Recurrence): Recurrence[] {
+function withRoutine(rows: Routine[], row: Routine): Routine[] {
   return withRow(rows, row).sort((a, b) => a.nextRunAt - b.nextRunAt);
 }
 

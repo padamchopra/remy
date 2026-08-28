@@ -39,10 +39,15 @@ export function isRemyToolRoute(method: string | undefined, pathname: string): b
   if ((method === "PATCH" || method === "DELETE") && /^\/agents\/[^/]+\/memories\/[^/]+$/.test(pathname)) return true;
   if ((method === "GET" || method === "POST") && pathname === "/workspaces") return true;
   if ((method === "GET" || method === "POST") && pathname === "/chats") return true;
+  if (method === "POST" && pathname === "/routines") return true;
   if (method === "POST" && pathname === "/runtime/environment-command") return true;
   if (method === "GET" && /^\/chats\/[^/]+$/.test(pathname)) return true;
   if (method === "POST" && /^\/chats\/[^/]+\/(message|stop)$/.test(pathname)) return true;
-  if ((method === "GET" || method === "POST") && /^\/chats\/[^/]+\/browser(?:\/[^/]+)?$/.test(pathname)) return true;
+  if (method === "GET" && /^\/chats\/[^/]+\/browser$/.test(pathname)) return true;
+  if (
+    method === "POST"
+    && /^\/chats\/[^/]+\/browser\/(open|viewport|snapshot|back|forward|reload|click|type|insert|press|scroll|wait|close)$/.test(pathname)
+  ) return true;
   if (method === "POST" && pathname === "/tickets") return true;
   if (!/^\/tickets\/[^/]+(?:\/[^/]+)?$/.test(pathname)) return false;
   if (method === "GET" && /\/activity$/.test(pathname)) return true;

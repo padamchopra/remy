@@ -16,6 +16,7 @@ export function remyMcpProcess(input: {
   chatId?: string;
   deviceId?: string;
   agentId?: string;
+  dm?: boolean;
   command?: string;
   script?: string;
   electron?: boolean;
@@ -33,6 +34,7 @@ export function remyMcpProcess(input: {
       ...(input.chatId ? { REMY_CHAT_ID: input.chatId } : {}),
       ...(input.deviceId ? { REMY_DEVICE_ID: input.deviceId } : {}),
       ...(input.agentId ? { REMY_AGENT_ID: input.agentId } : {}),
+      ...(input.dm ? { REMY_CHAT_DM: "1" } : {}),
       ...(electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
     },
   };

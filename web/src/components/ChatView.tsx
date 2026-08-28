@@ -8,6 +8,7 @@ import {
   ChevronDown,
   CircleAlert,
   CircleStop,
+  Clock3,
   Copy,
   FileCode2,
   Folder,
@@ -140,6 +141,7 @@ export function ChatView({
   onOpenTicket,
   onOpenThread,
   onOpenWorkspace,
+  onOpenRoutine,
   onRestored,
   crumbs,
   persona,
@@ -152,6 +154,7 @@ export function ChatView({
   /// a workspace. Without these the card is still drawn; it just does not open.
   onOpenThread?: (id: string) => void;
   onOpenWorkspace?: (workspaceId: string) => void;
+  onOpenRoutine?: () => void;
   onRestored?: (id: string) => void;
   /// Replaces the workspace-and-title trail. An inbox conversation is placed by
   /// who you are talking to, not by the folder it happens to run in.
@@ -241,7 +244,7 @@ export function ChatView({
   const visibleEntries = useMemo(
     () => entries.filter(
       (entry) => conversational
-        ? entry.kind === "user" || entry.kind === "assistant"
+        ? entry.kind === "user" || entry.kind === "assistant" || Boolean(entry.artifacts?.length)
         : entry.kind !== "thinking" || Boolean(entry.text?.trim()),
     ),
     [conversational, entries],
@@ -324,30 +327,23 @@ export function ChatView({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <PaneHeader
-        crumbs={crumbs ?? [
-          {
-            label: (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    <WorkspaceMark home={!workspace} workspace={workspace} server={server} size="sm" />
-                    <span className="truncate">{workspace?.name ?? server?.name ?? "This machine"}</span>
-                  </span>
-                </TooltipTrigger>
-                {/* The path is what the name stands for, so it stays one hover away. */}
-                <TooltipContent className="font-mono">{displayPath(chat.cwd)}</TooltipContent>
-              </Tooltip>
-            ),
-          },
-          {
-            label: persona ? (
-              <span className="flex min-w-0 items-center gap-1.5">
-                <AgentMark agent={persona} className="size-4" />
-                <span className="truncate">{open?.title ?? chat.title}</span>
-              </span>
-            ) : (open?.title ?? chat.title),
-          },
-        ]}
+        crumbs={crumbs ?? [{
+          label: (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="flex min-w-0 items-center gap-2">
+                  <WorkspaceMark home={!workspace} workspace={workspace} server={server} size="sm" />
+                  <span className="truncate">{open?.title ?? chat.title}</span>
+                </span>
+              </TooltipTrigger>
+              {/* The workspace and path stay available without crowding the title. */}
+              <TooltipContent>
+                <span className="font-medium">{workspace?.name ?? server?.name ?? "This machine"}</span>
+                <span className="ml-1.5 font-mono text-muted-foreground">{displayPath(chat.cwd)}</span>
+              </TooltipContent>
+            </Tooltip>
+          ),
+        }]}
       >
         {onOpenTicket && !persona && !archived && <ThreadTicket chatId={chat.id} onOpenTicket={onOpenTicket} />}
         {headerEnd}
@@ -394,7 +390,7 @@ export function ChatView({
             checkpoints={checkpoints}
             className="min-h-0 flex-1"
           >
-            <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-5 py-6 [overflow-anchor:none]">
+            <div className="mx-auto flex w-full max-w-[44rem] flex-1 flex-col gap-5 px-6 py-7 [overflow-anchor:none]">
           {loading && visibleEntries.length === 0 ? (
             <FeedSkeleton />
           ) : visibleEntries.length === 0 ? (
@@ -421,6 +417,7 @@ export function ChatView({
                   onOpenTicket={onOpenTicket}
                   onOpenThread={onOpenThread}
                   onOpenWorkspace={onOpenWorkspace}
+                  onOpenRoutine={onOpenRoutine}
                 />
               ) : (
                 <Entry
@@ -474,6 +471,10 @@ export function ChatView({
             </Marker>
           )}
 
+          {(approval || question || open?.error) && (
+            <span aria-hidden="true" className="min-h-0 flex-1" />
+          )}
+
           {approval && (
             <ApprovalCard
               approval={approval}
@@ -512,12 +513,12 @@ export function ChatView({
             </div>
           </ScrollFeed>
 
-          <div className="min-w-0 shrink-0 border-t border-border px-5 py-3">
+          <div className="min-w-0 shrink-0 bg-linear-to-t from-background via-background to-transparent px-6 pt-2 pb-4">
             {archived && (
               <Item
                 variant="outline"
                 size="sm"
-                className="mx-auto mb-3 w-full max-w-3xl bg-muted/30"
+                className="mx-auto mb-3 w-full max-w-[44rem] bg-muted/30"
               >
                 <ItemMedia variant="icon">
                   <ArchiveRestore />
@@ -541,13 +542,13 @@ export function ChatView({
             <form
           // The toolbar drops labels by how wide the composer is, not the
           // window: the sidebar takes a fixed slice, so the two differ.
-          className="@container mx-auto min-w-0 w-full max-w-3xl"
+          className="@container mx-auto min-w-0 w-full max-w-[44rem]"
           onSubmit={(event) => {
             event.preventDefault();
             void submit();
           }}
         >
-          <InputGroup className="items-stretch rounded-xl">
+          <InputGroup className="items-stretch rounded-2xl border-border/80 bg-card/95 shadow-sm">
             <InlineImageComposer
               ref={composerRef}
               ariaLabel="Message"
@@ -926,7 +927,7 @@ function ScrollFeed({
     <div className={cn("relative", className)}>
       <ScrollArea
         ref={rootRef}
-        className="h-full"
+        className="h-full [&_[data-slot=scroll-area-viewport]>div]:flex! [&_[data-slot=scroll-area-viewport]>div]:min-h-full!"
         onClickCapture={(event) => {
           if (!(event.target instanceof Element)) return;
           const message = event.target.closest<HTMLElement>("[data-scroll-checkpoint]");
@@ -1177,10 +1178,13 @@ function Entry({
               You
             </MessageHeader>
           )}
-          <Bubble align="end">
+          <Bubble align="end" variant="muted">
             <BubbleContent
               asChild={checkpoint !== undefined}
-              className="whitespace-pre-wrap transition-[background-color] duration-150 group-data-[compacted]/message:truncate group-data-[stuck]/message:bg-primary/45! group-data-[stuck]/message:backdrop-blur-sm motion-reduce:transition-none"
+              className={cn(
+                "whitespace-pre-wrap transition-[background-color] duration-150 group-data-[compacted]/message:truncate group-data-[stuck]/message:backdrop-blur-sm motion-reduce:transition-none",
+                "group-data-[stuck]/message:bg-muted/95!",
+              )}
             >
               {checkpoint !== undefined ? (
                 <Button
@@ -1281,6 +1285,7 @@ const ARTIFACT_ICON = {
   ticket: SquareKanban,
   thread: MessagesSquare,
   workspace: Folder,
+  routine: Clock3,
 } as const;
 
 /// What a Remy tool just made, as a thing rather than a sentence.
@@ -1392,6 +1397,7 @@ function CopyPrompt({ text }: { text: string }) {
           type="button"
           variant="ghost"
           size="icon-xs"
+          className="opacity-0 transition-opacity group-hover/message:opacity-100 focus-visible:opacity-100 motion-reduce:transition-none"
           aria-label="Copy prompt"
           onClick={() => void copy()}
         >
@@ -1477,11 +1483,13 @@ function ToolGroup({
   onOpenTicket,
   onOpenThread,
   onOpenWorkspace,
+  onOpenRoutine,
 }: {
   entries: ConvEntry[];
   onOpenTicket?: (key: string) => void;
   onOpenThread?: (id: string) => void;
   onOpenWorkspace?: (workspaceId: string) => void;
+  onOpenRoutine?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const failed = entries.filter((entry) => toolStatus(entry) === "error").length;
@@ -1489,7 +1497,7 @@ function ToolGroup({
 
   return (
     // Tool work is the agent's too, so it stays under the agent's text column.
-    <div className="flex flex-col gap-1.5 pl-10">
+    <div className="flex flex-col gap-1.5">
       <Collapsible open={expanded} onOpenChange={setExpanded}>
         <Marker asChild className="w-fit">
           <CollapsibleTrigger className="group/tool-group rounded-sm py-0.5 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
@@ -1522,6 +1530,8 @@ function ToolGroup({
                 ? () => onOpenThread(artifact.id!)
                 : artifact.kind === "workspace" && artifact.id && onOpenWorkspace
                   ? () => onOpenWorkspace(artifact.id!)
+                  : artifact.kind === "routine" && onOpenRoutine
+                    ? onOpenRoutine
                   : undefined
           }
         />
@@ -1565,7 +1575,7 @@ function toolGroupSummary(entries: ConvEntry[]): string {
 
 function Diff({ lines }: { lines: ConvDiffLine[] }) {
   return (
-    <div className="overflow-x-auto rounded-md border border-border/60 bg-background font-mono text-[11px] leading-5">
+    <div className="min-w-0 max-w-full overflow-x-auto rounded-md border border-border/60 bg-background font-mono text-[11px] leading-5">
       {lines.map((line, index) => (
         <div
           key={index}
@@ -1602,14 +1612,14 @@ function ApprovalCard({
   };
 
   return (
-    <Card className="gap-3 border-warning/50 p-4">
-      <div className="flex flex-col gap-1">
-        <p className="text-sm font-medium">{approval.title ?? `${approval.verb} ${approval.arg}`.trim()}</p>
-        {approval.reason && <p className="text-xs text-muted-foreground">{approval.reason}</p>}
+    <Card className="w-full min-w-0 max-w-full gap-3 overflow-hidden border-warning/50 p-4">
+      <div className="flex min-w-0 flex-col gap-1">
+        <p className="min-w-0 max-w-full text-sm font-medium [overflow-wrap:anywhere]">{approval.title ?? `${approval.verb} ${approval.arg}`.trim()}</p>
+        {approval.reason && <p className="min-w-0 max-w-full text-xs text-muted-foreground [overflow-wrap:anywhere]">{approval.reason}</p>}
       </div>
       {approval.plan && (
-        <div className="max-h-72 overflow-auto rounded-md bg-muted/50 p-3">
-          <Markdown text={approval.plan} className="text-xs" />
+        <div className="min-w-0 max-w-full max-h-72 overflow-auto rounded-md bg-muted/50 p-3">
+          <Markdown text={approval.plan} className="min-w-0 max-w-full text-xs" />
         </div>
       )}
       {approval.diff && approval.diff.length > 0 && <Diff lines={approval.diff} />}

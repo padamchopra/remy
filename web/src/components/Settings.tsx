@@ -1,4 +1,21 @@
-import { ArrowDown, ArrowUp, Boxes, ChartNoAxesCombined, Check, Cloud, Copy, Folder, GitBranch, Github, ImagePlus, Laptop, Monitor, Plus, RefreshCw, Smartphone, Trash2, X } from "lucide-react";
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { Boxes, ChartNoAxesCombined, Check, Cloud, Copy, Folder, GitBranch, Github, GripVertical, ImagePlus, Laptop, Monitor, Plus, RefreshCw, Smartphone, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import remyMark from "@/assets/remy-mark.png";
 import { Badge } from "@/components/ui/badge";
@@ -1352,6 +1369,7 @@ function DevicesPane() {
   const updateServer = useStore((s) => s.updateServer);
   const [busy, setBusy] = useState(false);
   const [savingOrder, setSavingOrder] = useState(false);
+  const [preferenceOrder, setPreferenceOrder] = useState<string[]>(() => settings?.devicePreferenceOrder ?? []);
   const [latestRelease, setLatestRelease] = useState<RemyRelease>();
   const hasPeer = servers.some((server) => server.peer);
   // Pairing lives in the daemon on this machine rather than in any one window,
@@ -1362,17 +1380,28 @@ function DevicesPane() {
   const homeIdentity = useIdentity(home?.id);
   const homeReachable = homeIdentity?.exposed === true;
   const preference = settings?.devicePreferenceOrder ?? [];
-  const rank = new Map(preference.map((id, index) => [id, index]));
-  const ordered = servers
+  // Device administration is not scheduling: keep the machine in front of the
+  // person first here, and let the compact preference field own run order.
+  const devices = servers
     .filter((server) => !server.cloud && !server.workspaceOnly)
-    .sort((a, b) => {
-      const aRank = rank.get(a.id);
-      const bRank = rank.get(b.id);
-      if (aRank !== undefined || bRank !== undefined) {
-        return (aRank ?? Number.MAX_SAFE_INTEGER) - (bRank ?? Number.MAX_SAFE_INTEGER);
-      }
-      return Number(b.local ?? false) - Number(a.local ?? false);
-    });
+    .sort((a, b) => Number(b.local ?? false) - Number(a.local ?? false));
+  const deviceById = new Map(devices.map((server) => [server.id, server]));
+  const preferenceIds = [
+    ...preferenceOrder.filter((id) => deviceById.has(id)),
+    ...devices.map((server) => server.id).filter((id) => !preferenceOrder.includes(id)),
+  ];
+  const preferredDevices = preferenceIds.flatMap((id) => {
+    const server = deviceById.get(id);
+    return server ? [server] : [];
+  });
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  useEffect(() => {
+    setPreferenceOrder(preference);
+  }, [settings?.devicePreferenceOrder]);
 
   useEffect(() => {
     if (!hasPeer) return;
@@ -1401,15 +1430,18 @@ function DevicesPane() {
     }
   };
 
-  const move = async (index: number, direction: -1 | 1) => {
-    const target = index + direction;
-    if (target < 0 || target >= ordered.length) return;
-    const next = ordered.map((server) => server.id);
-    [next[index], next[target]] = [next[target], next[index]];
+  const reorder = async (event: DragEndEvent) => {
+    if (!event.over || event.active.id === event.over.id) return;
+    const from = preferenceIds.indexOf(String(event.active.id));
+    const to = preferenceIds.indexOf(String(event.over.id));
+    if (from < 0 || to < 0) return;
+    const next = arrayMove(preferenceIds, from, to);
+    setPreferenceOrder(next);
     setSavingOrder(true);
     try {
       await saveSettings({ devicePreferenceOrder: next });
     } catch (caught) {
+      setPreferenceOrder(preference);
       toast.error("Couldn't change the device order", { description: apiError(caught) });
     } finally {
       setSavingOrder(false);
@@ -1433,11 +1465,11 @@ function DevicesPane() {
         <FieldContent>
           <FieldLabel>Devices</FieldLabel>
           <FieldDescription className="text-xs">
-            Remy tries them in this order for work without a workspace.
+            Manage this machine and the devices paired with it.
           </FieldDescription>
         </FieldContent>
         <ItemGroup className="gap-3">
-          {ordered.map((server, index) => (
+          {devices.map((server) => (
             <DeviceCard
               key={server.id}
               server={server}
@@ -1446,10 +1478,6 @@ function DevicesPane() {
               homeDeviceId={homeIdentity?.deviceId}
               homeName={home?.name ?? "this device"}
               busy={busy}
-              savingOrder={savingOrder}
-              index={index}
-              count={ordered.length}
-              onMove={(direction) => void move(index, direction)}
               onUnpair={() => void unpair(server)}
               onUpdate={async (patch) => {
                 if (server.local) {
@@ -1460,6 +1488,27 @@ function DevicesPane() {
             />
           ))}
         </ItemGroup>
+      </Field>
+      <Field data-device-preference-field>
+        <FieldContent>
+          <FieldLabel>Preferred device order</FieldLabel>
+          <FieldDescription className="text-xs">
+            Remy tries available devices from top to bottom when work can run anywhere.
+          </FieldDescription>
+        </FieldContent>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={(event) => void reorder(event)}
+        >
+          <SortableContext items={preferenceIds} strategy={verticalListSortingStrategy}>
+            <ItemGroup className="gap-2">
+              {preferredDevices.map((server) => (
+                <DevicePreferenceItem key={server.id} server={server} disabled={savingOrder} />
+              ))}
+            </ItemGroup>
+          </SortableContext>
+        </DndContext>
       </Field>
       {home ? <PhonesField serverId={home.id} /> : null}
       <DiscoveredDevices homeId={home?.id} reachable={homeReachable} />
@@ -1608,10 +1657,6 @@ function DeviceCard({
   homeDeviceId,
   homeName,
   busy,
-  savingOrder,
-  index,
-  count,
-  onMove,
   onUnpair,
   onUpdate,
 }: {
@@ -1621,10 +1666,6 @@ function DeviceCard({
   homeDeviceId?: string;
   homeName: string;
   busy: boolean;
-  savingOrder: boolean;
-  index: number;
-  count: number;
-  onMove: (direction: -1 | 1) => void;
   onUnpair: () => void;
   onUpdate: (patch: { name?: string; icon?: DeviceIconId; tint?: TintId }) => Promise<void>;
 }) {
@@ -1642,7 +1683,11 @@ function DeviceCard({
   }, [identity, onUpdate, server.icon, server.local, server.name, server.tint]);
 
   return (
-    <Item variant="outline" className="flex-col items-stretch gap-0 overflow-hidden p-0">
+    <Item
+      variant="outline"
+      data-device-card={server.id}
+      className="flex-col items-stretch gap-0 overflow-hidden p-0"
+    >
       <ItemHeader className="px-4 py-3">
         <ItemMedia>
           <IconPicker
@@ -1676,26 +1721,6 @@ function DeviceCard({
           </ItemDescription>
         </ItemContent>
 
-        <ItemActions className="shrink-0 gap-1">
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={`Move ${server.name} up`}
-            disabled={savingOrder || index === 0}
-            onClick={() => onMove(-1)}
-          >
-            <ArrowUp />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={`Move ${server.name} down`}
-            disabled={savingOrder || index === count - 1}
-            onClick={() => onMove(1)}
-          >
-            <ArrowDown />
-          </Button>
-        </ItemActions>
       </ItemHeader>
       <ItemSeparator />
       <FieldGroup className="gap-0">
@@ -1759,6 +1784,55 @@ function DeviceCard({
           </>
         )}
       </FieldGroup>
+    </Item>
+  );
+}
+
+function DevicePreferenceItem({ server, disabled }: { server: Server; disabled: boolean }) {
+  const DeviceIcon = deviceIcon(server.icon);
+  const {
+    attributes,
+    listeners,
+    setActivatorNodeRef,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: server.id, disabled });
+
+  return (
+    <Item
+      ref={setNodeRef}
+      variant="outline"
+      size="sm"
+      data-device-preference={server.id}
+      className={cn(isDragging && "z-10 bg-card shadow-md")}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+    >
+      <ItemMedia variant="icon">
+        <DeviceIcon />
+      </ItemMedia>
+      <ItemContent className="min-w-0 gap-0.5">
+        <ItemTitle className="truncate">{server.name}</ItemTitle>
+        <ItemDescription className="text-xs">
+          {server.local ? "This machine" : server.online ? "Online" : "Offline"}
+        </ItemDescription>
+      </ItemContent>
+      <ItemActions>
+        <Button
+          ref={setActivatorNodeRef}
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          className="touch-none cursor-grab active:cursor-grabbing"
+          aria-label={`Reorder ${server.name}`}
+          disabled={disabled}
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical />
+        </Button>
+      </ItemActions>
     </Item>
   );
 }

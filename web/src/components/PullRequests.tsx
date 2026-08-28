@@ -1,38 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  CircleCheck,
-  CircleDot,
-  CircleX,
-  ExternalLink,
-  GitBranch,
-  GitPullRequest,
-  MessageSquare,
-  RefreshCw,
-} from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { CircleDot, GitPullRequest, RefreshCw, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty";
-import {
-  Item,
-  ItemActions,
-  ItemContent,
-  ItemDescription,
-  ItemGroup,
-  ItemMedia,
-  ItemTitle,
-} from "@/components/ui/item";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
+import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { PaneHeader } from "@/components/PaneHeader";
 import { PullRequestView } from "@/components/PullRequestView";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { transport } from "@/lib/transport";
+import { cn } from "@/lib/utils";
 import type { Chat, Server, Workspace } from "@/state/types";
 
 type PullRequestFilter = "all" | "ready" | "draft";
@@ -52,6 +29,8 @@ interface AuthoredPullRequest {
   isDraft: boolean;
   reviewDecision: string;
   updatedAt: string;
+  additions: number;
+  deletions: number;
   checks: PullRequestCheck[];
   unreadComments: unknown[];
   hasUnreadActivity: boolean;
@@ -66,9 +45,7 @@ function mergePullRequests(pullRequests: AuthoredPullRequest[]): AuthoredPullReq
   const byURL = new Map<string, AuthoredPullRequest>();
   for (const pullRequest of pullRequests) {
     const current = byURL.get(pullRequest.url);
-    if (!current || (!current.worktreePath && pullRequest.worktreePath)) {
-      byURL.set(pullRequest.url, pullRequest);
-    }
+    if (!current || (!current.worktreePath && pullRequest.worktreePath)) byURL.set(pullRequest.url, pullRequest);
   }
   return [...byURL.values()].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
 }
@@ -92,14 +69,28 @@ function activeThread(pullRequest: AuthoredPullRequest, chats: Chat[]): Chat | u
 
 function relativeDate(value: string): string {
   const elapsed = Date.now() - Date.parse(value);
-  if (!Number.isFinite(elapsed)) return "Updated recently";
+  if (!Number.isFinite(elapsed)) return "Now";
   const minutes = Math.max(0, Math.round(elapsed / 60_000));
-  if (minutes < 1) return "Updated now";
-  if (minutes < 60) return `Updated ${minutes}m ago`;
+  if (minutes < 1) return "Now";
+  if (minutes < 60) return `${minutes}m`;
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `Updated ${hours}h ago`;
+  if (hours < 24) return `${hours}h`;
   const days = Math.round(hours / 24);
-  return `Updated ${days}d ago`;
+  if (days < 30) return `${days}d`;
+  return `${Math.round(days / 30)}mo`;
+}
+
+function needsAttention(pullRequest: AuthoredPullRequest): boolean {
+  return pullRequest.hasUnreadActivity
+    || pullRequest.reviewDecision === "CHANGES_REQUESTED"
+    || pullRequest.checks.some((check) => check.state === "fail");
+}
+
+function statusTone(pullRequest: AuthoredPullRequest): string {
+  if (pullRequest.checks.some((check) => check.state === "fail")) return "bg-destructive";
+  if (pullRequest.reviewDecision === "APPROVED") return "bg-success-foreground";
+  if (pullRequest.isDraft) return "bg-muted-foreground";
+  return "bg-warning-foreground";
 }
 
 export function PullRequests({
@@ -117,9 +108,10 @@ export function PullRequests({
 }) {
   const [pullRequests, setPullRequests] = useState<AuthoredPullRequest[]>([]);
   const [filter, setFilter] = useState<PullRequestFilter>("all");
+  const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [selected, setSelected] = useState<AuthoredPullRequest>();
+  const [selectedURL, setSelectedURL] = useState("");
 
   const load = useCallback(async (refresh = false) => {
     if (refresh) setRefreshing(true);
@@ -150,156 +142,167 @@ export function PullRequests({
     ready: pullRequests.filter((pullRequest) => !pullRequest.isDraft).length,
     draft: pullRequests.filter((pullRequest) => pullRequest.isDraft).length,
   }), [pullRequests]);
-  const visible = pullRequests.filter((pullRequest) =>
-    filter === "all" || (filter === "draft" ? pullRequest.isDraft : !pullRequest.isDraft));
-
-  if (selected) {
-    return (
-      <main className="flex min-w-0 flex-1 flex-col">
-        <PaneHeader
-          crumbs={[
-            { label: "Pull requests", onClick: () => setSelected(undefined) },
-            { label: `#${selected.number}` },
-          ]}
-        />
-        <div className="min-h-0 flex-1">
-          <PullRequestView
-            serverId={selected.serverId}
-            repository={selected.repository}
-            number={selected.number}
-          />
-        </div>
-      </main>
-    );
-  }
+  const visible = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    return pullRequests.filter((pullRequest) => {
+      const matchesFilter = filter === "all" || (filter === "draft" ? pullRequest.isDraft : !pullRequest.isDraft);
+      if (!matchesFilter) return false;
+      if (!normalizedQuery) return true;
+      return [pullRequest.title, pullRequest.repository, pullRequest.headRefName, String(pullRequest.number)]
+        .some((value) => value.toLowerCase().includes(normalizedQuery));
+    });
+  }, [filter, pullRequests, query]);
+  const selected = visible.find((pullRequest) => pullRequest.url === selectedURL);
+  const sections = [
+    { label: "Needs attention", pullRequests: visible.filter(needsAttention) },
+    { label: "Pull requests", pullRequests: visible.filter((pullRequest) => !needsAttention(pullRequest)) },
+  ].filter((section) => section.pullRequests.length > 0);
+  const selectedWorkspace = selected && workspaces.find((entry) =>
+    entry.serverId === selected.serverId && entry.id === selected.workspaceId);
+  const selectedServer = selected && servers.find((entry) => entry.id === selected.serverId);
+  const selectedThread = selected && activeThread(selected, chats);
 
   return (
-    <main className="flex min-w-0 flex-1 flex-col">
-      <PaneHeader
-        crumbs={[{ label: "Pull requests" }]}
-        tabs={(
+    <main className="flex min-w-0 flex-1">
+      <section className="flex min-h-0 w-[38%] min-w-72 max-w-[27rem] shrink-0 flex-col border-r border-border">
+        <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
           <ToggleGroup
             type="single"
-            variant="outline"
             size="sm"
             value={filter}
             onValueChange={(value) => value && setFilter(value as PullRequestFilter)}
             aria-label="Filter pull requests"
+            className="gap-0.5"
           >
-            <ToggleGroupItem value="all">All {counts.all}</ToggleGroupItem>
-            <ToggleGroupItem value="ready">Ready {counts.ready}</ToggleGroupItem>
-            <ToggleGroupItem value="draft">Draft {counts.draft}</ToggleGroupItem>
+            <ToggleGroupItem value="all" className="px-2.5">All <span className="text-muted-foreground">{counts.all}</span></ToggleGroupItem>
+            <ToggleGroupItem value="ready" className="px-2.5">Ready <span className="text-muted-foreground">{counts.ready}</span></ToggleGroupItem>
+            <ToggleGroupItem value="draft" className="px-2.5">Drafts <span className="text-muted-foreground">{counts.draft}</span></ToggleGroupItem>
           </ToggleGroup>
-        )}
-      >
-        <Button size="sm" variant="outline" disabled={refreshing} onClick={() => void load(true)}>
-          <RefreshCw className={refreshing ? "animate-spin" : undefined} />
-          Refresh
-        </Button>
-      </PaneHeader>
+          <Button variant="ghost" size="icon-sm" className="ml-auto" disabled={refreshing} onClick={() => void load(true)} aria-label="Refresh pull requests">
+            <RefreshCw className={refreshing ? "animate-spin" : undefined} />
+          </Button>
+        </div>
 
-      {loading ? (
-        <Empty>
-          <EmptyHeader>
-            <EmptyMedia variant="icon"><GitPullRequest /></EmptyMedia>
-            <EmptyTitle className="shimmer">Loading pull requests…</EmptyTitle>
-            <EmptyDescription>Reading your GitHub workspaces.</EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      ) : visible.length === 0 ? (
-        <Empty>
-          <EmptyHeader>
-            <EmptyMedia variant="icon"><GitPullRequest /></EmptyMedia>
-            <EmptyTitle>{filter === "all" ? "No pull requests" : `No ${filter} pull requests`}</EmptyTitle>
-            <EmptyDescription>
-              {filter === "all"
-                ? "Open one from a GitHub workspace you added to Remy."
-                : `Switch filters to see your other pull requests.`}
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      ) : (
-        <ScrollArea className="min-h-0 flex-1">
-          <ItemGroup className="gap-2 p-4">
-            {visible.map((pullRequest) => {
-              const workspace = workspaces.find((entry) =>
-                entry.serverId === pullRequest.serverId && entry.id === pullRequest.workspaceId);
-              const server = servers.find((entry) => entry.id === pullRequest.serverId);
-              const thread = activeThread(pullRequest, chats);
-              const failed = pullRequest.checks.filter((check) => check.state === "fail").length;
-              const pending = pullRequest.checks.filter((check) => check.state === "pending").length;
-              const passed = pullRequest.checks.filter((check) => check.state === "pass").length;
-              return (
-                <Item key={pullRequest.url} variant="outline" className="items-start">
-                  <ItemMedia variant="icon">
-                    <GitPullRequest />
-                  </ItemMedia>
-                  <ItemContent className="min-w-0">
-                    <ItemTitle className="max-w-full">
-                      <Button asChild variant="link" className="h-auto min-w-0 justify-start p-0 text-sm font-medium">
-                        <a href={pullRequest.url} target="_blank" rel="noreferrer" data-link>
-                          <span className="truncate">{pullRequest.title}</span>
-                          <ExternalLink className="size-3" />
-                        </a>
-                      </Button>
-                      <span className="shrink-0 text-xs font-normal text-muted-foreground">#{pullRequest.number}</span>
-                    </ItemTitle>
-                    <ItemDescription className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                      <span className="inline-flex items-center gap-1"><GitBranch className="size-3" />{pullRequest.headRefName}</span>
-                      <span>{relativeDate(pullRequest.updatedAt)}</span>
-                      <span>{pullRequest.repository}</span>
-                    </ItemDescription>
-                    <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                      <Badge variant={pullRequest.isDraft ? "secondary" : "success"}>
-                        {pullRequest.isDraft ? "Draft" : "Ready"}
-                      </Badge>
-                      {pullRequest.reviewDecision === "APPROVED" && (
-                        <Badge variant="success"><CircleCheck />Approved</Badge>
-                      )}
-                      {pullRequest.reviewDecision === "CHANGES_REQUESTED" && (
-                        <Badge variant="destructive"><CircleX />Changes requested</Badge>
-                      )}
-                      {failed > 0 ? (
-                        <Badge variant="destructive"><CircleX />{failed} failed</Badge>
-                      ) : pending > 0 ? (
-                        <Badge variant="warning"><CircleDot />{pending} pending</Badge>
-                      ) : pullRequest.checks.length > 0 ? (
-                        <Badge variant="outline"><CircleCheck />{passed}/{pullRequest.checks.length} checks</Badge>
-                      ) : null}
-                      {pullRequest.hasUnreadActivity && (
-                        <Badge variant="warning"><MessageSquare />New activity</Badge>
-                      )}
-                    </span>
-                  </ItemContent>
-                  <ItemActions className="shrink-0 flex-wrap justify-end">
-                    <Button variant="outline" size="sm" data-link onClick={() => setSelected(pullRequest)}>
-                      <GitPullRequest />
-                      Open pull request
-                    </Button>
-                    {workspace && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        data-link
-                        onClick={() => onOpenWorkspace(workspace.id)}
-                      >
-                        <WorkspaceMark home={false} workspace={workspace} server={server} size="sm" />
-                        {pullRequest.workspaceName}
-                      </Button>
-                    )}
-                    {thread && (
-                      <Button variant="outline" size="sm" data-link onClick={() => onOpenThread(thread.id)}>
-                        <CircleDot className="text-success" />
-                        Open active thread
-                      </Button>
-                    )}
-                  </ItemActions>
-                </Item>
-              );
-            })}
-          </ItemGroup>
-        </ScrollArea>
-      )}
+        <div className="shrink-0 p-3">
+          <InputGroup>
+            <InputGroupAddon><Search /></InputGroupAddon>
+            <InputGroupInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search pull requests" aria-label="Search pull requests" />
+          </InputGroup>
+        </div>
+
+        {loading ? (
+          <PullRequestListLoading />
+        ) : visible.length === 0 ? (
+          <Empty className="min-h-0 flex-1 px-5">
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><GitPullRequest /></EmptyMedia>
+              <EmptyTitle>{pullRequests.length === 0 ? "No pull requests" : "No matching pull requests"}</EmptyTitle>
+              <EmptyDescription>
+                {pullRequests.length === 0 ? "Open one from a GitHub workspace you added to Remy." : "Try another search or filter."}
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        ) : (
+          <ScrollArea className="min-h-0 flex-1">
+            <div className="pb-3">
+              {sections.map((section) => (
+                <section key={section.label} aria-label={section.label}>
+                  <h2 className="px-4 pb-1 pt-3 text-[11px] font-medium text-muted-foreground">{section.label}</h2>
+                  <ItemGroup className="gap-0 px-2">
+                    {section.pullRequests.map((pullRequest) => (
+                      <PullRequestListItem key={pullRequest.url} pullRequest={pullRequest} selected={selected?.url === pullRequest.url} onSelect={() => setSelectedURL(pullRequest.url)} />
+                    ))}
+                  </ItemGroup>
+                </section>
+              ))}
+            </div>
+          </ScrollArea>
+        )}
+      </section>
+
+      <section className="min-w-0 flex-1">
+        {selected ? (
+          <PullRequestView
+            key={selected.url}
+            serverId={selected.serverId}
+            repository={selected.repository}
+            number={selected.number}
+            actions={(
+              <>
+                {selectedWorkspace && (
+                  <Button variant="ghost" size="sm" data-link className="max-w-48" onClick={() => onOpenWorkspace(selectedWorkspace.id)}>
+                    <WorkspaceMark home={false} workspace={selectedWorkspace} server={selectedServer} size="sm" />
+                    <span className="truncate">{selected.workspaceName}</span>
+                  </Button>
+                )}
+                {selectedThread && (
+                  <Button variant="secondary" size="sm" data-link onClick={() => onOpenThread(selectedThread.id)}>
+                    <CircleDot className="text-success-foreground" />
+                    Open thread
+                  </Button>
+                )}
+              </>
+            )}
+          />
+        ) : (
+          <Empty className="h-full">
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><GitPullRequest /></EmptyMedia>
+              <EmptyTitle>Select a pull request</EmptyTitle>
+              <EmptyDescription>Choose one to review its summary and code.</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        )}
+      </section>
     </main>
+  );
+}
+
+function PullRequestListItem({ pullRequest, selected, onSelect }: { pullRequest: AuthoredPullRequest; selected: boolean; onSelect: () => void }) {
+  return (
+    <Item
+      asChild
+      size="sm"
+      className={cn(
+        "grid! grid-cols-[1rem_minmax(0,1fr)_5.5rem] items-start gap-x-3 gap-y-0 rounded-md px-2 py-2.5 text-left hover:bg-accent/70",
+        selected && "bg-accent",
+      )}
+    >
+      <button type="button" data-link aria-pressed={selected} onClick={onSelect}>
+        <ItemMedia className="relative col-start-1 row-start-1 self-start text-muted-foreground">
+          <GitPullRequest className="size-4" />
+          <span className={cn("absolute -bottom-0.5 -right-0.5 size-2 rounded-full border-2 border-background", statusTone(pullRequest))} />
+        </ItemMedia>
+        <ItemContent className="col-start-2 row-start-1 min-w-0 gap-1">
+          <ItemTitle className="w-full min-w-0 font-normal"><span className="truncate">{pullRequest.title}</span></ItemTitle>
+          <ItemDescription className="block min-w-0 truncate text-left text-[11px] text-nowrap">
+            {pullRequest.repository} · {pullRequest.headRefName}
+          </ItemDescription>
+        </ItemContent>
+        <span className="col-start-3 row-start-1 grid self-stretch grid-rows-2 justify-items-end gap-1 text-[11px] tabular-nums">
+          <span className="leading-snug text-muted-foreground">{relativeDate(pullRequest.updatedAt)}</span>
+          <span className="font-mono leading-normal text-nowrap">
+            <span className="text-success-foreground">+{pullRequest.additions}</span>{" "}
+            <span className="text-destructive">−{pullRequest.deletions}</span>
+          </span>
+        </span>
+      </button>
+    </Item>
+  );
+}
+
+function PullRequestListLoading() {
+  return (
+    <div className="flex flex-col gap-4 px-4 py-3" aria-label="Loading pull requests">
+      {["w-4/5", "w-3/5", "w-2/3", "w-5/6"].map((width, index) => (
+        <span key={index} className="flex items-start gap-3">
+          <span className="shimmer mt-1 size-4 rounded" />
+          <span className="flex min-w-0 flex-1 flex-col gap-2">
+            <span className={cn("shimmer h-3 rounded", width)} />
+            <span className="shimmer h-2.5 w-full rounded" />
+          </span>
+        </span>
+      ))}
+    </div>
   );
 }

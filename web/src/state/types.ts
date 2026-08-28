@@ -229,10 +229,10 @@ export interface PullRequestTimelineItem {
   line?: number | null;
 }
 
-/// Something a Remy tool made — a ticket, a thread, a workspace — with enough
+/// Something a Remy tool made — a ticket, thread, workspace, or routine — with enough
 /// on it to draw a card and open the thing it names.
 export interface ConvArtifact {
-  kind: "ticket" | "thread" | "workspace";
+  kind: "ticket" | "thread" | "workspace" | "routine";
   /// A ticket is addressed by key, a thread and a workspace by id.
   key?: string;
   id?: string;
@@ -440,6 +440,8 @@ export interface Project {
   /// project follows it.
   keyPrefix: string;
   origin?: string;
+  icon?: string | null;
+  tint?: string | null;
   /// Workspaces on that machine which are this project. Empty means the repo is
   /// not cloned there.
   workspaceIds: string[];
@@ -491,29 +493,21 @@ export interface Ticket {
   threads: TicketThread[];
 }
 
-/// Work that comes back: a ticket Remy writes again on a cadence, already
-/// handed to whoever is meant to do it. Mirrors `RecurrenceView` in
-/// `server/src/recurring.ts`.
 export type Cadence = "daily" | "weekdays" | "weekly" | "monthly";
 
-export interface Recurrence {
+export interface Routine {
   id: string;
   serverId: string;
-  projectId: string;
-  title: string;
-  body: string;
-  assigneeAgentId?: string;
+  agentId: string;
+  name: string;
+  prompt: string;
   cadence: Cadence;
-  /// Local time on the machine that writes the tickets.
   hour: number;
   minute: number;
-  /// Sunday = 0, for a weekly cadence.
   weekday?: number;
-  /// Day of the month, 1 to 28, for a monthly one.
   day?: number;
   enabled: boolean;
-  /// The machine that writes the tickets.
-  deviceId?: string;
+  schedulerDeviceId: string;
   runs: number;
   lastRunAt?: number;
   lastError?: string;

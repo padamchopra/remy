@@ -6,6 +6,7 @@ import { agentByHandle, getAgent, listAgents } from "./agents.js";
 import { forgetMemory, listMemories, projectIdForCwd, saveMemory } from "./agent-memories.js";
 import { listProjects, projectForWorkspace } from "./projects.js";
 import { artifactMarker, type ConvArtifact } from "./remy-artifacts.js";
+import { createRoutine } from "./routines.js";
 import {
   explicitlyRequestedTicketStatus,
   REMY_TOOL_INSTRUCTIONS,
@@ -15,11 +16,13 @@ import { addWorkspace, listWorkspaces } from "./workspaces.js";
 import {
   browserSnapshotText,
   clickBrowser,
+  navigateBrowser,
   openBrowser,
   pressBrowser,
   scrollBrowser,
   setBrowserViewport,
   typeBrowser,
+  type BrowserView,
   waitInBrowser,
 } from "./browser.js";
 import {
@@ -121,6 +124,10 @@ function ok(text: string, artifact?: ConvArtifact) {
   return { content: [{ type: "text" as const, text: artifact ? text + artifactMarker(artifact) : text }] };
 }
 
+function browserResult(action: string, view: BrowserView): string {
+  return [action, `Page: ${view.title || "Untitled"}`, `URL: ${view.url || "about:blank"}`].join("\n");
+}
+
 function ticketCard(ticket: TicketView): ConvArtifact {
   return { kind: "ticket", key: ticket.key, title: ticket.title, detail: ticket.status };
 }
@@ -161,7 +168,12 @@ function describeThread(thread: ThreadDetail): string {
   ].filter(Boolean).join("\n");
 }
 
-export function claudeTicketMcpServer(chatId: string, agentId: string | undefined, threads: RemyThreadControl) {
+export function claudeTicketMcpServer(
+  chatId: string,
+  agentId: string | undefined,
+  dm: boolean,
+  threads: RemyThreadControl,
+) {
   const key = z.string().optional().describe("Ticket key. Omit it for this thread's linked ticket.");
   return createSdkMcpServer({
     name: "remy",
@@ -217,11 +229,11 @@ export function claudeTicketMcpServer(chatId: string, agentId: string | undefine
       ),
       tool(
         "browser_open",
-        "Open a page in this thread's shared browser so the person can watch and take control.",
+        "Open a page in this thread's shared browser. The result confirms the loaded title and URL.",
         { url: z.string().min(1).max(4000) },
         async ({ url }) => {
-          await openBrowser(chatId, url, "agent");
-          return ok(`Opened ${url} in the shared browser.`);
+          const view = await openBrowser(chatId, url, "agent");
+          return ok(browserResult("Opened the page.", view));
         },
         { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
       ),
@@ -233,6 +245,27 @@ export function claudeTicketMcpServer(chatId: string, agentId: string | undefine
           const view = await setBrowserViewport(chatId, viewport, "agent");
           return ok(`Switched the shared browser to ${viewport} (${view.width} × ${view.height}).`);
         },
+        { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
+      ),
+      tool(
+        "browser_back",
+        "Go back in the shared browser and confirm the resulting page.",
+        {},
+        async () => ok(browserResult("Went back.", await navigateBrowser(chatId, "back", "agent"))),
+        { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } },
+      ),
+      tool(
+        "browser_forward",
+        "Go forward in the shared browser and confirm the resulting page.",
+        {},
+        async () => ok(browserResult("Went forward.", await navigateBrowser(chatId, "forward", "agent"))),
+        { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } },
+      ),
+      tool(
+        "browser_reload",
+        "Reload the shared browser and confirm the resulting page.",
+        {},
+        async () => ok(browserResult("Reloaded the page.", await navigateBrowser(chatId, "reload", "agent"))),
         { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
       ),
       tool(
@@ -254,8 +287,8 @@ export function claudeTicketMcpServer(chatId: string, agentId: string | undefine
           y: z.number().min(0).max(2000).optional(),
         },
         async (target) => {
-          await clickBrowser(chatId, target, "agent");
-          return ok("Clicked in the shared browser.");
+          const view = await clickBrowser(chatId, target, "agent");
+          return ok(browserResult("Clicked the page.", view));
         },
         { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } },
       ),
@@ -270,8 +303,8 @@ export function claudeTicketMcpServer(chatId: string, agentId: string | undefine
           value: z.string().max(20000),
         },
         async ({ value, ...target }) => {
-          await typeBrowser(chatId, target, value, "agent");
-          return ok("Entered text in the shared browser.");
+          const view = await typeBrowser(chatId, target, value, "agent");
+          return ok(browserResult("Entered the text.", view));
         },
         { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
       ),
@@ -280,8 +313,8 @@ export function claudeTicketMcpServer(chatId: string, agentId: string | undefine
         "Press a key or shortcut in the shared browser, such as Enter, Escape, or Meta+R.",
         { key: z.string().min(1).max(100) },
         async ({ key }) => {
-          await pressBrowser(chatId, key, "agent");
-          return ok(`Pressed ${key} in the shared browser.`);
+          const view = await pressBrowser(chatId, key, "agent");
+          return ok(browserResult(`Pressed ${key}.`, view));
         },
         { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } },
       ),
@@ -293,8 +326,8 @@ export function claudeTicketMcpServer(chatId: string, agentId: string | undefine
           delta_y: z.number().min(-10000).max(10000),
         },
         async ({ delta_x, delta_y }) => {
-          await scrollBrowser(chatId, delta_x ?? 0, delta_y, "agent");
-          return ok("Scrolled the shared browser.");
+          const view = await scrollBrowser(chatId, delta_x ?? 0, delta_y, "agent");
+          return ok(browserResult("Scrolled the page.", view));
         },
         { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } },
       ),
@@ -303,8 +336,8 @@ export function claudeTicketMcpServer(chatId: string, agentId: string | undefine
         "Wait briefly for the shared page to update before reading it again.",
         { milliseconds: z.number().int().min(0).max(10000).optional() },
         async ({ milliseconds }) => {
-          await waitInBrowser(chatId, milliseconds ?? 500, "agent");
-          return ok("The shared browser finished waiting.");
+          const view = await waitInBrowser(chatId, milliseconds ?? 500, "agent");
+          return ok(browserResult("Finished waiting.", view));
         },
         { annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true } },
       ),
@@ -453,6 +486,24 @@ export function claudeTicketMcpServer(chatId: string, agentId: string | undefine
         },
         { annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
       ),
+      ...(dm && agentId ? [tool(
+        "create_routine",
+        "Create a routine for this agent when the person asks for work to happen repeatedly.",
+        {
+          name: z.string().min(1).max(200).describe("A short name for the routine"),
+          prompt: z.string().min(1).max(20000).describe("The complete instruction to send this agent each time"),
+          cadence: z.enum(["daily", "weekdays", "weekly", "monthly"]),
+          hour: z.number().int().min(0).max(23).describe("Local hour on the routine's clock device"),
+          minute: z.number().int().min(0).max(59).default(0),
+          weekday: z.number().int().min(0).max(6).optional().describe("Sunday is 0; required for weekly routines"),
+          day: z.number().int().min(1).max(28).optional().describe("Day of month; required for monthly routines"),
+        },
+        async ({ name, prompt, cadence, hour, minute, weekday, day }) => {
+          const routine = createRoutine({ agentId, name, prompt, cadence, hour, minute, weekday, day });
+          return ok(`Created ${routine.name}.`, { kind: "routine", id: routine.id, title: routine.name });
+        },
+        { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
+      )] : []),
       tool(
         "create_ticket",
         "Write a new ticket on a workspace's board.",

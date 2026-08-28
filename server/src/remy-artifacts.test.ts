@@ -19,8 +19,9 @@ test("output with no marker comes back exactly as it was", () => {
 
 test("several things made in one call each get a card", () => {
   const thread: ConvArtifact = { kind: "thread", id: "abc", title: "Rework the inbox" };
-  const result = takeArtifacts(`Done.${artifactMarker(ticket)}${artifactMarker(thread)}`);
-  assert.deepEqual(result.artifacts, [ticket, thread]);
+  const routine: ConvArtifact = { kind: "routine", id: "routine-1", title: "Morning review" };
+  const result = takeArtifacts(`Done.${artifactMarker(ticket)}${artifactMarker(thread)}${artifactMarker(routine)}`);
+  assert.deepEqual(result.artifacts, [ticket, thread, routine]);
 });
 
 test("a marker Remy cannot read is dropped rather than drawn", () => {

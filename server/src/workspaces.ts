@@ -433,7 +433,7 @@ export function resetWorkspacesUsingProvider(provider: string): void {
   invalidateWorkspacesCache();
 }
 
-function normalizeWorkspaceIcon(icon: string | null): string | null {
+export function normalizeWorkspaceIcon(icon: string | null): string | null {
   const trimmed = icon?.trim() ?? "";
   if (!trimmed || trimmed === "folder") return null;
   const file = normalizeWorkspaceIconFile(trimmed);
@@ -526,7 +526,7 @@ function mimeForIcon(path: string): string | undefined {
   return undefined;
 }
 
-function normalizeWorkspaceTint(tint: string | null): string | null {
+export function normalizeWorkspaceTint(tint: string | null): string | null {
   const trimmed = tint?.trim() ?? "";
   if (!trimmed || trimmed === "zinc") return null;
   if (!/^[a-z0-9-]{1,32}$/.test(trimmed)) return null;

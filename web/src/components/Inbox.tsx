@@ -325,6 +325,7 @@ function Conversation({
         onOpenTicket={onOpenTicket}
         onOpenThread={onOpenThread}
         onOpenWorkspace={onOpenWorkspace}
+        onOpenRoutine={() => setEditing(true)}
         crumbs={[
           {
             // The list beside this already says which agents there are, so the

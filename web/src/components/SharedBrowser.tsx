@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent, type WheelEvent } from "react";
-import { ArrowRight, ChartNoAxesCombined, Gauge, GitPullRequest, Globe2, LoaderCircle, Maximize2, Monitor, MousePointer2, PanelRightClose, PanelRightOpen, Plus, Smartphone, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, ArrowUpRight, ChartNoAxesCombined, Gauge, GitPullRequest, Globe2, Maximize2, Monitor, MousePointer2, PanelRightClose, PanelRightOpen, Plus, RefreshCw, Smartphone, X } from "lucide-react";
 import { toast } from "sonner";
 import { ThreadAnalyticsTool, ThreadPerformanceTool } from "@/components/ThreadInsights";
 import { PullRequestView } from "@/components/PullRequestView";
@@ -9,12 +9,14 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
+import { Item, ItemContent, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { apiError } from "@/lib/api-error";
 import { transport } from "@/lib/transport";
@@ -41,20 +43,33 @@ export interface ThreadToolTab {
   type: "browser" | "analytics" | "performance" | "pull-request";
 }
 
+const WIDE_THREAD_TOOLS = "(min-width: 1024px)";
+
 function browserPath(chatId: string, browserId: string, action?: string): string {
   const base = `/chats/${encodeURIComponent(chatId)}/browser${action ? `/${action}` : ""}`;
   return `${base}?instance=${encodeURIComponent(browserId)}`;
 }
 
 export function useThreadTools(chatId: string, serverId: string, enabled = true) {
-  const [tabs, setTabs] = useState<ThreadToolTab[]>([{ id: "default", type: "browser" }]);
-  const [activeTab, setActiveTab] = useState("default");
+  const [tabs, setTabs] = useState<ThreadToolTab[]>([]);
+  const [activeTab, setActiveTab] = useState("");
   const [views, setViews] = useState<Record<string, SharedBrowserView | undefined>>({});
-  const [shown, setShown] = useState(false);
+  const [shown, setShown] = useState(() =>
+    typeof window !== "undefined" && window.matchMedia(WIDE_THREAD_TOOLS).matches,
+  );
   const [supportsInstances, setSupportsInstances] = useState(false);
   const refreshTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const nextBrowser = useRef(2);
   const nextInsight = useRef(2);
+
+  useEffect(() => {
+    const media = window.matchMedia(WIDE_THREAD_TOOLS);
+    const closeOnNarrow = () => {
+      if (!media.matches) setShown(false);
+    };
+    media.addEventListener("change", closeOnNarrow);
+    return () => media.removeEventListener("change", closeOnNarrow);
+  }, []);
 
   const refresh = useCallback(async (browserId = "default") => {
     if (!enabled) return;
@@ -325,31 +340,40 @@ export function ThreadToolsSidebar({
           ))}
         </Tabs>
       ) : (
-        <Empty className="min-h-0 flex-1">
-          <EmptyHeader>
-            <EmptyMedia variant="icon"><Globe2 /></EmptyMedia>
-            <EmptyTitle>No tools open</EmptyTitle>
-            <EmptyDescription>Add a tool when you need it beside this thread.</EmptyDescription>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button type="button" size="sm">
-                  <Plus data-icon="inline-start" />
-                  Add tool
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="center">
-                <DropdownMenuGroup>
-                  <DropdownMenuItem onSelect={addBrowser}><Globe2 />Browser</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={addAnalytics}><ChartNoAxesCombined />Analytics</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={addPerformance}><Gauge />Performance</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={addPullRequest}><GitPullRequest />Pull request</DropdownMenuItem>
-                </DropdownMenuGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </EmptyHeader>
-        </Empty>
+        <div className="flex min-h-0 flex-1 items-center justify-center p-6">
+          <div className="w-full max-w-md">
+            <p className="mb-3 px-1 text-xs font-medium text-muted-foreground">Open beside this thread</p>
+            <ItemGroup className="gap-1.5">
+              <ToolLaunchItem icon={Globe2} label="Browser" onClick={addBrowser} />
+              <ToolLaunchItem icon={GitPullRequest} label="Pull request" onClick={addPullRequest} />
+              <ToolLaunchItem icon={ChartNoAxesCombined} label="Analytics" onClick={addAnalytics} />
+              <ToolLaunchItem icon={Gauge} label="Performance" onClick={addPerformance} />
+            </ItemGroup>
+          </div>
+        </div>
       )}
     </section>
+  );
+}
+
+function ToolLaunchItem({
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  icon: typeof Globe2;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <Item asChild variant="muted" size="sm" className="rounded-lg hover:bg-accent/70">
+      <button type="button" onClick={onClick}>
+        <ItemMedia><Icon className="size-4 text-muted-foreground" /></ItemMedia>
+        <ItemContent>
+          <ItemTitle className="font-normal">{label}</ItemTitle>
+        </ItemContent>
+      </button>
+    </Item>
   );
 }
 
@@ -389,25 +413,41 @@ export function SharedBrowser({
     if (view?.url) setAddress(view.url);
   }, [view?.url]);
 
-  const action = async (name: string, body: Record<string, unknown>) => {
+  const action = useCallback(async (name: string, body: Record<string, unknown> = {}) => {
     try {
       const next = await transport.request<SharedBrowserView>(
         serverId,
         browserPath(chatId, browserId, name),
         { method: "POST", body },
       );
-      if (next && typeof next === "object" && "active" in next) setView(next);
+      if (next && typeof next === "object" && "active" in next) {
+        setView(next);
+        return next;
+      }
     } catch (caught) {
       toast.error("The browser action failed", { description: apiError(caught) });
     }
-  };
+  }, [browserId, chatId, serverId, setView]);
 
   const open = async (event: FormEvent) => {
     event.preventDefault();
     if (!address.trim() || busy) return;
     setBusy(true);
-    await action("open", { url: address.trim() });
-    setBusy(false);
+    try {
+      await action("open", { url: address.trim() });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const navigate = async (direction: "back" | "forward" | "reload") => {
+    if (!view?.active || busy) return;
+    setBusy(true);
+    try {
+      await action(direction);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const point = (event: MouseEvent<HTMLButtonElement>) => {
@@ -470,60 +510,88 @@ export function SharedBrowser({
       clearTimeout(resizeTimer.current);
       observer.disconnect();
     };
-  }, [view?.active, view?.height, view?.width, viewport]);
+  }, [action, view?.active, view?.height, view?.width, viewport]);
+
+  const ViewportIcon = viewport === "fullscreen" ? Maximize2 : viewport === "mobile" ? Smartphone : Monitor;
 
   return (
     <div className="flex size-full min-h-0 flex-col">
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
-        <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{view?.title || "Browser session"}</p>
-        <ToggleGroup
-          type="single"
-          value={viewport}
-          variant="outline"
-          size="sm"
-          aria-label="Browser viewport"
-          disabled={!canChangeViewport}
-          onValueChange={(next) => {
-            if (next === "fullscreen") void action("viewport", { viewport: next, ...fullscreenSize() });
-            if (next === "desktop" || next === "mobile") void action("viewport", { viewport: next });
-          }}
-        >
-          <ToggleGroupItem value="fullscreen" aria-label="Fullscreen viewport" title="Fullscreen viewport" className="px-2">
-            <Maximize2 />
-          </ToggleGroupItem>
-          <ToggleGroupItem value="desktop" aria-label="Desktop viewport" title="Desktop viewport" className="px-2">
-            <Monitor />
-          </ToggleGroupItem>
-          <ToggleGroupItem value="mobile" aria-label="Mobile viewport" title="Mobile viewport" className="px-2">
-            <Smartphone />
-          </ToggleGroupItem>
-        </ToggleGroup>
-        {view?.active && (
-          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <MousePointer2 className="size-3" />
-            {view.controller === "agent" ? "Agent controlling" : "You have control"}
-          </span>
-        )}
-      </div>
-
-      <form className="flex shrink-0 items-center gap-2 border-b border-border p-2" onSubmit={(event) => void open(event)}>
+      <form className="flex h-10 shrink-0 items-center gap-1 border-b border-border/70 px-2" onSubmit={(event) => void open(event)}>
+        <div className="flex shrink-0 items-center gap-0.5" role="group" aria-label="Browser navigation">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button type="button" variant="ghost" size="icon-xs" disabled={!view?.active || busy} aria-label="Back" onClick={() => void navigate("back")}>
+                <ArrowLeft />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Back</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button type="button" variant="ghost" size="icon-xs" disabled={!view?.active || busy} aria-label="Forward" onClick={() => void navigate("forward")}>
+                <ArrowRight />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Forward</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button type="button" variant="ghost" size="icon-xs" disabled={!view?.active || busy} aria-label="Refresh" onClick={() => void navigate("reload")}>
+                <RefreshCw className={cn(busy && "animate-spin")} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Refresh</TooltipContent>
+          </Tooltip>
+        </div>
         <Input
           aria-label="Browser address"
-          placeholder="http://127.0.0.1:5173"
+          placeholder="Search or enter URL"
+          spellCheck={false}
           value={address}
           onChange={(event) => setAddress(event.target.value)}
-          className="h-8 font-mono text-xs"
+          onFocus={(event) => event.currentTarget.select()}
+          className="h-7 min-w-0 flex-1 border-transparent bg-muted/50 px-2 font-mono text-xs shadow-none focus-visible:border-border focus-visible:ring-0"
         />
-        <Button type="submit" size="icon-sm" disabled={!address.trim() || busy} aria-label="Open address">
-          {busy ? <LoaderCircle className="animate-spin" /> : <ArrowRight />}
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button type="submit" variant="ghost" size="icon-xs" disabled={!address.trim() || busy} aria-label="Open address">
+              <ArrowUpRight />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Open address</TooltipContent>
+        </Tooltip>
+        <DropdownMenu>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="ghost" size="icon-xs" disabled={!canChangeViewport} aria-label="Browser viewport">
+                  <ViewportIcon />
+                </Button>
+              </DropdownMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent>Viewport</TooltipContent>
+          </Tooltip>
+          <DropdownMenuContent align="end">
+            <DropdownMenuRadioGroup
+              value={viewport}
+              onValueChange={(next) => {
+                if (next === "fullscreen") void action("viewport", { viewport: next, ...fullscreenSize() });
+                if (next === "desktop" || next === "mobile") void action("viewport", { viewport: next });
+              }}
+            >
+              <DropdownMenuRadioItem value="fullscreen"><Maximize2 />Fit panel</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="desktop"><Monitor />Desktop</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="mobile"><Smartphone />Mobile</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </form>
 
       <div
         ref={stageRef}
         className={cn(
-          "flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-muted/20",
-          viewport === "fullscreen" ? "p-0" : "p-3",
+          "relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-muted/15",
+          viewport === "fullscreen" ? "p-0" : "p-4",
         )}
       >
         {view?.active && view.screenshot ? (
@@ -539,14 +607,14 @@ export function SharedBrowser({
               type="button"
               variant="ghost"
               className={cn(
-                "relative size-full overflow-hidden border border-border bg-white p-0 shadow-sm focus-visible:ring-2",
-                viewport === "fullscreen" ? "rounded-none border-0 shadow-none" : "rounded-md",
+                "relative size-full overflow-hidden border border-border/70 bg-white p-0 shadow-sm focus-visible:ring-2",
+                viewport === "fullscreen" ? "rounded-none border-0 shadow-none" : "rounded-sm",
               )}
               aria-label="Browser page. Click, scroll, or type to take control."
               onClick={click}
               onWheel={scroll}
             >
-              <img src={view.screenshot} alt={view.title || "Shared browser page"} className="size-full object-contain" draggable={false} />
+              <img src={view.screenshot} alt={view.title || "Shared browser page"} className="size-full object-contain [image-rendering:auto]" draggable={false} />
               {view.cursor && view.controller === "agent" && (
                 <span
                   aria-hidden="true"
@@ -581,6 +649,12 @@ export function SharedBrowser({
               <EmptyDescription>You and the agent can click, type, and scroll on the same page.</EmptyDescription>
             </EmptyHeader>
           </Empty>
+        )}
+        {view?.active && (
+          <span className="pointer-events-none absolute left-3 top-3 z-20 flex items-center gap-1.5 rounded-full border border-border/70 bg-background/90 px-2.5 py-1 text-[11px] font-medium text-muted-foreground shadow-sm backdrop-blur">
+            <MousePointer2 className="size-3" />
+            {view.controller === "agent" ? "Agent controlling browser" : "You have control"}
+          </span>
         )}
       </div>
       {view?.error && <p className="shrink-0 border-t border-border px-3 py-2 text-xs text-destructive">{view.error}</p>}
