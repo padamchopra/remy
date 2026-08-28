@@ -47,6 +47,7 @@ Skip `VITE_MC_FIXTURE=1`; that is fake data, not your real state.
 
 - **`ui`** — layout and keyboard. Every control comes from a shadcn primitive; a custom `div` is the last resort.
 - **`content`** — every user-facing string. Second person, present tense, one short sentence.
+- **`product-design`** — ownership, settings placement, defaults, actors, and deletion behavior. Read it before shaping a capability or integration.
 - **`qa`** — after an interaction or server behavior change, drive the current code in the running app before calling it done.
 - **`pr-author`** — every PR carries proportional reviewer evidence; screenshots or recordings are required only for behavior a reviewer can exercise or judge in the running app.
 - **`shadcn`** and **`migrate-radix-to-base`** — vendored from `shadcn/ui` and tracked in `skills-lock.json`. Do not hand-edit them.

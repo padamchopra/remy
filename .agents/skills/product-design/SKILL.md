@@ -1,0 +1,52 @@
+---
+name: product-design
+description: Product structure and ownership in Remy. Use before making ANY product decision that adds or changes a setting, default, integration, automation, agent behavior, entity relationship, or deletion behavior.
+---
+
+# Product design
+
+`ui` owns layout and interaction. `content` owns the words. `qa` owns proving the result. This skill owns the product model they express.
+
+## Model the capability first
+
+Name the capability, its durable owner, the actor that performs it, the event that triggers it, and what happens when either owner or actor disappears before choosing a screen or schema.
+
+A setting lives with the thing whose behavior it controls. The actor that carries out that behavior is a reference, not the owner, when another actor could reasonably take its place.
+
+- A machine integration belongs to that machine's settings.
+- Repository behavior belongs to the workspace or repository identity it follows.
+- Personal behavior and instructions belong to an agent.
+- One conversation's presentation or execution state belongs to that thread.
+
+Put the control where someone looks for the capability. Do not put it on the current implementation of that capability merely because the code already has that object in hand.
+
+## Presets are templates
+
+An agent preset supplies creation-time defaults. After creation, the agent is an ordinary editable and deletable agent; runtime behavior never branches on its preset, handle, name, or seeded id.
+
+When a capability needs an agent, store an explicit agent id and let any eligible agent be selected. Define deletion in the same design: a missing selected agent disables the capability and asks for another selection rather than silently choosing a special preset.
+
+Automation that starts work without a direct action is off by default. Enabling the automation and choosing who performs it remain explicit, inspectable choices.
+
+## Pull request monitoring
+
+BAD
+```text
+Inbox → GitHub agent → Agent settings
+Monitor pull requests  [on/off]
+```
+
+This makes a machine integration look intrinsic to one deletable preset, prevents an arbitrary agent from taking over, and makes deletion or duplication ambiguous. Code shaped as `agent.preset === "github"` or `agentByHandle("github")` is the same product mistake below the UI.
+
+GOOD
+```text
+Settings → Version control
+Monitor pull requests  [off]
+Handled by             [Agent picker]
+```
+
+The machine setting owns whether monitoring runs and stores the selected agent id. Any agent can be chosen. Deleting the selected agent turns monitoring off until another is chosen. The GitHub preset remains an optional starting point with no privileged runtime behavior.
+
+## Review the lifecycle
+
+Before implementation, check the proposal against creation, rename, duplication, deletion, synchronization across devices, unavailable actors, and a fresh install. A design is incomplete when one of those states changes who owns the behavior or leaves work running without a visible controlling setting.
