@@ -3,6 +3,7 @@ import { codeFor, type DeviceIconId } from "~/lib/devices";
 import { agentConversation, availableAgentServers } from "~/lib/inbox";
 import type { TintId } from "~/lib/tints";
 import type { Provider } from "~/lib/providers";
+import { applyProjectIdentity } from "~/lib/projects";
 import { byRank } from "~/lib/tickets";
 import { transport } from "~/lib/transport";
 import { fixtureChats, fixtureServers, fixtureWorkspaces } from "./fixture";
@@ -232,7 +233,10 @@ interface State {
   readChat(id: string): Promise<void>;
   /// Renames a project, or the slug its tickets are keyed by. Changing the slug
   /// re-keys every ticket it has, so the whole board is read back after.
-  saveProject(id: string, patch: { name?: string; keyPrefix?: string }): Promise<Project>;
+  saveProject(
+    id: string,
+    patch: { name?: string; keyPrefix?: string; icon?: string | null; tint?: string | null },
+  ): Promise<Project>;
 }
 
 /// How often to poll. Long while pushes are arriving, short while they aren't.
@@ -380,36 +384,39 @@ export const useStore = create<State>((set, get) => ({
               .then((listed) => listed.workspaces ?? [])
               .catch(() => undefined),
           ]);
-          set((current) => ({
-            // One machine answering is enough to stop saying "Connecting…":
-            // there is something to show, and there is somewhere to type.
-            loading: false,
-            servers: current.servers.map((entry) =>
-              entry.id === server.id ? { ...entry, online: entry.cloud ? entry.online : true } : entry),
-            chats: [
-              ...current.chats.filter((chat) => chat.serverId !== server.id),
-              ...(chats.chats ?? []).map((raw) => toChat(raw, server.id)),
-            ].sort(byAttention),
-            archived: [
-              ...current.archived.filter((chat) => chat.serverId !== server.id),
-              ...archives.map((raw) => toArchivedThread(raw, server.id)),
-            ].sort((a, b) => b.archivedAt - a.archivedAt),
-            // The inbox comes back in the same answer, so it lands with the
-            // threads rather than costing a second round trip.
-            dms: [
-              ...current.dms.filter((chat) => chat.serverId !== server.id),
-              ...(chats.dms ?? []).map((raw) => toChat(raw, server.id)),
-            ],
-            // Keep the last catalogue when a paired machine is asleep. Its
-            // folders still exist there, and the device chip already says the
-            // machine is offline. A successful empty answer still clears it.
-            workspaces: workspaces === undefined
+          set((current) => {
+            const nextWorkspaces = workspaces === undefined
               ? current.workspaces
               : [
                   ...current.workspaces.filter((workspace) => workspace.serverId !== server.id),
                   ...workspaces.map((raw) => toWorkspace(raw, server.id)),
-                ],
-          }));
+                ];
+            return {
+              // One machine answering is enough to stop saying "Connecting…":
+              // there is something to show, and there is somewhere to type.
+              loading: false,
+              servers: current.servers.map((entry) =>
+                entry.id === server.id ? { ...entry, online: entry.cloud ? entry.online : true } : entry),
+              chats: [
+                ...current.chats.filter((chat) => chat.serverId !== server.id),
+                ...(chats.chats ?? []).map((raw) => toChat(raw, server.id)),
+              ].sort(byAttention),
+              archived: [
+                ...current.archived.filter((chat) => chat.serverId !== server.id),
+                ...archives.map((raw) => toArchivedThread(raw, server.id)),
+              ].sort((a, b) => b.archivedAt - a.archivedAt),
+              // The inbox comes back in the same answer, so it lands with the
+              // threads rather than costing a second round trip.
+              dms: [
+                ...current.dms.filter((chat) => chat.serverId !== server.id),
+                ...(chats.dms ?? []).map((raw) => toChat(raw, server.id)),
+              ],
+              // Keep the last catalogue when a paired machine is asleep. Its
+              // folders still exist there, and the device chip already says the
+              // machine is offline. A successful empty answer still clears it.
+              workspaces: applyProjectIdentity(nextWorkspaces, current.projects),
+            };
+          });
         } catch (error) {
           failures.set(server.id, `${server.name}: ${error instanceof Error ? error.message : String(error)}`);
           set((current) => ({
@@ -1017,13 +1024,17 @@ export const useStore = create<State>((set, get) => ({
     const paired = servers
       .filter((server) => server.peer)
       .map((server) => ({ deviceId: server.id, serverId: server.id }));
-    set({
-      agents: dedupe(results.flatMap((r) => r.agents)),
-      projects: dedupe(results.flatMap((r) => r.projects)),
-      tickets: dedupe(results.flatMap((r) => r.tickets)).sort(byRank),
-      routines: dedupe(results.flatMap((r) => r.routines)).sort((a, b) => a.nextRunAt - b.nextRunAt),
-      boardDevices: [...results.flatMap((r) => r.devices), ...paired],
-      boardLoading: false,
+    set((current) => {
+      const projects = dedupe(results.flatMap((r) => r.projects));
+      return {
+        agents: dedupe(results.flatMap((r) => r.agents)),
+        projects,
+        workspaces: applyProjectIdentity(current.workspaces, projects),
+        tickets: dedupe(results.flatMap((r) => r.tickets)).sort(byRank),
+        routines: dedupe(results.flatMap((r) => r.routines)).sort((a, b) => a.nextRunAt - b.nextRunAt),
+        boardDevices: [...results.flatMap((r) => r.devices), ...paired],
+        boardLoading: false,
+      };
     });
   },
 

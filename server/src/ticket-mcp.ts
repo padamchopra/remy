@@ -61,6 +61,13 @@ interface ApiThread {
   }[];
 }
 
+interface ApiBrowserView {
+  title?: string;
+  url?: string;
+  width: number;
+  height: number;
+}
+
 interface Board {
   tickets?: ApiTicket[];
   agents?: ApiAgent[];
@@ -136,6 +143,10 @@ async function describe(key?: string): Promise<string> {
 /// in-process server uses, so a card looks the same on every provider.
 function ok(text: string, artifact?: ConvArtifact) {
   return { content: [{ type: "text" as const, text: artifact ? text + artifactMarker(artifact) : text }] };
+}
+
+function browserResult(action: string, view: ApiBrowserView): string {
+  return [action, `Page: ${view.title || "Untitled"}`, `URL: ${view.url || "about:blank"}`].join("\n");
 }
 
 function ticketCard(ticket: ApiTicket): ConvArtifact {
@@ -269,12 +280,12 @@ const browserTarget = {
 };
 
 server.registerTool("browser_open", {
-  description: "Open a page in this thread's shared browser so the person can watch and take control.",
+  description: "Open a page in this thread's shared browser. The result confirms the loaded title and URL.",
   inputSchema: { url: z.string().min(1).max(4000) },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
 }, async ({ url }) => {
-  await request(`${browserPath}/open`, { method: "POST", body: { url } });
-  return ok(`Opened ${url} in the shared browser.`);
+  const view = await request<ApiBrowserView>(`${browserPath}/open`, { method: "POST", body: { url } });
+  return ok(browserResult("Opened the page.", view));
 });
 
 server.registerTool("browser_viewport", {
@@ -287,6 +298,33 @@ server.registerTool("browser_viewport", {
     body: { viewport },
   });
   return ok(`Switched the shared browser to ${viewport} (${view.width} × ${view.height}).`);
+});
+
+server.registerTool("browser_back", {
+  description: "Go back in the shared browser and confirm the resulting page.",
+  inputSchema: {},
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+}, async () => {
+  const view = await request<ApiBrowserView>(`${browserPath}/back`, { method: "POST" });
+  return ok(browserResult("Went back.", view));
+});
+
+server.registerTool("browser_forward", {
+  description: "Go forward in the shared browser and confirm the resulting page.",
+  inputSchema: {},
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+}, async () => {
+  const view = await request<ApiBrowserView>(`${browserPath}/forward`, { method: "POST" });
+  return ok(browserResult("Went forward.", view));
+});
+
+server.registerTool("browser_reload", {
+  description: "Reload the shared browser and confirm the resulting page.",
+  inputSchema: {},
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+}, async () => {
+  const view = await request<ApiBrowserView>(`${browserPath}/reload`, { method: "POST" });
+  return ok(browserResult("Reloaded the page.", view));
 });
 
 server.registerTool("browser_snapshot", {
@@ -303,8 +341,8 @@ server.registerTool("browser_click", {
   inputSchema: browserTarget,
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
 }, async (target) => {
-  await request(`${browserPath}/click`, { method: "POST", body: target });
-  return ok("Clicked in the shared browser.");
+  const view = await request<ApiBrowserView>(`${browserPath}/click`, { method: "POST", body: target });
+  return ok(browserResult("Clicked the page.", view));
 });
 
 server.registerTool("browser_type", {
@@ -312,8 +350,8 @@ server.registerTool("browser_type", {
   inputSchema: { ...browserTarget, value: z.string().max(20000) },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
 }, async ({ value, ...target }) => {
-  await request(`${browserPath}/type`, { method: "POST", body: { ...target, value } });
-  return ok("Entered text in the shared browser.");
+  const view = await request<ApiBrowserView>(`${browserPath}/type`, { method: "POST", body: { ...target, value } });
+  return ok(browserResult("Entered the text.", view));
 });
 
 server.registerTool("browser_press", {
@@ -321,8 +359,8 @@ server.registerTool("browser_press", {
   inputSchema: { key: z.string().min(1).max(100) },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
 }, async ({ key }) => {
-  await request(`${browserPath}/press`, { method: "POST", body: { key } });
-  return ok(`Pressed ${key} in the shared browser.`);
+  const view = await request<ApiBrowserView>(`${browserPath}/press`, { method: "POST", body: { key } });
+  return ok(browserResult(`Pressed ${key}.`, view));
 });
 
 server.registerTool("browser_scroll", {
@@ -333,8 +371,8 @@ server.registerTool("browser_scroll", {
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
 }, async ({ delta_x, delta_y }) => {
-  await request(`${browserPath}/scroll`, { method: "POST", body: { deltaX: delta_x ?? 0, deltaY: delta_y } });
-  return ok("Scrolled the shared browser.");
+  const view = await request<ApiBrowserView>(`${browserPath}/scroll`, { method: "POST", body: { deltaX: delta_x ?? 0, deltaY: delta_y } });
+  return ok(browserResult("Scrolled the page.", view));
 });
 
 server.registerTool("browser_wait", {
@@ -342,8 +380,8 @@ server.registerTool("browser_wait", {
   inputSchema: { milliseconds: z.number().int().min(0).max(10000).optional() },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
 }, async ({ milliseconds }) => {
-  await request(`${browserPath}/wait`, { method: "POST", body: { milliseconds: milliseconds ?? 500 } });
-  return ok("The shared browser finished waiting.");
+  const view = await request<ApiBrowserView>(`${browserPath}/wait`, { method: "POST", body: { milliseconds: milliseconds ?? 500 } });
+  return ok(browserResult("Finished waiting.", view));
 });
 
 server.registerTool("list_agents", {

@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { append, applyFields, entityIds, eventsFor } from "./board-log.js";
 import { db, runTransaction } from "./db.js";
-import { listWorkspaces, type Workspace } from "./workspaces.js";
+import {
+  listWorkspaces,
+  normalizeWorkspaceIcon,
+  normalizeWorkspaceTint,
+  type Workspace,
+} from "./workspaces.js";
 
 /// What a ticket belongs to.
 ///
@@ -22,6 +27,8 @@ export interface Project {
   /// the project at once, because a key is derived rather than stored.
   keyPrefix: string;
   origin?: string;
+  icon: string | null;
+  tint: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -32,7 +39,7 @@ export interface ProjectView extends Project {
   workspaceIds: string[];
 }
 
-const EDITABLE = ["name", "keyPrefix", "origin"] as const;
+const EDITABLE = ["name", "keyPrefix", "origin", "icon", "tint"] as const;
 
 /// A slug someone typed, held to what reads as a ticket key: letters and
 /// digits, upper case, short enough to sit in front of a number.
@@ -92,6 +99,8 @@ function fold(id: string): Project | undefined {
         id,
         name: String(event.payload.name ?? "Project"),
         keyPrefix: String(event.payload.keyPrefix ?? "TASK"),
+        icon: null,
+        tint: null,
         createdAt: event.at,
         updatedAt: event.at,
       };
@@ -111,16 +120,19 @@ export function reproject(id: string): Project | undefined {
     return undefined;
   }
   db.prepare(
-    `insert into projects (id, name, key_prefix, origin, counter, created_at, updated_at, deleted)
-     values (?, ?, ?, ?, 0, ?, ?, 0)
+    `insert into projects (id, name, key_prefix, origin, icon, tint, counter, created_at, updated_at, deleted)
+     values (?, ?, ?, ?, ?, ?, 0, ?, ?, 0)
      on conflict(id) do update set
        name = excluded.name, key_prefix = excluded.key_prefix,
-       origin = excluded.origin, updated_at = excluded.updated_at, deleted = 0`,
+       origin = excluded.origin, icon = excluded.icon, tint = excluded.tint,
+       updated_at = excluded.updated_at, deleted = 0`,
   ).run(
     project.id,
     project.name,
     project.keyPrefix,
     project.origin ?? null,
+    project.icon,
+    project.tint,
     project.createdAt,
     project.updatedAt,
   );
@@ -139,6 +151,8 @@ function toProject(row: Record<string, unknown>): Project {
     name: String(row.name),
     keyPrefix: String(row.key_prefix),
     ...(row.origin ? { origin: String(row.origin) } : {}),
+    icon: row.icon ? String(row.icon) : null,
+    tint: row.tint ? String(row.tint) : null,
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
   };
@@ -186,7 +200,12 @@ export function listProjects(): ProjectView[] {
 
 // ── writing ─────────────────────────────────────────────────────────────────
 
-export function createProject(input: { name: string; origin?: string }): Project {
+export function createProject(input: {
+  name: string;
+  origin?: string;
+  icon?: string | null;
+  tint?: string | null;
+}): Project {
   const name = input.name.trim().slice(0, 60);
   if (!name) throw new Error("a workspace needs a name");
   const id = randomUUID();
@@ -194,6 +213,8 @@ export function createProject(input: { name: string; origin?: string }): Project
     name,
     keyPrefix: uniquePrefix(name),
     ...(input.origin ? { origin: input.origin } : {}),
+    ...(input.icon ? { icon: normalizeWorkspaceIcon(input.icon) } : {}),
+    ...(input.tint ? { tint: normalizeWorkspaceTint(input.tint) } : {}),
   });
   const project = reproject(id);
   if (!project) throw new Error("could not track that workspace");
@@ -205,7 +226,10 @@ export function createProject(input: { name: string; origin?: string }): Project
 /// Nothing is rewritten per ticket: a key is the ticket's number behind the
 /// project's slug, so changing the slug here changes every key — the ones that
 /// already exist and the ones that do not yet.
-export function updateProject(id: string, patch: { name?: unknown; keyPrefix?: unknown }): Project {
+export function updateProject(
+  id: string,
+  patch: { name?: unknown; keyPrefix?: unknown; icon?: unknown; tint?: unknown },
+): Project {
   const existing = getProject(id);
   if (!existing) throw new Error("no such workspace");
   const fields: Record<string, unknown> = {};
@@ -223,6 +247,12 @@ export function updateProject(id: string, patch: { name?: unknown; keyPrefix?: u
       .get(slug, id) as { id?: string } | undefined;
     if (clash) throw new Error(`another workspace already uses ${slug}`);
     fields.keyPrefix = slug;
+  }
+  if (patch.icon !== undefined) {
+    fields.icon = normalizeWorkspaceIcon(patch.icon === null ? null : String(patch.icon));
+  }
+  if (patch.tint !== undefined) {
+    fields.tint = normalizeWorkspaceTint(patch.tint === null ? null : String(patch.tint));
   }
   if (Object.keys(fields).length === 0) return existing;
 
@@ -257,12 +287,24 @@ export function unbindWorkspace(workspaceId: string): void {
 /// makes the second machine's clone find the first machine's tickets.
 export function adoptWorkspace(workspace: Workspace): Project {
   const bound = projectForWorkspace(workspace.id);
-  if (bound) return bound;
+  if (bound) return seedProjectIdentity(bound, workspace);
   const origin = workspace.origin ?? undefined;
   const existing = origin ? projectByOrigin(origin) : undefined;
-  const project = existing ?? createProject({ name: workspace.name, origin });
+  const project = existing ?? createProject({
+    name: workspace.name,
+    origin,
+    icon: workspace.icon,
+    tint: workspace.tint,
+  });
   bindWorkspace(project.id, workspace.id);
-  return project;
+  return seedProjectIdentity(project, workspace);
+}
+
+function seedProjectIdentity(project: Project, workspace: Workspace): Project {
+  const hasIdentityEvent = eventsFor("project", project.id).some((event) =>
+    Object.hasOwn(event.payload, "icon") || Object.hasOwn(event.payload, "tint"));
+  if (hasIdentityEvent || (!workspace.icon && !workspace.tint)) return project;
+  return updateProject(project.id, { icon: workspace.icon, tint: workspace.tint });
 }
 
 /// Binds every workspace this machine knows about. Cheap, and run whenever the
@@ -275,13 +317,7 @@ export async function syncProjectBindings(): Promise<void> {
   } catch {
     return;
   }
-  const known = new Set(
-    (db.prepare("select workspace_id from project_workspaces").all() as { workspace_id: string }[]).map(
-      (row) => row.workspace_id,
-    ),
-  );
   for (const workspace of workspaces) {
-    if (known.has(workspace.id)) continue;
     try {
       adoptWorkspace(workspace);
     } catch (error) {

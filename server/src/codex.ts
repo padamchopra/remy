@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { homedir } from "node:os";
 import { createInterface } from "node:readline";
 import { codexSandbox } from "./providers.js";
 import { applyToolOutput, clip, MAX_ARG, MAX_OUTPUT, MAX_TEXT, MAX_THINK, type ConvEntry, type ConvTodo } from "./transcript.js";
@@ -148,6 +149,13 @@ export function codexAppServerArgs(options: CodexSessionOptions): string[] {
   return args;
 }
 
+export function codexErrorMessage(message: string): string {
+  if (/error loading default config.*operation not permitted \(os error 1\)/i.test(message)) {
+    return "Codex couldn’t read its configuration — allow Remy file access in System Settings, then try again.";
+  }
+  return message;
+}
+
 export function codexPermissions(permissionMode: string, roots: string[]): {
   sandbox: "read-only" | "workspace-write" | "danger-full-access";
   approvalPolicy: "on-request" | "never";
@@ -219,7 +227,10 @@ class AppServerSession implements CodexSession {
     private onQuestion?: (request: CodexQuestionRequest) => Promise<Record<string, string[]>>,
   ) {
     this.child = spawn(options.command, codexAppServerArgs(options), {
-      cwd: options.cwd,
+      // Codex loads its own config before Remy can send the thread workspace.
+      // Starting in a protected or vanished workspace makes that bootstrap fail,
+      // even though each thread and turn below carries its real cwd explicitly.
+      cwd: homedir(),
       env: { ...process.env, ...options.env, ...options.mcpServer?.env },
       stdio: ["pipe", "pipe", "pipe"],
     });

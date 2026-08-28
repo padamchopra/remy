@@ -390,7 +390,7 @@ export function ChatView({
             checkpoints={checkpoints}
             className="min-h-0 flex-1"
           >
-            <div className="mx-auto flex w-full max-w-[44rem] flex-col gap-5 px-6 py-7 [overflow-anchor:none]">
+            <div className="mx-auto flex w-full max-w-[44rem] flex-1 flex-col gap-5 px-6 py-7 [overflow-anchor:none]">
           {loading && visibleEntries.length === 0 ? (
             <FeedSkeleton />
           ) : visibleEntries.length === 0 ? (
@@ -427,7 +427,6 @@ export function ChatView({
                   name={persona?.name ?? provider?.label ?? "Claude"}
                   persona={persona}
                   lead={item.lead}
-                  showIdentity={conversational}
                   checkpoint={sticky ? checkpoint?.id : undefined}
                 />
               );
@@ -470,6 +469,10 @@ export function ChatView({
                 <span className="font-medium">{persona.name}</span> is working…
               </MarkerContent>
             </Marker>
+          )}
+
+          {(approval || question || open?.error) && (
+            <span aria-hidden="true" className="min-h-0 flex-1" />
           )}
 
           {approval && (
@@ -924,7 +927,7 @@ function ScrollFeed({
     <div className={cn("relative", className)}>
       <ScrollArea
         ref={rootRef}
-        className="h-full"
+        className="h-full [&_[data-slot=scroll-area-viewport]>div]:flex! [&_[data-slot=scroll-area-viewport]>div]:min-h-full!"
         onClickCapture={(event) => {
           if (!(event.target instanceof Element)) return;
           const message = event.target.closest<HTMLElement>("[data-scroll-checkpoint]");
@@ -1122,7 +1125,6 @@ function Entry({
   provider,
   name,
   persona,
-  showIdentity,
   checkpoint,
 }: {
   entry: ConvEntry;
@@ -1130,7 +1132,6 @@ function Entry({
   provider: string;
   name: string;
   persona?: Agent;
-  showIdentity: boolean;
   checkpoint?: string;
 }) {
   const switched = modelSwitch(entry);
@@ -1159,34 +1160,30 @@ function Entry({
           ],
         )}
       >
-        {showIdentity && (
-          /* The slot is its own muted disc at `min-w-8`. A smaller avatar inside
-              leaves that disc showing as a ring, so the avatar fills it and the
-              slot carries no colour of its own. */
-          <MessageAvatar
-            data-sequential-avatar={!lead ? "" : undefined}
-            className={cn(
-              "bg-transparent translate-y-[var(--checkpoint-avatar-y)]!",
-              !lead && "opacity-0",
-            )}
-          >
-            <UserAvatar />
-          </MessageAvatar>
-        )}
+        {/* The slot is its own muted disc at `min-w-8`. A smaller avatar inside
+            leaves that disc showing as a ring, so the avatar fills it and the
+            slot carries no colour of its own. */}
+        <MessageAvatar
+          data-sequential-avatar={!lead ? "" : undefined}
+          className={cn(
+            "bg-transparent translate-y-[var(--checkpoint-avatar-y)]!",
+            !lead && "opacity-0",
+          )}
+        >
+          <UserAvatar />
+        </MessageAvatar>
         <MessageContent>
-          {showIdentity && lead && (
+          {lead && (
             <MessageHeader className="max-h-5 overflow-hidden">
               You
             </MessageHeader>
           )}
-          <Bubble align="end" variant={showIdentity ? "default" : "muted"}>
+          <Bubble align="end" variant="muted">
             <BubbleContent
               asChild={checkpoint !== undefined}
               className={cn(
                 "whitespace-pre-wrap transition-[background-color] duration-150 group-data-[compacted]/message:truncate group-data-[stuck]/message:backdrop-blur-sm motion-reduce:transition-none",
-                showIdentity
-                  ? "group-data-[stuck]/message:bg-primary/45!"
-                  : "group-data-[stuck]/message:bg-muted/95!",
+                "group-data-[stuck]/message:bg-muted/95!",
               )}
             >
               {checkpoint !== undefined ? (
@@ -1231,11 +1228,11 @@ function Entry({
   if (entry.kind === "assistant") {
     return (
       <Message>
-        {showIdentity && <AgentAvatar provider={provider} persona={persona} lead={lead} />}
+        <AgentAvatar provider={provider} persona={persona} lead={lead} />
         <MessageContent>
           {/* The provider, not the model: which Claude or which Codex answered
               is a setting of the thread, and it is on the toolbar. */}
-          {showIdentity && lead && <MessageHeader>{name}</MessageHeader>}
+          {lead && <MessageHeader>{name}</MessageHeader>}
           <Bubble variant="ghost">
             <BubbleContent>
               <Markdown text={entry.text ?? ""} />
@@ -1249,9 +1246,9 @@ function Entry({
   if (entry.kind === "thinking") {
     return (
       <Message>
-        {showIdentity && <AgentAvatar provider={provider} persona={persona} lead={lead} />}
+        <AgentAvatar provider={provider} persona={persona} lead={lead} />
         <MessageContent>
-          {showIdentity && lead && <MessageHeader>{name}</MessageHeader>}
+          {lead && <MessageHeader>{name}</MessageHeader>}
           <Bubble variant="ghost">
             <BubbleContent className="text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground italic">
               {entry.text}
@@ -1578,7 +1575,7 @@ function toolGroupSummary(entries: ConvEntry[]): string {
 
 function Diff({ lines }: { lines: ConvDiffLine[] }) {
   return (
-    <div className="overflow-x-auto rounded-md border border-border/60 bg-background font-mono text-[11px] leading-5">
+    <div className="min-w-0 max-w-full overflow-x-auto rounded-md border border-border/60 bg-background font-mono text-[11px] leading-5">
       {lines.map((line, index) => (
         <div
           key={index}
@@ -1615,14 +1612,14 @@ function ApprovalCard({
   };
 
   return (
-    <Card className="gap-3 border-warning/50 p-4">
-      <div className="flex flex-col gap-1">
-        <p className="text-sm font-medium">{approval.title ?? `${approval.verb} ${approval.arg}`.trim()}</p>
-        {approval.reason && <p className="text-xs text-muted-foreground">{approval.reason}</p>}
+    <Card className="w-full min-w-0 max-w-full gap-3 overflow-hidden border-warning/50 p-4">
+      <div className="flex min-w-0 flex-col gap-1">
+        <p className="min-w-0 max-w-full text-sm font-medium [overflow-wrap:anywhere]">{approval.title ?? `${approval.verb} ${approval.arg}`.trim()}</p>
+        {approval.reason && <p className="min-w-0 max-w-full text-xs text-muted-foreground [overflow-wrap:anywhere]">{approval.reason}</p>}
       </div>
       {approval.plan && (
-        <div className="max-h-72 overflow-auto rounded-md bg-muted/50 p-3">
-          <Markdown text={approval.plan} className="text-xs" />
+        <div className="min-w-0 max-w-full max-h-72 overflow-auto rounded-md bg-muted/50 p-3">
+          <Markdown text={approval.plan} className="min-w-0 max-w-full text-xs" />
         </div>
       )}
       {approval.diff && approval.diff.length > 0 && <Diff lines={approval.diff} />}

@@ -109,6 +109,7 @@ export function useProviderUpdateToasts(onOpenProviders: () => void) {
       id: TOAST_ID,
       description: updateDescription(updates),
       duration: Infinity,
+      closeButton: true,
       action: { label: "Open providers", onClick: openProviders },
       onDismiss: () => {
         if (activeUpdateKey === updateKey) activeUpdateKey = undefined;

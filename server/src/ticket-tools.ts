@@ -16,11 +16,13 @@ import { addWorkspace, listWorkspaces } from "./workspaces.js";
 import {
   browserSnapshotText,
   clickBrowser,
+  navigateBrowser,
   openBrowser,
   pressBrowser,
   scrollBrowser,
   setBrowserViewport,
   typeBrowser,
+  type BrowserView,
   waitInBrowser,
 } from "./browser.js";
 import {
@@ -120,6 +122,10 @@ export function ticketPromptContext(chatId: string): string | undefined {
 /// the text because that is the one thing every provider's transcript keeps.
 function ok(text: string, artifact?: ConvArtifact) {
   return { content: [{ type: "text" as const, text: artifact ? text + artifactMarker(artifact) : text }] };
+}
+
+function browserResult(action: string, view: BrowserView): string {
+  return [action, `Page: ${view.title || "Untitled"}`, `URL: ${view.url || "about:blank"}`].join("\n");
 }
 
 function ticketCard(ticket: TicketView): ConvArtifact {
@@ -223,11 +229,11 @@ export function claudeTicketMcpServer(
       ),
       tool(
         "browser_open",
-        "Open a page in this thread's shared browser so the person can watch and take control.",
+        "Open a page in this thread's shared browser. The result confirms the loaded title and URL.",
         { url: z.string().min(1).max(4000) },
         async ({ url }) => {
-          await openBrowser(chatId, url, "agent");
-          return ok(`Opened ${url} in the shared browser.`);
+          const view = await openBrowser(chatId, url, "agent");
+          return ok(browserResult("Opened the page.", view));
         },
         { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
       ),
@@ -239,6 +245,27 @@ export function claudeTicketMcpServer(
           const view = await setBrowserViewport(chatId, viewport, "agent");
           return ok(`Switched the shared browser to ${viewport} (${view.width} × ${view.height}).`);
         },
+        { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
+      ),
+      tool(
+        "browser_back",
+        "Go back in the shared browser and confirm the resulting page.",
+        {},
+        async () => ok(browserResult("Went back.", await navigateBrowser(chatId, "back", "agent"))),
+        { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } },
+      ),
+      tool(
+        "browser_forward",
+        "Go forward in the shared browser and confirm the resulting page.",
+        {},
+        async () => ok(browserResult("Went forward.", await navigateBrowser(chatId, "forward", "agent"))),
+        { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } },
+      ),
+      tool(
+        "browser_reload",
+        "Reload the shared browser and confirm the resulting page.",
+        {},
+        async () => ok(browserResult("Reloaded the page.", await navigateBrowser(chatId, "reload", "agent"))),
         { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
       ),
       tool(
@@ -260,8 +287,8 @@ export function claudeTicketMcpServer(
           y: z.number().min(0).max(2000).optional(),
         },
         async (target) => {
-          await clickBrowser(chatId, target, "agent");
-          return ok("Clicked in the shared browser.");
+          const view = await clickBrowser(chatId, target, "agent");
+          return ok(browserResult("Clicked the page.", view));
         },
         { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } },
       ),
@@ -276,8 +303,8 @@ export function claudeTicketMcpServer(
           value: z.string().max(20000),
         },
         async ({ value, ...target }) => {
-          await typeBrowser(chatId, target, value, "agent");
-          return ok("Entered text in the shared browser.");
+          const view = await typeBrowser(chatId, target, value, "agent");
+          return ok(browserResult("Entered the text.", view));
         },
         { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true } },
       ),
@@ -286,8 +313,8 @@ export function claudeTicketMcpServer(
         "Press a key or shortcut in the shared browser, such as Enter, Escape, or Meta+R.",
         { key: z.string().min(1).max(100) },
         async ({ key }) => {
-          await pressBrowser(chatId, key, "agent");
-          return ok(`Pressed ${key} in the shared browser.`);
+          const view = await pressBrowser(chatId, key, "agent");
+          return ok(browserResult(`Pressed ${key}.`, view));
         },
         { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } },
       ),
@@ -299,8 +326,8 @@ export function claudeTicketMcpServer(
           delta_y: z.number().min(-10000).max(10000),
         },
         async ({ delta_x, delta_y }) => {
-          await scrollBrowser(chatId, delta_x ?? 0, delta_y, "agent");
-          return ok("Scrolled the shared browser.");
+          const view = await scrollBrowser(chatId, delta_x ?? 0, delta_y, "agent");
+          return ok(browserResult("Scrolled the page.", view));
         },
         { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } },
       ),
@@ -309,8 +336,8 @@ export function claudeTicketMcpServer(
         "Wait briefly for the shared page to update before reading it again.",
         { milliseconds: z.number().int().min(0).max(10000).optional() },
         async ({ milliseconds }) => {
-          await waitInBrowser(chatId, milliseconds ?? 500, "agent");
-          return ok("The shared browser finished waiting.");
+          const view = await waitInBrowser(chatId, milliseconds ?? 500, "agent");
+          return ok(browserResult("Finished waiting.", view));
         },
         { annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true } },
       ),

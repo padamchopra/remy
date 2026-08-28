@@ -6,6 +6,9 @@ import { broadcast } from "./notify.js";
 
 export type BrowserController = "agent" | "you";
 export type BrowserViewport = "fullscreen" | "desktop" | "mobile";
+export type BrowserNavigation = "back" | "forward" | "reload";
+
+export const BROWSER_DEVICE_SCALE_FACTOR = 2;
 
 const BROWSER_VIEWPORTS: Record<BrowserViewport, { width: number; height: number }> = {
   fullscreen: { width: 1920, height: 1080 },
@@ -51,9 +54,13 @@ interface BrowserSession {
   queue: Promise<unknown>;
   console: string[];
   network: string[];
+  unavailable: boolean;
 }
 
 const sessions = new Map<string, BrowserSession>();
+const contexts = new Map<string, { browser: Browser; context: BrowserContext }>();
+let sharedBrowser: Browser | undefined;
+let browserLaunch: Promise<Browser> | undefined;
 
 export function browserViewportSize(
   viewport: BrowserViewport,
@@ -115,21 +122,14 @@ function normaliseUrl(input: string): string {
 }
 
 async function createSession(chatId: string, browserId: string): Promise<BrowserSession> {
-  const executablePath = browserExecutable();
-  if (!executablePath) {
-    throw new Error("Remy could not find Chrome or Chromium on this device.");
-  }
+  const held = await contextFor(chatId);
   const viewport: BrowserViewport = "desktop";
   const size = browserViewportSize(viewport);
-  const browser = await chromium.launch({ executablePath, headless: true });
-  const context = await browser.newContext({
-    viewport: size,
-    colorScheme: "dark",
-  });
-  const page = await context.newPage();
+  const page = await held.context.newPage();
+  await page.setViewportSize(size);
   const session: BrowserSession = {
-    browser,
-    context,
+    browser: held.browser,
+    context: held.context,
     page,
     viewport,
     size,
@@ -138,6 +138,7 @@ async function createSession(chatId: string, browserId: string): Promise<Browser
     queue: Promise.resolve(),
     console: [],
     network: [],
+    unavailable: false,
   };
   page.on("console", (message) => {
     session.console.push(`${message.type()}: ${message.text()}`);
@@ -149,17 +150,96 @@ async function createSession(chatId: string, browserId: string): Promise<Browser
     session.network = session.network.slice(-50);
   });
   page.on("dialog", (dialog) => void dialog.dismiss());
-  page.on("close", () => {
-    const key = sessionKey(chatId, browserId);
-    if (sessions.get(key) === session) sessions.delete(key);
-    broadcast({ type: "browser", chatId, browserId, revision: session.revision + 1, active: false });
-  });
+  page.on("crash", () => browserUnavailable(chatId, browserId, session));
+  page.on("close", () => browserUnavailable(chatId, browserId, session));
   sessions.set(sessionKey(chatId, browserId), session);
   return session;
 }
 
+async function browserProcess(): Promise<Browser> {
+  if (sharedBrowser?.isConnected()) return sharedBrowser;
+  if (browserLaunch) return browserLaunch;
+  const executablePath = browserExecutable();
+  if (!executablePath) {
+    throw new Error("Remy could not find Chrome or Chromium on this device.");
+  }
+  browserLaunch = chromium.launch({ executablePath, headless: true }).then((browser) => {
+    sharedBrowser = browser;
+    browser.on("disconnected", () => {
+      if (sharedBrowser === browser) sharedBrowser = undefined;
+      browserLaunch = undefined;
+      for (const [chatId, held] of contexts) {
+        if (held.browser === browser) contexts.delete(chatId);
+      }
+      for (const [key, session] of sessions) {
+        if (session.browser !== browser) continue;
+        const separator = key.indexOf("\0");
+        browserUnavailable(key.slice(0, separator), key.slice(separator + 1), session);
+      }
+    });
+    return browser;
+  }).finally(() => {
+    browserLaunch = undefined;
+  });
+  return browserLaunch;
+}
+
+async function contextFor(chatId: string): Promise<{ browser: Browser; context: BrowserContext }> {
+  const existing = contexts.get(chatId);
+  if (existing?.browser.isConnected()) return existing;
+  if (existing) contexts.delete(chatId);
+  const browser = await browserProcess();
+  const context = await browser.newContext({
+    viewport: browserViewportSize("desktop"),
+    deviceScaleFactor: BROWSER_DEVICE_SCALE_FACTOR,
+    colorScheme: "dark",
+  });
+  const held = { browser, context };
+  contexts.set(chatId, held);
+  context.on("close", () => {
+    if (contexts.get(chatId) === held) contexts.delete(chatId);
+  });
+  return held;
+}
+
+function browserUnavailable(chatId: string, browserId: string, session: BrowserSession): void {
+  if (sessions.get(sessionKey(chatId, browserId)) !== session || session.unavailable) return;
+  session.unavailable = true;
+  session.error = "The browser stopped unexpectedly. Your next action will reopen it.";
+  session.revision += 1;
+  broadcast({
+    type: "browser",
+    chatId,
+    browserId,
+    revision: session.revision,
+    active: false,
+    error: session.error,
+  });
+}
+
 async function sessionFor(chatId: string, browserId: string): Promise<BrowserSession> {
-  return sessions.get(sessionKey(chatId, browserId)) ?? createSession(chatId, browserId);
+  const key = sessionKey(chatId, browserId);
+  const existing = sessions.get(key);
+  if (existing && !existing.unavailable && existing.browser.isConnected() && !existing.page.isClosed()) {
+    return existing;
+  }
+  const url = existing?.page.url();
+  const viewport = existing?.viewport;
+  const size = existing?.size;
+  if (existing) {
+    sessions.delete(key);
+    await existing.page.close().catch(() => undefined);
+  }
+  const session = await createSession(chatId, browserId);
+  if (viewport && size) {
+    session.viewport = viewport;
+    session.size = size;
+    await session.page.setViewportSize(size);
+  }
+  if (url && url !== "about:blank") {
+    await session.page.goto(url, { waitUntil: "domcontentloaded", timeout: 20_000 });
+  }
+  return session;
 }
 
 function changed(chatId: string, browserId: string, session: BrowserSession): void {
@@ -319,6 +399,24 @@ export async function pressBrowser(chatId: string, key: string, controller: Brow
   });
 }
 
+export async function navigateBrowser(
+  chatId: string,
+  navigation: BrowserNavigation,
+  controller: BrowserController,
+  browserId = "default",
+): Promise<BrowserView> {
+  if (!sessions.has(sessionKey(chatId, browserId))) {
+    throw new Error("Open a page before navigating it.");
+  }
+  return queued(chatId, browserId, controller, async (session, epoch) => {
+    if (navigation === "back") await session.page.goBack({ waitUntil: "domcontentloaded", timeout: 20_000 });
+    if (navigation === "forward") await session.page.goForward({ waitUntil: "domcontentloaded", timeout: 20_000 });
+    if (navigation === "reload") await session.page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 });
+    if (controller === "agent") assertAgentStillControls(session, epoch);
+    return browserView(chatId, true, browserId);
+  });
+}
+
 export async function insertBrowser(chatId: string, text: string, controller: BrowserController, browserId = "default"): Promise<BrowserView> {
   return queued(chatId, browserId, controller, async (session, epoch) => {
     await session.page.keyboard.insertText(text);
@@ -396,6 +494,20 @@ export async function browserView(chatId: string, screenshot = false, browserId 
     const viewport: BrowserViewport = "desktop";
     return { browserId, active: false, viewport, ...browserViewportSize(viewport), revision: 0 };
   }
+  if (session.unavailable || session.page.isClosed() || !session.browser.isConnected()) {
+    return {
+      browserId,
+      active: false,
+      url: session.page.url(),
+      viewport: session.viewport,
+      width: session.size.width,
+      height: session.size.height,
+      revision: session.revision,
+      controller: session.controller,
+      cursor: session.cursor,
+      error: session.error,
+    };
+  }
   const view: BrowserView = {
     browserId,
     active: true,
@@ -410,7 +522,7 @@ export async function browserView(chatId: string, screenshot = false, browserId 
     error: session.error,
   };
   if (screenshot) {
-    const image = await session.page.screenshot({ type: "png" });
+    const image = await session.page.screenshot({ type: "png", scale: "device" });
     view.screenshot = `data:image/png;base64,${image.toString("base64")}`;
   }
   return view;
@@ -421,6 +533,9 @@ export async function closeBrowser(chatId: string, browserId?: string): Promise<
     await Promise.all(Array.from(sessions.entries())
       .filter(([key]) => key.startsWith(`${chatId}\0`))
       .map(([key, session]) => closeSession(chatId, key.slice(chatId.length + 1), session)));
+    const held = contexts.get(chatId);
+    contexts.delete(chatId);
+    await held?.context.close().catch(() => undefined);
     return;
   }
   const session = sessions.get(sessionKey(chatId, browserId));
@@ -429,7 +544,6 @@ export async function closeBrowser(chatId: string, browserId?: string): Promise<
 
 async function closeSession(chatId: string, browserId: string, session: BrowserSession): Promise<void> {
   sessions.delete(sessionKey(chatId, browserId));
-  await session.context.close().catch(() => undefined);
-  await session.browser.close().catch(() => undefined);
+  await session.page.close().catch(() => undefined);
   broadcast({ type: "browser", chatId, browserId, revision: session.revision + 1, active: false });
 }

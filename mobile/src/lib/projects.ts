@@ -1,5 +1,5 @@
 import { Box, Code, Database, Folder, GitBranch, Globe, Sparkles, Terminal, type LucideIcon } from "lucide-react-native";
-import type { Server, Workspace } from "../state/types";
+import type { Project, Server, Workspace } from "../state/types";
 
 export const PROJECT_ICONS = {
   folder: Folder,
@@ -34,6 +34,24 @@ export interface WorkspaceGroup {
   id: string;
   workspace: Workspace;
   copies: Workspace[];
+}
+
+export function applyProjectIdentity(workspaces: Workspace[], projects: Project[]): Workspace[] {
+  const byOrigin = new Map(
+    projects.flatMap((project) => project.origin ? [[project.origin, project] as const] : []),
+  );
+  const byWorkspace = new Map(
+    projects.flatMap((project) => project.workspaceIds.map((id) => [id, project] as const)),
+  );
+  return workspaces.map((workspace) => {
+    const project = (workspace.origin ? byOrigin.get(workspace.origin) : undefined) ?? byWorkspace.get(workspace.id);
+    if (!project) return workspace;
+    return {
+      ...workspace,
+      ...(Object.hasOwn(project, "icon") ? { icon: project.icon ?? null } : {}),
+      ...(Object.hasOwn(project, "tint") ? { tint: project.tint ?? null } : {}),
+    };
+  });
 }
 
 /// One repository across Macs, or one ordinary folder on one Mac.

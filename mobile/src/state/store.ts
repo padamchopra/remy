@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { codeFor, type DeviceIconId } from "../lib/devices";
+import { applyProjectIdentity } from "../lib/projects";
 import { transport } from "../lib/transport";
 import type { TintId } from "../lib/tints";
 import type {
@@ -238,7 +239,7 @@ export const useStore = create<State>((set, get) => ({
       servers: results.map((r) => r.server),
       chats: results.flatMap((r) => r.chats).sort(byAttention),
       dms: results.flatMap((r) => r.dms),
-      workspaces: results.flatMap((r) => r.workspaces),
+      workspaces: applyProjectIdentity(results.flatMap((r) => r.workspaces), get().projects),
       loading: false,
       error: failures.length === servers.length ? failures.join("; ") : undefined,
       connected: results.some((r) => r.server.online),
@@ -319,12 +320,16 @@ export const useStore = create<State>((set, get) => ({
       }),
     );
     const dedupe = <T extends { id: string }>(rows: T[]): T[] => [...new Map(rows.map((row) => [row.id, row])).values()];
-    set({
-      agents: dedupe(results.flatMap((r) => r.agents)),
-      projects: dedupe(results.flatMap((r) => r.projects)),
-      tickets: dedupe(results.flatMap((r) => r.tickets)).sort((a, b) => a.rank.localeCompare(b.rank)),
-      boardDevices: results.flatMap((r) => r.devices),
-      boardLoading: false,
+    set((current) => {
+      const projects = dedupe(results.flatMap((r) => r.projects));
+      return {
+        agents: dedupe(results.flatMap((r) => r.agents)),
+        projects,
+        workspaces: applyProjectIdentity(current.workspaces, projects),
+        tickets: dedupe(results.flatMap((r) => r.tickets)).sort((a, b) => a.rank.localeCompare(b.rank)),
+        boardDevices: results.flatMap((r) => r.devices),
+        boardLoading: false,
+      };
     });
   },
 

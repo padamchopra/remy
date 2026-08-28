@@ -25,6 +25,7 @@ import {
 } from "./environments.js";
 import {
   codexEntry,
+  codexErrorMessage,
   codexTodos,
   codexTokens,
   createCodexSession,
@@ -1463,7 +1464,7 @@ This is the agent's Inbox conversation. When the person signals that something s
       session: this.record.id,
       click: `remy://chat/${this.record.id}`,
       title: `${this.record.title} failed`,
-      message: clip(message, 200),
+      message: clip(this.record.error ?? message, 200),
       highPriority: true,
     });
   }
@@ -1471,8 +1472,7 @@ This is the agent's Inbox conversation. When the person signals that something s
   private recordFailure(detail: string): void {
     if (/abort|interrupt|cancel|SIGTERM/i.test(detail)) return;
     const safeDetail = redactKnownSecrets(detail);
-    this.record.error = safeDetail;
-    this.append({ id: `e-${randomUUID()}`, kind: "assistant", text: `⚠️ ${clip(safeDetail, 400)}` });
+    this.record.error = this.record.provider === "codex" ? codexErrorMessage(safeDetail) : safeDetail;
   }
 
   // ── permissions ──────────────────────────────────────────────────────────

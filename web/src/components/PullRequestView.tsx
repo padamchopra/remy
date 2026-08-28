@@ -28,7 +28,6 @@ import {
 } from "@/components/ui/attachment";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupText, InputGroupTextarea } from "@/components/ui/input-group";
@@ -54,7 +53,7 @@ interface Selection {
   focus: number;
 }
 
-type PullRequestTab = "summary" | "activity" | "files";
+type PullRequestTab = "summary" | "code";
 
 export function PullRequestView({
   serverId,
@@ -64,6 +63,7 @@ export function PullRequestView({
   codeReferences = [],
   onAddReference,
   onRemoveReference,
+  actions,
 }: {
   serverId: string;
   repository?: string;
@@ -72,6 +72,7 @@ export function PullRequestView({
   codeReferences?: ChatCodeReference[];
   onAddReference?: (reference: ChatCodeReference) => void;
   onRemoveReference?: (id: string) => void;
+  actions?: ReactNode;
 }) {
   const [pullRequest, setPullRequest] = useState<PullRequestData>();
   const [loading, setLoading] = useState(true);
@@ -107,7 +108,7 @@ export function PullRequestView({
   }, [chatId, number, repository, serverId]);
 
   useEffect(() => {
-    if (tab !== "activity" || !pullRequest || timeline || timelineError) return;
+    if (tab !== "summary" || !pullRequest || timeline || timelineError) return;
     let current = true;
     const path = `/pull-requests/timeline?repository=${encodeURIComponent(pullRequest.repository)}&number=${pullRequest.number}`;
     void transport.request<{ timeline?: PullRequestTimelineItem[] }>(serverId, path)
@@ -156,74 +157,51 @@ export function PullRequestView({
 
   if (loading) return <PullRequestLoading />;
   if (error || !pullRequest) {
+    const title = chatId ? "No pull request yet" : "Couldn't load this pull request";
+    const description = chatId
+      ? "Open one for this branch, then refresh."
+      : "Refresh the list and try again.";
     return (
       <Empty className="h-full">
         <EmptyHeader>
           <EmptyMedia variant="icon"><GitPullRequest /></EmptyMedia>
-          <EmptyTitle>No pull request</EmptyTitle>
-          <EmptyDescription>{error || "This branch does not have a pull request."}</EmptyDescription>
+          <EmptyTitle>{title}</EmptyTitle>
+          <EmptyDescription>{description}</EmptyDescription>
         </EmptyHeader>
       </Empty>
     );
   }
 
-  const failed = pullRequest.checks.filter((check) => check.state === "fail").length;
-  const pending = pullRequest.checks.filter((check) => check.state === "pending").length;
-  const passed = pullRequest.checks.filter((check) => check.state === "pass").length;
   const changedFiles = pullRequest.changedFiles || pullRequest.files.length;
 
   return (
     <Tabs value={tab} onValueChange={(value) => setTab(value as PullRequestTab)} className="size-full min-h-0 gap-0">
-      <header className="shrink-0 border-b border-border">
-        <div className="flex min-w-0 items-start gap-3 px-4 pb-3 pt-4">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted">
-            <GitPullRequest className="size-4" />
+      <header className="flex min-h-12 shrink-0 items-center gap-3 border-b border-border px-3">
+        <span className="flex min-w-0 flex-1 items-center gap-2 text-xs text-muted-foreground">
+          <GitPullRequest className="size-4 shrink-0 text-primary" />
+          <span className="min-w-0 truncate">
+            <span className="text-foreground">{pullRequest.repository}</span>
+            <span> #{pullRequest.number}</span>
           </span>
-          <span className="min-w-0 flex-1">
-            <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="truncate">{pullRequest.repository}</span>
-              <span className="shrink-0">#{pullRequest.number}</span>
-            </span>
-            <h2 className="mt-1 text-sm font-semibold leading-snug">{pullRequest.title}</h2>
-            <span className="mt-2 flex min-w-0 items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
-              <GitBranch className="size-3 shrink-0" />
-              <span className="truncate">{pullRequest.headRefName}</span>
-              <ArrowRight className="size-3 shrink-0" />
-              <span className="truncate">{pullRequest.baseRefName}</span>
-            </span>
-          </span>
+        </span>
+        <TabsList aria-label="Pull request views" className="h-8 shrink-0">
+          <TabsTrigger value="summary">Summary</TabsTrigger>
+          <TabsTrigger value="code">Code <span className="text-muted-foreground">{changedFiles}</span></TabsTrigger>
+        </TabsList>
+        <span className="flex min-w-0 items-center justify-end gap-1">
+          {actions}
           <Button asChild variant="ghost" size="icon-sm">
             <a href={pullRequest.url} target="_blank" rel="noreferrer" data-link aria-label="Open pull request on GitHub">
               <ExternalLink />
             </a>
           </Button>
-        </div>
-        <div className="flex flex-wrap items-center gap-1.5 px-4 pb-3">
-          <PullRequestStateBadge pullRequest={pullRequest} />
-          {pullRequest.reviewDecision === "APPROVED" && <Badge variant="success"><CircleCheck />Approved</Badge>}
-          {pullRequest.reviewDecision === "CHANGES_REQUESTED" && <Badge variant="destructive"><CircleX />Changes requested</Badge>}
-          {failed > 0 ? (
-            <Badge variant="destructive"><CircleX />{failed} failed</Badge>
-          ) : pending > 0 ? (
-            <Badge variant="warning"><CircleDot />{pending} pending</Badge>
-          ) : pullRequest.checks.length > 0 ? (
-            <Badge variant="outline"><CircleCheck />{passed}/{pullRequest.checks.length} checks</Badge>
-          ) : null}
-        </div>
-        <TabsList variant="line" aria-label="Pull request views" className="h-9 w-full justify-start gap-3 rounded-none px-4 py-0">
-          <TabsTrigger value="summary" className="flex-none px-0 after:bottom-0!">Summary</TabsTrigger>
-          <TabsTrigger value="activity" className="flex-none px-0 after:bottom-0!">Activity</TabsTrigger>
-          <TabsTrigger value="files" className="flex-none px-0 after:bottom-0!">Files {changedFiles}</TabsTrigger>
-        </TabsList>
+        </span>
       </header>
 
       <TabsContent value="summary" className="min-h-0 overflow-hidden">
-        <PullRequestSummary pullRequest={pullRequest} />
+        <PullRequestSummary pullRequest={pullRequest} timeline={timeline} timelineError={timelineError} />
       </TabsContent>
-      <TabsContent value="activity" className="min-h-0 overflow-hidden">
-        <PullRequestActivity timeline={timeline} error={timelineError} />
-      </TabsContent>
-      <TabsContent value="files" className="min-h-0 overflow-hidden">
+      <TabsContent value="code" className="min-h-0 overflow-hidden">
         <PullRequestFiles
           pullRequest={pullRequest}
           selection={selection}
@@ -243,17 +221,18 @@ export function PullRequestView({
 
 function PullRequestLoading() {
   return (
-    <div className="flex flex-col gap-4 p-4">
-      <span className="flex items-start gap-3">
-        <Skeleton className="size-9 shrink-0" />
-        <span className="flex min-w-0 flex-1 flex-col gap-2">
-          <Skeleton className="h-3 w-28" />
-          <Skeleton className="h-5 w-4/5" />
-          <Skeleton className="h-3 w-2/3" />
-        </span>
-      </span>
-      <Skeleton className="h-9 w-full" />
-      <Skeleton className="h-48 w-full" />
+    <div className="size-full">
+      <div className="flex h-12 items-center gap-3 border-b border-border px-3">
+        <Skeleton className="h-3 w-40" />
+        <Skeleton className="ml-auto h-8 w-36" />
+      </div>
+      <div className="mx-auto flex max-w-4xl flex-col gap-5 px-8 py-8">
+        <Skeleton className="h-8 w-4/5" />
+        <Skeleton className="h-3 w-40" />
+        <Skeleton className="mt-3 h-32 w-full" />
+        <Skeleton className="h-px w-full" />
+        <Skeleton className="h-48 w-full" />
+      </div>
     </div>
   );
 }
@@ -264,125 +243,141 @@ function PullRequestStateBadge({ pullRequest }: { pullRequest: PullRequestData }
   return <Badge variant={pullRequest.isDraft ? "secondary" : "success"}>{pullRequest.isDraft ? "Draft" : "Open"}</Badge>;
 }
 
-function PullRequestSummary({ pullRequest }: { pullRequest: PullRequestData }) {
+function PullRequestSummary({
+  pullRequest,
+  timeline,
+  timelineError,
+}: {
+  pullRequest: PullRequestData;
+  timeline?: PullRequestTimelineItem[];
+  timelineError: string;
+}) {
+  const failed = pullRequest.checks.filter((check) => check.state === "fail").length;
+  const pending = pullRequest.checks.filter((check) => check.state === "pending").length;
+  const passed = pullRequest.checks.filter((check) => check.state === "pass").length;
+  const review = pullRequest.reviewDecision === "APPROVED"
+    ? "Approved"
+    : pullRequest.reviewDecision === "CHANGES_REQUESTED"
+      ? "Changes requested"
+      : "Review pending";
+  const checks = failed > 0
+    ? `${failed} failed`
+    : pending > 0
+      ? `${pending} pending`
+      : pullRequest.checks.length > 0
+        ? `${passed} passed`
+        : "No checks";
+
   return (
     <ScrollArea className="h-full">
-      <div className="flex flex-col gap-3 p-3">
-        <Card className="gap-0 py-0 shadow-none">
-          <CardHeader className="border-b border-border px-4 py-3">
-            <CardTitle className="text-sm">Description</CardTitle>
-          </CardHeader>
-          <CardContent className="px-4 py-3">
+      <div className="mx-auto max-w-4xl px-6 py-7 sm:px-8 lg:px-10 lg:py-9">
+        <h1 className="text-2xl font-semibold leading-tight tracking-tight">{pullRequest.title}</h1>
+        <p className="mt-2 text-sm text-muted-foreground">{pullRequest.repository} · #{pullRequest.number}</p>
+
+        <dl className="mt-8 grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-4 gap-y-3 text-sm">
+          <dt className="flex items-center gap-2 text-muted-foreground"><GitBranch className="size-4" />Branch</dt>
+          <dd className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="min-w-0 truncate font-mono text-xs">{pullRequest.headRefName}</span>
+            <ArrowRight className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="font-mono text-xs">{pullRequest.baseRefName}</span>
+            <span className="ml-1 font-mono text-xs tabular-nums">
+              <span className="text-success-foreground">+{pullRequest.additions}</span>{" "}
+              <span className="text-destructive">−{pullRequest.deletions}</span>
+            </span>
+          </dd>
+          <dt className="flex items-center gap-2 text-muted-foreground"><MessageSquare className="size-4" />Review</dt>
+          <dd>{review}</dd>
+          <dt className="flex items-center gap-2 text-muted-foreground"><CircleCheck className="size-4" />Checks</dt>
+          <dd>{checks}</dd>
+          <dt className="flex items-center gap-2 text-muted-foreground"><GitPullRequest className="size-4" />Status</dt>
+          <dd><PullRequestStateBadge pullRequest={pullRequest} /></dd>
+        </dl>
+
+        <section className="mt-9 border-t border-border pt-7">
+          <h2 className="text-base font-semibold">Description</h2>
+          <div className="mt-4">
             {pullRequest.body.trim() ? (
-              <Markdown text={pullRequest.body} className="text-xs" />
+              <Markdown text={pullRequest.body} className="text-sm" />
             ) : (
-              <p className="text-xs text-muted-foreground">No description.</p>
+              <p className="text-sm text-muted-foreground">No description.</p>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </section>
 
-        <Card className="gap-0 py-0 shadow-none">
-          <CardHeader className="border-b border-border px-4 py-3">
-            <CardTitle className="text-sm">Changes</CardTitle>
-          </CardHeader>
-          <CardContent className="grid grid-cols-3 divide-x divide-border px-0 py-3 text-center">
-            <PullRequestStat label="Files" value={pullRequest.changedFiles || pullRequest.files.length} />
-            <PullRequestStat label="Added" value={`+${pullRequest.additions}`} tone="text-success-foreground" />
-            <PullRequestStat label="Removed" value={`−${pullRequest.deletions}`} tone="text-destructive" />
-          </CardContent>
-        </Card>
+        {pullRequest.checks.length > 0 && (
+          <section className="mt-8 border-t border-border pt-5">
+            <h2 className="text-sm font-medium">Checks</h2>
+            <ItemGroup className="mt-2 gap-0">
+              {pullRequest.checks.map((check) => (
+                <Item key={check.name} size="sm" className="min-h-0 rounded-none px-0 py-1.5">
+                  <ItemMedia className="text-muted-foreground">{checkIcon(check.state)}</ItemMedia>
+                  <ItemContent><ItemTitle className="text-xs font-normal">{check.name}</ItemTitle></ItemContent>
+                  <span className={cn(
+                    "text-[11px]",
+                    check.state === "fail" ? "text-destructive" : check.state === "pending" ? "text-warning-foreground" : "text-muted-foreground",
+                  )}>
+                    {check.state === "pass" ? "Passed" : check.state === "fail" ? "Failed" : check.state === "pending" ? "Pending" : "Skipped"}
+                  </span>
+                </Item>
+              ))}
+            </ItemGroup>
+          </section>
+        )}
 
-        <Card className="gap-0 py-0 shadow-none">
-          <CardHeader className="border-b border-border px-4 py-3">
-            <CardTitle className="text-sm">Checks</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            {pullRequest.checks.length > 0 ? (
-              <ItemGroup>
-                {pullRequest.checks.map((check) => (
-                  <Item key={check.name} size="sm" className="rounded-none border-b border-border last:border-b-0">
-                    <ItemMedia>{checkIcon(check.state)}</ItemMedia>
-                    <ItemContent><ItemTitle>{check.name}</ItemTitle></ItemContent>
-                    <Badge variant={check.state === "fail" ? "destructive" : check.state === "pending" ? "warning" : "outline"}>
-                      {check.state === "pass" ? "Passed" : check.state === "fail" ? "Failed" : check.state === "pending" ? "Pending" : "Skipped"}
-                    </Badge>
-                  </Item>
-                ))}
-              </ItemGroup>
-            ) : (
-              <p className="px-4 py-3 text-xs text-muted-foreground">No checks reported.</p>
-            )}
-          </CardContent>
-        </Card>
+        <section className="mt-8 border-t border-border pt-5">
+          <h2 className="text-sm font-medium">Recent activity</h2>
+          <PullRequestActivity timeline={timeline} error={timelineError} />
+        </section>
       </div>
     </ScrollArea>
   );
 }
 
-function PullRequestStat({ label, value, tone }: { label: string; value: ReactNode; tone?: string }) {
-  return (
-    <span className="flex flex-col gap-0.5 px-2">
-      <strong className={cn("text-sm font-semibold tabular-nums", tone)}>{value}</strong>
-      <span className="text-[11px] text-muted-foreground">{label}</span>
-    </span>
-  );
-}
-
 function checkIcon(state: PullRequestData["checks"][number]["state"]) {
-  if (state === "pass") return <CircleCheck className="text-success-foreground" />;
-  if (state === "fail") return <CircleX className="text-destructive" />;
-  return <CircleDot className="text-muted-foreground" />;
+  if (state === "pass") return <CircleCheck className="size-3.5 text-success-foreground" />;
+  if (state === "fail") return <CircleX className="size-3.5 text-destructive" />;
+  return <CircleDot className="size-3.5 text-muted-foreground" />;
 }
 
 function PullRequestActivity({ timeline, error }: { timeline?: PullRequestTimelineItem[]; error: string }) {
   if (error) {
-    return (
-      <Empty className="h-full">
-        <EmptyHeader>
-          <EmptyMedia variant="icon"><MessageSquare /></EmptyMedia>
-          <EmptyTitle>Activity unavailable</EmptyTitle>
-          <EmptyDescription>{error}</EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    );
+    return <p className="mt-3 text-sm text-muted-foreground">{error}</p>;
   }
   if (!timeline) {
-    return <div className="flex flex-col gap-3 p-4"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div>;
+    return <div className="mt-3 flex flex-col gap-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-4/5" /></div>;
   }
   if (timeline.length === 0) {
-    return (
-      <Empty className="h-full">
-        <EmptyHeader>
-          <EmptyMedia variant="icon"><MessageSquare /></EmptyMedia>
-          <EmptyTitle>No activity</EmptyTitle>
-          <EmptyDescription>This pull request has no activity yet.</EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    );
+    return <p className="mt-3 text-sm text-muted-foreground">No activity yet.</p>;
   }
   return (
-    <ScrollArea className="h-full">
-      <ItemGroup className="gap-2 p-3">
-        {timeline.map((item) => (
-          <Item key={item.id} asChild variant="outline" size="sm" className="items-start">
-            <a href={item.url} target="_blank" rel="noreferrer" data-link>
-              <ItemMedia variant="icon">{item.kind === "commit" ? <GitCommitHorizontal /> : <MessageSquare />}</ItemMedia>
-              <ItemContent className="min-w-0">
-                <ItemTitle className="max-w-full">
-                  <span className="truncate">{activityTitle(item)}</span>
-                  <ExternalLink className="size-3 shrink-0" />
-                </ItemTitle>
-                {item.kind !== "commit" && item.body && (
-                  <ItemDescription className="line-clamp-3 whitespace-pre-wrap text-xs">{item.body}</ItemDescription>
-                )}
-                <span className="text-[11px] text-muted-foreground">{item.author} · {relativeDate(item.createdAt)}</span>
-              </ItemContent>
-            </a>
-          </Item>
-        ))}
-      </ItemGroup>
-    </ScrollArea>
+    <ItemGroup className="relative mt-2 gap-0 before:absolute before:bottom-3 before:left-[0.4375rem] before:top-3 before:w-px before:bg-border">
+      {timeline.map((item) => (
+        <Item key={item.id} asChild size="sm" className="min-h-0 items-start rounded-none px-0 py-2 hover:bg-transparent">
+          <a href={item.url} target="_blank" rel="noreferrer" data-link>
+            <ItemMedia className="relative z-10 bg-background py-0.5 text-muted-foreground">
+              {activityIcon(item)}
+            </ItemMedia>
+            <ItemContent className="min-w-0 gap-0.5">
+              <ItemTitle className="max-w-full gap-2 text-xs font-normal">
+                <span className="truncate text-foreground">{activityTitle(item)}</span>
+                <span className="shrink-0 text-[11px] font-normal text-muted-foreground">{item.author} · {relativeDate(item.createdAt)}</span>
+              </ItemTitle>
+              {item.kind !== "commit" && item.body && (
+                <ItemDescription className="line-clamp-2 whitespace-pre-wrap text-[11px] leading-relaxed">{item.body}</ItemDescription>
+              )}
+            </ItemContent>
+          </a>
+        </Item>
+      ))}
+    </ItemGroup>
   );
+}
+
+function activityIcon(item: PullRequestTimelineItem) {
+  if (item.kind === "commit") return <GitCommitHorizontal className="size-3.5" />;
+  if (item.kind === "review" && item.state === "APPROVED") return <CircleCheck className="size-3.5 text-success-foreground" />;
+  if (item.kind === "review" && item.state === "CHANGES_REQUESTED") return <CircleX className="size-3.5 text-destructive" />;
+  return <MessageSquare className="size-3.5" />;
 }
 
 function activityTitle(item: PullRequestTimelineItem): string {

@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
   codexAppServerArgs,
   codexEntry,
+  codexErrorMessage,
   codexPermissions,
   codexTodos,
   codexTokens,
@@ -30,6 +31,14 @@ test("app-server receives MCP environment names without their values", () => {
   assert.ok(args.includes('mcp_servers.remy.args=["/app/ticket-mcp.js"]'));
   assert.ok(args.includes('mcp_servers.remy.env_vars=["REMY_CHAT_ID","REMY_API_TOKEN"]'));
   assert.ok(!args.some((arg) => arg.includes("secret")));
+});
+
+test("Codex config permission failures say how to recover", () => {
+  assert.equal(
+    codexErrorMessage("Error: error loading default config after config error: Operation not permitted (os error 1)"),
+    "Codex couldn’t read its configuration — allow Remy file access in System Settings, then try again.",
+  );
+  assert.equal(codexErrorMessage("Codex exited with code 1."), "Codex exited with code 1.");
 });
 
 test("Ask can stop for approval while the other modes keep their boundaries", () => {
@@ -154,6 +163,7 @@ const rl = readline.createInterface({ input: process.stdin });
 let turn = 0;
 let active;
 let threadEffort;
+let threadCwd;
 const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
 const item = (id, text) => ({ type: "agentMessage", id, text, phase: null, memoryCitation: null, delivery: null });
 const complete = (text, status = "completed") => {
@@ -170,6 +180,7 @@ rl.on("line", (line) => {
   if (message.method === "initialized") return;
   if (message.method === "thread/start" || message.method === "thread/resume") {
     threadEffort = message.params.modelReasoningEffort;
+    threadCwd = message.params.cwd;
     return send({ id: message.id, result: { thread: { id: "thread-1" } } });
   }
   if (message.method === "turn/start") {
@@ -187,6 +198,10 @@ rl.on("line", (line) => {
     }
     if (prompt === "effort") {
       complete("effort:" + threadEffort + ":" + message.params.modelReasoningEffort);
+      return;
+    }
+    if (prompt === "cwd") {
+      complete(JSON.stringify({ processCwd: process.cwd(), threadCwd, turnCwd: message.params.cwd }));
       return;
     }
     if (prompt === "image") {
@@ -225,6 +240,28 @@ test("one app-server connection carries multiple streamed turns", async () => {
   );
   const usage = events.find((event) => event.type === "usage.updated");
   assert.equal(usage?.type === "usage.updated" && usage.usage.context_window, 200_000);
+});
+
+test("app-server bootstrap does not depend on the thread workspace", async () => {
+  const events: CodexEvent[] = [];
+  const workspace = mkdtempSync(join(tmpdir(), "remy-codex-workspace-"));
+  const session = createCodexSession(
+    { command: fakeAppServer(), cwd: workspace, permissionMode: "plan" },
+    (event) => events.push(event),
+  );
+  await session.run("cwd").done;
+  session.close();
+
+  const response = events.find((event) =>
+    event.type === "item.completed"
+    && event.item.type === "agent_message");
+  assert.equal(response?.type, "item.completed");
+  assert.equal(response.item.type, "agent_message");
+  assert.deepEqual(JSON.parse(response.item.text), {
+    processCwd: homedir(),
+    threadCwd: workspace,
+    turnCwd: workspace,
+  });
 });
 
 test("Codex receives native image inputs", async () => {

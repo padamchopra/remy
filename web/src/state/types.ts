@@ -440,6 +440,8 @@ export interface Project {
   /// project follows it.
   keyPrefix: string;
   origin?: string;
+  icon?: string | null;
+  tint?: string | null;
   /// Workspaces on that machine which are this project. Empty means the repo is
   /// not cloned there.
   workspaceIds: string[];

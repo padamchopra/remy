@@ -15,6 +15,7 @@ import { deviceId, onLocalAppend, onRemoteMerge, type LogEvent } from "./board-l
 import {
   adoptWorkspace,
   listProjects,
+  projectForWorkspace,
   syncProjectBindings,
   unbindWorkspace,
   updateProject,
@@ -95,6 +96,7 @@ import {
   clickBrowser,
   closeBrowser,
   insertBrowser,
+  navigateBrowser,
   openBrowser,
   pressBrowser,
   scrollBrowser,
@@ -1469,6 +1471,9 @@ const server = createServer(async (req, res) => {
               ));
             }
             if (parts[3] === "snapshot") return json(res, 200, { text: await browserSnapshotText(id, browserId) });
+            if (parts[3] === "back" || parts[3] === "forward" || parts[3] === "reload") {
+              return json(res, 200, await navigateBrowser(id, parts[3], controller, browserId));
+            }
             if (parts[3] === "click") return json(res, 200, await clickBrowser(id, target, controller, browserId));
             if (parts[3] === "type") return json(res, 200, await typeBrowser(id, target, String(body.value ?? ""), controller, browserId));
             if (parts[3] === "insert") return json(res, 200, await insertBrowser(id, String(body.value ?? ""), controller, browserId));
@@ -1756,7 +1761,12 @@ const server = createServer(async (req, res) => {
     }
 
     if (url.pathname === "/workspaces" && req.method === "GET") {
-      return json(res, 200, { workspaces: await listWorkspaces() });
+      await syncProjectBindings();
+      const workspaces = (await listWorkspaces()).map((workspace) => {
+        const project = projectForWorkspace(workspace.id);
+        return project ? { ...workspace, icon: project.icon, tint: project.tint } : workspace;
+      });
+      return json(res, 200, { workspaces });
     }
 
     if (url.pathname === "/paths" && req.method === "GET") {
@@ -1814,16 +1824,25 @@ const server = createServer(async (req, res) => {
       if (req.method === "PATCH" && parts.length === 2) {
         try {
           const body = await readJson(req);
+          const workspace = await updateWorkspace(id, {
+            name: body.name === undefined ? undefined : String(body.name),
+            icon: body.icon === undefined ? undefined : body.icon === null ? null : String(body.icon),
+            tint: body.tint === undefined ? undefined : body.tint === null ? null : String(body.tint),
+            // Null is how a workspace goes back to following the machine.
+            provider: body.provider === undefined ? undefined : body.provider === null ? null : String(body.provider),
+            model: body.model === undefined ? undefined : body.model === null ? null : String(body.model),
+            effort: body.effort === undefined ? undefined : body.effort === null ? null : String(body.effort),
+          });
+          let identity = projectForWorkspace(id);
+          if (body.icon !== undefined || body.tint !== undefined) {
+            identity = updateProject((identity ?? adoptWorkspace(workspace)).id, {
+              icon: body.icon,
+              tint: body.tint,
+            });
+            broadcast({ type: "board" });
+          }
           return json(res, 200, {
-            workspace: await updateWorkspace(id, {
-              name: body.name === undefined ? undefined : String(body.name),
-              icon: body.icon === undefined ? undefined : body.icon === null ? null : String(body.icon),
-              tint: body.tint === undefined ? undefined : body.tint === null ? null : String(body.tint),
-              // Null is how a workspace goes back to following the machine.
-              provider: body.provider === undefined ? undefined : body.provider === null ? null : String(body.provider),
-              model: body.model === undefined ? undefined : body.model === null ? null : String(body.model),
-              effort: body.effort === undefined ? undefined : body.effort === null ? null : String(body.effort),
-            }),
+            workspace: identity ? { ...workspace, icon: identity.icon, tint: identity.tint } : workspace,
           });
         } catch (error) {
           return json(res, 400, { error: (error as Error).message || "could not update workspace" });
