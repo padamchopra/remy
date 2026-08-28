@@ -145,6 +145,8 @@ export function ChatView({
   onRestored,
   crumbs,
   persona,
+  toolsShown,
+  onToolsShownChange,
 }: {
   chat: Chat;
   archived?: ArchivedThread;
@@ -164,6 +166,8 @@ export function ChatView({
   /// mark; which model is behind it is on the composer, where it is a setting.
   /// It also has no work of its own, so it carries no ticket.
   persona?: Agent;
+  toolsShown?: boolean;
+  onToolsShownChange?: (shown: boolean) => void;
 }) {
   const detail = useStore((s) => s.detail);
   const loading = useStore((s) => s.detailLoading);
@@ -186,8 +190,15 @@ export function ChatView({
   });
   const [busy, setBusy] = useState(false);
   const [codeReferences, setCodeReferences] = useState<ChatCodeReference[]>([]);
+  const [localToolsShown, setLocalToolsShown] = useState(false);
   const composerRef = useRef<InlineImageComposerHandle>(null);
-  const threadTools = useThreadTools(chat.id, chat.serverId, !archived);
+  const threadTools = useThreadTools(
+    chat.id,
+    chat.serverId,
+    toolsShown ?? localToolsShown,
+    onToolsShownChange ?? setLocalToolsShown,
+    !archived,
+  );
 
   useEffect(() => {
     if (archived) return;
@@ -1307,10 +1318,10 @@ function ArtifactCard({
         <Icon className="size-3.5" />
       </ItemMedia>
       <ItemContent className="gap-0.5">
-        <ItemTitle className="truncate">{artifact.title}</ItemTitle>
-        <ItemDescription className="flex items-center gap-1.5 truncate">
-          {artifact.key && <span className="font-mono">{artifact.key}</span>}
-          {artifact.detail}
+        <ItemTitle className="w-full whitespace-normal break-words">{artifact.title}</ItemTitle>
+        <ItemDescription className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+          {artifact.key && <span className="shrink-0 font-mono">{artifact.key}</span>}
+          {artifact.detail && <span className="min-w-0 break-words">{artifact.detail}</span>}
         </ItemDescription>
       </ItemContent>
       {onOpen && (

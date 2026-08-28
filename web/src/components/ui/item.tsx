@@ -108,7 +108,7 @@ function ItemContent({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="item-content"
       className={cn(
-        "flex flex-1 flex-col gap-1 [&+[data-slot=item-content]]:flex-none",
+        "flex min-w-0 flex-1 flex-col gap-1 [&+[data-slot=item-content]]:flex-none",
         className
       )}
       {...props}
@@ -121,7 +121,7 @@ function ItemTitle({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="item-title"
       className={cn(
-        "flex w-fit items-center gap-2 text-sm leading-snug font-medium",
+        "flex min-w-0 max-w-full w-fit items-center gap-2 text-sm leading-snug font-medium",
         className
       )}
       {...props}
@@ -134,7 +134,7 @@ function ItemDescription({ className, ...props }: React.ComponentProps<"p">) {
     <p
       data-slot="item-description"
       className={cn(
-        "line-clamp-2 text-sm leading-normal font-normal text-balance text-muted-foreground",
+        "line-clamp-2 min-w-0 max-w-full text-sm leading-normal font-normal text-balance text-muted-foreground",
         "[&>a]:underline [&>a]:underline-offset-4 [&>a:hover]:text-primary",
         className
       )}
@@ -147,7 +147,7 @@ function ItemActions({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="item-actions"
-      className={cn("flex items-center gap-2", className)}
+      className={cn("flex shrink-0 items-center gap-2", className)}
       {...props}
     />
   )

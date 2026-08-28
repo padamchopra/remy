@@ -73,6 +73,7 @@ import {
   ItemTitle,
 } from "@/components/ui/item";
 import { ModelPickerButton } from "@/components/ModelPicker";
+import { PullRequestMonitoringFields } from "@/components/PullRequestMonitoring";
 import { PERMISSIONS, permissionOf } from "@/lib/chat-options";
 import { ProviderMark } from "@/components/ProviderMark";
 import type { Provider } from "@/lib/providers";
@@ -728,16 +729,35 @@ function VersionControlPane() {
   const tooling = useStore((s) => s.tooling);
   const loadTooling = useStore((s) => s.loadTooling);
   const [pickingRoot, setPickingRoot] = useState(false);
+  const servers = useStore((s) => s.servers);
+  const agents = useStore((s) => s.agents);
+  const loadBoard = useStore((s) => s.loadBoard);
+  const localServer = servers.find((server) => !server.peer && !server.cloud);
+  const localAgents = agents.filter((agent) => agent.serverId === localServer?.id);
 
   useEffect(() => {
     if (online) void loadTooling().catch(() => {});
   }, [online, loadTooling]);
+
+  useEffect(() => { if (online) void loadBoard().catch(() => {}); }, [online, loadBoard]);
 
   if (!online) return <Unreachable />;
   if (!settings) return <p className="text-sm shimmer text-muted-foreground">Reading this machine's settings…</p>;
 
   return (
     <div className="flex flex-col gap-5">
+      <PullRequestMonitoringFields
+        id="default-pull-request-monitoring"
+        enabled={settings.pullRequestMonitoringEnabled}
+        agentId={settings.pullRequestMonitoringAgentId || null}
+        agents={localAgents}
+        description="Work starts when one of your pull requests needs attention."
+        onChange={(policy) => void save({
+          pullRequestMonitoringEnabled: policy.enabled,
+          pullRequestMonitoringAgentId: policy.agentId ?? "",
+        }, "pull request monitoring")}
+      />
+
       <Field orientation="horizontal" className="items-center">
         <FieldContent>
           <FieldLabel htmlFor="default-git-identity">Commit attribution</FieldLabel>

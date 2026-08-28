@@ -71,3 +71,11 @@ test("routes work to the newest active thread in the pull request worktree", () 
   ]);
   assert.equal(selected?.id, "new");
 });
+
+test("routes work only to an active thread using the selected agent", () => {
+  const chats = [
+    { ...chat("newer-wrong-agent", pullRequest.worktreePath!, "working", 20), agentId: "qa" },
+    { ...chat("selected-agent", pullRequest.worktreePath!, "working", 10), agentId: "builder" },
+  ];
+  assert.equal(activePullRequestThread(pullRequest, chats, "builder")?.id, "selected-agent");
+});

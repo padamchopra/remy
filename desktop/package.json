@@ -58,7 +58,14 @@
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "entitlements.mac.plist",
-      "entitlementsInherit": "entitlements.mac.plist"
+      "entitlementsInherit": "entitlements.mac.plist",
+      "extendInfo": {
+        "NSDocumentsFolderUsageDescription": "Remy reads the workspace folders you add from Documents.",
+        "NSDesktopFolderUsageDescription": "Remy reads the workspace folders you add from Desktop.",
+        "NSDownloadsFolderUsageDescription": "Remy reads the workspace folders you add from Downloads.",
+        "NSNetworkVolumesUsageDescription": "Remy reads the workspace folders you add from network drives.",
+        "NSRemovableVolumesUsageDescription": "Remy reads the workspace folders you add from removable drives."
+      }
     },
     "dmg": {
       "title": "Remy ${version}"

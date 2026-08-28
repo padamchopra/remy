@@ -61,7 +61,10 @@ function migrate(database: DatabaseSync): void {
       name text not null,
       path text not null,
       icon text,
-      tint text
+      tint text,
+      pr_monitoring_override integer not null default 0,
+      pr_monitoring_enabled integer not null default 0,
+      pr_monitoring_agent_id text
     );
     create table if not exists archives (
       id text primary key,
@@ -358,6 +361,21 @@ function migrate(database: DatabaseSync): void {
   } catch {
     // Column already exists on databases created after this migration.
   }
+  try {
+    database.exec("alter table workspaces add column pr_monitoring_override integer not null default 0");
+  } catch {
+    // Column already exists on databases created after this migration.
+  }
+  try {
+    database.exec("alter table workspaces add column pr_monitoring_enabled integer not null default 0");
+  } catch {
+    // Column already exists on databases created after this migration.
+  }
+  try {
+    database.exec("alter table workspaces add column pr_monitoring_agent_id text");
+  } catch {
+    // Column already exists on databases created after this migration.
+  }
   // A thread that is an agent's inbox conversation rather than work in a
   // repository. Zero in every existing row, which is what they all are.
   try {
@@ -384,7 +402,7 @@ function migrate(database: DatabaseSync): void {
   // replaced them, and a table nothing reads is worth dropping rather than
   // carrying.
   database.exec("drop table if exists loops");
-  database.exec("pragma user_version = 6");
+  database.exec("pragma user_version = 7");
 }
 
 export function getKv<T>(key: string): T | undefined {

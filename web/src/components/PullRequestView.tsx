@@ -16,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { Markdown } from "@/components/Markdown";
+import { PullRequestMonitoringButton } from "@/components/PullRequestMonitoring";
 import {
   Attachment,
   AttachmentAction,
@@ -190,6 +191,15 @@ export function PullRequestView({
         </TabsList>
         <span className="flex min-w-0 items-center justify-end gap-1">
           {actions}
+          {chatId && pullRequest.workspaceId && (
+            <PullRequestMonitoringButton
+              serverId={serverId}
+              workspaceId={pullRequest.workspaceId}
+              repository={pullRequest.repository}
+              number={pullRequest.number}
+              chatId={chatId}
+            />
+          )}
           <Button asChild variant="ghost" size="icon-sm">
             <a href={pullRequest.url} target="_blank" rel="noreferrer" data-link aria-label="Open pull request on GitHub">
               <ExternalLink />

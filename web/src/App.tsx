@@ -49,7 +49,7 @@ import { deviceIcon } from "@/lib/devices";
 import { apiError } from "@/lib/api-error";
 import { agentConversation } from "@/lib/inbox";
 import { notificationsEnabled } from "@/lib/notify";
-import { devicesForWorkspace, isProjectIconFile, workspaceGroups } from "@/lib/projects";
+import { devicesForWorkspace, workspaceGroups } from "@/lib/projects";
 import { sectionOf, type Route } from "@/lib/route";
 import { WorkspaceIcon } from "@/components/WorkspaceIcon";
 import { tintOf } from "@/lib/tints";
@@ -140,6 +140,16 @@ export function App() {
   const [addTicketOpen, setAddTicketOpen] = useState(false);
   const [creatingAgent, setCreatingAgent] = useState(false);
   const [sidebarShown, setSidebarShown] = useState(initialSidebarShown);
+  const [threadToolsShown, setThreadToolsShown] = useState<Record<string, boolean>>({});
+
+  const setThreadToolsVisibility = useCallback((threadId: string, shown: boolean) => {
+    setThreadToolsShown((current) => current[threadId] === shown
+      ? current
+      : { ...current, [threadId]: shown });
+  }, []);
+  const setSelectedThreadToolsVisibility = useCallback((shown: boolean) => {
+    if (selected) setThreadToolsVisibility(selected, shown);
+  }, [selected, setThreadToolsVisibility]);
 
   const toggleSidebar = () => {
     setSidebarShown((shown) => {
@@ -508,6 +518,8 @@ export function App() {
               <ChatView
                 key={active.id}
                 chat={active}
+                toolsShown={threadToolsShown[active.id] === true}
+                onToolsShownChange={setSelectedThreadToolsVisibility}
                 persona={agents.find(
                   (agent) => agent.id === active.agentId && agent.serverId === active.serverId,
                 )}
@@ -590,7 +602,8 @@ export function App() {
                             <WorkspaceIcon
                               workspaceId={workspace.id}
                               icon={workspace.icon}
-                              className={isProjectIconFile(workspace.icon) ? "size-8" : "size-4"}
+                              className="size-4"
+                              fileClassName="size-8"
                             />
                           </span>
                           <span className="min-w-0 flex-1">

@@ -165,6 +165,16 @@ import { buildInbox } from "./inbox.js";
 import { listAuthoredPullRequests, markPullRequestRead, pullRequestDiff, pullRequestDiffForCwd, pullRequestTimeline } from "./pull-requests.js";
 import { validateChatCodeReferences } from "./chat-references.js";
 import { startPullRequestMonitor } from "./pull-request-monitor.js";
+import {
+  clearAgentPullRequestMonitoring,
+  clearThreadPullRequestMonitoring,
+  pullRequestMonitoring,
+  resetPullRequestMonitoring,
+  resetWorkspacePullRequestMonitoring,
+  setPullRequestMonitoring,
+  setWorkspacePullRequestMonitoring,
+  workspacePullRequestMonitoring,
+} from "./pull-request-monitoring.js";
 import { createRoutine, deleteRoutine, listRoutines, updateRoutine } from "./routines.js";
 import { runRoutine, startRoutines } from "./routine-runner.js";
 import { setSleepBusyCheck, sleepSupported, syncSleepAssertion } from "./sleep.js";
@@ -486,6 +496,10 @@ const server = createServer(async (req, res) => {
     }
     if (url.pathname === "/server/settings" && req.method === "PATCH") {
       const body = await readJson(req);
+      if (body.pullRequestMonitoringAgentId) {
+        const agent = getAgent(String(body.pullRequestMonitoringAgentId));
+        if (!agent) return json(res, 404, { error: "no such agent" });
+      }
       const settings = patchSettings(body);
       syncSleepAssertion();
       // Turning the schedule off has to stop the timer now, not at its next tick.
@@ -995,6 +1009,7 @@ const server = createServer(async (req, res) => {
       if (req.method === "DELETE") {
         try {
           deleteAgent(id);
+          clearAgentPullRequestMonitoring(id);
           for (const routine of listRoutines(id)) deleteRoutine(routine.id);
           broadcast({ type: "board" });
           return json(res, 200, { ok: true });
@@ -1534,6 +1549,7 @@ const server = createServer(async (req, res) => {
       if (req.method === "DELETE" && parts.length === 2) {
         try {
           void closeBrowser(id);
+          clearThreadPullRequestMonitoring(id);
           deleteChat(id);
           return json(res, 200, { ok: true });
         } catch (error) {
@@ -1556,6 +1572,7 @@ const server = createServer(async (req, res) => {
           conversation: archiveConversation(chat.id),
         });
         void closeBrowser(id);
+        clearThreadPullRequestMonitoring(id);
         deleteChat(id);
         return json(res, 200, { archive });
       }
@@ -1575,7 +1592,10 @@ const server = createServer(async (req, res) => {
       }
       if (req.method === "GET" && parts[2] === "pull-request-diff") {
         try {
-          return json(res, 200, { diff: await pullRequestDiffForCwd(chatCwd(id)) });
+          const cwd = chatCwd(id);
+          const holder = (await listWorkspaces()).find((workspace) =>
+            cwd === workspace.path || workspace.worktrees.some((worktree) => cwd === worktree.path));
+          return json(res, 200, { diff: { ...await pullRequestDiffForCwd(cwd), workspaceId: holder?.id } });
         } catch (error) {
           return json(res, 404, { error: (error as Error).message || "this branch does not have a pull request" });
         }
@@ -1695,6 +1715,42 @@ const server = createServer(async (req, res) => {
         } catch (error) {
           return json(res, 404, { error: (error as Error).message || "no such chat" });
         }
+      }
+    }
+
+    if (url.pathname === "/pull-request-monitoring") {
+      const workspaceId = url.searchParams.get("workspaceId") ?? "";
+      const repository = url.searchParams.get("repository") ?? "";
+      const number = Number(url.searchParams.get("number") ?? "0");
+      const isPullRequest = Boolean(repository && Number.isInteger(number) && number > 0);
+      try {
+        if (req.method === "GET") {
+          const policy = isPullRequest
+            ? pullRequestMonitoring(workspaceId, repository, number)
+            : workspacePullRequestMonitoring(workspaceId);
+          return json(res, 200, { policy });
+        }
+        if (req.method === "PATCH") {
+          const body = await readJson(req);
+          const value = {
+            enabled: body.enabled === true,
+            agentId: String(body.agentId ?? "") || null,
+            chatId: String(body.chatId ?? "") || null,
+          };
+          const policy = isPullRequest
+            ? setPullRequestMonitoring(workspaceId, repository, number, value)
+            : await setWorkspacePullRequestMonitoring(workspaceId, value);
+          return json(res, 200, { policy });
+        }
+        if (req.method === "DELETE") {
+          const policy = isPullRequest
+            ? resetPullRequestMonitoring(workspaceId, repository, number)
+            : await resetWorkspacePullRequestMonitoring(workspaceId);
+          return json(res, 200, { policy });
+        }
+      } catch (error) {
+        const message = (error as Error).message || "could not change pull request monitoring";
+        return json(res, /not found|no such/.test(message) ? 404 : 400, { error: message });
       }
     }
 

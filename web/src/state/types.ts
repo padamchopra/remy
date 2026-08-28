@@ -122,6 +122,7 @@ export interface Workspace {
   provider?: string | null;
   model?: string | null;
   effort?: string | null;
+  pullRequestMonitoring?: { enabled: boolean; agentId: string | null } | null;
   worktrees: GitWorktree[];
   /// A device projection used for routing, hidden from the workspace list.
   virtual?: boolean;
@@ -199,6 +200,7 @@ export interface PullRequestDiffFile {
 }
 
 export interface PullRequestDiff {
+  workspaceId?: string;
   url: string;
   repository: string;
   number: number;
@@ -343,6 +345,8 @@ export interface ServerSettings {
   remyEffort: string;
   favoriteModels: string[];
   repoUpdate: "off" | "hourly" | "sixHourly" | "daily";
+  pullRequestMonitoringEnabled: boolean;
+  pullRequestMonitoringAgentId: string;
   worktreeBranchPrefix: string;
   /// Your face: empty for the default, `preset:<id>`, or a `data:` URL.
   avatar: string;

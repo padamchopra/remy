@@ -50,13 +50,16 @@ function browserPath(chatId: string, browserId: string, action?: string): string
   return `${base}?instance=${encodeURIComponent(browserId)}`;
 }
 
-export function useThreadTools(chatId: string, serverId: string, enabled = true) {
+export function useThreadTools(
+  chatId: string,
+  serverId: string,
+  shown: boolean,
+  setShown: (shown: boolean) => void,
+  enabled = true,
+) {
   const [tabs, setTabs] = useState<ThreadToolTab[]>([]);
   const [activeTab, setActiveTab] = useState("");
   const [views, setViews] = useState<Record<string, SharedBrowserView | undefined>>({});
-  const [shown, setShown] = useState(() =>
-    typeof window !== "undefined" && window.matchMedia(WIDE_THREAD_TOOLS).matches,
-  );
   const [supportsInstances, setSupportsInstances] = useState(false);
   const refreshTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const nextBrowser = useRef(2);
@@ -69,7 +72,7 @@ export function useThreadTools(chatId: string, serverId: string, enabled = true)
     };
     media.addEventListener("change", closeOnNarrow);
     return () => media.removeEventListener("change", closeOnNarrow);
-  }, []);
+  }, [setShown]);
 
   const refresh = useCallback(async (browserId = "default") => {
     if (!enabled) return;

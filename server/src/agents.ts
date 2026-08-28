@@ -576,6 +576,7 @@ interface Preset {
   tint: string;
   model: string;
   permissionMode: ChatPermissionMode;
+  autoStart?: boolean;
   gitIdentity: GitIdentityMode;
   handoffTo: string[];
   instructions: string;
@@ -590,6 +591,7 @@ const PRESETS: Preset[] = [
     tint: "green",
     model: "",
     permissionMode: "auto",
+    autoStart: false,
     gitIdentity: REMY_DEFAULT,
     handoffTo: [],
     instructions: [
@@ -694,6 +696,13 @@ export function seedPresetAgents(): void {
 
   const existing = listAgents().filter((agent) => agent.preset);
   const byPreset = new Map(existing.map((agent) => [agent.preset!, agent]));
+  const github = byPreset.get("github");
+  if (github) {
+    const autoStartWasPicked = eventsFor("agent", github.id).some(
+      (event) => event.kind === "field" && event.payload.autoStart !== undefined,
+    );
+    if (!autoStartWasPicked && github.autoStart) updateAgent(github.id, { autoStart: false });
+  }
   let criticMigrated = false;
   for (const preset of PRESETS) {
     const agent = byPreset.get(preset.preset);

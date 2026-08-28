@@ -60,6 +60,64 @@ GOOD
 
 A composed screen assembles primitives; it never replaces one that exists. A control that appears on two screens moves into its own module rather than being copied — `ComposerMenu.tsx` and `PathPicker.tsx` are shared this way.
 
+## Text containment
+
+Every flex or grid child that owns variable text must be able to shrink. Use `min-w-0` on the text-bearing flex child and `minmax(0, 1fr)` for the corresponding grid track; keep icons and trailing actions `shrink-0`.
+
+Choose wrapping or truncation deliberately. `truncate` is only for a bounded single line whose omitted text is acceptable. A title meant to remain readable uses `whitespace-normal break-words`; do not use `break-all` for ordinary prose.
+
+BAD
+```tsx
+<ItemContent>
+  <ItemTitle className="truncate">{artifact.title}</ItemTitle>
+</ItemContent>
+```
+
+GOOD
+```tsx
+<ItemContent className="min-w-0">
+  <ItemTitle className="w-full whitespace-normal break-words">{artifact.title}</ItemTitle>
+</ItemContent>
+```
+
+Test variable text in the narrowest pane that can render the component. Use both a long sentence and an unbroken identifier or URL, then confirm the container has no horizontal overflow with `scrollWidth <= clientWidth`. When wrapping is intended, also confirm the text occupies more than one line rather than disappearing behind an ellipsis.
+
+## Scroll ownership
+
+A flex column with `overflow-auto` owns scrolling. Its variable-height groups use `shrink-0`; allowing a group to shrink while its children remain visible makes the next group lay out on top of those children.
+
+BAD
+```tsx
+<SidebarContent>
+  <SidebarGroup className="min-h-0">{threads}</SidebarGroup>
+  <SidebarGroup>{archived}</SidebarGroup>
+</SidebarContent>
+```
+
+GOOD
+```tsx
+<SidebarContent>
+  <SidebarGroup className="shrink-0">{threads}</SidebarGroup>
+  <SidebarGroup className="shrink-0">{archived}</SidebarGroup>
+</SidebarContent>
+```
+
+After rendering the longest realistic list, confirm each group's last child ends at or before the next sibling begins and the scroll container's `scrollHeight` grows beyond its `clientHeight` instead of compressing its children.
+
+## Input capability
+
+Viewport width does not say whether a person has a mouse. A control that stays visible for touch but appears on hover for pointer devices keys its hidden state to `@media (hover: hover)`, not a width breakpoint such as `md`.
+
+BAD
+```tsx
+className="group-hover/menu-item:opacity-100 md:opacity-0"
+```
+
+GOOD
+```tsx
+className="[@media(hover:hover)]:opacity-0 group-hover/menu-item:!opacity-100 group-focus-within/menu-item:!opacity-100"
+```
+
 ## Keyboard
 
 Every interactive surface has keyboard access, from the primitive that already implements it rather than a home-rolled `onKeyDown`.

@@ -13,13 +13,22 @@ export function WorkspaceIcon({
   workspaceId,
   icon,
   className,
+  fileClassName,
 }: {
   workspaceId: string;
   icon?: string | null;
   className?: string;
+  fileClassName?: string;
 }) {
   if (isProjectIconFile(icon)) {
-    return <WorkspaceFileIcon workspaceId={workspaceId} path={icon} className={className} />;
+    return (
+      <WorkspaceFileIcon
+        workspaceId={workspaceId}
+        path={icon}
+        className={fileClassName ?? className}
+        fallbackClassName={className}
+      />
+    );
   }
   const Icon = projectIcon(icon);
   return <Icon className={cn("size-4", className)} />;
@@ -29,10 +38,12 @@ export function WorkspaceFileIcon({
   workspaceId,
   path,
   className,
+  fallbackClassName,
 }: {
   workspaceId: string;
   path: string;
   className?: string;
+  fallbackClassName?: string;
 }) {
   const workspaceFile = useStore((s) => s.workspaceFile);
   const key = `${workspaceId}:${path}`;
@@ -54,7 +65,7 @@ export function WorkspaceFileIcon({
     };
   }, [key, path, workspaceFile, workspaceId]);
 
-  if (!src) return <Folder className={cn("size-4", className)} />;
+  if (!src) return <Folder className={cn("size-4", fallbackClassName ?? className)} />;
   return <img src={src} alt="" className={cn("block size-4 object-contain object-center", className)} />;
 }
 
@@ -86,7 +97,6 @@ export function WorkspaceMark({
     );
   }
   const colors = tintOf(workspace.tint);
-  const file = isProjectIconFile(workspace.icon);
   return (
     <span
       className={cn(
@@ -99,7 +109,8 @@ export function WorkspaceMark({
       <WorkspaceIcon
         workspaceId={workspace.id}
         icon={workspace.icon}
-        className={file ? "size-full" : glyph}
+        className={glyph}
+        fileClassName="size-full"
       />
     </span>
   );
