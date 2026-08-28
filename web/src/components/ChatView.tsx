@@ -1318,10 +1318,10 @@ function ArtifactCard({
         <Icon className="size-3.5" />
       </ItemMedia>
       <ItemContent className="gap-0.5">
-        <ItemTitle className="truncate">{artifact.title}</ItemTitle>
-        <ItemDescription className="flex items-center gap-1.5 truncate">
-          {artifact.key && <span className="font-mono">{artifact.key}</span>}
-          {artifact.detail}
+        <ItemTitle className="w-full whitespace-normal break-words">{artifact.title}</ItemTitle>
+        <ItemDescription className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+          {artifact.key && <span className="shrink-0 font-mono">{artifact.key}</span>}
+          {artifact.detail && <span className="min-w-0 break-words">{artifact.detail}</span>}
         </ItemDescription>
       </ItemContent>
       {onOpen && (
