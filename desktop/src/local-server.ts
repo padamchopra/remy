@@ -86,7 +86,7 @@ function xml(value: string): string {
     .replace(/'/g, "&apos;");
 }
 
-function launchAgentDocument(serverDir: string, entry: string): string {
+function launchAgentDocument(serverDir: string, entry: string, release: string): string {
   const homeDir = homedir();
   const stateDir = activeConfigDir();
   const path = [
@@ -118,6 +118,8 @@ function launchAgentDocument(serverDir: string, entry: string): string {
     <string>${xml(path)}</string>
     <key>LANG</key>
     <string>${xml(process.env.LANG || process.env.LC_ALL || "en_US.UTF-8")}</string>
+    <key>REMY_SERVER_RELEASE</key>
+    <string>${xml(release)}</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>
@@ -134,14 +136,27 @@ function launchAgentDocument(serverDir: string, entry: string): string {
 `;
 }
 
-async function installLaunchAgent(serverDir: string, entry: string): Promise<boolean> {
+function launchAgentPath(): string {
+  return join(homedir(), "Library", "LaunchAgents", `${LAUNCH_AGENT_LABEL}.plist`);
+}
+
+function launchAgentIsCurrent(serverDir: string, entry: string, release: string): boolean {
+  const plistPath = launchAgentPath();
+  try {
+    return readFileSync(plistPath, "utf8") === launchAgentDocument(serverDir, entry, release);
+  } catch {
+    return false;
+  }
+}
+
+async function installLaunchAgent(serverDir: string, entry: string, release: string): Promise<boolean> {
   const uid = process.getuid?.();
   if (uid === undefined) return false;
   const stateDir = activeConfigDir();
   const agentsDir = join(homedir(), "Library", "LaunchAgents");
-  const plistPath = join(agentsDir, `${LAUNCH_AGENT_LABEL}.plist`);
+  const plistPath = launchAgentPath();
   const service = `gui/${uid}/${LAUNCH_AGENT_LABEL}`;
-  const document = launchAgentDocument(serverDir, entry);
+  const document = launchAgentDocument(serverDir, entry, release);
   mkdirSync(stateDir, { recursive: true });
   mkdirSync(agentsDir, { recursive: true });
   if (!existsSync(plistPath) || readFileSync(plistPath, "utf8") !== document) {
@@ -199,17 +214,28 @@ function nodeCommand(electronNode: boolean): string {
 export async function ensureLocalServer(
   serverDir: string,
   target: LocalTarget,
-  options: { electronNode?: boolean; persistent?: boolean } = {},
+  options: { electronNode?: boolean; persistent?: boolean; release?: string } = {},
 ): Promise<LocalTarget> {
   if (!isLoopback(target.url)) return target;
-  if (await reachable(target)) return { ...target, token: readHomeConfig()?.token || target.token };
-
   const entry = join(serverDir, "dist/index.js");
+  const online = await reachable(target);
+  const release = options.release ?? "";
+  // A packaged update replaces the files under this same path. The running
+  // launch agent has already loaded the old files, so a healthy response is
+  // not enough to prove that the current release is serving the window.
+  const staleAgent = Boolean(
+    online
+    && options.persistent
+    && release
+    && !launchAgentIsCurrent(serverDir, entry, release),
+  );
+  if (online && !staleAgent) return { ...target, token: readHomeConfig()?.token || target.token };
+
   if (!existsSync(entry)) {
     if (!existsSync(join(serverDir, "package.json"))) return target;
     await execFile("npm", ["run", "build"], { cwd: serverDir });
   }
-  if (options.persistent && await installLaunchAgent(serverDir, entry)) {
+  if (options.persistent && await installLaunchAgent(serverDir, entry, release)) {
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
       const token = readHomeConfig()?.token || target.token;

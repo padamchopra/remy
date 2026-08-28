@@ -131,6 +131,7 @@ async function wireIpc(): Promise<void> {
     const target = await ensureLocalServer(serverDir(), localTargetFromConfig(), {
       electronNode: app.isPackaged,
       persistent: app.isPackaged && process.platform === "darwin",
+      release: app.getVersion(),
     });
     if (target.token) {
       servers = withBuiltinLocal(servers, {

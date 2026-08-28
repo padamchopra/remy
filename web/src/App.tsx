@@ -49,7 +49,7 @@ import { deviceIcon } from "@/lib/devices";
 import { apiError } from "@/lib/api-error";
 import { agentConversation } from "@/lib/inbox";
 import { notificationsEnabled } from "@/lib/notify";
-import { devicesForWorkspace, isProjectIconFile, workspaceGroups } from "@/lib/projects";
+import { devicesForWorkspace, workspaceGroups } from "@/lib/projects";
 import { sectionOf, type Route } from "@/lib/route";
 import { WorkspaceIcon } from "@/components/WorkspaceIcon";
 import { tintOf } from "@/lib/tints";
@@ -590,7 +590,8 @@ export function App() {
                             <WorkspaceIcon
                               workspaceId={workspace.id}
                               icon={workspace.icon}
-                              className={isProjectIconFile(workspace.icon) ? "size-8" : "size-4"}
+                              className="size-4"
+                              fileClassName="size-8"
                             />
                           </span>
                           <span className="min-w-0 flex-1">
