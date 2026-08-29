@@ -11,7 +11,13 @@ import {
   SquareKanban,
 } from "lucide-react";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
+import {
+  Avatar,
+  AvatarBadge,
+  AvatarFallback,
+  AvatarGroup,
+  AvatarGroupCount,
+} from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
@@ -31,6 +37,7 @@ import { AppActionsProvider } from "@/actions/context";
 import { AppSidebar } from "@/components/AppSidebar";
 import { ChatComposer } from "@/components/ChatComposer";
 import { ChatView } from "@/components/ChatView";
+import { ThreadWorkspace } from "@/components/ThreadWorkspace";
 import { PaneHeader } from "@/components/PaneHeader";
 import { Palette } from "@/components/Palette";
 import { AddWorkspaceDialog } from "@/components/AddWorkspace";
@@ -55,7 +62,15 @@ import { sectionOf, type Route } from "@/lib/route";
 import { WorkspaceIcon } from "@/components/WorkspaceIcon";
 import { tintOf } from "@/lib/tints";
 import { cn } from "@/lib/utils";
+import {
+  addThreadPane,
+  decodeThreadLayout,
+  encodeThreadLayout,
+  threadLeaf,
+  type ThreadLayoutNode,
+} from "@/lib/thread-layout";
 import { useStore } from "@/state/store";
+import type { Server } from "@/state/types";
 
 type Section = "inbox" | "chats" | "workspaces" | "tasks" | "prs";
 
@@ -84,6 +99,68 @@ const SECTIONS: { id: Section; label: string; icon: typeof Inbox }[] = [
   { id: "tasks", label: "Tasks", icon: SquareKanban },
   { id: "prs", label: "Pull requests", icon: GitPullRequest },
 ];
+
+function DeviceAvatarGroup({ devices, onOpen }: { devices: Server[]; onOpen: () => void }) {
+  const shown = devices.slice(0, 4);
+  const hidden = devices.slice(shown.length);
+  const hiddenOnline = hidden.filter((device) => device.online).length;
+
+  if (devices.length === 0) return null;
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className="h-7 px-1"
+      data-link
+      aria-label="Open device settings"
+      onClick={onOpen}
+    >
+      <AvatarGroup className="-space-x-1.5" role="group" aria-label="Devices">
+        {shown.map((device) => {
+          const DeviceIcon = deviceIcon(device.icon);
+          const colors = tintOf(device.tint);
+          const status = device.online ? "Online" : "Offline";
+
+          return (
+            <Tooltip key={device.id}>
+              <TooltipTrigger asChild>
+                <Avatar
+                  size="sm"
+                  className="overflow-visible bg-background ring-2 ring-background"
+                  aria-label={`${device.name}, ${status.toLowerCase()}`}
+                >
+                  <AvatarFallback className={cn(colors.well, colors.fg)}>
+                    <DeviceIcon className="size-3" />
+                  </AvatarFallback>
+                  <AvatarBadge
+                    role="img"
+                    aria-label={status}
+                    className={device.online ? "bg-success" : "bg-muted-foreground"}
+                  />
+                </Avatar>
+              </TooltipTrigger>
+              <TooltipContent>{device.name} · {status}</TooltipContent>
+            </Tooltip>
+          );
+        })}
+        {hidden.length > 0 && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <AvatarGroupCount aria-label={`${hidden.length} more devices`}>
+                +{hidden.length}
+              </AvatarGroupCount>
+            </TooltipTrigger>
+            <TooltipContent>
+              {hidden.length} more · {hiddenOnline} online · {hidden.length - hiddenOnline} offline
+            </TooltipContent>
+          </Tooltip>
+        )}
+      </AvatarGroup>
+    </Button>
+  );
+}
 
 // Inbox draws its own: what is missing there is an agent, not a thread.
 const EMPTY: Record<
@@ -133,7 +210,7 @@ export function App() {
   const providerDeviceId = route.name === "settings" && route.tab === "providers"
     ? route.deviceId
     : undefined;
-  const selected = route.name === "threads" ? (route.threadId ?? null) : null;
+  const selected = route.name === "threads" ? (route.focus ?? route.threadId ?? null) : null;
   const workspaceSettingsId = route.name === "workspaces" ? (route.workspaceId ?? null) : null;
 
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -148,10 +225,6 @@ export function App() {
       ? current
       : { ...current, [threadId]: shown });
   }, []);
-  const setSelectedThreadToolsVisibility = useCallback((shown: boolean) => {
-    if (selected) setThreadToolsVisibility(selected, shown);
-  }, [selected, setThreadToolsVisibility]);
-
   const toggleSidebar = () => {
     setSidebarShown((shown) => {
       const next = !shown;
@@ -297,8 +370,9 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const active = chats.find((chat) => chat.id === selected) ?? null;
-  const activeArchive = archived.find((thread) => thread.id === selected) ?? null;
+  const routedThreadId = route.name === "threads" ? route.threadId : undefined;
+  const active = chats.find((chat) => chat.id === routedThreadId) ?? null;
+  const activeArchive = archived.find((thread) => thread.id === routedThreadId) ?? null;
   const archivedChat = activeArchive ? {
     id: activeArchive.id,
     serverId: activeArchive.serverId,
@@ -313,9 +387,6 @@ export function App() {
     updatedAt: activeArchive.archivedAt,
   } : null;
   const needsYou = scoped.filter((chat) => chat.state === "needs_input").length;
-  const working = scoped.filter((chat) => chat.state === "working").length;
-  const onlineDevices = servers.filter((server) => server.online).length;
-  const anyOnline = onlineDevices > 0;
   const openWorkspace = allWorkspaces.find((workspace) => workspace.id === workspaceSettingsId) ?? null;
   // Tickets are addressed by key, which is what someone pastes into a message.
   const openTicket = route.name === "ticket" ? tickets.find((ticket) => ticket.key === route.key) : undefined;
@@ -326,6 +397,31 @@ export function App() {
   const draftChat = () => go({ name: "threads" });
 
   const openChat = (id: string) => go({ name: "threads", threadId: id });
+
+  const setThreadLayout = (
+    parentId: string,
+    layout: ThreadLayoutNode,
+    focus: string,
+    replace = false,
+  ) => go({
+    name: "threads",
+    threadId: parentId,
+    layout: encodeThreadLayout(layout),
+    focus,
+  }, replace);
+
+  const openBeside = (childId: string) => {
+    const child = allChats.find((chat) => chat.id === childId);
+    if (!child?.parentChatId) return openChat(childId);
+    const parent = allChats.find((chat) => chat.id === child.parentChatId);
+    if (!parent) return openChat(childId);
+    const current = route.name === "threads" && route.threadId === parent.id
+      ? decodeThreadLayout(route.layout) ?? threadLeaf(parent.id)
+      : threadLeaf(parent.id);
+    const width = Math.max(1, window.innerWidth - (sidebarShown ? 208 : 0));
+    const height = Math.max(1, window.innerHeight - 48);
+    setThreadLayout(parent.id, addThreadPane(current, child.id, width, height), child.id);
+  };
 
   /// Where a conversation opens, whichever list it is in. A notification only
   /// carries an id, and an inbox conversation opened as a thread would land on
@@ -366,21 +462,13 @@ export function App() {
   // A thread can be deleted from another window, or the URL can name one that
   // never existed. Fall back to the composer rather than showing an empty pane.
   useEffect(() => {
-    if (!selected || catalogLoading) return;
+    if (!routedThreadId || catalogLoading) return;
     if (
-      allChats.some((chat) => chat.id === selected)
-      || archived.some((thread) => thread.id === selected)
+      allChats.some((chat) => chat.id === routedThreadId)
+      || archived.some((thread) => thread.id === routedThreadId)
     ) return;
     go({ name: "threads" }, true);
-  }, [selected, catalogLoading, allChats, archived]);
-
-  const chatCounts = (
-    <div className="flex items-center gap-4 text-xs text-muted-foreground">
-      <span>{needsYou} need you</span>
-      <span>{working} active</span>
-      <span>{scoped.length - needsYou - working} idle</span>
-    </div>
-  );
+  }, [routedThreadId, catalogLoading, allChats, archived]);
 
   return (
     <AppActionsProvider
@@ -414,10 +502,7 @@ export function App() {
           <TooltipContent>{sidebarShown ? "Hide sidebar" : "Show sidebar"}</TooltipContent>
         </Tooltip>
         <div className="app-no-drag ml-auto flex items-center gap-2">
-          <Badge variant={anyOnline ? "success" : "secondary"}>
-            <span className="size-1.5 rounded-full bg-current" />
-            {onlineDevices} device{onlineDevices === 1 ? "" : "s"}
-          </Badge>
+          <DeviceAvatarGroup devices={servers} onOpen={() => openSettings("devices")} />
           <Button variant="outline" size="sm" onClick={() => setPaletteOpen(true)}>
             <Search />
             <KbdGroup>
@@ -451,6 +536,7 @@ export function App() {
             sections={SECTIONS}
             onSection={(id) => go(routeForSection(id as Section))}
             onSelectChat={openChat}
+            onOpenBeside={openBeside}
             onOpenTicket={(key) => go({ name: "ticket", key })}
             onOpenWorkspace={(workspaceId) => go({ name: "workspaces", workspaceId })}
             onNewThread={draftChat}
@@ -517,17 +603,17 @@ export function App() {
         ) : (
           <main className="flex min-w-0 flex-1 flex-col">
             {section === "chats" && active ? (
-              <ChatView
+              <ThreadWorkspace
                 key={active.id}
-                chat={active}
-                toolsShown={threadToolsShown[active.id] === true}
-                onToolsShownChange={setSelectedThreadToolsVisibility}
-                persona={agents.find(
-                  (agent) => agent.id === active.agentId && agent.serverId === active.serverId,
-                )}
+                routeThread={active}
+                encodedLayout={route.name === "threads" ? route.layout : undefined}
+                focusedId={route.name === "threads" ? route.focus : undefined}
+                toolsShown={threadToolsShown}
+                onToolsShownChange={setThreadToolsVisibility}
                 onOpenTicket={(key) => go({ name: "ticket", key })}
                 onOpenThread={openChat}
                 onOpenWorkspace={(workspaceId) => go({ name: "workspaces", workspaceId })}
+                onLayoutChange={setThreadLayout}
               />
             ) : section === "chats" && activeArchive && archivedChat ? (
               <ChatView
@@ -556,12 +642,10 @@ export function App() {
                 servers={servers}
                 onCreated={(id) => go({ name: "threads", threadId: id })}
                 onAddWorkspace={() => setAddWorkspaceOpen(true)}
-                headerEnd={chatCounts}
               />
             ) : (
               <>
             <PaneHeader crumbs={[{ label: SECTIONS.find((s) => s.id === section)?.label ?? "" }]}>
-              {section === "chats" && chatCounts}
               {section === "workspaces" && (
                 <Button size="sm" onClick={() => setAddWorkspaceOpen(true)}>
                   <Plus />

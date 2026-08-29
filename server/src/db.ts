@@ -46,7 +46,8 @@ function migrate(database: DatabaseSync): void {
       context_json text,
       todos_json text,
       error text,
-      pinned integer not null default 0
+      pinned integer not null default 0,
+      parent_chat_id text references chats(id) on delete cascade
     );
     create table if not exists chat_entries (
       chat_id text not null references chats(id) on delete cascade,
@@ -394,6 +395,11 @@ function migrate(database: DatabaseSync): void {
     // Column already exists on databases created after this migration.
   }
   try {
+    database.exec("alter table chats add column parent_chat_id text references chats(id) on delete cascade");
+  } catch {
+    // Column already exists on databases created after this migration.
+  }
+  try {
     database.exec("alter table archives add column chat_id text");
   } catch {
     // Column already exists on databases created after this migration.
@@ -402,7 +408,7 @@ function migrate(database: DatabaseSync): void {
   // replaced them, and a table nothing reads is worth dropping rather than
   // carrying.
   database.exec("drop table if exists loops");
-  database.exec("pragma user_version = 7");
+  database.exec("pragma user_version = 8");
 }
 
 export function getKv<T>(key: string): T | undefined {

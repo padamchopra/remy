@@ -65,10 +65,12 @@ interface RawChat {
   dm?: boolean;
   unread?: boolean;
   pinned?: boolean;
+  parentChatId?: string;
 }
 
 interface RawArchive {
   id: string;
+  chatId?: string;
   session: string;
   archivedAt: number;
   cwd?: string | null;
@@ -79,6 +81,7 @@ interface RawArchive {
     model?: string;
     effort?: string;
     permissionMode?: string;
+    parentChatId?: string;
     entries?: ConvEntry[];
     todos?: ConvTodo[];
     context?: ContextUsage;
@@ -107,11 +110,11 @@ interface State {
   /// apart from `chats` because they are two lists a person reads differently.
   dms: Chat[];
   workspaces: Workspace[];
-  /// The chat the main pane has open. Held here rather than in the component so
-  /// a push can patch it without the view refetching.
-  openId?: string;
-  detail?: ChatDetail;
-  detailLoading: boolean;
+  /// Every transcript currently mounted in the thread workspace. Keyed by id so
+  /// parallel panes can stream independently without painting over each other.
+  openIds: string[];
+  details: Record<string, ChatDetail | undefined>;
+  detailLoading: Record<string, boolean | undefined>;
   /// This machine's own settings and tool status. Both are read on demand by
   /// the panes that show them, not on every poll.
   settings?: ServerSettings;
@@ -172,6 +175,11 @@ interface State {
     effort?: string;
     permissionMode?: string;
   }): Promise<{ id: string; serverId: string }>;
+  createSubthread(input: {
+    parentId: string;
+    text: string;
+    includeParent: boolean;
+  }): Promise<Chat>;
   loadSettings(): Promise<void>;
   saveSettings(patch: Partial<ServerSettings>): Promise<void>;
   loadTooling(): Promise<void>;
@@ -184,13 +192,13 @@ interface State {
   loadRepoRun(): Promise<void>;
   updateRepos(): Promise<void>;
   openChat(id: string): Promise<void>;
-  closeChat(): void;
-  uploadMessageImage(file: File): Promise<ChatImageAttachment>;
-  sendMessage(text: string, attachments?: ChatImageAttachment[], codeReferences?: ChatCodeReference[]): Promise<void>;
-  answerApproval(requestId: string, decision: "allow" | "allowAlways" | "deny"): Promise<void>;
-  answerQuestion(requestId: string, answers: Record<string, unknown>): Promise<void>;
-  interrupt(): Promise<void>;
-  setChatOptions(patch: { model?: string | null; effort?: string | null; permissionMode?: string }): Promise<void>;
+  closeChat(id: string): void;
+  uploadMessageImage(id: string, file: File): Promise<ChatImageAttachment>;
+  sendMessage(id: string, text: string, attachments?: ChatImageAttachment[], codeReferences?: ChatCodeReference[]): Promise<void>;
+  answerApproval(id: string, requestId: string, decision: "allow" | "allowAlways" | "deny"): Promise<void>;
+  answerQuestion(id: string, requestId: string, answers: Record<string, unknown>): Promise<void>;
+  interrupt(id: string): Promise<void>;
+  setChatOptions(id: string, patch: { model?: string | null; effort?: string | null; permissionMode?: string }): Promise<void>;
   pinThread(id: string, pinned: boolean): Promise<void>;
   archiveThread(id: string): Promise<void>;
   restoreThread(id: string, serverId: string): Promise<Chat>;
@@ -301,7 +309,9 @@ export const useStore = create<State>((set, get) => ({
   boardDevices: [],
   boardLoading: false,
   catalogLoading: !useFixture,
-  detailLoading: false,
+  openIds: [],
+  details: {},
+  detailLoading: {},
   loading: !useFixture,
   connected: useFixture,
 
@@ -329,10 +339,16 @@ export const useStore = create<State>((set, get) => ({
       }
       if (frame.type === "peer-reset") {
         pushPeerServers.add(serverId);
-        const detail = get().detail;
-        if (detail?.serverId === serverId && get().openId === detail.id) {
+        const current = get();
+        for (const id of current.openIds) {
+          const detail = current.details[id];
+          if (detail?.serverId !== serverId) continue;
           void readChatDetail(detail.id, serverId).then((next) => {
-            if (get().openId === next.id) set({ detail: next, detailLoading: false });
+            if (!get().openIds.includes(next.id)) return;
+            set((state) => ({
+              details: { ...state.details, [next.id]: next },
+              detailLoading: { ...state.detailLoading, [next.id]: false },
+            }));
           }).catch(() => {});
         }
         return;
@@ -361,7 +377,7 @@ export const useStore = create<State>((set, get) => ({
       }
       // A turn streams as `chat` frames: the entries that changed, plus the
       // whole scalar state. Patch what is on screen rather than refetching.
-      if (frame.type === "chat" && frame.chatId) set((current) => applyChatFrame(current, frame));
+      if (frame.type === "chat" && frame.chatId) set((current) => applyChatFrame(current, frame, serverId));
     });
 
     const offStatus = transport.onStatus((serverId, pushUp) => {
@@ -404,11 +420,25 @@ export const useStore = create<State>((set, get) => ({
       detailPolling = true;
       try {
         const current = get();
-        const detail = current.detail;
-        const peer = detail && current.servers.find((server) => server.id === detail.serverId)?.peer;
-        if (detail && current.openId === detail.id && peer && !pushPeerServers.has(detail.serverId)) {
-          const next = await readChatDetail(detail.id, detail.serverId);
-          if (get().openId === detail.id) set({ detail: next, detailLoading: false });
+        const stale = current.openIds
+          .map((id) => current.details[id])
+          .filter((detail): detail is ChatDetail => Boolean(
+            detail
+            && current.servers.find((server) => server.id === detail.serverId)?.peer
+            && !pushPeerServers.has(detail.serverId),
+          ));
+        const refreshed = await Promise.all(stale.map((detail) => readChatDetail(detail.id, detail.serverId)));
+        if (refreshed.length > 0) {
+          set((state) => ({
+            details: refreshed.reduce(
+              (details, detail) => state.openIds.includes(detail.id) ? { ...details, [detail.id]: detail } : details,
+              state.details,
+            ),
+            detailLoading: refreshed.reduce(
+              (loading, detail) => ({ ...loading, [detail.id]: false }),
+              state.detailLoading,
+            ),
+          }));
         }
       } catch {
         // The existing feed remains useful through a transient peer failure.
@@ -845,6 +875,22 @@ export const useStore = create<State>((set, get) => ({
     return { id, serverId: server.id };
   },
 
+  async createSubthread(input) {
+    const parent = get().chats.find((chat) => chat.id === input.parentId);
+    if (!parent) throw new Error("That parent thread is no longer available.");
+    if (parent.parentChatId) throw new Error("A subthread can't start another subthread.");
+    const body = await transport.request<{ chat?: RawChat }>(
+      parent.serverId,
+      `/chats/${encodeURIComponent(parent.id)}/subthreads`,
+      { method: "POST", body: { text: input.text, includeParent: input.includeParent } },
+    );
+    if (!body.chat) throw new Error("Couldn't start that subthread.");
+    const child = toChat(body.chat, parent.serverId);
+    set((current) => ({ chats: [...current.chats.filter((chat) => chat.id !== child.id), child] }));
+    await get().refresh();
+    return child;
+  },
+
   async loadSettings() {
     const server = localServer(get().servers);
     if (!server) return;
@@ -963,39 +1009,51 @@ export const useStore = create<State>((set, get) => ({
     if (!chat) return;
     const cached = detailCache.get(detailKey(id, chat.serverId));
     if (cached) cacheDetail(cached);
-    // Keep whatever is already on screen for this chat, so reopening it does
-    // not blank the feed while the fetch is in flight.
-    const same = get().detail?.id === id;
-    set({
-      openId: id,
-      detailLoading: !same && !cached,
-      ...(same ? {} : { detail: cached }),
-    });
+    const same = get().details[id]?.id === id;
+    set((current) => ({
+      openIds: current.openIds.includes(id) ? current.openIds : [...current.openIds, id],
+      detailLoading: { ...current.detailLoading, [id]: !same && !cached },
+      ...(same ? {} : { details: { ...current.details, [id]: cached } }),
+    }));
 
     if (useFixture) {
-      set({ detail: { ...chat, entries: [], todos: [] }, detailLoading: false });
+      set((current) => ({
+        details: { ...current.details, [id]: { ...chat, entries: [], todos: [] } },
+        detailLoading: { ...current.detailLoading, [id]: false },
+      }));
       return;
     }
 
     try {
       const next = await readChatDetail(id, chat.serverId);
-      // A slow fetch for a chat that has since been closed must not paint over
-      // the one that is open now.
-      if (get().openId !== id) return;
-      set({ detail: next, detailLoading: false });
+      if (!get().openIds.includes(id)) return;
+      set((current) => ({
+        details: { ...current.details, [id]: next },
+        detailLoading: { ...current.detailLoading, [id]: false },
+      }));
     } catch (error) {
-      if (get().openId !== id) return;
-      set({ detailLoading: false });
+      if (!get().openIds.includes(id)) return;
+      set((current) => ({ detailLoading: { ...current.detailLoading, [id]: false } }));
       throw error;
     }
   },
 
-  closeChat() {
-    set({ openId: undefined, detail: undefined, detailLoading: false });
+  closeChat(id) {
+    set((current) => {
+      const details = { ...current.details };
+      const loading = { ...current.detailLoading };
+      delete details[id];
+      delete loading[id];
+      return {
+        openIds: current.openIds.filter((openId) => openId !== id),
+        details,
+        detailLoading: loading,
+      };
+    });
   },
 
-  async uploadMessageImage(file) {
-    const detail = get().detail;
+  async uploadMessageImage(id, file) {
+    const detail = get().details[id];
     if (!detail) throw new Error("Open a thread before attaching an image.");
     const body = await transport.upload<{ attachment?: ChatImageAttachment }>(
       detail.serverId,
@@ -1006,8 +1064,8 @@ export const useStore = create<State>((set, get) => ({
     return body.attachment;
   },
 
-  async sendMessage(text, attachments = [], codeReferences = []) {
-    const detail = get().detail;
+  async sendMessage(id, text, attachments = [], codeReferences = []) {
+    const detail = get().details[id];
     const trimmed = text.trim();
     if (!detail || (!trimmed && codeReferences.length === 0)) return;
     await transport.request(detail.serverId, `/chats/${encodeURIComponent(detail.id)}/message`, {
@@ -1019,8 +1077,8 @@ export const useStore = create<State>((set, get) => ({
     if (!get().connected) await get().openChat(detail.id);
   },
 
-  async answerApproval(requestId, decision) {
-    const detail = get().detail;
+  async answerApproval(id, requestId, decision) {
+    const detail = get().details[id];
     if (!detail) return;
     await transport.request(detail.serverId, `/chats/${encodeURIComponent(detail.id)}/approval`, {
       method: "POST",
@@ -1028,8 +1086,8 @@ export const useStore = create<State>((set, get) => ({
     });
   },
 
-  async answerQuestion(requestId, answers) {
-    const detail = get().detail;
+  async answerQuestion(id, requestId, answers) {
+    const detail = get().details[id];
     if (!detail) return;
     await transport.request(detail.serverId, `/chats/${encodeURIComponent(detail.id)}/question`, {
       method: "POST",
@@ -1453,8 +1511,8 @@ export const useStore = create<State>((set, get) => ({
     return { ...body.project, serverId: project.serverId, workspaceIds: project.workspaceIds } as Project;
   },
 
-  async setChatOptions(patch) {
-    const detail = get().detail;
+  async setChatOptions(id, patch) {
+    const detail = get().details[id];
     if (!detail) return;
     // The server answers with the chat as it now stands, and retires the Claude
     // process so the next message starts under the new settings.
@@ -1466,24 +1524,26 @@ export const useStore = create<State>((set, get) => ({
     const chat = body.chat;
     if (!chat) return;
     set((current) => ({
-      detail:
-        current.detail?.id === detail.id
+      details: {
+        ...current.details,
+        [id]: current.details[id]
           ? {
-              ...current.detail,
+              ...current.details[id],
               provider: chat.provider,
               model: chat.model,
               effort: chat.effort,
               permissionMode: chat.permissionMode,
             }
-          : current.detail,
+          : current.details[id],
+      },
       chats: current.chats.map((entry) =>
         entry.id === detail.id ? { ...entry, provider: chat.provider, model: chat.model, effort: chat.effort } : entry,
       ),
     }));
   },
 
-  async interrupt() {
-    const detail = get().detail;
+  async interrupt(id) {
+    const detail = get().details[id];
     if (!detail) return;
     await transport.request(detail.serverId, `/chats/${encodeURIComponent(detail.id)}/interrupt`, {
       method: "POST",
@@ -1532,6 +1592,7 @@ function toDetail(raw: RawChatDetail, serverId: string): ChatDetail {
     serverId,
     title: raw.title,
     cwd: raw.cwd,
+    parentChatId: raw.parentChatId,
     provider: raw.provider,
     agentId: raw.agentId,
     model: raw.model,
@@ -1563,17 +1624,17 @@ function patchRow(chat: Chat, frame: ChatFrame): Chat {
   };
 }
 
-function applyChatFrame(current: State, frame: ChatFrame): Partial<State> {
+function applyChatFrame(current: State, frame: ChatFrame, serverId: string): Partial<State> {
   // The row in the list is patched in place rather than re-sorted: a chat that
   // is streaming would otherwise walk up and down the sidebar on every frame.
   // A frame does not say which list its conversation is in, so both are asked.
   const chats = current.chats.map((chat) => patchRow(chat, frame));
   const dms = current.dms.map((chat) => patchRow(chat, frame));
-  const detail =
-    current.detail && current.detail.id === frame.chatId
-      ? mergeDetail(current.detail, frame)
-      : current.detail;
-  return { chats, dms, detail };
+  const detail = current.details[frame.chatId ?? ""];
+  const details = detail && detail.serverId === serverId
+    ? { ...current.details, [detail.id]: mergeDetail(detail, frame) }
+    : current.details;
+  return { chats, dms, details };
 }
 
 function mergeDetail(detail: ChatDetail, frame: ChatFrame): ChatDetail {
@@ -1628,6 +1689,7 @@ function toChat(raw: RawChat, serverId: string): Chat {
     ...(raw.dm ? { dm: true } : {}),
     ...(raw.unread ? { unread: true } : {}),
     ...(raw.pinned ? { pinned: true } : {}),
+    ...(raw.parentChatId ? { parentChatId: raw.parentChatId } : {}),
   };
 }
 
@@ -1639,6 +1701,7 @@ function toArchivedThread(raw: RawArchive, serverId: string): ArchivedThread {
     ?.text;
   return {
     id: raw.id,
+    chatId: raw.chatId,
     serverId,
     title: raw.conversation?.title?.trim() || raw.session,
     cwd: raw.cwd ?? "~",
@@ -1647,6 +1710,7 @@ function toArchivedThread(raw: RawArchive, serverId: string): ArchivedThread {
     model: raw.conversation?.model,
     effort: raw.conversation?.effort,
     permissionMode: raw.conversation?.permissionMode,
+    parentChatId: raw.conversation?.parentChatId,
     preview,
     archivedAt: raw.archivedAt,
     entries,

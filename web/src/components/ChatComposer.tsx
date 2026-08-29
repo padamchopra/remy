@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { ArrowUp, Check, ChevronDown, Folder, FolderGit2, GitBranch } from "lucide-react";
 import { toast } from "sonner";
@@ -31,6 +30,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ComposerMenu } from "@/components/ComposerMenu";
 import { ModelPickerButton, useProvider } from "@/components/ModelPicker";
 import { PaneHeader } from "@/components/PaneHeader";
+import {
+  TerminalButton,
+  ThreadTerminal,
+  ThreadTerminalLayout,
+  terminalSessionId,
+} from "@/components/ThreadTerminal";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { CLOUD_MODES, cloudModeOf, PERMISSIONS, permissionOf, type PermissionValue } from "@/lib/chat-options";
 import { apiError } from "@/lib/api-error";
@@ -38,6 +43,7 @@ import { deviceIcon } from "@/lib/devices";
 import { availableAgentServers } from "@/lib/inbox";
 import { devicesForWorkspace, workspaceGroups } from "@/lib/projects";
 import type { ModelChoice } from "@/lib/providers";
+import { transport } from "@/lib/transport";
 import { useStore } from "@/state/store";
 import type { GitBranch as Branch, Server, Workspace } from "@/state/types";
 
@@ -68,13 +74,11 @@ export function ChatComposer({
   servers,
   onCreated,
   onAddWorkspace,
-  headerEnd,
 }: {
   workspaces: Workspace[];
   servers: Server[];
   onCreated: (id: string) => void;
   onAddWorkspace: () => void;
-  headerEnd?: ReactNode;
 }) {
   const createChat = useStore((s) => s.createChat);
   const checkoutBranch = useStore((s) => s.checkoutBranch);
@@ -91,8 +95,11 @@ export function ChatComposer({
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [switchingBranch, setSwitchingBranch] = useState(false);
+  const [terminalShown, setTerminalShown] = useState(false);
+  const [terminalActive, setTerminalActive] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const checkoutDefaultsRef = useRef<string | undefined>(undefined);
+  const terminalClientIdRef = useRef(crypto.randomUUID());
 
   useEffect(() => {
     textareaRef.current?.focus();
@@ -125,6 +132,18 @@ export function ChatComposer({
   const CheckoutIcon = checkout === "worktree" ? FolderGit2 : Folder;
   const branchName = branch ?? mainBranch;
   const checkoutDefaults = `${workspace?.id ?? HOME}\0${settings?.defaultCheckout ?? "main"}\0${settings?.worktreeBase ?? "remote"}`;
+  // A draft's terminal follows its device and workspace, but not its branch or
+  // worktree choice. Those become real only when the thread itself starts.
+  const terminalCwd = home || !workspace ? "~" : mainPath(workspace);
+  const terminalId = terminalSessionId(
+    "draft",
+    terminalClientIdRef.current,
+    server?.id ?? "device",
+    workspace?.id ?? HOME,
+  );
+  const terminalAvailable = Boolean(server && !cloud);
+
+  useEffect(() => setTerminalActive(false), [terminalId]);
 
   useEffect(() => {
     if (!home || devicePicked) return;
@@ -253,6 +272,11 @@ export function ChatComposer({
         effort: choice.effort ?? "",
         permissionMode,
       });
+      await transport.request(
+        server.id,
+        `/terminals/${encodeURIComponent(terminalId)}/close`,
+        { method: "POST" },
+      ).catch(() => undefined);
       onCreated(created.id);
     } catch (caught) {
       toast.error("Couldn't start that thread", { description: apiError(caught) });
@@ -291,11 +315,32 @@ export function ChatComposer({
           { label: "New thread" },
         ]}
       >
-        {headerEnd}
+        <TerminalButton
+          active={terminalActive}
+          shown={terminalShown}
+          disabled={!terminalAvailable}
+          onClick={() => setTerminalShown((shown) => !shown)}
+        />
       </PaneHeader>
 
-      <div className="flex min-h-0 flex-1 items-center justify-center p-6">
-        <div className="flex w-full max-w-2xl flex-col gap-8">
+      <ThreadTerminalLayout
+        open={terminalAvailable && terminalShown}
+        layoutId={terminalId}
+        terminal={server ? (
+          <ThreadTerminal
+            serverId={server.id}
+            terminalId={terminalId}
+            cwd={terminalCwd}
+            label={place}
+            visible={terminalAvailable && terminalShown}
+            onHide={() => setTerminalShown(false)}
+            onSessionClosed={() => setTerminalShown(false)}
+            onActiveChange={setTerminalActive}
+          />
+        ) : null}
+      >
+        <div className="flex min-h-0 flex-1 items-center justify-center p-6">
+          <div className="flex w-full max-w-2xl flex-col gap-8">
           <h2 className="flex flex-wrap items-center justify-center gap-x-1.5 text-3xl font-medium leading-none tracking-tight">
             <span>What do you want to do in</span>
             <DropdownMenu>
@@ -414,8 +459,9 @@ export function ChatComposer({
               </p>
             )}
           </form>
+          </div>
         </div>
-      </div>
+      </ThreadTerminalLayout>
     </div>
   );
 }

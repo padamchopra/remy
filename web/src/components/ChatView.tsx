@@ -102,7 +102,7 @@ import {
 } from "@/components/InlineImageComposer";
 import { ContextMeter } from "@/components/ContextMeter";
 import { AgentMark } from "@/components/AgentAvatar";
-import { PaneHeader } from "@/components/PaneHeader";
+import { PaneHeader, type Crumb } from "@/components/PaneHeader";
 import { ModelPickerButton, useProvider } from "@/components/ModelPicker";
 import { ProviderMark } from "@/components/ProviderMark";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -111,6 +111,12 @@ import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { ThreadToolsButton, ThreadToolsSidebar, useThreadTools } from "@/components/SharedBrowser";
 import { referenceLabel } from "@/components/PullRequestView";
 import { ThreadToolsLayout } from "@/components/ThreadToolsLayout";
+import {
+  TerminalButton,
+  ThreadTerminal,
+  ThreadTerminalLayout,
+  terminalSessionId,
+} from "@/components/ThreadTerminal";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -149,6 +155,7 @@ export function ChatView({
   persona,
   toolsShown,
   onToolsShownChange,
+  focused = true,
 }: {
   chat: Chat;
   archived?: ArchivedThread;
@@ -162,7 +169,7 @@ export function ChatView({
   onRestored?: (id: string) => void;
   /// Replaces the workspace-and-title trail. An inbox conversation is placed by
   /// who you are talking to, not by the folder it happens to run in.
-  crumbs?: { label: ReactNode }[];
+  crumbs?: Crumb[];
   /// Who is answering, when that is somebody rather than a provider. In the
   /// inbox you are talking to an agent, so the feed says its name and wears its
   /// mark; which model is behind it is on the composer, where it is a setting.
@@ -170,9 +177,11 @@ export function ChatView({
   persona?: Agent;
   toolsShown?: boolean;
   onToolsShownChange?: (shown: boolean) => void;
+  /// Only the focused pane exposes work surfaces and takes composer focus.
+  focused?: boolean;
 }) {
-  const detail = useStore((s) => s.detail);
-  const loading = useStore((s) => s.detailLoading);
+  const detail = useStore((s) => s.details[chat.id]);
+  const loading = useStore((s) => s.detailLoading[chat.id] === true);
   const openChat = useStore((s) => s.openChat);
   const closeChat = useStore((s) => s.closeChat);
   const sendMessage = useStore((s) => s.sendMessage);
@@ -193,6 +202,8 @@ export function ChatView({
   const [busy, setBusy] = useState(false);
   const [codeReferences, setCodeReferences] = useState<ChatCodeReference[]>([]);
   const [localToolsShown, setLocalToolsShown] = useState(false);
+  const [terminalShown, setTerminalShown] = useState(false);
+  const [terminalActive, setTerminalActive] = useState(false);
   const [fullFeed, setFullFeed] = useState(false);
   const composerRef = useRef<InlineImageComposerHandle>(null);
   const threadTools = useThreadTools(
@@ -200,7 +211,7 @@ export function ChatView({
     chat.serverId,
     toolsShown ?? localToolsShown,
     onToolsShownChange ?? setLocalToolsShown,
-    !archived,
+    !archived && focused,
   );
 
   useEffect(() => {
@@ -208,21 +219,24 @@ export function ChatView({
     void openChat(chat.id).catch((caught) => {
       toast.error("Couldn't open that thread", { description: apiError(caught) });
     });
-    return () => closeChat();
+    return () => closeChat(chat.id);
   }, [chat.id, archived, openChat, closeChat]);
 
   useEffect(() => {
     composerRef.current?.clear();
-    composerRef.current?.focus();
+    if (focused) composerRef.current?.focus();
     setCodeReferences([]);
-  }, [chat.id]);
+  }, [chat.id, focused]);
 
   // Which project this chat is in, so the breadcrumb reads as a place rather
   // than a path. A chat started in `~` belongs to no workspace and wears the
   // machine instead.
+  const conversational = chat.dm === true;
   const workspace = workspaces[workspaceForPath(chat.cwd, workspaces)];
   const server = servers.find((entry) => entry.id === chat.serverId);
   const cloud = server?.cloud === true;
+  const terminalId = terminalSessionId("thread", chat.id);
+  const terminalAvailable = focused && !conversational && !archived && !cloud && Boolean(server);
   const DeviceIcon = deviceIcon(server?.icon);
   // The checkout this thread runs in, which is what names its branch. A thread
   // started in a subdirectory still belongs to the deepest checkout above it,
@@ -253,7 +267,6 @@ export function ChatView({
   } : detail?.id === chat.id ? detail : undefined;
   const state = open?.state ?? chat.state;
   const working = state === "working";
-  const conversational = chat.dm === true;
   const entries = open?.entries ?? [];
   useEffect(() => {
     if (fullFeed || entries.length <= INITIAL_FEED_ENTRIES) return;
@@ -306,7 +319,7 @@ export function ChatView({
     if ((!trimmed && codeReferences.length === 0) || draft.uploading || busy || archived) return;
     setBusy(true);
     try {
-      await sendMessage(trimmed, draft.attachments, codeReferences);
+      await sendMessage(chat.id, trimmed, draft.attachments, codeReferences);
       composerRef.current?.clear();
       setCodeReferences([]);
     } catch (caught) {
@@ -340,7 +353,7 @@ export function ChatView({
     what: string,
   ) => {
     try {
-      await setChatOptions(patch);
+      await setChatOptions(chat.id, patch);
     } catch (caught) {
       toast.error(`Couldn't change the ${what}`, { description: apiError(caught) });
     }
@@ -348,7 +361,7 @@ export function ChatView({
 
   const stop = async () => {
     try {
-      await interrupt();
+      await interrupt(chat.id);
     } catch (caught) {
       toast.error("Couldn't stop this turn", { description: apiError(caught) });
     }
@@ -377,7 +390,14 @@ export function ChatView({
       >
         {onOpenTicket && !persona && !archived && <ThreadTicket chatId={chat.id} onOpenTicket={onOpenTicket} />}
         {headerEnd}
-        {!conversational && !archived && (
+        {terminalAvailable && (
+          <TerminalButton
+            active={terminalActive}
+            shown={terminalShown}
+            onClick={() => setTerminalShown((shown) => !shown)}
+          />
+        )}
+        {focused && !conversational && !archived && (
           <ThreadToolsButton
             active={threadTools.active}
             shown={threadTools.shown}
@@ -387,7 +407,7 @@ export function ChatView({
       </PaneHeader>
 
       <ThreadToolsLayout
-        open={!conversational && !archived && threadTools.shown}
+        open={focused && !conversational && !archived && threadTools.shown}
         threadId={chat.id}
         sidebar={(
           <ThreadToolsSidebar
@@ -407,11 +427,27 @@ export function ChatView({
             onRemoveReference={(id) => setCodeReferences((current) => current.filter((reference) => reference.id !== id))}
             canAddBrowser={threadTools.canAddBrowser}
             closeTab={threadTools.closeTab}
-            visible={!conversational && !archived && threadTools.shown}
+            visible={focused && !conversational && !archived && threadTools.shown}
           />
         )}
       >
-        <div className="flex min-w-0 flex-1 flex-col">
+        <ThreadTerminalLayout
+          open={terminalAvailable && terminalShown}
+          layoutId={chat.id}
+          terminal={(
+            <ThreadTerminal
+              serverId={chat.serverId}
+              terminalId={terminalId}
+              cwd={chat.cwd}
+              label={workspace?.name ?? "Terminal"}
+              visible={terminalAvailable && terminalShown}
+              onHide={() => setTerminalShown(false)}
+              onSessionClosed={() => setTerminalShown(false)}
+              onActiveChange={setTerminalActive}
+            />
+          )}
+        >
+          <div className="flex min-w-0 flex-1 flex-col">
           <ScrollFeed
             key={chat.id}
             chatId={chat.id}
@@ -512,7 +548,7 @@ export function ChatView({
               onOpenLink={!conversational && !archived ? threadTools.openLink : undefined}
               onDecide={async (decision) => {
                 try {
-                  await answerApproval(approval.requestId, decision);
+                  await answerApproval(chat.id, approval.requestId, decision);
                 } catch (caught) {
                   toast.error("Couldn't answer that", { description: apiError(caught) });
                 }
@@ -525,7 +561,7 @@ export function ChatView({
               request={question}
               onAnswer={async (answers) => {
                 try {
-                  await answerQuestion(question.requestId, answers);
+                  await answerQuestion(chat.id, question.requestId, answers);
                 } catch (caught) {
                   toast.error("Couldn't answer that", { description: apiError(caught) });
                 }
@@ -594,7 +630,7 @@ export function ChatView({
               disabled={Boolean(archived)}
               onChange={setDraft}
               onSubmit={() => void submit()}
-              onUpload={uploadMessageImage}
+              onUpload={(file) => uploadMessageImage(chat.id, file)}
               onError={(message) => toast.error(message)}
             />
             {codeReferences.length > 0 && (
@@ -697,7 +733,8 @@ export function ChatView({
           )}
             </form>
           </div>
-        </div>
+          </div>
+        </ThreadTerminalLayout>
       </ThreadToolsLayout>
     </div>
   );
