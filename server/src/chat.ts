@@ -163,6 +163,8 @@ interface ChatRecord {
   /// When you last had this conversation open. What makes an inbox row bold.
   readAt?: number;
   pinned?: boolean;
+  /// A parallel session sharing its parent thread's checkout.
+  parentChatId?: string;
   createdAt: number;
   updatedAt: number;
   claudeSessionId?: string;
@@ -201,6 +203,8 @@ export interface ChatSummary {
   unread?: boolean;
   /// Pinned threads lead the thread list on every client of this machine.
   pinned?: boolean;
+  /// The parent thread this parallel session belongs to.
+  parentChatId?: string;
   createdAt: number;
   updatedAt: number;
   state: ChatState;
@@ -434,6 +438,7 @@ class Chat {
       ...(this.record.dm ? { dm: true } : {}),
       ...(this.unread() ? { unread: true } : {}),
       ...(this.record.pinned ? { pinned: true } : {}),
+      ...(this.record.parentChatId ? { parentChatId: this.record.parentChatId } : {}),
       createdAt: this.record.createdAt,
       updatedAt: this.record.updatedAt,
       state: this.state,
@@ -495,6 +500,7 @@ class Chat {
     text: string,
     attachments: ChatImageAttachment[] = [],
     codeReferences: ChatCodeReference[] = [],
+    agentContext?: string,
   ): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed && codeReferences.length === 0) return;
@@ -516,8 +522,9 @@ class Chat {
     // A better name is worth having but not worth waiting for, so it runs
     // alongside the turn and lands whenever it lands.
     if (first && !this.record.dm) void this.rename(safeText);
-    linkTicketFromWorkPrompt(this.record.id, safeText, this.record.agentId);
-    const ticketContext = ticketPromptContext(this.record.id);
+    const ticketOwnerId = this.record.parentChatId ?? this.record.id;
+    linkTicketFromWorkPrompt(ticketOwnerId, safeText, this.record.agentId);
+    const ticketContext = ticketPromptContext(ticketOwnerId);
     const routineContext = this.record.dm
       ? `<remy_routine_context>
 This is the agent's Inbox conversation. When the person signals that something should happen repeatedly, routinely, or on a cadence, use Remy's create_routine tool directly. Do not use a scheduling skill, shell command, cron, or an outside automation. The routine belongs to this agent and Remy runs it on the preferred available device.
@@ -525,7 +532,9 @@ This is the agent's Inbox conversation. When the person signals that something s
       : undefined;
     const referenceContext = codeReferencePrompt(safeReferences);
     const remembered = this.record.agentId ? await memoryPrompt(this.record.agentId, this.record.cwd) : undefined;
-    const agentText = [remembered, ticketContext, routineContext, referenceContext, safeText].filter(Boolean).join("\n\n");
+    const agentText = [remembered, ticketContext, routineContext, referenceContext, agentContext, safeText]
+      .filter(Boolean)
+      .join("\n\n");
     const agentPrompt: ChatPrompt = { text: agentText, attachments };
     this.append({
       id: `u-${randomUUID()}`,
@@ -1881,6 +1890,7 @@ export interface ArchivedConversation extends Conversation {
   turns?: number;
   costUsd?: number;
   agentId?: string;
+  parentChatId?: string;
 }
 
 export function archiveConversation(id: string): ArchivedConversation {
@@ -1899,6 +1909,7 @@ export function archiveConversation(id: string): ArchivedConversation {
     turns: record.turns,
     costUsd: record.costUsd,
     agentId: record.agentId,
+    parentChatId: record.parentChatId,
     context: record.context,
     todos: record.todos,
     entries: record.entries,
@@ -1925,6 +1936,7 @@ export function restoreArchivedChat(input: {
     ...(conversation.effort ? { effort: conversation.effort } : {}),
     permissionMode: permissionMode(conversation.permissionMode, config.defaultPermissionMode),
     ...(conversation.agentId ? { agentId: conversation.agentId } : {}),
+    ...(conversation.parentChatId ? { parentChatId: conversation.parentChatId } : {}),
     createdAt: conversation.createdAt ?? nowMs(),
     updatedAt: nowMs(),
     ...(conversation.claudeSessionId ? { claudeSessionId: conversation.claudeSessionId } : {}),
@@ -2048,7 +2060,7 @@ function expandChatCwd(raw: string): string {
 }
 
 export function createChat(input: {
-  cwd: string;
+  cwd?: string;
   title?: string;
   provider?: unknown;
   model?: string;
@@ -2058,6 +2070,9 @@ export function createChat(input: {
   /// Marks this as an agent's inbox conversation. `dmChatFor` is the only
   /// caller that sets it, so there stays one per agent.
   dm?: boolean;
+  /// Makes this a parallel session in an existing thread's exact checkout.
+  /// The parent owns every execution choice; callers cannot override them.
+  parentChatId?: string;
   /// What the workspace this thread opens in runs on, when it does not follow
   /// the machine. The caller resolves it: which workspace holds a directory
   /// takes the worktree list, and this does not wait on git.
@@ -2065,12 +2080,16 @@ export function createChat(input: {
 }): ChatSummary {
   // Refuse loudly rather than running a conversation this server cannot keep.
   assertChatStorage();
-  const cwd = expandChatCwd(input.cwd);
+  const parent = input.parentChatId ? mustGet(input.parentChatId).record : undefined;
+  if (parent?.parentChatId) throw new Error("a subthread cannot start another subthread");
+  if (parent?.dm) throw new Error("an inbox conversation cannot have subthreads");
+  const cwd = parent?.cwd ?? expandChatCwd(input.cwd ?? "~");
   if (!existsSync(cwd)) throw new Error("that directory does not exist on this machine");
   // An agent brings its own provider, model and permission mode, and anything
   // the caller asked for explicitly still wins over them.
-  const agent = input.agentId ? getAgent(input.agentId) : undefined;
-  if (input.agentId && !agent) throw new Error("no such agent");
+  const inheritedAgentId = parent?.agentId ?? input.agentId;
+  const agent = inheritedAgentId ? getAgent(inheritedAgentId) : undefined;
+  if (inheritedAgentId && !agent) throw new Error("no such agent");
   // A workspace that runs on something of its own stands where the machine's
   // default would. An agent still outranks it, including one that follows the
   // machine default rather than naming a model of its own.
@@ -2082,7 +2101,7 @@ export function createChat(input: {
       }
     : { provider: config.defaultProvider, model: config.defaultModel, effort: config.defaultEffort };
   const inherited = agent ? resolvedAgentModel(agent) : workspace;
-  const askedProvider = providerId(input.provider ?? inherited.provider);
+  const askedProvider = providerId(parent?.provider ?? input.provider ?? inherited.provider);
   if (input.provider !== undefined && !config.enabledProviders.includes(askedProvider)) {
     throw new Error("that provider is turned off");
   }
@@ -2094,8 +2113,8 @@ export function createChat(input: {
   // other provider is dropped rather than passed to a CLI that would refuse it.
   // `??` rather than `||`, so asking for a provider's own Default is read as the
   // choice it is instead of a gap to fill with somebody else's model.
-  const model = providerModel(provider, input.model ?? inherited.model);
-  const effort = providerEffort(provider, model, input.effort ?? inherited.effort);
+  const model = providerModel(provider, parent?.model ?? input.model ?? inherited.model);
+  const effort = providerEffort(provider, model, parent?.effort ?? input.effort ?? inherited.effort);
   const record: ChatRecord = {
     id: randomUUID(),
     title: input.title?.trim() || "New chat",
@@ -2105,7 +2124,9 @@ export function createChat(input: {
     ...(effort ? { effort } : {}),
     ...(agent ? { agentId: agent.id } : {}),
     ...(input.dm ? { dm: true } : {}),
-    permissionMode: permissionMode(input.permissionMode, agent?.permissionMode ?? config.defaultPermissionMode),
+    ...(parent ? { parentChatId: parent.id } : {}),
+    permissionMode: parent?.permissionMode
+      ?? permissionMode(input.permissionMode, agent?.permissionMode ?? config.defaultPermissionMode),
     createdAt: nowMs(),
     updatedAt: nowMs(),
     entries: [],
@@ -2117,6 +2138,70 @@ export function createChat(input: {
   chat.persist();
   broadcast({ type: "chats" });
   return chat.summary();
+}
+
+function visibleParentContext(parent: ChatDetail): string {
+  const transcript = parent.entries
+    .filter((entry) => (entry.kind === "user" || entry.kind === "assistant") && entry.text?.trim())
+    .map((entry) => `${entry.kind === "user" ? "You" : "Agent"}: ${entry.text!.trim()}`)
+    .join("\n\n");
+  const bounded = transcript.slice(-48_000);
+  return `<parent_thread_snapshot title=${JSON.stringify(parent.title)}>
+This is an immutable snapshot of the parent thread from when this subthread started. Use it as context for the new task. The sessions do not share later messages.
+
+${bounded}
+</parent_thread_snapshot>`;
+}
+
+/// Starts one independent provider conversation in the parent's exact checkout.
+/// The device, directory and execution settings come only from the parent.
+export async function createSubthread(
+  parentId: string,
+  input: { text: string; includeParent?: boolean },
+): Promise<ChatSummary> {
+  const parent = getChat(parentId);
+  if (!parent) throw new Error("no such parent thread");
+  if (parent.parentChatId) throw new Error("a subthread cannot start another subthread");
+  const text = input.text.trim();
+  if (!text) throw new Error("write a task for the subthread");
+  const child = createChat({
+    parentChatId: parent.id,
+    title: titleFrom(text),
+  });
+  try {
+    await sendChatMessage(
+      child.id,
+      text,
+      [],
+      [],
+      input.includeParent ? visibleParentContext(parent) : undefined,
+    );
+  } catch (error) {
+    deleteChat(child.id);
+    throw error;
+  }
+  return getChat(child.id) ?? child;
+}
+
+/// A parent and its direct parallel sessions. The one-level invariant means
+/// this is the entire group and never needs recursive traversal.
+export function chatGroup(parentId: string): ChatSummary[] {
+  const parent = mustGet(parentId).summary();
+  if (parent.parentChatId) throw new Error("a subthread does not own a thread group");
+  return [parent, ...listChats().filter((chat) => chat.parentChatId === parent.id)];
+}
+
+/// Stops every running member before a parent lifecycle operation continues.
+export async function stopChatGroup(parentId: string): Promise<ChatSummary[]> {
+  const group = chatGroup(parentId);
+  await Promise.all(group
+    .filter((chat) => chat.state === "working" || chat.state === "needs_input")
+    .map((chat) => interruptChat(chat.id)));
+  const blocking = group
+    .map((chat) => getChat(chat.id))
+    .find((chat) => chat && (chat.state === "working" || chat.state === "needs_input"));
+  if (blocking) throw new Error(`could not stop ${blocking.title}`);
+  return group;
 }
 
 export function updateChat(
@@ -2186,8 +2271,9 @@ export async function sendChatMessage(
   text: string,
   attachments: ChatImageAttachment[] = [],
   codeReferences: ChatCodeReference[] = [],
+  agentContext?: string,
 ): Promise<void> {
-  await mustGet(id).send(text, attachments, codeReferences);
+  await mustGet(id).send(text, attachments, codeReferences, agentContext);
 }
 
 export async function runChatEnvironmentCommand(
@@ -2230,6 +2316,14 @@ export function deleteChat(id: string): void {
   removeChat(id);
   broadcast({ type: "chats" });
   syncSleepAssertion();
+}
+
+/// Removes a parent and every child after the caller has stopped external work
+/// surfaces. All members are validated before the first one is removed.
+export function deleteChatGroup(parentId: string): void {
+  const group = chatGroup(parentId);
+  for (const child of group.slice(1)) deleteChat(child.id);
+  deleteChat(parentId);
 }
 
 export function stopChat(id: string): void {

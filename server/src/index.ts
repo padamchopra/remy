@@ -48,7 +48,9 @@ import {
   chatsUnavailable,
   archiveConversation,
   createChat,
+  createSubthread,
   deleteChat,
+  deleteChatGroup,
   dmChatFor,
   getChat,
   interruptChat,
@@ -65,6 +67,7 @@ import {
   runChatEnvironmentCommand,
   sendChatMessage,
   stopChat,
+  stopChatGroup,
   chatCwd,
   updateChat,
 } from "./chat.js";
@@ -106,6 +109,7 @@ import {
   typeBrowser,
   waitInBrowser,
 } from "./browser.js";
+import { closeTerminal, openTerminal, resizeTerminal, writeTerminal } from "./terminal.js";
 import { forgetPushDevice, pushStatus, registerPushDevice } from "./push.js";
 import { discover, sameTailnetHost } from "./tailnet.js";
 import {
@@ -518,6 +522,37 @@ const server = createServer(async (req, res) => {
     if (url.pathname === "/cursor-cloud/status" && req.method === "GET") {
       return json(res, 200, cursorCloudStatus());
     }
+
+    if (parts[0] === "terminals" && parts[1] && parts.length === 3 && req.method === "POST") {
+      const terminalId = decodeURIComponent(parts[1]);
+      const action = parts[2];
+      const body = await readJson(req);
+      try {
+        if (action === "open") {
+          return json(res, 200, openTerminal(terminalId, {
+            cwd: typeof body.cwd === "string" ? body.cwd : undefined,
+            cols: typeof body.cols === "number" ? body.cols : undefined,
+            rows: typeof body.rows === "number" ? body.rows : undefined,
+          }));
+        }
+        if (action === "write") {
+          writeTerminal(terminalId, typeof body.data === "string" ? body.data : "");
+          return json(res, 200, { ok: true });
+        }
+        if (action === "resize") {
+          resizeTerminal(terminalId, body.cols, body.rows);
+          return json(res, 200, { ok: true });
+        }
+        if (action === "close") {
+          closeTerminal(terminalId);
+          return json(res, 200, { ok: true });
+        }
+      } catch (error) {
+        return json(res, 409, { error: (error as Error).message || "the terminal action failed" });
+      }
+      return json(res, 404, { error: "no such terminal action" });
+    }
+
     if (url.pathname === "/cursor-cloud/connect" && req.method === "POST") {
       const body = await readJson(req);
       try {
@@ -1476,6 +1511,20 @@ const server = createServer(async (req, res) => {
     }
     if (parts[0] === "chats" && parts[1]) {
       const id = decodeURIComponent(parts[1]);
+      if (req.method === "POST" && parts[2] === "subthreads" && parts.length === 3) {
+        if (!fullAccess) return json(res, 403, { error: "only you can start a subthread" });
+        const body = await readJson(req);
+        try {
+          const chat = await createSubthread(id, {
+            text: typeof body.text === "string" ? body.text : "",
+            includeParent: body.includeParent === true,
+          });
+          return json(res, 200, { chat });
+        } catch (error) {
+          const message = (error as Error).message || "could not start the subthread";
+          return json(res, /no such/.test(message) ? 404 : 409, { error: message });
+        }
+      }
       if (req.method === "GET" && parts[2] === "analytics" && parts.length === 3) {
         const chat = getChat(id);
         if (!chat) return json(res, 404, { error: "no such chat" });
@@ -1590,12 +1639,26 @@ const server = createServer(async (req, res) => {
       }
       if (req.method === "DELETE" && parts.length === 2) {
         try {
-          void closeBrowser(id);
-          clearThreadPullRequestMonitoring(id);
-          deleteChat(id);
+          const chat = getChat(id);
+          if (!chat) throw new Error("no such chat");
+          if (chat.parentChatId) {
+            void closeBrowser(id);
+            closeTerminal(`thread-${id}`);
+            clearThreadPullRequestMonitoring(id);
+            deleteChat(id);
+          } else {
+            const group = await stopChatGroup(id);
+            await Promise.all(group.map((member) => closeBrowser(member.id).catch(() => undefined)));
+            for (const member of group) {
+              closeTerminal(`thread-${member.id}`);
+              clearThreadPullRequestMonitoring(member.id);
+            }
+            deleteChatGroup(id);
+          }
           return json(res, 200, { ok: true });
         } catch (error) {
-          return json(res, 404, { error: (error as Error).message || "no such chat" });
+          const message = (error as Error).message || "no such chat";
+          return json(res, /no such/.test(message) ? 404 : 409, { error: message });
         }
       }
       // Keeping the conversation and dropping the thread. A turn still running
@@ -1603,20 +1666,42 @@ const server = createServer(async (req, res) => {
       if (req.method === "POST" && parts[2] === "archive") {
         const chat = getChat(id);
         if (!chat) return json(res, 404, { error: "no such chat" });
-        if (chat.state === "working" || chat.state === "needs_input") {
+        if (chat.parentChatId && (chat.state === "working" || chat.state === "needs_input")) {
           return json(res, 409, { error: "this thread is still running" });
         }
-        const archive = archiveChat({
-          chatId: chat.id,
-          session: chat.title,
-          agent: chat.provider,
-          cwd: chat.cwd,
-          conversation: archiveConversation(chat.id),
-        });
-        void closeBrowser(id);
-        clearThreadPullRequestMonitoring(id);
-        deleteChat(id);
-        return json(res, 200, { archive });
+        try {
+          if (chat.parentChatId) {
+            const archive = archiveChat({
+              chatId: chat.id,
+              session: chat.title,
+              agent: chat.provider,
+              cwd: chat.cwd,
+              conversation: archiveConversation(chat.id),
+            });
+            void closeBrowser(id);
+            closeTerminal(`thread-${id}`);
+            clearThreadPullRequestMonitoring(id);
+            deleteChat(id);
+            return json(res, 200, { archive });
+          }
+          const group = await stopChatGroup(id);
+          await Promise.all(group.map((member) => closeBrowser(member.id).catch(() => undefined)));
+          const archives = group.map((member) => archiveChat({
+            chatId: member.id,
+            session: member.title,
+            agent: member.provider,
+            cwd: member.cwd,
+            conversation: archiveConversation(member.id),
+          }));
+          for (const member of group) {
+            closeTerminal(`thread-${member.id}`);
+            clearThreadPullRequestMonitoring(member.id);
+          }
+          deleteChatGroup(id);
+          return json(res, 200, { archive: archives[0], archives });
+        } catch (error) {
+          return json(res, 409, { error: (error as Error).message || "could not archive that thread" });
+        }
       }
       if (req.method === "POST" && parts[2] === "message") {
         if (scopedChatId === id) {
@@ -1879,21 +1964,35 @@ const server = createServer(async (req, res) => {
       const archive = getArchivedChat(id);
       if (!archive) return json(res, 404, { error: "archived thread not found" });
       try {
-        const chat = restoreArchivedChat({
-          chatId: archive.chatId,
-          session: archive.session,
-          cwd: archive.cwd,
-          conversation: archive.conversation,
-        });
-        deleteArchivedChat(id);
-        return json(res, 200, { chat });
+        const group = archive.conversation.parentChatId || !archive.chatId
+          ? [archive]
+          : [
+              archive,
+              ...listArchivedChats().filter((entry) => entry.conversation.parentChatId === archive.chatId),
+            ];
+        const restored = group.map((entry) => restoreArchivedChat({
+          chatId: entry.chatId,
+          session: entry.session,
+          cwd: entry.cwd,
+          conversation: entry.conversation,
+        }));
+        for (const entry of group) deleteArchivedChat(entry.id);
+        return json(res, 200, { chat: restored[0], chats: restored });
       } catch (error) {
         return json(res, 409, { error: (error as Error).message || "could not unarchive that thread" });
       }
     }
     if (parts[0] === "archives" && parts[1] && req.method === "DELETE") {
       try {
-        deleteArchivedChat(decodeURIComponent(parts[1]));
+        const archive = getArchivedChat(decodeURIComponent(parts[1]));
+        if (!archive) throw new Error("archived chat not found");
+        const group = archive.conversation.parentChatId || !archive.chatId
+          ? [archive]
+          : [
+              archive,
+              ...listArchivedChats().filter((entry) => entry.conversation.parentChatId === archive.chatId),
+            ];
+        for (const entry of group) deleteArchivedChat(entry.id);
         return json(res, 200, { ok: true });
       } catch (error) {
         return json(res, 404, { error: (error as Error).message || "archived chat not found" });

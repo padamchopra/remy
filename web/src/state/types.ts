@@ -77,10 +77,13 @@ export interface Chat {
   unread?: boolean;
   /// Pinned threads lead the active thread list.
   pinned?: boolean;
+  /// This parallel session shares its parent thread's checkout.
+  parentChatId?: string;
 }
 
 export interface ArchivedThread {
   id: string;
+  chatId?: string;
   serverId: string;
   title: string;
   cwd: string;
@@ -89,6 +92,7 @@ export interface ArchivedThread {
   model?: string;
   effort?: string;
   permissionMode?: string;
+  parentChatId?: string;
   preview?: string;
   archivedAt: number;
   entries: ConvEntry[];
@@ -308,6 +312,7 @@ export interface ChatDetail {
   serverId: string;
   title: string;
   cwd: string;
+  parentChatId?: string;
   /// Which agent this thread thinks with. Changeable, like the model: the feed
   /// stays, and the new one arrives knowing only what it is told next.
   provider?: string;
