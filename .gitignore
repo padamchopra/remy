@@ -13,6 +13,12 @@ desktop/dist/
 desktop/build/
 desktop/release/
 
+# Rendered videos. A render is a build artifact — reproducible from `video/`
+# with one command — and git keeps every version of a binary forever, so a
+# handful of re-renders is tens of megabytes of history nothing can reclaim.
+# Render it, post it, keep the file outside the repo.
+docs/video/
+
 # Expo
 mobile/.expo/
 mobile/ios/

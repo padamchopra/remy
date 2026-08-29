@@ -53,7 +53,10 @@ npx remotion studio            # preview, scrub, edit
 npx remotion render PairDevice out/remy-add-a-device.mp4 --codec=h264 --crf=18
 ```
 
-The newest render is committed at `docs/video/remy-add-a-device.mp4`.
+Renders are **not** committed. `docs/video/` is ignored, and so is `out/`: an
+MP4 is a build artifact, and git keeps every version of a binary forever — five
+committed cuts of this fifteen-second video came to 12.5 MB of history that
+nothing can reclaim. Render it, post it, and keep the file outside the repo.
 
 ## How it is put together
 
