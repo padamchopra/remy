@@ -176,6 +176,7 @@ import {
 import { buildInbox } from "./inbox.js";
 import { listAuthoredPullRequests, markPullRequestFileViewed, markPullRequestRead, markPullRequestReady, pullRequestDiff, pullRequestDiffForCwd, pullRequestFileReviewState, pullRequestTimeline } from "./pull-requests.js";
 import { pullRequestFileContent, validPullRequestFileRequest } from "./pull-request-file.js";
+import { askPullRequestQuestion, discoverPullRequestQuestions, readPullRequestQuestions } from "./pull-request-questions.js";
 import { validateChatCodeReferences } from "./chat-references.js";
 import { startPullRequestMonitor } from "./pull-request-monitor.js";
 import {
@@ -1089,6 +1090,26 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { guide });
       } catch (error) {
         return json(res, 409, { error: (error as Error).message || "could not answer that question" });
+      }
+    }
+
+    if (["/pull-requests/questions", "/pull-requests/questions/discover"].includes(url.pathname)) {
+      const body = req.method === "POST" ? await readJson(req) : {};
+      const repository = String(body.repository ?? url.searchParams.get("repository") ?? "").trim();
+      const number = Number(body.number ?? url.searchParams.get("number"));
+      if (!/^[\w.-]+\/[\w.-]+$/.test(repository) || !Number.isInteger(number) || number <= 0) {
+        return json(res, 400, { error: "A repository and pull request number are required." });
+      }
+      if (req.method === "GET") return json(res, 200, url.pathname.endsWith("/discover")
+        ? await discoverPullRequestQuestions(repository, number) : { questions: readPullRequestQuestions(repository, number) });
+      if (req.method === "POST" && url.pathname === "/pull-requests/questions") {
+        try {
+          const question = await askPullRequestQuestion({ ...body, repository, number });
+          broadcast({ type: "pull-request-question", repository, number });
+          return json(res, 200, { question });
+        } catch (error) {
+          return json(res, 409, { error: (error as Error).message || "Couldn't answer that question. Try again." });
+        }
       }
     }
 

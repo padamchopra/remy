@@ -291,6 +291,14 @@ function migrate(database: DatabaseSync): void {
       updated_at integer not null,
       primary key (repository, number)
     );
+    create table if not exists pull_request_questions (
+      id text primary key,
+      repository text not null,
+      number integer not null,
+      json text not null,
+      created_at integer not null
+    );
+    create index if not exists pull_request_questions_pr on pull_request_questions(repository, number, created_at);
   `);
   try {
     database.exec("alter table workspaces add column icon text");

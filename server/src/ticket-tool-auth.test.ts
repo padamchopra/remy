@@ -26,6 +26,9 @@ test("a Remy capability reaches orchestration without reaching administration", 
   assert.equal(isRemyToolRoute("POST", "/pull-requests/stack"), false);
   assert.equal(isRemyToolRoute("GET", "/pull-requests/file"), false);
   assert.equal(isRemyToolRoute("POST", "/pull-requests/file"), false);
+  assert.equal(isRemyToolRoute("GET", "/pull-requests/questions"), false);
+  assert.equal(isRemyToolRoute("GET", "/pull-requests/questions/discover"), false);
+  assert.equal(isRemyToolRoute("POST", "/pull-requests/questions"), false);
   assert.equal(isRemyToolRoute("POST", "/workspaces"), true);
   assert.equal(isRemyToolRoute("POST", "/runtime/environment-command"), true);
   assert.equal(isRemyToolRoute("POST", "/routines"), true);

@@ -272,6 +272,27 @@ export interface PullRequestGuideHunk {
   lines: PullRequestDiffLine[];
 }
 
+export interface PullRequestQuestionSource {
+  path: string;
+  head?: string;
+  header: string;
+  lines: PullRequestDiffLine[];
+}
+
+export interface PullRequestQuestion {
+  id: string;
+  repository: string;
+  number: number;
+  source: PullRequestQuestionSource;
+  start: number;
+  end: number;
+  question: string;
+  answer: string;
+  provider: string;
+  model: string;
+  createdAt: number;
+}
+
 export interface PullRequestGuideStep {
   id: string;
   title: string;
