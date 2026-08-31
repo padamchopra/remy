@@ -1,6 +1,6 @@
 ---
 name: pr-author
-description: Create, update, or publish Remy pull requests with proportional reviewer evidence. Use for ANY pull request, including every PR in a stack.
+description: Remy pull request writing and reviewer evidence. Use when creating, updating, or publishing ANY pull request, including every PR in a stack.
 ---
 
 # Authoring a pull request
@@ -10,6 +10,68 @@ Media is required when a PR changes behavior a reviewer can exercise or judge in
 Media is not required for changes with no in-app behavior to show, such as CI, release or build configuration, documentation, tests, and internal refactors. Record the relevant commands and results under `## Testing` instead.
 
 `qa` owns proving changes against the running app and may use real state. When media is required, PR evidence is a separate capture pass with safe state.
+
+## Body format
+
+Lead with required media, then use `## Summary`, `## Changes`, `## Review notes`, and `## Testing`, in that order. These are writing conventions, not an automated check.
+
+- **Media:** Put image tables at the very top of the body, before any heading, introduction, badge, or status note. Every image belongs in a Markdown table with descriptive column headers, such as `Code review` and `Guided review`, or `Before` and `After` for a comparison. Use readable alt text and keep the table narrow enough to judge the images. Put labeled video links below all image tables and above `## Summary`. With videos only, lead with the videos. Never collapse required media or add empty media placeholders.
+- **Summary:** A short paragraph explaining the problem and the outcome, not an inventory of the implementation.
+- **Changes:** A few themed bullets describing what changes for the user or reviewer. Group related work rather than listing each file, commit, follow-up, or test.
+- **Review notes:** Important decisions, review focus, limitations, unresolved questions, breaking changes, migrations, or rollout requirements. Keep anything that could change an approval visible. Omit this section when there is nothing material to call out.
+- **Testing:** A brief statement of what was verified and the relevant limits of that verification. Keep failures and important untested behavior visible; move commands, individual scenarios, and supporting results into a collapsed `Detailed validation` section.
+
+Optional implementation context goes in a separate collapsed `Implementation details` section after Testing. Use `<details>` with a descriptive `<summary>` and blank lines around its Markdown content. Omit empty or unhelpful collapsible sections.
+
+On follow-up updates, rewrite the body into this shape instead of appending a work log. Preserve relevant authored notes, links, and attribution without repeating them. Do not include terminal transcripts, exhaustive test-name lists, or routine progress updates.
+
+A PR-specific request to omit media overrides the media requirement for that PR, not future PRs. Without media, start directly with `## Summary`.
+
+Example for guided reviews when media is explicitly waived:
+
+BAD
+```markdown
+## Summary
+- Add a Guide tab.
+- Add a model picker.
+- Add commit selection.
+- Store guides.
+- Add peer lookup.
+- Add question persistence.
+
+## Testing
+- Tested saving, loading, selecting, asking, reconnecting, retrying, and every file control.
+```
+
+GOOD
+```markdown
+## Summary
+
+Make large pull requests easier to understand with a guided review beside the existing diff.
+
+## Changes
+
+- Generate digestible change groups for selected commits, using the model you choose.
+- Reuse saved guides across paired devices and ask questions inline.
+- Keep the same file-viewing and change-comment controls in Code and Guide.
+
+## Review notes
+
+- Diff coverage is checked programmatically; changes omitted by the model stay visible below the guide.
+- Change comments require an open thread; standalone PRs support questions.
+
+## Testing
+
+Tests and isolated interaction checks pass; model responses use a disposable provider fixture.
+
+<details>
+<summary>Detailed validation</summary>
+
+- Server tests cover saved guides, authenticated device discovery, and diff coverage.
+- Isolated interaction checks cover file controls, inline questions, and retry behavior.
+
+</details>
+```
 
 ## Evidence state
 
@@ -43,7 +105,7 @@ Do not turn terminal output, test results, configuration diffs, or API responses
 
 ## Publish
 
-Create the draft PR first. When media is required, preserve its existing description, add a short `## Evidence` caption that says what the artifact demonstrates, then upload the inspected files:
+Create the draft PR first. When media is required, upload the inspected files:
 
 ```sh
 agent-cli upload /tmp/remy-pr-artifacts/branch/change.png
@@ -55,7 +117,7 @@ If `agent-cli` is unavailable, install it globally, then run the upload again:
 npm -g i @choprapadam/agent-cli
 ```
 
-Add the returned URLs under the evidence caption. Append `?w=640` to raster image URLs for inline embeds.
+Embed the returned image URLs in labeled tables at the top of the body. Append `?w=640` to raster image URLs for inline embeds.
 
 Upload video evidence in its original recorded format:
 
@@ -63,12 +125,12 @@ Upload video evidence in its original recorded format:
 agent-cli upload /tmp/remy-pr-artifacts/branch/change.mp4
 ```
 
-Inspect the video, then add its returned URL as a normal Markdown link. Never convert a video to GIF.
+Inspect the video, then add its returned URL as a labeled Markdown link below the image tables and above Summary. Never convert a video to GIF.
 
 Do not wrap an external `agent-cli` URL in a `<video>` tag because GitHub strips the tag from PR Markdown.
 
-Read the PR description back and confirm that every URL is present and resolves successfully.
+Read the PR description back and confirm the section order, topmost image tables, video placement, and collapsed supporting detail. Confirm that every media URL is present and resolves successfully, and that required review notes remain visible.
 
-When media is not required, omit `## Evidence`; `## Testing` carries the reviewer-visible verification.
+When media is not required or explicitly waived, omit the media block; `## Testing` carries the reviewer-visible verification.
 
 Do not substitute a written QA claim for required media. If a safe, representative artifact cannot be produced for a change that requires it, keep the PR in draft and report the concrete blocker.
