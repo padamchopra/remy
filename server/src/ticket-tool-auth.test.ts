@@ -22,6 +22,13 @@ test("a Remy capability reaches orchestration without reaching administration", 
   assert.equal(isRemyToolRoute("DELETE", "/tickets/one/comments/two"), false);
   assert.equal(isRemyToolRoute("PATCH", "/tickets/one"), true);
   assert.equal(isRemyToolRoute("GET", "/workspaces"), true);
+  assert.equal(isRemyToolRoute("GET", "/pull-requests/stack"), false);
+  assert.equal(isRemyToolRoute("POST", "/pull-requests/stack"), false);
+  assert.equal(isRemyToolRoute("GET", "/pull-requests/file"), false);
+  assert.equal(isRemyToolRoute("POST", "/pull-requests/file"), false);
+  assert.equal(isRemyToolRoute("GET", "/pull-requests/questions"), false);
+  assert.equal(isRemyToolRoute("GET", "/pull-requests/questions/discover"), false);
+  assert.equal(isRemyToolRoute("POST", "/pull-requests/questions"), false);
   assert.equal(isRemyToolRoute("POST", "/workspaces"), true);
   assert.equal(isRemyToolRoute("POST", "/runtime/environment-command"), true);
   assert.equal(isRemyToolRoute("POST", "/routines"), true);
@@ -37,7 +44,13 @@ test("a Remy capability reaches orchestration without reaching administration", 
   assert.equal(isRemyToolRoute("POST", "/tickets/one/start"), false);
   assert.equal(isRemyToolRoute("DELETE", "/tickets/one"), false);
   assert.equal(isRemyToolRoute("DELETE", "/chats/chat-1"), false);
+  assert.equal(isRemyToolRoute("PATCH", "/chats/chat-1"), false);
+  assert.equal(isRemyToolRoute("GET", "/chats/chat-1"), true);
+  assert.equal(isRemyToolRoute("GET", "/chats/chat-1/pull-request"), false);
+  assert.equal(isRemyToolRoute("POST", "/chats/chat-1/archive"), false);
   assert.equal(isRemyToolRoute("PATCH", "/workspaces/one"), false);
+  assert.equal(isRemyToolRoute("GET", "/workspaces/one/dirty"), false);
+  assert.equal(isRemyToolRoute("POST", "/workspaces/one/worktrees/close"), false);
   assert.equal(isRemyToolRoute("GET", "/projects/one/environments"), false);
   assert.equal(isRemyToolRoute("PATCH", "/server/settings"), false);
   // The inbox is the person's, not an agent's: an agent may read the roster

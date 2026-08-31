@@ -1,31 +1,14 @@
-import { Fragment, type ComponentType } from "react";
-import { useState } from "react";
+import { Fragment, useState, type ComponentType } from "react";
 import {
-  Archive,
-  ArchiveRestore,
   ArrowUpCircle,
   ChevronLeft,
   Clock,
-  Columns2,
   CornerDownRight,
   GitBranch,
   Pin,
-  PinOff,
   Settings2,
   SquarePen,
-  Trash2,
 } from "lucide-react";
-import { toast } from "sonner";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import {
   Sidebar,
   SidebarContent,
@@ -36,7 +19,6 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
-  SidebarMenuAction,
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -51,7 +33,7 @@ import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { deviceIcon } from "@/lib/devices";
 import { modelLabel, providerLabel, PROVIDERS } from "@/lib/providers";
 import { displayPath, plainText } from "@/lib/path";
-import { apiError } from "@/lib/api-error";
+import { ThreadMenu } from "@/components/ThreadMenu";
 import { elapsedSince, useTicker } from "@/lib/elapsed";
 import { workspaceForPath } from "@/lib/projects";
 import { cn } from "@/lib/utils";
@@ -189,8 +171,9 @@ export function AppSidebar({
                       const aggregate = aggregateThreadState([chat, ...children]);
                       return (
                         <Fragment key={chat.id}>
-                          <SidebarMenuItem>
-                            <ThreadRow
+                          <ThreadMenu chat={chat} onOpenThread={onSelectChat} onOpenBeside={onOpenBeside} onOpenWorkspace={onOpenWorkspace}>
+                            {(menuOpen) => <ThreadRow
+                              contextDisabled={menuOpen}
                               chat={{ ...chat, state: aggregate }}
                               active={selected === chat.id}
                               workspace={workspaces[workspaceForPath(chat.cwd, workspaces)]}
@@ -199,17 +182,16 @@ export function AppSidebar({
                               onSelect={() => onSelectChat(chat.id)}
                               onOpenTicket={onOpenTicket}
                               onOpenWorkspace={onOpenWorkspace}
-                            />
-                            <ThreadActions chat={chat} />
-                          </SidebarMenuItem>
+                            />}
+                          </ThreadMenu>
                           {children.map((child) => (
-                            <SubthreadRow
-                              key={child.id}
-                              chat={child}
-                              active={selected === child.id}
-                              onSelect={() => onSelectChat(child.id)}
-                              onOpenBeside={() => onOpenBeside(child.id)}
-                            />
+                            <ThreadMenu key={child.id} chat={child} onOpenThread={onSelectChat} onOpenBeside={onOpenBeside} onOpenWorkspace={onOpenWorkspace}>
+                              <SidebarMenuButton data-link size="sm" isActive={selected === child.id} className={cn("h-7 gap-1.5 pl-5 text-xs", threadRowHoverClass, threadRowActionSpaceClass)} onClick={() => onSelectChat(child.id)}>
+                                <CornerDownRight />
+                                <span className="min-w-0 flex-1 truncate">{child.title}</span>
+                                <ThreadState state={child.state} />
+                              </SidebarMenuButton>
+                            </ThreadMenu>
                           ))}
                         </Fragment>
                       );
@@ -224,17 +206,12 @@ export function AppSidebar({
                 <SidebarGroupContent>
                   <SidebarMenu>
                     {archived.map((thread) => (
-                      <ArchivedThreadItem
-                        key={`${thread.serverId}:${thread.id}`}
-                        thread={thread}
-                        childCount={thread.chatId
-                          ? archived.filter((entry) => entry.parentChatId === thread.chatId).length
-                          : 0}
-                        active={selected === thread.id}
-                        workspace={workspaces[workspaceForPath(thread.cwd, workspaces)]}
-                        server={servers.find((entry) => entry.id === thread.serverId)}
-                        onSelectChat={onSelectChat}
-                      />
+                      <ThreadMenu key={`${thread.serverId}:${thread.id}`} chat={{ ...thread, state: "idle", updatedAt: thread.archivedAt }} archive={thread} onOpenThread={onSelectChat}>
+                        <SidebarMenuButton data-link size="sm" className={cn(threadRowActionSpaceClass, threadRowHoverClass)} isActive={selected === thread.id} onClick={() => onSelectChat(thread.id)}>
+                          <WorkspaceMark home={!workspaces[workspaceForPath(thread.cwd, workspaces)]} workspace={workspaces[workspaceForPath(thread.cwd, workspaces)]} server={servers.find((entry) => entry.id === thread.serverId)} size="sm" />
+                          <span className="min-w-0 flex-1 truncate">{thread.title}</span>
+                        </SidebarMenuButton>
+                      </ThreadMenu>
                     ))}
                   </SidebarMenu>
                 </SidebarGroupContent>
@@ -278,86 +255,6 @@ function aggregateThreadState(group: Chat[]): ChatState {
   return "idle";
 }
 
-function SubthreadRow({
-  chat,
-  active,
-  onSelect,
-  onOpenBeside,
-}: {
-  chat: Chat;
-  active: boolean;
-  onSelect: () => void;
-  onOpenBeside: () => void;
-}) {
-  const archiveThread = useStore((s) => s.archiveThread);
-  const [saving, setSaving] = useState(false);
-  const running = chat.state === "working" || chat.state === "needs_input";
-
-  const archive = async () => {
-    setSaving(true);
-    try {
-      await archiveThread(chat.id);
-      toast.success("Archived the subthread.");
-    } catch (caught) {
-      toast.error("Couldn't archive that subthread", { description: apiError(caught) });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <SidebarMenuItem>
-      <SidebarMenuButton
-        data-link
-        size="sm"
-        isActive={active}
-        className={cn(
-          "h-7 gap-1.5 pl-5 pr-12 text-xs",
-          threadRowHoverClass,
-          threadRowActionSpaceClass,
-        )}
-        onClick={onSelect}
-      >
-        <CornerDownRight className="size-3 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate">{chat.title}</span>
-        <ThreadState state={chat.state} />
-      </SidebarMenuButton>
-
-      <ThreadActionFade compact />
-
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <SidebarMenuAction
-            showOnHover
-            className={threadActionLeftClass}
-            aria-label={`Archive ${chat.title}`}
-            disabled={saving || running}
-            onClick={() => void archive()}
-          >
-            <Archive />
-          </SidebarMenuAction>
-        </TooltipTrigger>
-        <TooltipContent side="top" sideOffset={6}>Archive</TooltipContent>
-      </Tooltip>
-
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <SidebarMenuAction
-            showOnHover
-            className={threadActionRightClass}
-            aria-label={`Open ${chat.title} beside its parent`}
-            disabled={saving}
-            onClick={onOpenBeside}
-          >
-            <Columns2 />
-          </SidebarMenuAction>
-        </TooltipTrigger>
-        <TooltipContent side="top" sideOffset={6}>Open beside</TooltipContent>
-      </Tooltip>
-    </SidebarMenuItem>
-  );
-}
-
 function ThreadState({ state }: { state: ChatState }) {
   const label = state === "idle"
     ? "Done"
@@ -382,211 +279,12 @@ function ThreadState({ state }: { state: ChatState }) {
 }
 
 
-/// Hover actions keep lifecycle controls beside the thread without crowding
-/// every row. A parent archive coordinates and stops its whole group.
-const threadActionLeftClass = "z-20 right-6 translate-x-1 !bg-transparent transition-[opacity,transform] duration-150 group-focus-within/menu-item:translate-x-0 group-hover/menu-item:translate-x-0 hover:!bg-transparent motion-reduce:transition-none";
-const threadActionRightClass = "z-20 translate-x-1 !bg-transparent transition-[opacity,transform] duration-150 group-focus-within/menu-item:translate-x-0 group-hover/menu-item:translate-x-0 hover:!bg-transparent motion-reduce:transition-none";
 const threadRowHoverClass = "group-focus-within/menu-item:!bg-sidebar-row-hover group-hover/menu-item:!bg-sidebar-row-hover";
-const threadRowActionSpaceClass = "pr-12 [@media(hover:hover)]:!pr-2 group-focus-within/menu-item:!pr-12 group-hover/menu-item:!pr-12";
-
-function ThreadActionFade({ compact = false }: { compact?: boolean }) {
-  return (
-    <span
-      aria-hidden
-      className={cn(
-        "pointer-events-none absolute right-1 z-10 h-5 w-[72px] bg-[linear-gradient(to_right,transparent_0,var(--sidebar-row-hover)_32px,var(--sidebar-row-hover)_100%)] transition-opacity duration-150 [@media(hover:hover)]:opacity-0 group-focus-within/menu-item:!opacity-100 group-hover/menu-item:!opacity-100 motion-reduce:transition-none",
-        compact ? "top-1" : "top-1.5",
-      )}
-    />
-  );
-}
-
-function ThreadActions({ chat }: { chat: Chat }) {
-  const pinThread = useStore((s) => s.pinThread);
-  const archiveThread = useStore((s) => s.archiveThread);
-  const [saving, setSaving] = useState(false);
-
-  const pin = async () => {
-    setSaving(true);
-    try {
-      await pinThread(chat.id, !chat.pinned);
-      toast.success(chat.pinned ? "Unpinned the thread." : "Pinned the thread.");
-    } catch (caught) {
-      toast.error(`Couldn't ${chat.pinned ? "unpin" : "pin"} that thread`, { description: apiError(caught) });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const archive = async () => {
-    setSaving(true);
-    try {
-      await archiveThread(chat.id);
-      toast.success("Archived the thread.");
-    } catch (caught) {
-      toast.error("Couldn't archive that thread", { description: apiError(caught) });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <>
-      <ThreadActionFade />
-
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <SidebarMenuAction
-            showOnHover
-            className={threadActionLeftClass}
-            aria-label={`${chat.pinned ? "Unpin" : "Pin"} ${chat.title}`}
-            disabled={saving}
-            onClick={() => void pin()}
-          >
-            {chat.pinned ? <PinOff /> : <Pin />}
-          </SidebarMenuAction>
-        </TooltipTrigger>
-        <TooltipContent side="top" sideOffset={6}>{chat.pinned ? "Unpin" : "Pin"}</TooltipContent>
-      </Tooltip>
-
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <SidebarMenuAction
-            showOnHover
-            className={threadActionRightClass}
-            aria-label={`Archive ${chat.title}`}
-            disabled={saving}
-            onClick={() => void archive()}
-          >
-            <Archive />
-          </SidebarMenuAction>
-        </TooltipTrigger>
-        <TooltipContent side="top" sideOffset={6}>Archive</TooltipContent>
-      </Tooltip>
-    </>
-  );
-}
-
-function ArchivedThreadItem({
-  thread,
-  childCount,
-  active,
-  workspace,
-  server,
-  onSelectChat,
-}: {
-  thread: ArchivedThread;
-  childCount: number;
-  active: boolean;
-  workspace?: Workspace;
-  server?: Server;
-  onSelectChat: (id: string) => void;
-}) {
-  const restoreThread = useStore((s) => s.restoreThread);
-  const deleteArchivedThread = useStore((s) => s.deleteArchivedThread);
-  const [busy, setBusy] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-
-  const restore = async () => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      const chat = await restoreThread(thread.id, thread.serverId);
-      toast.success("Unarchived the thread.");
-      onSelectChat(chat.id);
-    } catch (caught) {
-      toast.error("Couldn't unarchive that thread", { description: apiError(caught) });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const remove = async () => {
-    setBusy(true);
-    try {
-      await deleteArchivedThread(thread.id, thread.serverId);
-      toast.success("Deleted the thread.");
-    } catch (caught) {
-      toast.error("Couldn't delete that thread", { description: apiError(caught) });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <SidebarMenuItem>
-      <SidebarMenuButton
-        data-link
-        size="sm"
-        className={cn(
-          "text-muted-foreground",
-          threadRowActionSpaceClass,
-          threadRowHoverClass,
-        )}
-        disabled={busy}
-        isActive={active}
-        onClick={() => onSelectChat(thread.id)}
-      >
-        <WorkspaceMark home={!workspace} workspace={workspace} server={server} size="sm" />
-        <span className="min-w-0 flex-1 truncate text-sidebar-foreground">{thread.title}</span>
-      </SidebarMenuButton>
-
-      <ThreadActionFade compact />
-
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <SidebarMenuAction
-            showOnHover
-            className={threadActionLeftClass}
-            aria-label={`Unarchive ${thread.title}`}
-            disabled={busy}
-            onClick={() => void restore()}
-          >
-            <ArchiveRestore />
-          </SidebarMenuAction>
-        </TooltipTrigger>
-        <TooltipContent side="top" sideOffset={6}>Unarchive</TooltipContent>
-      </Tooltip>
-
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <SidebarMenuAction
-            showOnHover
-            className={threadActionRightClass}
-            aria-label={`Delete ${thread.title}`}
-            disabled={busy}
-            onClick={() => setConfirming(true)}
-          >
-            <Trash2 />
-          </SidebarMenuAction>
-        </TooltipTrigger>
-        <TooltipContent side="top" sideOffset={6}>Delete</TooltipContent>
-      </Tooltip>
-
-      <AlertDialog open={confirming} onOpenChange={setConfirming}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete {thread.title}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {childCount > 0
-                ? `This permanently deletes the thread and ${childCount} ${childCount === 1 ? "subthread" : "subthreads"}.`
-                : "This permanently deletes the archived conversation."}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={() => void remove()}>
-              Delete thread
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </SidebarMenuItem>
-  );
-}
+const threadRowActionSpaceClass = "pr-8";
 
 /// One thread in the list: what it is, where it runs, and what it is doing.
 function ThreadRow({
+  contextDisabled,
   chat,
   active,
   workspace,
@@ -596,6 +294,7 @@ function ThreadRow({
   onOpenTicket,
   onOpenWorkspace,
 }: {
+  contextDisabled: boolean;
   chat: Chat;
   active: boolean;
   workspace?: Workspace;
@@ -605,6 +304,7 @@ function ThreadRow({
   onOpenTicket: (key: string) => void;
   onOpenWorkspace: (workspaceId: string) => void;
 }) {
+  const [contextOpen, setContextOpen] = useState(false);
   const DeviceIcon = deviceIcon(server?.icon);
   const place = workspace?.name ?? displayPath(chat.cwd);
   const elapsed = chat.workingSince ? elapsedSince(chat.workingSince, now) : undefined;
@@ -690,7 +390,7 @@ function ThreadRow({
   // The row is narrow and truncates; hovering says the whole of it — the full
   // title, which machine and workspace it runs in, its branch and its ticket.
   return (
-    <HoverCard openDelay={450}>
+    <HoverCard openDelay={450} open={contextOpen && !contextDisabled} onOpenChange={setContextOpen}>
       <HoverCardTrigger asChild>{row}</HoverCardTrigger>
       <HoverCardContent side="right" align="start" className="w-72">
         <ThreadContext

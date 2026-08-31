@@ -87,6 +87,7 @@ export interface PathSuggestion {
 }
 
 export interface ConvEntry {
+  activity?: unknown;
   id: string;
   kind: "user" | "assistant" | "thinking" | "tool";
   at?: number;

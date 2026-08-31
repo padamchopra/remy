@@ -74,6 +74,13 @@ test("runtime commands receive values but their output and prompts are redacted"
   assert.equal(result.exitCode, 0);
   assert.equal(result.output, "[REDACTED] safe");
   assert.equal(await redactForCwd(workspacePath, "token exact-secret-value"), "token [REDACTED]");
+  const { redactEntry } = await import("./chat.js");
+  const entry = redactEntry({
+    id: "activity:tool", kind: "tool",
+    activity: { id: "tool", kind: "shell", provider: "claude", title: "exact-secret-value", command: "echo exact-secret-value", progress: "exact-secret-value", output: "exact-secret-value", model: "exact-secret-value", status: "running", startedAt: 1, updatedAt: 2 },
+  });
+  assert.ok(!JSON.stringify(entry).includes("exact-secret-value"));
+  assert.equal(entry.activity?.output, "[REDACTED]");
 });
 
 test("sync records converge while the receiving database remains encrypted", () => {

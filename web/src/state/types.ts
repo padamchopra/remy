@@ -147,6 +147,7 @@ export interface WorkspaceIconMatch {
 /// One rendered item in a chat's feed. `kind` picks the renderer; the rest are
 /// populated per kind. Mirrors `ConvEntry` in `server/src/transcript.ts`.
 export interface ConvEntry {
+  activity?: ThreadActivity;
   id: string;
   kind: "user" | "assistant" | "thinking" | "tool";
   at?: number;
@@ -167,6 +168,27 @@ export interface ConvEntry {
   artifacts?: ConvArtifact[];
   attachments?: ChatImageAttachment[];
   codeReferences?: ChatCodeReference[];
+}
+
+export interface ThreadActivity {
+  id: string;
+  kind: "subagent" | "shell";
+  provider: string;
+  title: string;
+  status: "running" | "waiting" | "idle" | "completed" | "failed" | "stopped" | "unknown";
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
+  parentId?: string;
+  taskId?: string;
+  toolUseId?: string;
+  model?: string;
+  background?: boolean;
+  command?: string;
+  progress?: string;
+  output?: string;
+  tokens?: number;
+  toolCount?: number;
 }
 
 export interface ChatImageAttachment {
@@ -200,12 +222,23 @@ export interface PullRequestDiffHunk {
 export interface PullRequestDiffFile {
   path: string;
   previousPath?: string;
+  deleted?: boolean;
   hunks: PullRequestDiffHunk[];
   viewed?: boolean;
 }
 
+export interface PullRequestStack {
+  number: number;
+  position: number;
+  size: number;
+  baseRefName: string;
+  entries?: { position: number; number: number; title: string; state: string; isDraft: boolean }[];
+}
+
 export interface PullRequestDiff {
   nodeId?: string;
+  headRefOid?: string;
+  baseRefOid?: string;
   workspaceId?: string;
   url: string;
   repository: string;
@@ -222,6 +255,75 @@ export interface PullRequestDiff {
   changedFiles: number;
   checks: { name: string; state: "pass" | "fail" | "pending" | "skipping" }[];
   files: PullRequestDiffFile[];
+}
+
+export interface PullRequestGuideCommit {
+  sha: string;
+  title: string;
+  author: string;
+  committedAt: string;
+}
+
+export interface PullRequestGuideHunk {
+  revision?: { head: string; base?: string; previousPath?: string; deleted?: boolean };
+  id: string;
+  path: string;
+  header: string;
+  lines: PullRequestDiffLine[];
+}
+
+export interface PullRequestQuestionSource {
+  path: string;
+  head?: string;
+  header: string;
+  lines: PullRequestDiffLine[];
+}
+
+export interface PullRequestQuestion {
+  id: string;
+  repository: string;
+  number: number;
+  source: PullRequestQuestionSource;
+  start: number;
+  end: number;
+  question: string;
+  answer: string;
+  provider: string;
+  model: string;
+  createdAt: number;
+}
+
+export interface PullRequestGuideStep {
+  id: string;
+  title: string;
+  summary: string;
+  hunkIds: string[];
+}
+
+export interface PullRequestGuideQuestion {
+  id: string;
+  stepId: string;
+  hunkId: string;
+  start: number;
+  end: number;
+  question: string;
+  answer: string;
+  createdAt: number;
+}
+
+export interface PullRequestGuide {
+  repository: string;
+  number: number;
+  provider: string;
+  model: string;
+  effort: string;
+  commitShas: string[];
+  commits: PullRequestGuideCommit[];
+  hunks: PullRequestGuideHunk[];
+  steps: PullRequestGuideStep[];
+  uncoveredHunkIds?: string[];
+  questions: PullRequestGuideQuestion[];
+  createdAt: number;
 }
 
 export interface PullRequestTimelineItem {

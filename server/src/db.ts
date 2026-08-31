@@ -284,6 +284,21 @@ function migrate(database: DatabaseSync): void {
       primary key (chat_id, entry_id)
     );
     create index if not exists cursor_cloud_entries_order on cursor_cloud_entries(chat_id, seq);
+    create table if not exists pull_request_guides (
+      repository text not null,
+      number integer not null,
+      json text not null,
+      updated_at integer not null,
+      primary key (repository, number)
+    );
+    create table if not exists pull_request_questions (
+      id text primary key,
+      repository text not null,
+      number integer not null,
+      json text not null,
+      created_at integer not null
+    );
+    create index if not exists pull_request_questions_pr on pull_request_questions(repository, number, created_at);
   `);
   try {
     database.exec("alter table workspaces add column icon text");
@@ -408,7 +423,7 @@ function migrate(database: DatabaseSync): void {
   // replaced them, and a table nothing reads is worth dropping rather than
   // carrying.
   database.exec("drop table if exists loops");
-  database.exec("pragma user_version = 8");
+  database.exec("pragma user_version = 9");
 }
 
 export function getKv<T>(key: string): T | undefined {

@@ -85,6 +85,7 @@ import {
   type ChatImageAttachment,
 } from "./transcript.js";
 import { codeReferencePrompt } from "./chat-references.js";
+import { ThreadActivityTracker } from "./thread-activity.js";
 import { claudeTicketMcpServer, ticketPromptContext } from "./ticket-tools.js";
 import { remyToolToken } from "./ticket-tool-auth.js";
 import { forgetChat, linkTicketFromWorkPrompt, syncTicketFromThread } from "./tickets.js";
@@ -335,7 +336,7 @@ function str(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-class Chat {
+export class Chat {
   record: ChatRecord;
   private currentState: ChatState = "idle";
   /// When the current run of work began, so a client can say how long a chat
@@ -364,6 +365,7 @@ class Chat {
   private cursorTurnId = "";
   private cursorMessages = new Map<string, string>();
   private claudeQueue: ChatPrompt[] = [];
+  private claudeInterrupted = false;
   private restartAfterTurn = false;
   private activePermissionMode?: ChatPermissionMode;
   private pending = new Map<string, (result: PermissionResult) => void>();
@@ -380,13 +382,16 @@ class Chat {
   private deleted = false;
   private peakTokens = 0;
   private compactions = 0;
+  private activity: ThreadActivityTracker;
   // The exact `questions` array Claude sent, echoed back with the answers.
   private lastQuestionInput: unknown[] = [];
 
-  constructor(record: ChatRecord) {
+  constructor(record: ChatRecord, private readonly claudeQuery: typeof query = query) {
     this.record = record;
     this.peakTokens = Math.max(record.context?.peakTokens ?? 0, record.context?.tokens ?? 0);
     for (const entry of record.entries) this.byId.set(entry.id, entry);
+    this.activity = new ThreadActivityTracker(record.entries, (entry) => this.upsert(entry));
+    this.activity.disconnected();
   }
 
   get id(): string {
@@ -579,6 +584,7 @@ This is the agent's Inbox conversation. When the person signals that something s
       this.persist();
       return;
     }
+    this.claudeInterrupted = false;
     const session = await this.start();
     session.queue.push(userMessage(this.record.id, agentPrompt));
     this.push();
@@ -588,6 +594,7 @@ This is the agent's Inbox conversation. When the person signals that something s
   /// Interrupts the running turn. Anything the agent is blocked on is denied
   /// first — a permission request that outlives its turn would block the next.
   async interrupt(): Promise<void> {
+    this.claudeInterrupted = true;
     this.settlePending("User stopped the turn.");
     // Anything typed while it was working was never sent, so it goes too.
     this.codexQueue = [];
@@ -801,7 +808,7 @@ This is the agent's Inbox conversation. When the person signals that something s
         if (text) console.error(`chat ${this.record.id}: ${text}`);
       },
     };
-    const handle = query({ prompt: queue, options });
+    const handle = this.claudeQuery({ prompt: queue, options });
     const live = { query: handle, queue };
     this.live = live;
     // Fire-and-forget, but never silently: this promise is the whole turn.
@@ -812,6 +819,7 @@ This is the agent's Inbox conversation. When the person signals that something s
   private async pump(live: { query: Query; queue: PromptQueue }): Promise<void> {
     try {
       for await (const message of live.query) {
+        if (this.live !== live) break;
         try {
           this.handle(message);
         } catch (error) {
@@ -819,6 +827,7 @@ This is the agent's Inbox conversation. When the person signals that something s
         }
       }
     } catch (error) {
+      if (this.live !== live) return;
       const message = error instanceof Error ? error.message : String(error);
       this.record.error = message;
       this.state = "error";
@@ -831,8 +840,10 @@ This is the agent's Inbox conversation. When the person signals that something s
         highPriority: true,
       });
     } finally {
+      // A retired session may finish after its replacement has started.
+      if (this.live !== live) return;
       const restart = this.restartAfterTurn;
-      if (this.live === live) this.live = undefined;
+      this.live = undefined;
       this.settlePending("The Claude session ended.");
       this.openBlocks.clear();
       if (this.state === "working") this.state = "idle";
@@ -856,6 +867,15 @@ This is the agent's Inbox conversation. When the person signals that something s
 
   private handle(message: SDKMessage): void {
     this.lastActivity = nowMs();
+    const frame = message as unknown as Record<string, any>;
+    const activeTurn = !frame.parent_tool_use_id && (message.type === "assistant"
+      || message.type === "stream_event" && frame.event?.type === "message_start");
+    // Claude can continue a live session without another send from Remy.
+    if (activeTurn && this.state === "idle" && !this.claudeInterrupted) {
+      this.state = this.pending.size > 0 ? "needs_input" : "working";
+      this.push();
+    }
+    if (this.activity.claude(message as unknown as Record<string, any>)) return;
     switch (message.type) {
       case "system":
         this.handleSystem(message as Record<string, unknown>);
@@ -1222,6 +1242,10 @@ This is the agent's Inbox conversation. When the person signals that something s
   private handleCursorEvent(event: CursorEvent): void {
     this.lastActivity = nowMs();
     switch (event.type) {
+      case "session.closed":
+        this.cursorSession = undefined;
+        this.activity.disconnected();
+        return;
       case "session.started":
         if (event.sessionId !== this.record.cursorSessionId) {
           this.record.cursorSessionId = event.sessionId;
@@ -1254,6 +1278,7 @@ This is the agent's Inbox conversation. When the person signals that something s
         return;
       case "tool.updated": {
         const entry = cursorEntry(event.toolCall, this.cursorTurnId);
+        this.activity.cursor(event.toolCall, entry);
         this.upsert(entry);
         this.action = `${entry.verb ?? ""} ${entry.arg ?? ""}`.trim();
         this.push();
@@ -1378,8 +1403,16 @@ This is the agent's Inbox conversation. When the person signals that something s
   }
 
   private handleCodexEvent(event: CodexEvent): void {
+    if (event.type === "activity") {
+      this.activity.codex(event.method, event.params, event.parentThreadId);
+      return;
+    }
     this.lastActivity = nowMs();
     switch (event.type) {
+      case "session.closed":
+        this.codexSession = undefined;
+        this.activity.disconnected();
+        return;
       case "thread.started":
         // Recorded before anything else can fail: this is what a later turn
         // resumes, and without it the conversation starts over.
@@ -1791,6 +1824,7 @@ This is the agent's Inbox conversation. When the person signals that something s
 
   push(): void {
     if (this.deleted) return;
+    if (!this.isLive) this.activity.disconnected();
     broadcast({ type: "chat", chatId: this.record.id, ...this.stateFields() });
     syncSleepAssertion();
   }
@@ -1825,6 +1859,11 @@ function blockKind(type: unknown): ConvEntry["kind"] | undefined {
 /// first delta happened to carry. `redactEntry(entry) === entry` is what keeps
 /// that from happening, and it is what the test asserts.
 export function redactEntry(entry: ConvEntry): ConvEntry {
+  if (entry.activity) {
+    for (const key of ["title", "command", "progress", "output", "model"] as const) {
+      if (entry.activity[key] !== undefined) entry.activity[key] = redactKnownSecrets(entry.activity[key]!);
+    }
+  }
   if (entry.text !== undefined) entry.text = redactKnownSecrets(entry.text);
   if (entry.arg !== undefined) entry.arg = redactKnownSecrets(entry.arg);
   if (entry.output !== undefined) entry.output = redactKnownSecrets(entry.output);

@@ -58,7 +58,7 @@ export function ThreadScreen({ id }: { id: string }) {
   const open = detail?.id === chat.id ? detail : undefined;
   const state = open?.state ?? chat.state;
   const working = state === "working";
-  const entries = open?.entries ?? [];
+  const entries = (open?.entries ?? []).filter((entry) => !entry.activity);
   const workspace = workspaces[workspaceForPath(chat.cwd, workspaces)];
   const server = servers.find((entry) => entry.id === chat.serverId);
   const cloud = server?.cloud === true;

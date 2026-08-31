@@ -262,6 +262,10 @@ test("reports usage and measured performance for one thread only", () => {
     todos: [],
   });
   for (const entry of entries) storage.saveEntry("thread-metrics", entry);
+  storage.saveEntry("thread-metrics", {
+    id: "activity:child", kind: "tool", at: createdAt + 100,
+    activity: { id: "child", kind: "subagent", provider: "cursor", title: "Review", status: "running", startedAt: createdAt + 100, updatedAt: createdAt + 2_000 },
+  });
 
   const analytics = threadAnalytics("thread-metrics", { state: "idle" }, createdAt + 5_000);
   assert.equal(analytics?.usage.totalTokens, 0);
@@ -281,5 +285,7 @@ test("reports usage and measured performance for one thread only", () => {
   assert.equal(performance?.turnDuration.medianMs, 2_000);
   assert.equal(performance?.toolDuration.p95Ms, 1_000);
   assert.equal(performance?.tools.succeeded, 3);
+  assert.equal(performance?.tools.total, 3);
+  assert.equal(performance?.tools.running, 0);
   assert.equal(performance?.live, true);
 });

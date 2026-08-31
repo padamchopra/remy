@@ -157,10 +157,11 @@ export async function callPeer<T>(
     filename?: string;
     contentType?: string;
     peerAuth?: boolean;
+    timeoutMs?: number;
   } = {},
 ): Promise<T> {
   if (init.body !== undefined && init.rawBody !== undefined) throw new Error("a peer request has one body");
-  const signal = AbortSignal.timeout(init.rawBody ? 120_000 : REQUEST_TIMEOUT_MS);
+  const signal = AbortSignal.timeout(init.timeoutMs ?? (init.rawBody ? 120_000 : REQUEST_TIMEOUT_MS));
   const method = init.method ?? "GET";
   const timestamp = String(Date.now());
   const peerSignature = init.peerAuth
@@ -553,7 +554,8 @@ export async function proxyToPeer<T>(
   const peer = getPeer(peerId);
   if (!peer) throw new Error("that device is not paired");
   try {
-    const result = await callPeer<T>(peer, path, init);
+    const guideWrite = init.method === "POST" && /^\/pull-requests\/guide(?:\/question)?$/.test(path);
+    const result = await callPeer<T>(peer, path, { ...init, ...(guideWrite ? { timeoutMs: 150_000 } : {}) });
     seen(peer.id);
     return result;
   } catch (error) {

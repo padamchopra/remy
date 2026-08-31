@@ -243,6 +243,8 @@ test("pull request view combines review state, checks, and files", () => {
     body: "## Summary\nAdds the flight deck.",
     baseRefName: "main",
     headRefName: "feature/flight-deck",
+    headRefOid: "a".repeat(40),
+    baseRefOid: "b".repeat(40),
     state: "OPEN",
     isDraft: false,
     reviewDecision: "CHANGES_REQUESTED",
@@ -267,4 +269,13 @@ test("pull request view combines review state, checks, and files", () => {
   assert.equal(result.reviewDecision, "CHANGES_REQUESTED");
   assert.deepEqual(result.checks.map((check) => check.state), ["pass", "fail"]);
   assert.equal(result.files[0].path, "src/new.ts");
+  assert.equal(result.headRefOid, "a".repeat(40));
+  assert.equal(result.baseRefOid, "b".repeat(40));
+});
+
+test("deleted files retain their original path and side for full-file reads", () => {
+  const [file] = parsePullRequestPatch("diff --git a/src/old.ts b/src/old.ts\ndeleted file mode 100644\n--- a/src/old.ts\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-one\n-two\n");
+  assert.equal(file.path, "src/old.ts");
+  assert.equal(file.deleted, true);
+  assert.deepEqual(file.hunks[0].lines.map((line) => line.oldLine), [1, 2]);
 });

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent, type WheelEvent } from "react";
-import { ArrowLeft, ArrowRight, ArrowUpRight, ChartNoAxesCombined, Gauge, GitPullRequest, Globe2, Maximize2, Monitor, MousePointer2, PanelRight, Plus, RefreshCw, Smartphone, X } from "lucide-react";
+import { Activity, ArrowLeft, ArrowRight, ArrowUpRight, ChartNoAxesCombined, Gauge, GitPullRequest, Globe2, Maximize2, Monitor, MousePointer2, PanelRight, Plus, RefreshCw, Smartphone, X } from "lucide-react";
 import { toast } from "sonner";
 import { ThreadAnalyticsTool, ThreadPerformanceTool } from "@/components/ThreadInsights";
 import { PullRequestView } from "@/components/PullRequestView";
+import { ThreadActivityTool } from "@/components/ThreadActivity";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -21,7 +22,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { apiError } from "@/lib/api-error";
 import { transport } from "@/lib/transport";
 import { cn } from "@/lib/utils";
-import type { ChatCodeReference } from "@/state/types";
+import type { ChatCodeReference, ThreadActivity } from "@/state/types";
 
 export interface SharedBrowserView {
   browserId?: string;
@@ -40,7 +41,7 @@ export interface SharedBrowserView {
 
 export interface ThreadToolTab {
   id: string;
-  type: "browser" | "analytics" | "performance" | "pull-request";
+  type: "browser" | "analytics" | "performance" | "pull-request" | "activity";
   repository?: string;
   pullRequestNumber?: number;
 }
@@ -238,6 +239,11 @@ export function useThreadTools(
     addAnalytics: () => addInsight("analytics"),
     addPerformance: () => addInsight("performance"),
     addPullRequest: () => showPullRequest(),
+    addActivity: () => {
+      setTabs((current) => current.some((tab) => tab.type === "activity") ? current : [...current, { id: "activity", type: "activity" }]);
+      setActiveTab("activity");
+      setShown(true);
+    },
     openLink,
     canAddBrowser: supportsInstances || !tabs.some((tab) => tab.type === "browser"),
     closeTab,
@@ -288,6 +294,9 @@ export function ThreadToolsSidebar({
   addAnalytics,
   addPerformance,
   addPullRequest,
+  addActivity,
+  activities,
+  activityConnected,
   codeReferences,
   onAddReference,
   onRemoveReference,
@@ -306,6 +315,9 @@ export function ThreadToolsSidebar({
   addAnalytics: () => void;
   addPerformance: () => void;
   addPullRequest: () => void;
+  addActivity: () => void;
+  activities: ThreadActivity[];
+  activityConnected: boolean;
   codeReferences: ChatCodeReference[];
   onAddReference: (reference: ChatCodeReference) => void;
   onRemoveReference: (id: string) => void;
@@ -354,6 +366,10 @@ export function ThreadToolsSidebar({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start">
                 <DropdownMenuGroup>
+                  <DropdownMenuItem onSelect={addActivity}>
+                    <Activity />
+                    Running work
+                  </DropdownMenuItem>
                   <DropdownMenuItem onSelect={addBrowser} disabled={!canAddBrowser}>
                     <Globe2 />
                     Browser
@@ -388,6 +404,8 @@ export function ThreadToolsSidebar({
                 <ThreadAnalyticsTool chatId={chatId} serverId={serverId} enabled={visible && activeTab === tab.id} />
               ) : tab.type === "performance" ? (
                 <ThreadPerformanceTool chatId={chatId} serverId={serverId} enabled={visible && activeTab === tab.id} />
+              ) : tab.type === "activity" ? (
+                <ThreadActivityTool activities={activities} connected={activityConnected} />
               ) : (
                 <PullRequestView
                   chatId={tab.repository && tab.pullRequestNumber ? undefined : chatId}
@@ -407,6 +425,7 @@ export function ThreadToolsSidebar({
           <div className="w-full max-w-md">
             <p className="mb-3 px-1 text-xs font-medium text-muted-foreground">Open beside this thread</p>
             <ItemGroup className="gap-1.5">
+              <ToolLaunchItem icon={Activity} label="Running work" onClick={addActivity} />
               <ToolLaunchItem icon={Globe2} label="Browser" onClick={addBrowser} />
               <ToolLaunchItem icon={GitPullRequest} label="Pull request" onClick={addPullRequest} />
               <ToolLaunchItem icon={ChartNoAxesCombined} label="Analytics" onClick={addAnalytics} />
@@ -441,11 +460,12 @@ function ToolLaunchItem({
 }
 
 function toolLabel(tab: ThreadToolTab, typeIndex: number): string {
-  const label = tab.type === "analytics" ? "Analytics" : tab.type === "performance" ? "Performance" : tab.type === "pull-request" ? "Pull request" : "Browser";
+  const label = tab.type === "activity" ? "Running work" : tab.type === "analytics" ? "Analytics" : tab.type === "performance" ? "Performance" : tab.type === "pull-request" ? "Pull request" : "Browser";
   return typeIndex > 0 ? `${label} ${typeIndex + 1}` : label;
 }
 
 function toolIcon(type: ThreadToolTab["type"]) {
+  if (type === "activity") return Activity;
   if (type === "analytics") return ChartNoAxesCombined;
   if (type === "performance") return Gauge;
   if (type === "pull-request") return GitPullRequest;

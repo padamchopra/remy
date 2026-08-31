@@ -411,9 +411,11 @@ export function App() {
   }, replace);
 
   const openBeside = (childId: string) => {
-    const child = allChats.find((chat) => chat.id === childId);
+    // Creation may finish before this render's catalogue contains the child.
+    const currentChats = useStore.getState().chats;
+    const child = currentChats.find((chat) => chat.id === childId);
     if (!child?.parentChatId) return openChat(childId);
-    const parent = allChats.find((chat) => chat.id === child.parentChatId);
+    const parent = currentChats.find((chat) => chat.id === child.parentChatId);
     if (!parent) return openChat(childId);
     const current = route.name === "threads" && route.threadId === parent.id
       ? decodeThreadLayout(route.layout) ?? threadLeaf(parent.id)
@@ -599,7 +601,7 @@ export function App() {
             onDeleted={() => go({ name: "inbox" }, true)}
           />
         ) : openWorkspace ? (
-          <WorkspaceSettings workspace={openWorkspace} onBack={() => go({ name: "workspaces" })} />
+          <WorkspaceSettings key={`${openWorkspace.serverId}:${openWorkspace.id}`} workspace={openWorkspace} onBack={() => go({ name: "workspaces" })} />
         ) : (
           <main className="flex min-w-0 flex-1 flex-col">
             {section === "chats" && active ? (

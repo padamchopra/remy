@@ -29,14 +29,17 @@ export function PaneHeader({
   /// rather than inside them: a tab strip is a place you go, not a place you
   /// have been, and a breadcrumb's last item is not something to click.
   tabs,
+  selection,
   children,
 }: {
   crumbs: Crumb[];
   tabs?: ReactNode;
+  selection?: ReactNode;
   children?: ReactNode;
 }) {
   return (
     <div className="flex shrink-0 items-center gap-3 border-b border-border px-5 py-4">
+      {selection ? selection : <>
       <Breadcrumb className="min-w-0">
         <BreadcrumbList className="flex-nowrap gap-1.5 sm:gap-1.5">
           {crumbs.map((crumb, index) => {
@@ -66,6 +69,7 @@ export function PaneHeader({
       </Breadcrumb>
       {tabs}
       {children && <div className="ml-auto flex shrink-0 items-center gap-3">{children}</div>}
+      </>}
     </div>
   );
 }

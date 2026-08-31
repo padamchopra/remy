@@ -105,6 +105,7 @@ import { AgentMark } from "@/components/AgentAvatar";
 import { PaneHeader, type Crumb } from "@/components/PaneHeader";
 import { ModelPickerButton, useProvider } from "@/components/ModelPicker";
 import { ProviderMark } from "@/components/ProviderMark";
+import { WorkingMarker } from "@/components/WorkingMarker";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Markdown } from "@/components/Markdown";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
@@ -127,6 +128,8 @@ import { displayPath } from "@/lib/path";
 import { workspaceForPath } from "@/lib/projects";
 import { PROVIDERS } from "@/lib/providers";
 import { cn } from "@/lib/utils";
+import { workingToolGroupId } from "@/lib/working-tool";
+import { activityRunning, threadActivities } from "@/lib/thread-activity";
 import { useStore } from "@/state/store";
 import type { Agent, ArchivedThread, Chat, ChatApproval, ChatCodeReference, ChatQuestionRequest, ConvArtifact, ConvDiffLine, ConvEntry } from "@/state/types";
 
@@ -286,13 +289,14 @@ export function ChatView({
   );
   const visibleEntries = useMemo(
     () => renderedEntries.filter(
-      (entry) => conversational
+      (entry) => !entry.activity && (conversational
         ? entry.kind === "user" || entry.kind === "assistant" || Boolean(entry.artifacts?.length)
-        : entry.kind !== "thinking" || Boolean(entry.text?.trim()),
+        : entry.kind !== "thinking" || Boolean(entry.text?.trim())),
     ),
     [conversational, renderedEntries],
   );
   const feedItems = useMemo(() => groupToolEntries(visibleEntries), [visibleEntries]);
+  const workingToolId = useMemo(() => workingToolGroupId(visibleEntries, working), [visibleEntries, working]);
   const feedTurns = useMemo(() => groupFeedTurns(feedItems), [feedItems]);
   const checkpoints = useMemo(
     () => conversational ? [] : feedTurns.flatMap((turn): ThreadCheckpoint[] => {
@@ -346,6 +350,8 @@ export function ChatView({
 
   const permission = cloud ? cloudModeOf(open?.permissionMode) : permissionOf(open?.permissionMode);
   const provider = useProvider(open?.provider ?? chat.provider ?? "claude");
+  const activityConnected = server?.online === true;
+  const activities = useMemo(() => threadActivities(entries, open?.provider ?? chat.provider ?? "claude", working, activityConnected), [entries, open?.provider, chat.provider, working, activityConnected]);
   const asks = provider?.approvals !== false;
 
   const setOption = async (
@@ -399,7 +405,7 @@ export function ChatView({
         )}
         {focused && !conversational && !archived && (
           <ThreadToolsButton
-            active={threadTools.active}
+            active={threadTools.active || activities.some(activityRunning)}
             shown={threadTools.shown}
             onClick={() => threadTools.setShown(!threadTools.shown)}
           />
@@ -422,6 +428,9 @@ export function ChatView({
             addAnalytics={threadTools.addAnalytics}
             addPerformance={threadTools.addPerformance}
             addPullRequest={threadTools.addPullRequest}
+            addActivity={threadTools.addActivity}
+            activities={activities}
+            activityConnected={activityConnected}
             codeReferences={codeReferences}
             onAddReference={(reference) => setCodeReferences((current) => [...current, reference])}
             onRemoveReference={(id) => setCodeReferences((current) => current.filter((reference) => reference.id !== id))}
@@ -480,6 +489,7 @@ export function ChatView({
                 <ToolGroup
                   key={`tools:${item.entries[0].id}`}
                   entries={item.entries}
+                  working={item.entries[0].id === workingToolId}
                   onOpenTicket={onOpenTicket}
                   onOpenThread={onOpenThread}
                   onOpenWorkspace={onOpenWorkspace}
@@ -527,15 +537,8 @@ export function ChatView({
             })
           )}
 
-          {conversational && working && persona && (
-            <Marker role="status" aria-live="polite">
-              <MarkerIcon className="size-8">
-                <AgentMark agent={persona} className="size-8" />
-              </MarkerIcon>
-              <MarkerContent className="shimmer">
-                <span className="font-medium">{persona.name}</span> is working…
-              </MarkerContent>
-            </Marker>
+          {working && (
+            <WorkingMarker provider={provider?.id ?? "claude"} label={provider?.label ?? "Claude"} workingSince={chat.workingSince} />
           )}
 
           {(approval || question || open?.error) && (
@@ -1551,12 +1554,14 @@ function ToolEntry({ entry }: { entry: ConvEntry }) {
 
 function ToolGroup({
   entries,
+  working,
   onOpenTicket,
   onOpenThread,
   onOpenWorkspace,
   onOpenRoutine,
 }: {
   entries: ConvEntry[];
+  working: boolean;
   onOpenTicket?: (key: string) => void;
   onOpenThread?: (id: string) => void;
   onOpenWorkspace?: (workspaceId: string) => void;
@@ -1575,7 +1580,7 @@ function ToolGroup({
             <MarkerIcon className={failed > 0 ? "text-destructive" : undefined}>
               {failed > 0 ? <CircleAlert /> : stopped > 0 ? <CircleStop /> : <Wrench />}
             </MarkerIcon>
-            <MarkerContent>{toolGroupSummary(entries)}</MarkerContent>
+            <MarkerContent className={working ? "shimmer" : undefined}>{toolGroupSummary(entries)}</MarkerContent>
             {failed > 0 && <Badge variant="destructive">{failed} failed</Badge>}
             {stopped > 0 && (
               <Badge variant="secondary">{stopped === 1 ? "Stopped" : `${stopped} stopped`}</Badge>

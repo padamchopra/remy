@@ -33,6 +33,7 @@ export interface ChatCodeReference {
 // A single rendered item in the conversation feed. `kind` picks the renderer on
 // the client; the other fields are populated per kind.
 export interface ConvEntry {
+  activity?: import("./thread-activity.js").ThreadActivity;
   id: string;
   kind: "user" | "assistant" | "thinking" | "tool";
   /// When Remy first saw this item. Older entries may not carry timing data.

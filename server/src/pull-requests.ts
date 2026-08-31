@@ -1,4 +1,5 @@
 import { run as exec } from "./run.js";
+import { pullRequestStacks, type PullRequestStack } from "./pull-request-stacks.js";
 import { listWorkspaces, type Workspace } from "./workspaces.js";
 
 export interface PullRequestCheck {
@@ -30,6 +31,7 @@ export interface PullRequestTimelineItem {
 }
 
 export interface AuthoredPullRequest {
+  stack?: PullRequestStack | null;
   url: string;
   number: number;
   title: string;
@@ -71,12 +73,15 @@ export interface PullRequestDiffHunk {
 export interface PullRequestDiffFile {
   path: string;
   previousPath?: string;
+  deleted?: boolean;
   hunks: PullRequestDiffHunk[];
   viewed?: boolean;
 }
 
 export interface PullRequestDiff {
   nodeId?: string;
+  headRefOid?: string;
+  baseRefOid?: string;
   url: string;
   repository: string;
   number: number;
@@ -128,6 +133,11 @@ async function pullRequestsForWorkspace(
       { cwd: workspace.path, timeout: 30_000 },
     );
     const pullRequests = parseAuthoredPullRequests(stdout, workspace, new Set(unread.keys()));
+    const stacks = await pullRequestStacks(repositoryName(workspace), pullRequests.map((pr) => pr.number))
+      .catch(() => new Map<number, PullRequestStack | null>());
+    for (const pr of pullRequests) {
+      if (stacks.has(pr.number)) pr.stack = stacks.get(pr.number);
+    }
     return Promise.all(pullRequests.map(async (pullRequest) => {
       const attention = unread.get(pullRequestKey(pullRequest.repository, pullRequest.number));
       if (!attention) return pullRequest;
@@ -435,17 +445,20 @@ export async function pullRequestTimeline(repository: string, number: number): P
 
 export async function pullRequestDiff(repository: string, number: number, cwd?: string): Promise<PullRequestDiff> {
   const fields = [
-    "number", "title", "url", "body", "baseRefName", "headRefName", "state", "isDraft",
+    "number", "title", "url", "body", "baseRefName", "headRefName", "baseRefOid", "headRefOid", "state", "isDraft",
     "reviewDecision", "additions", "deletions", "changedFiles", "statusCheckRollup",
   ].join(",");
   const options = { ...(cwd ? { cwd } : {}), timeout: 30_000 };
-  const [view, patch, fileViews] = await Promise.all([
+  const [view, fileViews] = await Promise.all([
     exec("gh", ["pr", "view", String(number), "--repo", repository, "--json", fields], options),
-    // The default is the aggregate PR diff. `--patch` emits one patch per
-    // commit, repeating files and giving comments the wrong line space.
-    exec("gh", ["pr", "diff", String(number), "--repo", repository], options),
     pullRequestFileViews(repository, number).catch(() => undefined),
   ]);
+  const metadata = asRecord(JSON.parse(view.stdout));
+  const base = stringValue(metadata.baseRefOid);
+  const head = stringValue(metadata.headRefOid);
+  if (!/^[a-f0-9]{40}$/i.test(base) || !/^[a-f0-9]{40}$/i.test(head)) throw new Error("Couldn't resolve this pull request's commits. Try again.");
+  // Pin both the aggregate diff and later context reads before the branch can move.
+  const patch = await exec("gh", ["api", `repos/${repository}/compare/${base}...${head}`, "-H", "Accept: application/vnd.github.diff"], { ...options, maxBuffer: 20 * 1024 * 1024 });
   const result = parsePullRequestView(view.stdout, patch.stdout, repository, number);
   if (!fileViews) return result;
   return {
@@ -464,6 +477,8 @@ export function parsePullRequestView(
   const metadata = asRecord(JSON.parse(raw || "{}"));
   return {
     url: stringValue(metadata.url) || `https://github.com/${repository}/pull/${number}`,
+    ...(metadata.headRefOid ? { headRefOid: stringValue(metadata.headRefOid) } : {}),
+    ...(metadata.baseRefOid ? { baseRefOid: stringValue(metadata.baseRefOid) } : {}),
     repository,
     number,
     title: stringValue(metadata.title) || `Pull request #${number}`,
@@ -510,6 +525,7 @@ export function parsePullRequestPatch(raw: string): PullRequestDiffFile[] {
       hunk = undefined;
       continue;
     }
+    if (file && line.startsWith("deleted file mode ")) file.deleted = true;
     const hunkMatch = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/);
     if (file && hunkMatch) {
       oldLine = Number(hunkMatch[1]);
