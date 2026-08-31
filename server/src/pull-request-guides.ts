@@ -21,6 +21,7 @@ export interface PullRequestGuideCommit {
 }
 
 export interface PullRequestGuideHunk {
+  revision?: { head: string; base?: string; previousPath?: string; deleted?: boolean };
   id: string;
   path: string;
   header: string;
@@ -149,10 +150,7 @@ async function buildPullRequestGuide(input: GenerateGuideInput): Promise<PullReq
   const selected = selectedCommits(commits, input.commitShas);
   const inherited = await guideDefaultChoice(input.repository, input.chatId);
   const choice = validateChoice(input, inherited);
-  const patch = await patchForSelection(input.repository, input.number, commits, selected);
-  if (!patch.trim()) throw new Error("the selected commits have no text changes to guide");
-  if (patch.length > MAX_PATCH_CHARS) throw new Error("the selected changes are too large for one guide");
-  const hunks = flattenGuideHunks(parsePullRequestPatch(patch));
+  const hunks = await hunksForSelection(input.repository, input.number, commits, selected);
   if (hunks.length === 0) throw new Error("the selected commits have no changes to guide");
 
   const answer = await modelAnswer(choice, guidePrompt(input.repository, input.number, selected, hunks));
@@ -285,26 +283,34 @@ function selectedCommits(commits: PullRequestGuideCommit[], value: unknown): Pul
   return selected;
 }
 
-async function patchForSelection(
+async function hunksForSelection(
   repository: string,
   number: number,
   commits: PullRequestGuideCommit[],
   selected: PullRequestGuideCommit[],
-): Promise<string> {
+): Promise<PullRequestGuideHunk[]> {
   if (selected.length === commits.length && selected.every((commit, index) => commit.sha === commits[index]?.sha)) {
     const diff = await pullRequestDiff(repository, number);
-    return serializeFiles(diff.files);
+    if (serializeFiles(diff.files).length > MAX_PATCH_CHARS) throw new Error("the selected changes are too large for one guide");
+    return flattenGuideHunks(diff.files, diff.headRefOid ? { head: diff.headRefOid, base: diff.baseRefOid } : undefined);
   }
-  const patches: string[] = [];
+  const hunks: PullRequestGuideHunk[] = [];
+  let size = 0;
   for (const commit of selected) {
     const { stdout } = await exec(
       "gh",
       ["api", `repos/${repository}/commits/${commit.sha}`, "-H", "Accept: application/vnd.github.diff"],
       { timeout: 30_000 },
     );
-    patches.push(stdout);
+    size += stdout.length;
+    if (size > MAX_PATCH_CHARS) throw new Error("the selected changes are too large for one guide");
+    const files = parsePullRequestPatch(stdout);
+    const parent = files.some((file) => file.deleted)
+      ? (await exec("gh", ["api", `repos/${repository}/commits/${commit.sha}`, "--jq", ".parents[0].sha"], { timeout: 30_000 })).stdout.trim()
+      : undefined;
+    for (const hunk of flattenGuideHunks(files, { head: commit.sha, base: parent })) hunks.push({ ...hunk, id: `H${hunks.length + 1}` });
   }
-  return patches.join("\n");
+  return hunks;
 }
 
 function serializeFiles(files: Awaited<ReturnType<typeof pullRequestDiff>>["files"]): string {
@@ -317,7 +323,7 @@ function serializeFiles(files: Awaited<ReturnType<typeof pullRequestDiff>>["file
   ]).join("\n");
 }
 
-export function flattenGuideHunks(files: ReturnType<typeof parsePullRequestPatch>): PullRequestGuideHunk[] {
+export function flattenGuideHunks(files: ReturnType<typeof parsePullRequestPatch>, revision?: { head: string; base?: string }): PullRequestGuideHunk[] {
   let next = 1;
   return files.flatMap((file) => file.hunks.length > 0
     ? file.hunks.map((hunk) => ({
@@ -325,12 +331,14 @@ export function flattenGuideHunks(files: ReturnType<typeof parsePullRequestPatch
         path: file.path,
         header: hunk.header,
         lines: hunk.lines,
+        ...(revision ? { revision: { ...revision, previousPath: file.previousPath, deleted: file.deleted } } : {}),
       }))
     : [{
         id: `H${next++}`,
         path: file.path,
         header: file.previousPath ? `Renamed from ${file.previousPath}` : "No text preview",
         lines: [],
+        ...(revision ? { revision: { ...revision, previousPath: file.previousPath, deleted: file.deleted } } : {}),
       }]);
 }
 
@@ -507,6 +515,7 @@ function isSavedGuide(value: unknown, repository: string, number: number): value
     && Array.isArray(guide.hunks) && guide.hunks.every((value) => {
       const hunk = record(value);
       return [hunk.id, hunk.path, hunk.header].every((field) => typeof field === "string")
+        && (hunk.revision === undefined || validGuideRevision(hunk.revision))
         && Array.isArray(hunk.lines) && hunk.lines.every((value) => {
           const line = record(value);
           return ["add", "del", "ctx"].includes(String(line.kind)) && typeof line.text === "string"
@@ -522,6 +531,15 @@ function isSavedGuide(value: unknown, repository: string, number: number): value
       return [question.id, question.stepId, question.hunkId, question.question, question.answer].every((field) => typeof field === "string")
         && [question.start, question.end, question.createdAt].every((field) => typeof field === "number");
     });
+}
+
+function validGuideRevision(value: unknown): boolean {
+  const revision = record(value);
+  const sha = (value: unknown) => typeof value === "string" && /^[a-f0-9]{40}$/i.test(value);
+  return sha(revision.head)
+    && (revision.base === undefined || sha(revision.base))
+    && (revision.previousPath === undefined || typeof revision.previousPath === "string")
+    && (revision.deleted === undefined || typeof revision.deleted === "boolean");
 }
 
 function saveGuide(guide: PullRequestGuide): void {

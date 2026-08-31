@@ -265,6 +265,7 @@ export interface PullRequestGuideCommit {
 }
 
 export interface PullRequestGuideHunk {
+  revision?: { head: string; base?: string; previousPath?: string; deleted?: boolean };
   id: string;
   path: string;
   header: string;

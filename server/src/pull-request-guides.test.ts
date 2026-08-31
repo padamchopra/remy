@@ -188,3 +188,33 @@ test("coverage includes binary and rename-only files without text hunks", () => 
   assert.equal(hunks[1]?.header, "Renamed from old-name.ts");
   assert.deepEqual(uncoveredGuideHunkIds([], hunks.map((hunk) => hunk.id)), ["H1", "H2"]);
 });
+
+test("guide hunks retain exact revisions and file metadata outside the model prompt", () => {
+  const revision = { head: "a".repeat(40), base: "b".repeat(40) };
+  const hunks = flattenGuideHunks([
+    { path: "new.ts", previousPath: "old.ts", hunks: [] },
+    { path: "deleted.ts", deleted: true, hunks: [{ header: "@@ -1 +0,0 @@", lines: [{ kind: "del", oldLine: 1, newLine: null, text: "removed" }] }] },
+  ], revision);
+  assert.deepEqual(hunks[0].revision, { ...revision, previousPath: "old.ts", deleted: undefined });
+  assert.deepEqual(hunks[1].revision, { ...revision, previousPath: undefined, deleted: true });
+  assert.ok(!compactGuideHunks(hunks).includes(revision.head));
+});
+
+test("persists revisions and rejects malformed revision metadata from storage or a paired device", async (t) => {
+  const guide = savedGuide(106);
+  guide.hunks[0].revision = { head: "a".repeat(40), base: "b".repeat(40), deleted: true };
+  const save = (value: unknown) => db.prepare("insert or replace into pull_request_guides (repository, number, json, updated_at) values (?, ?, ?, ?)")
+    .run(guide.repository, guide.number, JSON.stringify(value), Date.now());
+  save(guide);
+  assert.deepEqual(readSavedPullRequestGuide(guide.repository, guide.number), guide);
+  await pairedServer(t, "revision-owner", (_req, res) => { res.end(JSON.stringify({ guide })); });
+  db.prepare("delete from pull_request_guides where number = ?").run(guide.number);
+  assert.deepEqual(await discoverPullRequestGuide(guide.repository, guide.number), { guide, peerId: "revision-owner" });
+  for (const revision of [null, { head: "main" }, { head: "a".repeat(40), deleted: "true" }]) {
+    const invalid = { ...guide, hunks: [{ ...guide.hunks[0], revision }] };
+    save(invalid);
+    assert.equal(readSavedPullRequestGuide(guide.repository, guide.number), undefined);
+  }
+  guide.hunks[0].revision.head = "main";
+  assert.deepEqual(await discoverPullRequestGuide(guide.repository, guide.number), {});
+});

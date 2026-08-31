@@ -15,7 +15,7 @@ export function FilePathLabel({ path }: { path: string }) {
   return <span title={path} dir="rtl" className="block min-w-0 flex-1 truncate text-left font-mono"><bdi dir="ltr">{path}</bdi></span>;
 }
 
-export function usePullRequestFileContent(serverId: string, pullRequest: PullRequestDiff, file: PullRequestDiffFile) {
+export function usePullRequestFileContent(serverId: string, pullRequest: PullRequestDiff, file: PullRequestDiffFile, revisionError?: string) {
   const [content, setContent] = useState<FileContent>();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -28,7 +28,7 @@ export function usePullRequestFileContent(serverId: string, pullRequest: PullReq
     pending.current = Promise.resolve().then(async () => {
       try {
         if (!pullRequest.headRefOid || (file.deleted && !pullRequest.baseRefOid)) {
-          throw new Error("Refresh the pull request to load its file revision.");
+          throw new Error(revisionError ?? "Refresh the pull request to load its file revision.");
         }
         const params = new URLSearchParams({ repository: pullRequest.repository, head: pullRequest.headRefOid, path: file.path });
         if (file.deleted) params.set("base", pullRequest.baseRefOid!);
@@ -69,7 +69,7 @@ export function PullRequestFileButton({ file, url, reader }: { file: PullRequest
         <DialogHeader className="min-w-0 shrink-0 border-b border-border p-4 pr-12">
           <DialogTitle className="flex min-w-0"><FilePathLabel path={file.path} /></DialogTitle>
           <DialogDescription>
-            {file.deleted ? "Before deletion" : "Pull request version"}
+            {file.deleted ? "Before deletion" : "Diff version"}
             {reader.content && ` · ${reader.content.revision.slice(0, 7)} · ${lines.length.toLocaleString()} lines`}
           </DialogDescription>
         </DialogHeader>

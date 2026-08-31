@@ -1,14 +1,13 @@
-import { useEffect, useId, useMemo, useState, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { PullRequestStackInfo } from "@/components/PullRequestStackInfo";
-import { FilePathLabel, PullRequestContextGap, PullRequestFileButton, usePullRequestFileContent } from "@/components/PullRequestFileContext";
-import { fileContextGaps } from "@/lib/pull-request-context";
+import { PullRequestFileDiff } from "@/components/PullRequestFileDiff";
+import { guideFileGroups, pullRequestFileStat } from "@/lib/pull-request-guide-files";
 import type { PullRequestStack } from "@/state/types";
 import { toast } from "sonner";
 import {
   ArrowRight,
   BookOpenCheck,
   ChevronDown,
-  ChevronRight,
   CircleCheck,
   CircleDot,
   CircleX,
@@ -40,8 +39,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupText, InputGroupTextarea } from "@/components/ui/input-group";
@@ -88,6 +85,15 @@ interface GuideSelection {
   hunkId: string;
   anchor: number;
   focus: number;
+}
+
+interface GuideFileReview {
+  serverId: string;
+  pullRequest: PullRequestData;
+  openFiles: ReadonlySet<string>;
+  markingViewed: ReadonlySet<string>;
+  onOpenChange: (path: string, open: boolean) => void;
+  onViewedChange: (path: string, viewed: boolean) => void;
 }
 
 type PullRequestTab = "summary" | "code" | "guide";
@@ -137,6 +143,9 @@ export function PullRequestView({
   const [comment, setComment] = useState("");
   const [markingReady, setMarkingReady] = useState(false);
   const [markingViewed, setMarkingViewed] = useState<Set<string>>(new Set());
+  const [openFiles, setOpenFiles] = useState<Set<string>>(new Set());
+  const loadVersion = useRef(0);
+  const openedGuide = useRef<string | undefined>(undefined);
   const [reviewServerId, setReviewServerId] = useState(serverId);
   const [guide, setGuide] = useState<PullRequestGuide>();
   const [guideOwnerServerId, setGuideOwnerServerId] = useState(serverId);
@@ -155,6 +164,10 @@ export function PullRequestView({
 
   useEffect(() => {
     let current = true;
+    loadVersion.current += 1;
+    setMarkingViewed(new Set());
+    setOpenFiles(new Set());
+    openedGuide.current = undefined;
     setLoading(true);
     setError("");
     setPullRequest(undefined);
@@ -180,6 +193,7 @@ export function PullRequestView({
       .then((response) => {
         if (!current) return;
         setPullRequest(response.diff);
+        setOpenFiles(new Set(response.diff.files.filter((file) => !file.viewed).map((file) => file.path)));
         if (response.diff.nodeId) return;
         void transport.servers()
           .then((servers) => servers.find((candidate) => candidate.local)?.id)
@@ -192,6 +206,7 @@ export function PullRequestView({
             if (!current) return;
             const viewed = new Map(reviewResponse.review.files.map((file) => [file.path, file.viewed]));
             setReviewServerId(localServerId);
+            setOpenFiles(new Set(response.diff.files.filter((file) => !viewed.get(file.path)).map((file) => file.path)));
             setPullRequest((loaded) => loaded ? {
               ...loaded,
               nodeId: reviewResponse.review.nodeId,
@@ -206,8 +221,17 @@ export function PullRequestView({
       .finally(() => {
         if (current) setLoading(false);
       });
-    return () => { current = false; };
+    return () => { current = false; loadVersion.current += 1; };
   }, [chatId, number, repository, serverId]);
+
+  useEffect(() => {
+    if (!guide || !pullRequest) return;
+    const key = `${guide.repository}:${guide.number}:${guide.createdAt}`;
+    if (openedGuide.current === key) return;
+    openedGuide.current = key;
+    const currentPaths = new Set(pullRequest.files.map((file) => file.path));
+    setOpenFiles((current) => new Set([...current, ...guide.hunks.filter((hunk) => !currentPaths.has(hunk.path)).map((hunk) => hunk.path)]));
+  }, [guide, pullRequest]);
 
   useEffect(() => {
     if (tab !== "summary" || !pullRequest || timeline || timelineError) return;
@@ -364,9 +388,21 @@ export function PullRequestView({
     }
   };
 
+  const setFileOpen = (path: string, open: boolean) => {
+    setOpenFiles((current) => {
+      const next = new Set(current);
+      if (open) next.add(path);
+      else next.delete(path);
+      return next;
+    });
+  };
+
   const markFileViewed = async (path: string, viewed: boolean) => {
     if (!pullRequest?.nodeId || markingViewed.has(path)) return;
+    const version = loadVersion.current;
     const previous = pullRequest.files.find((file) => file.path === path)?.viewed ?? false;
+    const wasOpen = openFiles.has(path);
+    setFileOpen(path, !viewed);
     setMarkingViewed((current) => new Set(current).add(path));
     setPullRequest((current) => current ? {
       ...current,
@@ -378,13 +414,15 @@ export function PullRequestView({
         body: { pullRequestId: pullRequest.nodeId, path, viewed },
       });
     } catch (caught) {
+      if (version !== loadVersion.current) return;
+      setFileOpen(path, wasOpen);
       setPullRequest((current) => current ? {
         ...current,
         files: current.files.map((file) => file.path === path ? { ...file, viewed: previous } : file),
       } : current);
       toast.error("Couldn't update the file", { description: apiError(caught) });
     } finally {
-      setMarkingViewed((current) => {
+      if (version === loadVersion.current) setMarkingViewed((current) => {
         const next = new Set(current);
         next.delete(path);
         return next;
@@ -570,10 +608,14 @@ export function PullRequestView({
           onRemoveReference={onRemoveReference}
           markingViewed={markingViewed}
           onViewedChange={markFileViewed}
+          openFiles={openFiles}
+          onOpenFilesChange={setOpenFiles}
+          onFileOpenChange={setFileOpen}
         />
       </TabsContent>
       <TabsContent value="guide" className="min-h-0 overflow-hidden">
         <PullRequestGuideView
+          fileReview={{ serverId, pullRequest, openFiles, markingViewed, onOpenChange: setFileOpen, onViewedChange: markFileViewed }}
           guide={guide}
           commits={guideCommits}
           choice={guideChoice}
@@ -603,6 +645,7 @@ export function PullRequestView({
 }
 
 function PullRequestGuideView({
+  fileReview,
   guide,
   commits,
   choice,
@@ -622,6 +665,7 @@ function PullRequestGuideView({
   onQuestionChange,
   onAsk,
 }: {
+  fileReview: GuideFileReview;
   guide?: PullRequestGuide;
   commits: PullRequestGuideCommit[];
   choice: ModelChoice;
@@ -743,6 +787,7 @@ function PullRequestGuideView({
             <GuideStep
               key={step.id}
               step={step}
+              fileReview={fileReview}
               index={index}
               guide={guide}
               selection={selection}
@@ -751,6 +796,7 @@ function PullRequestGuideView({
           ))}
           {uncoveredHunks.length > 0 && (
             <GuideCoverage
+              fileReview={fileReview}
               hunks={uncoveredHunks}
               guide={guide}
               selection={selection}
@@ -790,11 +836,13 @@ function PullRequestGuideView({
 }
 
 function GuideCoverage({
+  fileReview,
   hunks,
   guide,
   selection,
   onSelectLine,
 }: {
+  fileReview: GuideFileReview;
   hunks: PullRequestGuideHunk[];
   guide: PullRequestGuide;
   selection?: GuideSelection;
@@ -816,16 +864,7 @@ function GuideCoverage({
         </div>
       </div>
       <div className="mt-5 flex min-w-0 flex-col gap-4">
-        {hunks.map((hunk) => (
-          <GuideHunk
-            key={hunk.id}
-            hunk={hunk}
-            step={step}
-            guide={guide}
-            selection={selection}
-            onSelectLine={onSelectLine}
-          />
-        ))}
+        <GuideFiles hunks={hunks} step={step} guide={guide} fileReview={fileReview} selection={selection} onSelectLine={onSelectLine} />
       </div>
     </section>
   );
@@ -889,12 +928,14 @@ function GuideCommitPicker({
 }
 
 function GuideStep({
+  fileReview,
   step,
   index,
   guide,
   selection,
   onSelectLine,
 }: {
+  fileReview: GuideFileReview;
   step: PullRequestGuideStep;
   index: number;
   guide: PullRequestGuide;
@@ -915,19 +956,40 @@ function GuideStep({
         </div>
       </div>
       <div className="mt-5 flex min-w-0 flex-col gap-4">
-        {hunks.map((hunk) => (
-          <GuideHunk
-            key={hunk.id}
-            hunk={hunk}
-            step={step}
-            guide={guide}
-            selection={selection}
-            onSelectLine={onSelectLine}
-          />
-        ))}
+        <GuideFiles hunks={hunks} step={step} guide={guide} fileReview={fileReview} selection={selection} onSelectLine={onSelectLine} />
       </div>
     </section>
   );
+}
+
+function GuideFiles({ hunks, step, guide, fileReview, selection, onSelectLine }: {
+  hunks: PullRequestGuideHunk[];
+  step: PullRequestGuideStep;
+  guide: PullRequestGuide;
+  fileReview: GuideFileReview;
+  selection?: GuideSelection;
+  onSelectLine: (event: MouseEvent, hunkId: string, lineIndex: number) => void;
+}) {
+  return guideFileGroups(guide, hunks, fileReview.pullRequest).map((group) => (
+    <div key={`${guide.createdAt}:${fileReview.serverId}:${group.key}`} className="min-w-0 overflow-hidden rounded-md border border-border">
+      <PullRequestFileDiff
+        serverId={fileReview.serverId}
+        pullRequest={group.pullRequest}
+        file={group.file}
+        open={fileReview.openFiles.has(group.file.path)}
+        onOpenChange={(open) => fileReview.onOpenChange(group.file.path, open)}
+        markingViewed={fileReview.markingViewed.has(group.file.path)}
+        canMarkViewed={group.canMarkViewed}
+        onViewedChange={(viewed) => fileReview.onViewedChange(group.file.path, viewed)}
+        visibleHunks={new Set(group.selectedByIndex.keys())}
+        revisionError={!group.pullRequest.headRefOid ? "This saved guide has no matching file revision. Open the Code tab to view the current file." : undefined}
+        renderHunk={(_, index) => {
+          const hunk = group.selectedByIndex.get(index);
+          return hunk && <GuideHunk hunk={hunk} step={step} guide={guide} selection={selection} onSelectLine={onSelectLine} />;
+        }}
+      />
+    </div>
+  ));
 }
 
 function GuideHunk({
@@ -944,12 +1006,7 @@ function GuideHunk({
   onSelectLine: (event: MouseEvent, hunkId: string, lineIndex: number) => void;
 }) {
   return (
-    <div className="min-w-0 overflow-hidden rounded-md border border-border">
-      <div className="flex min-w-0 flex-col gap-1 bg-muted/50 px-3 py-2 font-mono text-[10px] text-muted-foreground">
-        <FilePathLabel path={hunk.path} />
-        <span className="break-all">{hunk.header}</span>
-      </div>
-      <div className="font-mono text-[11px] leading-5">
+    <>
         {hunk.lines.map((line, lineIndex) => {
           const chosen = selection?.hunkId === hunk.id
             && lineIndex >= Math.min(selection.anchor, selection.focus)
@@ -984,8 +1041,7 @@ function GuideHunk({
             </div>
           );
         })}
-      </div>
-    </div>
+    </>
   );
 }
 
@@ -1204,6 +1260,9 @@ function PullRequestFiles({
   onRemoveReference,
   markingViewed,
   onViewedChange,
+  openFiles,
+  onOpenFilesChange,
+  onFileOpenChange,
 }: {
   serverId: string;
   pullRequest: PullRequestData;
@@ -1218,8 +1277,10 @@ function PullRequestFiles({
   onRemoveReference?: (id: string) => void;
   markingViewed: ReadonlySet<string>;
   onViewedChange: (path: string, viewed: boolean) => void;
+  openFiles: ReadonlySet<string>;
+  onOpenFilesChange: (paths: Set<string>) => void;
+  onFileOpenChange: (path: string, open: boolean) => void;
 }) {
-  const [openFiles, setOpenFiles] = useState<Set<string>>(() => new Set(pullRequest.files.map((file) => file.path)));
   const allOpen = pullRequest.files.every((file) => openFiles.has(file.path));
   const lineProgress = pullRequest.files.reduce((progress, file) => {
     const stat = pullRequestFileStat(file);
@@ -1229,19 +1290,6 @@ function PullRequestFiles({
       total: progress.total + lines,
     };
   }, { reviewed: 0, total: 0 });
-
-  useEffect(() => {
-    setOpenFiles(new Set(pullRequest.files.map((file) => file.path)));
-  }, [pullRequest.number, pullRequest.repository]);
-
-  const setFileOpen = (path: string, open: boolean) => {
-    setOpenFiles((current) => {
-      const next = new Set(current);
-      if (open) next.add(path);
-      else next.delete(path);
-      return next;
-    });
-  };
 
   return (
     <div className="flex size-full min-h-0 flex-col">
@@ -1273,7 +1321,7 @@ function PullRequestFiles({
           variant="ghost"
           size="xs"
           className="ml-auto"
-          onClick={() => setOpenFiles(allOpen ? new Set() : new Set(pullRequest.files.map((file) => file.path)))}
+          onClick={() => onOpenFilesChange(allOpen ? new Set() : new Set(pullRequest.files.map((file) => file.path)))}
         >
           {allOpen ? "Collapse all" : "Expand all"}
         </Button>
@@ -1298,13 +1346,10 @@ function PullRequestFiles({
                   selection={selection}
                   interactive={interactive}
                   onSelectLine={onSelectLine}
-                  onOpenChange={(open) => setFileOpen(file.path, open)}
+                  onOpenChange={(open) => onFileOpenChange(file.path, open)}
                   markingViewed={markingViewed.has(file.path)}
                   canMarkViewed={Boolean(pullRequest.nodeId)}
-                  onViewedChange={(viewed) => {
-                    if (viewed) setFileOpen(file.path, false);
-                    onViewedChange(file.path, viewed);
-                  }}
+                  onViewedChange={(viewed) => onViewedChange(file.path, viewed)}
                 />
               ))}
             </div>
@@ -1390,74 +1435,34 @@ function PullRequestFile({
   canMarkViewed: boolean;
   onViewedChange: (viewed: boolean) => void;
 }) {
-  const stat = pullRequestFileStat(file);
-  const reader = usePullRequestFileContent(serverId, pullRequest, file);
-  const gaps = fileContextGaps(file);
-  const checkboxId = useId();
-
   return (
-    <Collapsible open={open} onOpenChange={onOpenChange} className="group/file border-b border-border">
-      <div className="flex min-w-0 items-center">
-        <CollapsibleTrigger asChild>
-          <Button variant="ghost" size="icon-sm" className="rounded-none" aria-label={`${open ? "Collapse" : "Expand"} diff for ${file.path}`}>
-            <ChevronRight className="transition-transform group-data-[state=open]/file:rotate-90" />
-          </Button>
-        </CollapsibleTrigger>
-        <PullRequestFileButton file={file} url={pullRequest.url} reader={reader} />
-        <span className="shrink-0 px-2 font-mono text-[10px] text-muted-foreground">
-          <span className="text-success-foreground">+{stat.additions}</span> <span className="text-destructive">−{stat.deletions}</span>
-        </span>
-        <Field orientation="horizontal" className="w-auto shrink-0 gap-1.5 px-3">
-          <Checkbox
-            id={checkboxId}
-            checked={Boolean(file.viewed)}
-            disabled={!canMarkViewed || markingViewed}
-            onCheckedChange={(checked) => onViewedChange(checked === true)}
+    <PullRequestFileDiff
+      serverId={serverId}
+      pullRequest={pullRequest}
+      file={file}
+      open={open}
+      onOpenChange={onOpenChange}
+      markingViewed={markingViewed}
+      canMarkViewed={canMarkViewed}
+      onViewedChange={onViewedChange}
+      renderHunk={(hunk, hunkIndex) => hunk.lines.map((line, lineIndex) => {
+        const chosen = selection?.fileIndex === fileIndex
+          && selection.hunkIndex === hunkIndex
+          && lineIndex >= Math.min(selection.anchor, selection.focus)
+          && lineIndex <= Math.max(selection.anchor, selection.focus);
+        return (
+          <PullRequestLine
+            key={`${line.oldLine}:${line.newLine}:${lineIndex}`}
+            line={line}
+            lineIndex={lineIndex}
+            chosen={chosen}
+            interactive={interactive}
+            onClick={(event) => onSelectLine(event, fileIndex, hunkIndex, lineIndex)}
           />
-          <FieldLabel htmlFor={checkboxId} className="text-[11px] font-normal text-muted-foreground">Viewed</FieldLabel>
-        </Field>
-      </div>
-      <CollapsibleContent>
-        {file.previousPath && <div className="flex min-w-0 gap-1 border-t border-border px-3 py-1.5 text-[11px] text-muted-foreground"><span className="shrink-0">Renamed from</span><FilePathLabel path={file.previousPath} /></div>}
-        {file.hunks.length === 0 ? (
-          <p className="border-t border-border px-3 py-8 text-center text-xs text-muted-foreground">This file has no text preview.</p>
-        ) : file.hunks.map((hunk, hunkIndex) => (
-          <div key={`${hunk.header}:${hunkIndex}`} className="border-t border-border">
-            {gaps[hunkIndex] && <PullRequestContextGap gap={gaps[hunkIndex]} path={file.path} reader={reader} />}
-            <div className="bg-info/10 px-3 py-1.5 font-mono text-[10px] text-muted-foreground break-all">{hunk.header}</div>
-            <div className="font-mono text-[11px] leading-5">
-              {hunk.lines.map((line, lineIndex) => {
-                const chosen = selection?.fileIndex === fileIndex
-                  && selection.hunkIndex === hunkIndex
-                  && lineIndex >= Math.min(selection.anchor, selection.focus)
-                  && lineIndex <= Math.max(selection.anchor, selection.focus);
-                return (
-                  <PullRequestLine
-                    key={`${line.oldLine}:${line.newLine}:${lineIndex}`}
-                    line={line}
-                    lineIndex={lineIndex}
-                    chosen={chosen}
-                    interactive={interactive}
-                    onClick={(event) => onSelectLine(event, fileIndex, hunkIndex, lineIndex)}
-                  />
-                );
-              })}
-            </div>
-          </div>
-        ))}
-        {file.hunks.length > 0 && gaps[file.hunks.length] && (
-          <PullRequestContextGap gap={gaps[file.hunks.length]} path={file.path} reader={reader} />
-        )}
-      </CollapsibleContent>
-    </Collapsible>
+        );
+      })}
+    />
   );
-}
-
-function pullRequestFileStat(file: PullRequestDiffFile): { additions: number; deletions: number } {
-  return file.hunks.flatMap((hunk) => hunk.lines).reduce((result, line) => ({
-    additions: result.additions + Number(line.kind === "add"),
-    deletions: result.deletions + Number(line.kind === "del"),
-  }), { additions: 0, deletions: 0 });
 }
 
 function PullRequestLine({
