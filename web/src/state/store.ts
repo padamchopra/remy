@@ -158,8 +158,8 @@ interface State {
   suggestPaths(query: string, serverId?: string): Promise<PathSuggestion[]>;
   suggestWorkspaceIcons(id: string, query: string): Promise<WorkspaceIconMatch[]>;
   workspaceFile(id: string, path: string): Promise<{ mime: string; data: string } | undefined>;
-  loadWorkspaceWorktrees(id: string): Promise<GitWorktree[]>;
-  cleanWorkspaceWorktree(id: string, path: string, force: boolean): Promise<GitWorktree[]>;
+  loadWorkspaceWorktrees(id: string, serverId?: string): Promise<GitWorktree[]>;
+  cleanWorkspaceWorktree(id: string, path: string, force: boolean, serverId?: string): Promise<GitWorktree[]>;
   listBranches(workspaceId: string): Promise<GitBranch[]>;
   checkoutBranch(input: {
     workspaceId: string;
@@ -200,6 +200,7 @@ interface State {
   interrupt(id: string): Promise<void>;
   setChatOptions(id: string, patch: { model?: string | null; effort?: string | null; permissionMode?: string }): Promise<void>;
   pinThread(id: string, pinned: boolean): Promise<void>;
+  renameThread(id: string, title: string): Promise<void>;
   archiveThread(id: string): Promise<void>;
   restoreThread(id: string, serverId: string): Promise<Chat>;
   deleteArchivedThread(id: string, serverId: string): Promise<void>;
@@ -739,18 +740,18 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
-  async loadWorkspaceWorktrees(id) {
-    const workspace = get().workspaces.find((entry) => entry.id === id);
+  async loadWorkspaceWorktrees(id, serverId) {
+    const workspace = get().workspaces.find((entry) => entry.id === id && (!serverId || entry.serverId === serverId));
     if (!workspace) throw new Error("This workspace is no longer available.");
     if (useFixture) return workspace.worktrees;
     const server = get().servers.find((entry) => entry.id === workspace.serverId);
     if (!server?.online) throw new Error("This device isn't connected.");
-    const listed = await transport.request<{ dirty?: Record<string, boolean> }>(
+    const listed = await transport.request<{ dirty?: Record<string, boolean>; worktrees?: GitWorktree[] }>(
       server.id,
       `/workspaces/${encodeURIComponent(id)}/dirty`,
     );
     const dirty = listed.dirty ?? {};
-    const worktrees = workspace.worktrees.map((worktree) => ({
+    const worktrees = listed.worktrees ?? workspace.worktrees.filter((tree) => tree.path in dirty).map((worktree) => ({
       ...worktree,
       dirty: dirty[worktree.path] ?? true,
     }));
@@ -761,8 +762,8 @@ export const useStore = create<State>((set, get) => ({
     return worktrees;
   },
 
-  async cleanWorkspaceWorktree(id, path, force) {
-    const workspace = get().workspaces.find((entry) => entry.id === id);
+  async cleanWorkspaceWorktree(id, path, force, serverId) {
+    const workspace = get().workspaces.find((entry) => entry.id === id && (!serverId || entry.serverId === serverId));
     if (!workspace) throw new Error("This workspace is no longer available.");
     if (useFixture) {
       const target = workspace.worktrees.find((worktree) => worktree.path === path);
@@ -776,12 +777,16 @@ export const useStore = create<State>((set, get) => ({
     }
     const server = get().servers.find((entry) => entry.id === workspace.serverId);
     if (!server?.online) throw new Error("This device isn't connected.");
-    await transport.request(
+    const result = await transport.request<{ closedPaths: string[] }>(
       server.id,
       `/workspaces/${encodeURIComponent(id)}/worktrees/close`,
       { method: "POST", body: { path, force } },
     );
-    return get().loadWorkspaceWorktrees(id);
+    const worktrees = workspace.worktrees.filter((tree) => !result.closedPaths.includes(tree.path));
+    set((current) => ({ workspaces: current.workspaces.map((entry) =>
+      entry.id === id && entry.serverId === server.id ? { ...entry, worktrees } : entry),
+    }));
+    return worktrees;
   },
 
   async listBranches(workspaceId) {
@@ -1114,6 +1119,19 @@ export const useStore = create<State>((set, get) => ({
       body: { pinned },
     });
     await get().refresh();
+  },
+
+  async renameThread(id, title) {
+    const chat = get().chats.find((entry) => entry.id === id);
+    if (!chat) throw new Error("This thread is no longer available.");
+    const response = await transport.request<{ chat: RawChat }>(chat.serverId, `/chats/${encodeURIComponent(id)}`, {
+      method: "PATCH", body: { title },
+    });
+    set((current) => ({
+      chats: current.chats.map((entry) => entry.id === id ? { ...entry, title: response.chat.title } : entry),
+      details: current.details[id] ? { ...current.details, [id]: { ...current.details[id], title: response.chat.title } } : current.details,
+    }));
+    detailCache.delete(detailKey(id, chat.serverId));
   },
 
   async restoreThread(id, serverId) {
@@ -1543,12 +1561,13 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async interrupt(id) {
-    const detail = get().details[id];
-    if (!detail) return;
-    await transport.request(detail.serverId, `/chats/${encodeURIComponent(detail.id)}/interrupt`, {
+    const chat = get().chats.find((entry) => entry.id === id) ?? get().details[id];
+    if (!chat) throw new Error("This thread is no longer available.");
+    await transport.request(chat.serverId, `/chats/${encodeURIComponent(id)}/interrupt`, {
       method: "POST",
       body: {},
     });
+    await get().refresh();
   },
 }));
 

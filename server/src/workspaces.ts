@@ -954,6 +954,10 @@ async function closeWorktrees(workspace: Workspace, paths: string[], force: bool
   const sessions = await listSessions();
   const sessionsToKill = sessions.filter((session) => targets.some((worktree) => containsPath(worktree.path, session.panePath)));
   await Promise.all(sessionsToKill.map((session) => killSession(session.name)));
+  const { listChats, stopChat } = await import("./chat.js");
+  for (const chat of listChats()) {
+    if (targets.some((worktree) => containsPath(worktree.path, chat.cwd))) stopChat(chat.id);
+  }
 
   const closedPaths: string[] = [];
   for (const target of targets) {
@@ -984,12 +988,15 @@ export async function closeAllWorkspaceWorktrees(id: string, force: boolean) {
 // On-demand dirty state for every worktree of a workspace, for the repository
 // sheet. Kept out of the fleet-poll listing because `git status` is slow on big
 // repos and external drives.
-export async function worktreeDirtyMap(id: string): Promise<Record<string, boolean>> {
+export async function listWorkspaceWorktrees(id: string): Promise<GitWorktree[]> {
   const workspace = await workspaceByID(id);
-  const entries = await Promise.all(
-    workspace.worktrees.map(async (worktree) => [worktree.path, await worktreeDirty(worktree.path)] as const),
+  return Promise.all(
+    workspace.worktrees.map(async (worktree) => ({ ...worktree, dirty: await worktreeDirty(worktree.path) })),
   );
-  return Object.fromEntries(entries);
+}
+
+export async function worktreeDirtyMap(id: string): Promise<Record<string, boolean>> {
+  return Object.fromEntries((await listWorkspaceWorktrees(id)).map((tree) => [tree.path, tree.dirty]));
 }
 
 export async function listWorkspaceBranches(id: string): Promise<GitBranch[]> {

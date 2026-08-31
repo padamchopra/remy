@@ -223,7 +223,7 @@ import {
   suggestWorkspaceIcons,
   suggestWorkspacePaths,
   updateWorkspace,
-  worktreeDirtyMap,
+  listWorkspaceWorktrees,
 } from "./workspaces.js";
 import { startServerUpdate, updateStatus } from "./update.js";
 import {
@@ -1828,6 +1828,14 @@ const server = createServer(async (req, res) => {
           return json(res, 409, { error: (error as Error).message || "could not send the message" });
         }
       }
+      if (req.method === "GET" && parts[2] === "pull-request" && parts.length === 3) {
+        try {
+          const { pullRequest } = await resolveLinks(chatCwd(id), undefined);
+          return json(res, 200, { pullRequest });
+        } catch (error) {
+          return json(res, 404, { error: (error as Error).message || "could not find that pull request" });
+        }
+      }
       if (req.method === "GET" && parts[2] === "pull-request-diff") {
         try {
           const cwd = chatCwd(id);
@@ -2186,7 +2194,8 @@ const server = createServer(async (req, res) => {
         }
       }
       if (req.method === "GET" && parts[2] === "dirty") {
-        return json(res, 200, { dirty: await worktreeDirtyMap(id) });
+        const worktrees = await listWorkspaceWorktrees(id);
+        return json(res, 200, { worktrees, dirty: Object.fromEntries(worktrees.map((tree) => [tree.path, tree.dirty])) });
       }
       if (req.method === "GET" && parts[2] === "branches") {
         try {
@@ -2229,13 +2238,24 @@ const server = createServer(async (req, res) => {
       // Closing a worktree also stops the tmux sessions living inside it.
       if (req.method === "POST" && parts[2] === "worktrees" && parts[3] === "close") {
         const body = await readJson(req);
-        const result = await closeWorkspaceWorktree(id, String(body.path ?? ""), body.force === true);
-        pushSessionList();
-        return json(res, 200, result);
+        try {
+          const result = await closeWorkspaceWorktree(id, String(body.path ?? ""), body.force === true);
+          broadcast({ type: "workspace-worktrees", workspaceId: id });
+          pushSessionList();
+          return json(res, 200, result);
+        } catch (error) {
+          const reason = String(error);
+          const message = /locked/i.test(reason) ? "Unlock this worktree in Git before cleaning it up."
+            : /uncommitted|modified|untracked/i.test(reason) ? "Commit or stash your changes, or select this worktree again to confirm discarding them."
+            : /primary|unregistered/i.test(reason) ? "Only linked worktrees in this workspace can be cleaned up."
+            : "Couldn't remove this worktree; check its folder and try again.";
+          return json(res, 409, { error: message });
+        }
       }
       if (req.method === "POST" && parts[2] === "worktrees" && parts[3] === "close-all") {
         const body = await readJson(req);
         const result = await closeAllWorkspaceWorktrees(id, body.force === true);
+        broadcast({ type: "workspace-worktrees", workspaceId: id });
         pushSessionList();
         return json(res, 200, result);
       }

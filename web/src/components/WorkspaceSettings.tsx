@@ -22,7 +22,8 @@ import { IconPicker } from "@/components/IconPicker";
 import { ModelPickerButton, REMY_DEFAULT } from "@/components/ModelPicker";
 import { WorkspaceFileIcon } from "@/components/WorkspaceIcon";
 import { WorkspaceEnvironmentSettings } from "@/components/WorkspaceEnvironmentSettings";
-import { WorkspaceWorktrees } from "@/components/WorkspaceWorktrees";
+import { WorkspaceWorktrees, WorktreeSelectionToolbar } from "@/components/WorkspaceWorktrees";
+import { useWorkspaceWorktrees } from "@/hooks/use-workspace-worktrees";
 import { ScopedPullRequestMonitoring } from "@/components/PullRequestMonitoring";
 import { apiError } from "@/lib/api-error";
 import { deviceIcon } from "@/lib/devices";
@@ -153,6 +154,7 @@ export function WorkspaceSettings({
   const saveProject = useStore((s) => s.saveProject);
   const removeWorkspace = useStore((s) => s.removeWorkspace);
   const copies = workspaceCopies(workspace, allWorkspaces);
+  const worktreeState = useWorkspaceWorktrees(workspace);
   const devices = devicesForWorkspace(workspace, copies, servers);
   const project = projects.find((entry) =>
     entry.workspaceIds.includes(workspace.id)
@@ -174,6 +176,7 @@ export function WorkspaceSettings({
   return (
     <main className="flex min-w-0 flex-1 flex-col">
       <PaneHeader
+        selection={worktreeState.selectedTargets.length > 0 ? <WorktreeSelectionToolbar state={worktreeState} /> : undefined}
         crumbs={[
           { label: "Workspaces", onClick: onBack },
           { label: workspace.name },
@@ -216,7 +219,7 @@ export function WorkspaceSettings({
 
           <WorkspaceEnvironmentSettings workspace={workspace} />
 
-          <WorkspaceWorktrees workspace={workspace} />
+          <WorkspaceWorktrees state={worktreeState} />
 
           <div className="flex flex-col gap-2">
             <p className="px-1 text-xs font-medium text-muted-foreground">Devices</p>

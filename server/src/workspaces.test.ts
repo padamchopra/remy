@@ -16,6 +16,7 @@ const {
   checkoutTicketWorktree,
   checkoutWorkspaceBranch,
   closeWorkspaceWorktree,
+  listWorkspaceWorktrees,
   listWorkspaces,
   updateWorkspace,
   worktreeDirtyMap,
@@ -131,6 +132,9 @@ test("loads worktree changes on demand and protects them from safe cleanup", asy
   writeFileSync(join(linked, "dirty.txt"), "keep me\n");
   const added = await addWorkspace("cleanup", path);
 
+  await assert.rejects(closeWorkspaceWorktree(added.id, realpathSync(path), true), /primary worktree/);
+  await assert.rejects(closeWorkspaceWorktree(added.id, "/", true), /unregistered/);
+
   const dirty = await worktreeDirtyMap(added.id);
   assert.equal(dirty[realpathSync(path)], false);
   assert.equal(dirty[realpathSync(linked)], true);
@@ -139,6 +143,13 @@ test("loads worktree changes on demand and protects them from safe cleanup", asy
 
   await closeWorkspaceWorktree(added.id, realpathSync(linked), true);
   assert.equal(existsSync(linked), false);
+  assert.deepEqual((await listWorkspaceWorktrees(added.id)).map((tree) => tree.path), [realpathSync(path)]);
+
+  const newPath = join(path, "..", `fresh-${Date.now()}`);
+  execFileSync("git", ["-C", path, "worktree", "add", "-b", "fresh-tree", newPath]);
+  assert.equal((await listWorkspaceWorktrees(added.id)).some((tree) => tree.path === realpathSync(newPath)), true);
+  await closeWorkspaceWorktree(added.id, realpathSync(newPath), false);
+  assert.equal(existsSync(newPath), false);
 });
 
 test("switches the main checkout before a thread starts and preserves Git's failure reason", async () => {
