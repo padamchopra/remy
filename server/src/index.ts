@@ -10,6 +10,13 @@ import { deliverAnnouncements } from "./announcements.js";
 import { appUpdateStatus, reportAppUpdate, requestAppUpdate } from "./app-update.js";
 import { localAnalytics } from "./analytics.js";
 import { threadAnalytics, threadPerformance } from "./thread-metrics.js";
+import {
+  askPullRequestGuideQuestion,
+  discoverPullRequestGuide,
+  generatePullRequestGuide,
+  pullRequestGuideContext,
+  readSavedPullRequestGuide,
+} from "./pull-request-guides.js";
 import { archiveChat, deleteArchivedChat, getArchivedChat, listArchivedChats } from "./archives.js";
 import { deviceId, onLocalAppend, onRemoteMerge, type LogEvent } from "./board-log.js";
 import {
@@ -168,6 +175,7 @@ import {
 } from "./git.js";
 import { buildInbox } from "./inbox.js";
 import { listAuthoredPullRequests, markPullRequestFileViewed, markPullRequestRead, markPullRequestReady, pullRequestDiff, pullRequestDiffForCwd, pullRequestFileReviewState, pullRequestTimeline } from "./pull-requests.js";
+import { pullRequestFileContent, validPullRequestFileRequest } from "./pull-request-file.js";
 import { validateChatCodeReferences } from "./chat-references.js";
 import { startPullRequestMonitor } from "./pull-request-monitor.js";
 import {
@@ -195,6 +203,7 @@ import { registry, type PendingMessage } from "./registry.js";
 import { getQuickReplies, setQuickReplies } from "./settings.js";
 import { githubAvatar, githubLogin, tooling } from "./tooling.js";
 import { isRemyToolRoute, remyToolChatId } from "./ticket-tool-auth.js";
+import { pullRequestStacks } from "./pull-request-stacks.js";
 import { lastUpdateRun, syncRepoUpdateSchedule, updateRepositories } from "./repo-update.js";
 import { attachStream } from "./stream.js";
 import { discoverClaudeTranscript, readContextUsage, readConversation, resolveTranscriptPath, type Conversation } from "./transcript.js";
@@ -981,6 +990,20 @@ const server = createServer(async (req, res) => {
         return json(res, 502, { error: (error as Error).message || "could not load file review state" });
       }
     }
+    if (req.method === "GET" && url.pathname === "/pull-requests/stack") {
+      const repository = String(url.searchParams.get("repository") ?? "").trim();
+      const number = Number(url.searchParams.get("number"));
+      if (!/^[^/\s]+\/[^/\s]+$/.test(repository) || !Number.isSafeInteger(number) || number <= 0) {
+        return json(res, 400, { error: "repository and pull request number are required" });
+      }
+      try {
+        const stacks = await pullRequestStacks(repository, [number], true);
+        if (!stacks.has(number)) throw new Error("couldn't read stack information from GitHub");
+        return json(res, 200, { stack: stacks.get(number) });
+      } catch (error) {
+        return json(res, 502, { error: (error as Error).message || "couldn't load stack information" });
+      }
+    }
     if (req.method === "GET" && url.pathname === "/pull-requests/timeline") {
       const repository = String(url.searchParams.get("repository") ?? "").trim();
       const number = Number(url.searchParams.get("number"));
@@ -988,6 +1011,20 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { error: "repository and pull request number are required" });
       }
       return json(res, 200, { timeline: await pullRequestTimeline(repository, number) });
+    }
+    if (req.method === "GET" && url.pathname === "/pull-requests/file") {
+      const request = {
+        repository: url.searchParams.get("repository") ?? "",
+        head: url.searchParams.get("head") ?? "",
+        path: url.searchParams.get("path") ?? "",
+        ...(url.searchParams.has("base") ? { base: url.searchParams.get("base")! } : {}),
+      };
+      if (!validPullRequestFileRequest(request)) return json(res, 400, { error: "A repository, commit, and relative file path are required." });
+      try {
+        return json(res, 200, await pullRequestFileContent(request));
+      } catch (error) {
+        return json(res, 502, { error: (error as Error).message || "Couldn't load this file. Try again." });
+      }
     }
     if (req.method === "GET" && url.pathname === "/pull-requests/diff") {
       const repository = String(url.searchParams.get("repository") ?? "").trim();
@@ -999,6 +1036,59 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { diff: await pullRequestDiff(repository, number) });
       } catch (error) {
         return json(res, 502, { error: (error as Error).message || "could not load those changes" });
+      }
+    }
+    if (req.method === "GET" && ["/pull-requests/guide/saved", "/pull-requests/guide/discover"].includes(url.pathname)) {
+      const repository = String(url.searchParams.get("repository") ?? "").trim();
+      const number = Number(url.searchParams.get("number"));
+      if (!/^[^/\s]+\/[^/\s]+$/.test(repository) || !Number.isInteger(number) || number <= 0) {
+        return json(res, 400, { error: "repository and pull request number are required" });
+      }
+      return json(res, 200, url.pathname.endsWith("/saved")
+        ? { guide: readSavedPullRequestGuide(repository, number) }
+        : await discoverPullRequestGuide(repository, number));
+    }
+    if (req.method === "GET" && url.pathname === "/pull-requests/guide") {
+      const repository = String(url.searchParams.get("repository") ?? "").trim();
+      const number = Number(url.searchParams.get("number"));
+      const chatId = String(url.searchParams.get("chatId") ?? "").trim() || undefined;
+      if (!/^[^/\s]+\/[^/\s]+$/.test(repository) || !Number.isInteger(number) || number <= 0) {
+        return json(res, 400, { error: "repository and pull request number are required" });
+      }
+      try {
+        return json(res, 200, await pullRequestGuideContext(repository, number, chatId));
+      } catch (error) {
+        return json(res, 502, { error: (error as Error).message || "could not load the guided review" });
+      }
+    }
+    if (req.method === "POST" && url.pathname === "/pull-requests/guide") {
+      const body = await readJson(req);
+      const repository = String(body.repository ?? "").trim();
+      const number = Number(body.number);
+      if (!/^[^/\s]+\/[^/\s]+$/.test(repository) || !Number.isInteger(number) || number <= 0) {
+        return json(res, 400, { error: "repository and pull request number are required" });
+      }
+      try {
+        const guide = await generatePullRequestGuide({ ...body, repository, number });
+        broadcast({ type: "pull-request-guide", repository, number });
+        return json(res, 200, { guide });
+      } catch (error) {
+        return json(res, 409, { error: (error as Error).message || "could not start the guided review" });
+      }
+    }
+    if (req.method === "POST" && url.pathname === "/pull-requests/guide/question") {
+      const body = await readJson(req);
+      const repository = String(body.repository ?? "").trim();
+      const number = Number(body.number);
+      if (!/^[^/\s]+\/[^/\s]+$/.test(repository) || !Number.isInteger(number) || number <= 0) {
+        return json(res, 400, { error: "repository and pull request number are required" });
+      }
+      try {
+        const guide = await askPullRequestGuideQuestion({ ...body, repository, number });
+        broadcast({ type: "pull-request-guide", repository, number });
+        return json(res, 200, { guide });
+      } catch (error) {
+        return json(res, 409, { error: (error as Error).message || "could not answer that question" });
       }
     }
 

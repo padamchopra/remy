@@ -47,6 +47,8 @@ export interface CodexUsage {
 }
 
 export type CodexEvent =
+  | { type: "session.closed" }
+  | { type: "activity"; method: string; params: Record<string, unknown>; parentThreadId?: string }
   | { type: "thread.started"; thread_id: string }
   | { type: "turn.started" }
   | { type: "turn.completed" }
@@ -311,6 +313,7 @@ class AppServerSession implements CodexSession {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.onEvent({ type: "session.closed" });
     this.active?.controller.abort();
     this.active?.resolve();
     this.active = undefined;
@@ -458,6 +461,7 @@ class AppServerSession implements CodexSession {
   }
 
   private notification(method: string, params: Record<string, unknown>): void {
+    this.onEvent({ type: "activity", method, params, parentThreadId: this.threadId });
     if (this.threadId && typeof params.threadId === "string" && params.threadId !== this.threadId) return;
     if (method === "turn/started") {
       const turn = asRecord(params.turn);
@@ -560,6 +564,7 @@ class AppServerSession implements CodexSession {
   private fail(error: Error): void {
     if (this.closed) return;
     this.closed = true;
+    this.onEvent({ type: "session.closed" });
     for (const pending of this.requests.values()) pending.reject(error);
     this.requests.clear();
     if (this.active) {
@@ -709,10 +714,16 @@ export async function codexAnswer(options: {
     },
   );
   const run = session.run(options.prompt, { model: options.model, effort: options.effort, permissionMode: "plan" });
-  const timer = setTimeout(() => run.stop(), options.timeoutMs);
-  timer.unref?.();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      run.stop();
+      reject(new Error("Codex took too long; choose a faster model and try again."));
+    }, options.timeoutMs);
+    timer.unref?.();
+  });
   try {
-    await run.done;
+    await Promise.race([run.done, timeout]);
     return answer;
   } finally {
     clearTimeout(timer);

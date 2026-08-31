@@ -5,10 +5,21 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   createCursorSession,
+  cursorAnswer,
   cursorAcpArgs,
   cursorEntry,
   type CursorEvent,
 } from "./cursor.js";
+
+test("a one-shot Cursor answer has a hard deadline even during startup", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "remy-cursor-deadline-"));
+  const command = join(directory, "agent");
+  writeFileSync(command, "#!/usr/bin/env node\nprocess.stdin.resume();\n", { mode: 0o755 });
+  const started = Date.now();
+
+  await assert.rejects(cursorAnswer({ command, prompt: "Organize the changes.", cwd: directory, timeoutMs: 100 }), /took too long/);
+  assert.ok(Date.now() - started < 2_000);
+});
 
 test("Cursor uses ACP and maps Remy's broad permission modes to current CLI flags", () => {
   assert.deepEqual(cursorAcpArgs({ permissionMode: "default" }), ["--approve-mcps", "acp"]);
@@ -104,6 +115,7 @@ test("one ACP connection carries turns and returns Remy's approval choice", asyn
   session.close();
 
   assert.equal(events.filter((event) => event.type === "session.started").length, 1);
+  assert.equal(events.filter((event) => event.type === "session.closed").length, 1);
   assert.equal(events.filter((event) => event.type === "turn.started").length, 2);
   assert.ok(events.some((event) => event.type === "usage.updated" && event.used === 1234 && event.size === 200000 && event.costUsd === 0.42));
   assert.ok(events.some((event) => event.type === "tool.updated" && event.toolCall.toolCallId === "tool-1"));

@@ -41,11 +41,24 @@ test("peer stream authenticates and relays remote frames to local clients", asyn
 
   let requestUrl: string | undefined;
   let authorization: string | undefined;
+  let connections = 0;
+  const activity = { id: "activity:child", kind: "tool", activity: { id: "child", kind: "subagent", provider: "codex", title: "Review", status: "running", startedAt: 1, updatedAt: 2 } };
   remote.on("connection", (socket, request) => {
+    connections += 1;
     requestUrl = request.url;
     authorization = request.headers.authorization;
-    socket.send(JSON.stringify({ type: "hello", push: true, streamId: "remote-stream", sequence: 4 }));
-    socket.send(JSON.stringify({ type: "chat", chatId: "remote-chat", sequence: 5 }));
+    if (connections === 1) {
+      socket.send(JSON.stringify({ type: "hello", push: true, streamId: "remote-stream", sequence: 4 }));
+      socket.send(JSON.stringify({ type: "chat", chatId: "remote-chat", sequence: 5, entries: [activity] }));
+    } else if (connections === 2) {
+      socket.send(JSON.stringify({ type: "hello", push: true, streamId: "remote-stream", sequence: 6 }));
+      const completed = { ...activity, activity: { ...activity.activity, status: "completed" } };
+      for (let i = 0; i < 2; i++) socket.send(JSON.stringify({ type: "chat", chatId: "remote-chat", sequence: 6, entries: [completed] }));
+      socket.send(JSON.stringify({ type: "replay-finished", sequence: 7 }));
+    } else {
+      socket.send(JSON.stringify({ type: "hello", push: true, streamId: "restarted-stream", sequence: 0 }));
+      socket.send(JSON.stringify({ type: "chat", chatId: "remote-chat", sequence: 1, entries: [activity] }));
+    }
   });
 
   const relayed = new Promise<Record<string, unknown>>((resolve, reject) => {
@@ -65,11 +78,34 @@ test("peer stream authenticates and relays remote frames to local clients", asyn
     assert.deepEqual(await relayed, {
       type: "peer-frame",
       serverId: "remote",
-      payload: { type: "chat", chatId: "remote-chat", sequence: 5 },
+      payload: { type: "chat", chatId: "remote-chat", sequence: 5, entries: [activity] },
     });
     assert.equal(authorization, "Bearer secret");
     assert.match(requestUrl ?? "", /^\/notify\/stream\?/);
     assert.match(requestUrl ?? "", /relay=1/);
+    const waitFor = (predicate: (payload: Record<string, unknown>) => boolean) => new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => { local.off("sent", receive); reject(new Error("missing reconnect frame")); }, 2_000);
+      const receive = (frame: Record<string, unknown>) => {
+        const payload = frame.payload as Record<string, unknown> | undefined;
+        if (!payload || !predicate(payload)) return;
+        clearTimeout(timer);
+        local.off("sent", receive);
+        resolve();
+      };
+      local.on("sent", receive);
+    });
+    const replayed = waitFor((payload) => payload.type === "replay-finished");
+    for (const socket of remote.clients) socket.terminate();
+    await replayed;
+    assert.match(requestUrl ?? "", /afterSequence=5/);
+    const updates = local.sent.flatMap((frame) => frame.payload ? [frame.payload as Record<string, unknown>] : []);
+    const completed = updates.filter((frame) => frame.type === "chat" && frame.sequence === 6);
+    assert.equal(completed.length, 1);
+    assert.equal((completed[0].entries as typeof activity[])[0].activity.status, "completed");
+    const restarted = waitFor((payload) => payload.type === "chat" && payload.sequence === 1);
+    for (const socket of remote.clients) socket.terminate();
+    await restarted;
+    assert.ok(local.sent.some((frame) => (frame.payload as Record<string, unknown>)?.type === "peer-reset"));
   } finally {
     stop();
     await new Promise<void>((resolve, reject) => {

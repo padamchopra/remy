@@ -124,7 +124,7 @@ export function threadAnalytics(chatId: string, runtime: ThreadRuntime = {}, now
 
   const transcriptCost = transcripts.flatMap((transcript) => transcript.cost).reduce((total, entry) => total + entry.costUsd, 0);
   usage.costUsd = Math.max(transcriptCost, chat.costUsd ?? 0);
-  const measured = measureTurns(chat.entries, runtime.state === "working" || runtime.state === "needs_input", now);
+  const measured = measureTurns(chat.entries.filter((entry) => !entry.activity), runtime.state === "working" || runtime.state === "needs_input", now);
   const currentRunMs = runtime.workingSince ? Math.max(0, now - runtime.workingSince) : 0;
   const transcriptSkills = transcripts.flatMap((transcript) =>
     transcript.tools.flatMap((entry) => entry.skill ? [entry.skill] : []),
@@ -141,7 +141,7 @@ export function threadAnalytics(chatId: string, runtime: ThreadRuntime = {}, now
     usage,
     turns: chat.turns,
     toolCalls: transcripts.reduce((total, transcript) => total + transcript.tools.length, 0)
-      || chat.entries.filter((entry) => entry.kind === "tool").length,
+      || chat.entries.filter((entry) => entry.kind === "tool" && !entry.activity).length,
     skillInvocations: skills.reduce((total, skill) => total + skill.count, 0),
     skills,
     sessionSpanMs: sessionSpan(chat, runtime, now),
@@ -170,8 +170,8 @@ export function threadPerformance(
   const chat = loadChat(chatId, ENTRY_LIMIT);
   if (!chat) return undefined;
   const busy = runtime.state === "working" || runtime.state === "needs_input";
-  const measured = measureTurns(chat.entries, busy, now);
-  const tools = chat.entries.filter((entry) => entry.kind === "tool");
+  const measured = measureTurns(chat.entries.filter((entry) => !entry.activity), busy, now);
+  const tools = chat.entries.filter((entry) => entry.kind === "tool" && !entry.activity);
   const completedTools = tools.flatMap((entry) => {
     if (!entry.at || !entry.completedAt || !entry.status) return [];
     return [{

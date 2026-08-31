@@ -1,17 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CircleDot, Folder, GitPullRequest, RefreshCw, Search } from "lucide-react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { CircleDot, Folder, GitPullRequest, Layers, PanelLeftClose, PanelLeftOpen, RefreshCw, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PullRequestView } from "@/components/PullRequestView";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { workspaceGroups, type WorkspaceGroup } from "@/lib/projects";
+import { groupPullRequests, orderPullRequests } from "@/lib/pull-request-order";
 import { transport } from "@/lib/transport";
 import { cn } from "@/lib/utils";
-import type { Chat, Server, Workspace } from "@/state/types";
+import type { Chat, PullRequestStack, Server, Workspace } from "@/state/types";
 
 type PullRequestFilter = "all" | "ready" | "draft";
 
@@ -21,6 +23,7 @@ interface PullRequestCheck {
 }
 
 interface AuthoredPullRequest {
+  stack?: PullRequestStack | null;
   url: string;
   number: number;
   title: string;
@@ -123,13 +126,14 @@ function mergePullRequests(pullRequests: AuthoredPullRequest[]): AuthoredPullReq
     const preferred = !current.worktreePath && pullRequest.worktreePath ? pullRequest : current;
     byURL.set(pullRequest.url, {
       ...preferred,
+      stack: preferred.stack !== undefined ? preferred.stack : current.stack !== undefined ? current.stack : pullRequest.stack,
       sourceServerIds: [...new Set([
         ...(current.sourceServerIds ?? [current.serverId]),
         ...(pullRequest.sourceServerIds ?? [pullRequest.serverId]),
       ])],
     });
   }
-  return [...byURL.values()].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+  return orderPullRequests([...byURL.values()]);
 }
 
 function inside(path: string, root: string): boolean {
@@ -195,6 +199,8 @@ export function PullRequests({
   const [loading, setLoading] = useState(!hasCachedPullRequests(serverIds));
   const [refreshing, setRefreshing] = useState(false);
   const [selectedURL, setSelectedURL] = useState("");
+  const [listHidden, setListHidden] = useState(false);
+  const listId = useId();
   const requestId = useRef(0);
   const progressRequestId = useRef<number | undefined>(undefined);
 
@@ -263,11 +269,13 @@ export function PullRequests({
       const matchesFilter = filter === "all" || (filter === "draft" ? pullRequest.isDraft : !pullRequest.isDraft);
       if (!matchesFilter) return false;
       if (!normalizedQuery) return true;
-      return [pullRequest.title, pullRequest.repository, pullRequest.headRefName, String(pullRequest.number)]
+      return [pullRequest.title, pullRequest.repository, pullRequest.headRefName, `#${pullRequest.number}`, pullRequest.stack ? `stack #${pullRequest.stack.number}` : ""]
         .some((value) => value.toLowerCase().includes(normalizedQuery));
     });
   }, [filter, pullRequests, query]);
   const selected = visible.find((pullRequest) => pullRequest.url === selectedURL);
+  const listCollapsed = listHidden && Boolean(selected);
+  const listToggleLabel = listCollapsed ? "Show pull request list" : "Hide pull request list";
   const groupedWorkspaces = useMemo(() => workspaceGroups(workspaces, servers), [servers, workspaces]);
   const workspaceGroupByCopy = useMemo(() => new Map<string, WorkspaceGroup>(
     groupedWorkspaces.flatMap((group) => group.copies.map((workspace) => [
@@ -302,7 +310,7 @@ export function PullRequests({
       }
       section.pullRequests.push(pullRequest);
     }
-    return [...grouped.values()];
+    return [...grouped.values()].map((section) => ({ ...section, groups: groupPullRequests(section.pullRequests) }));
   }, [servers, visible, workspaceGroupByCopy, workspaces]);
   const selectedWorkspace = selected && workspaces.find((entry) =>
     entry.serverId === selected.serverId && entry.id === selected.workspaceId);
@@ -316,7 +324,11 @@ export function PullRequests({
 
   return (
     <main className="flex min-w-0 flex-1">
-      <section className="flex min-h-0 w-[38%] min-w-72 max-w-[27rem] shrink-0 flex-col border-r border-border">
+      <section
+        id={listId}
+        aria-label="Pull request list"
+        className={cn("min-h-0 w-[38%] min-w-72 max-w-[27rem] shrink-0 flex-col border-r border-border", listCollapsed ? "hidden" : "flex")}
+      >
         <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
           <ToggleGroup
             type="single"
@@ -367,10 +379,25 @@ export function PullRequests({
                     )}
                     <span className="truncate">{section.label}</span>
                   </h2>
-                  <ItemGroup className="gap-0 px-2">
-                    {section.pullRequests.map((pullRequest) => (
-                      <PullRequestListItem key={pullRequest.url} pullRequest={pullRequest} selected={selected?.url === pullRequest.url} onSelect={() => setSelectedURL(pullRequest.url)} />
-                    ))}
+                  <ItemGroup role="group" className="gap-0 px-2">
+                    {section.groups.map((group) => {
+                      const stack = group.members[0].stack;
+                      const rows = group.members.map((pullRequest) => (
+                        <PullRequestListItem key={pullRequest.url} pullRequest={pullRequest} selected={selected?.url === pullRequest.url} onSelect={() => setSelectedURL(pullRequest.url)} />
+                      ));
+                      return stack ? (
+                        <section key={group.key} aria-label={`Stack #${stack.number}`} className="relative my-1 before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-muted-foreground/30">
+                          <h3 className="flex min-w-0 items-center gap-2 px-2 py-1.5 text-[11px] text-muted-foreground">
+                            <Layers className="size-4 shrink-0" />
+                            <span className="truncate font-medium">Stack #{stack.number}</span>
+                            <span className="ml-auto shrink-0 tabular-nums">
+                              {group.members.length === stack.size ? `${stack.size} PRs` : `${group.members.length} of ${stack.size} shown`}
+                            </span>
+                          </h3>
+                          <ItemGroup className="gap-0">{rows}</ItemGroup>
+                        </section>
+                      ) : <ItemGroup key={group.key} className="gap-0">{rows}</ItemGroup>;
+                    })}
                   </ItemGroup>
                 </section>
               ))}
@@ -386,7 +413,25 @@ export function PullRequests({
             serverId={selectedDetailServerId ?? selected.serverId}
             repository={selected.repository}
             number={selected.number}
+            stack={selected.stack}
             onPullRequestChanged={() => void load({ refresh: true })}
+            leadingActions={(
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={listToggleLabel}
+                    aria-controls={listId}
+                    aria-expanded={!listCollapsed}
+                    onClick={() => setListHidden(!listCollapsed)}
+                  >
+                    {listCollapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{listToggleLabel}</TooltipContent>
+              </Tooltip>
+            )}
             actions={(
               <>
                 {selectedWorkspace && (
@@ -440,11 +485,17 @@ function PullRequestListItem({ pullRequest, selected, onSelect }: { pullRequest:
             <span className="truncate">{pullRequest.title}</span>
             {needsAttention(pullRequest) && <span className="sr-only">Needs attention</span>}
           </ItemTitle>
-          <ItemDescription className="block min-w-0 truncate text-left text-[11px] text-nowrap">
-            {pullRequest.repository} · {pullRequest.headRefName}
+          <ItemDescription className="flex min-w-0 gap-1 text-left text-[11px] text-nowrap">
+            <span className="shrink-0 tabular-nums">#{pullRequest.number}</span>
+            {pullRequest.stack && (
+              <span className="shrink-0 tabular-nums" aria-label={`${pullRequest.stack.position} of ${pullRequest.stack.size} in stack`}>
+                · {pullRequest.stack.position}/{pullRequest.stack.size}
+              </span>
+            )}
+            <span className="min-w-0 truncate">· {pullRequest.repository} · {pullRequest.headRefName}</span>
           </ItemDescription>
         </ItemContent>
-        <span className="col-start-3 row-start-1 grid self-stretch grid-rows-2 justify-items-end gap-1 text-[11px] tabular-nums">
+        <span className="col-start-3 row-start-1 grid grid-rows-2 justify-items-end gap-1 text-[11px] tabular-nums">
           <span className="leading-snug text-muted-foreground">{relativeDate(pullRequest.updatedAt)}</span>
           <span className="font-mono leading-normal text-nowrap">
             <span className="text-success-foreground">+{pullRequest.additions}</span>{" "}

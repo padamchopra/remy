@@ -96,6 +96,18 @@ test("re-saving an entry updates it in place, keeping its position", () => {
   assert.equal(loaded?.entries[0]?.text, "partial and then some");
 });
 
+test("activity updates persist in place and disappear when their thread is deleted", () => {
+  storage.saveChat(chat("activity"));
+  const entry: ConvEntry = { id: "activity:child", kind: "tool", activity: { id: "child", kind: "subagent", provider: "claude", title: "Review", status: "running", startedAt: 1, updatedAt: 2 } };
+  storage.saveEntry("activity", entry);
+  storage.saveEntry("activity", { ...entry, activity: { ...entry.activity!, status: "completed", output: "Done", completedAt: 3 } });
+  const entries = storage.loadChats(100).find((row) => row.id === "activity")!.entries;
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].activity?.status, "completed");
+  storage.removeChat("activity");
+  assert.equal(storage.loadChats(100).find((row) => row.id === "activity"), undefined);
+});
+
 test("the entry limit keeps the newest entries", () => {
   storage.saveChat(chat("c"));
   for (let i = 1; i <= 10; i += 1) storage.saveEntry("c", entry(`n${i}`, `line ${i}`));

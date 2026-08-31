@@ -4,6 +4,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  codexAnswer,
   codexAppServerArgs,
   codexEntry,
   codexErrorMessage,
@@ -16,6 +17,16 @@ import {
 } from "./codex.js";
 
 const base = { command: "/usr/local/bin/codex", cwd: "/repo", permissionMode: "default" };
+
+test("a one-shot Codex answer has a hard deadline even during startup", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "remy-codex-deadline-"));
+  const command = join(directory, "codex");
+  writeFileSync(command, "#!/usr/bin/env node\nprocess.stdin.resume();\n", { mode: 0o755 });
+  const started = Date.now();
+
+  await assert.rejects(codexAnswer({ command, prompt: "Organize the changes.", cwd: directory, timeoutMs: 100 }), /took too long/);
+  assert.ok(Date.now() - started < 2_000);
+});
 
 test("app-server receives MCP environment names without their values", () => {
   const args = codexAppServerArgs({
@@ -196,6 +207,13 @@ rl.on("line", (line) => {
     if (prompt === "question") {
       return send({ id: "question-1", method: "item/tool/requestUserInput", params: { threadId: "thread-1", turnId: active, itemId: "question", isBlocking: true, questions: [{ id: "target", header: "Target", question: "Where should this run?", options: [{ label: "Local", description: "This machine." }] }] } });
     }
+    if (prompt === "subagent") {
+      send({ method: "thread/started", params: { thread: { id: "child", source: { subagent: { thread_spawn: { parent_thread_id: "thread-1" } } } } } });
+      send({ method: "item/completed", params: { threadId: "child", turnId: "child-turn", item: item("child-message", "Child-only output") } });
+      send({ method: "thread/tokenUsage/updated", params: { threadId: "child", tokenUsage: { total: { totalTokens: 99999 } } } });
+      complete("Parent output");
+      return;
+    }
     if (prompt === "effort") {
       complete("effort:" + threadEffort + ":" + message.params.modelReasoningEffort);
       return;
@@ -233,6 +251,7 @@ test("one app-server connection carries multiple streamed turns", async () => {
   session.close();
 
   assert.equal(events.filter((event) => event.type === "thread.started").length, 1);
+  assert.equal(events.filter((event) => event.type === "session.closed").length, 1);
   assert.equal(events.filter((event) => event.type === "turn.started").length, 2);
   assert.deepEqual(
     events.flatMap((event) => event.type === "item.completed" && event.item.type === "agent_message" ? [event.item.text] : []),
@@ -240,6 +259,17 @@ test("one app-server connection carries multiple streamed turns", async () => {
   );
   const usage = events.find((event) => event.type === "usage.updated");
   assert.equal(usage?.type === "usage.updated" && usage.usage.context_window, 200_000);
+});
+
+test("child notifications reach activity tracking without polluting parent output or usage", async () => {
+  const events: CodexEvent[] = [];
+  const session = createCodexSession({ command: fakeAppServer(), cwd: process.cwd(), permissionMode: "plan" }, (event) => events.push(event));
+  try {
+    await session.run("subagent").done;
+    assert.ok(events.some((event) => event.type === "activity" && event.method === "item/completed" && event.params.threadId === "child"));
+    assert.deepEqual(events.flatMap((event) => event.type === "item.completed" && event.item.type === "agent_message" ? [event.item.text] : []), ["Parent output"]);
+    assert.equal(events.filter((event) => event.type === "usage.updated").length, 1);
+  } finally { session.close(); }
 });
 
 test("app-server bootstrap does not depend on the thread workspace", async () => {

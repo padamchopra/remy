@@ -85,6 +85,7 @@ import {
   type ChatImageAttachment,
 } from "./transcript.js";
 import { codeReferencePrompt } from "./chat-references.js";
+import { ThreadActivityTracker } from "./thread-activity.js";
 import { claudeTicketMcpServer, ticketPromptContext } from "./ticket-tools.js";
 import { remyToolToken } from "./ticket-tool-auth.js";
 import { forgetChat, linkTicketFromWorkPrompt, syncTicketFromThread } from "./tickets.js";
@@ -380,6 +381,7 @@ class Chat {
   private deleted = false;
   private peakTokens = 0;
   private compactions = 0;
+  private activity: ThreadActivityTracker;
   // The exact `questions` array Claude sent, echoed back with the answers.
   private lastQuestionInput: unknown[] = [];
 
@@ -387,6 +389,8 @@ class Chat {
     this.record = record;
     this.peakTokens = Math.max(record.context?.peakTokens ?? 0, record.context?.tokens ?? 0);
     for (const entry of record.entries) this.byId.set(entry.id, entry);
+    this.activity = new ThreadActivityTracker(record.entries, (entry) => this.upsert(entry));
+    this.activity.disconnected();
   }
 
   get id(): string {
@@ -856,6 +860,7 @@ This is the agent's Inbox conversation. When the person signals that something s
 
   private handle(message: SDKMessage): void {
     this.lastActivity = nowMs();
+    if (this.activity.claude(message as unknown as Record<string, any>)) return;
     switch (message.type) {
       case "system":
         this.handleSystem(message as Record<string, unknown>);
@@ -1222,6 +1227,10 @@ This is the agent's Inbox conversation. When the person signals that something s
   private handleCursorEvent(event: CursorEvent): void {
     this.lastActivity = nowMs();
     switch (event.type) {
+      case "session.closed":
+        this.cursorSession = undefined;
+        this.activity.disconnected();
+        return;
       case "session.started":
         if (event.sessionId !== this.record.cursorSessionId) {
           this.record.cursorSessionId = event.sessionId;
@@ -1254,6 +1263,7 @@ This is the agent's Inbox conversation. When the person signals that something s
         return;
       case "tool.updated": {
         const entry = cursorEntry(event.toolCall, this.cursorTurnId);
+        this.activity.cursor(event.toolCall, entry);
         this.upsert(entry);
         this.action = `${entry.verb ?? ""} ${entry.arg ?? ""}`.trim();
         this.push();
@@ -1378,8 +1388,16 @@ This is the agent's Inbox conversation. When the person signals that something s
   }
 
   private handleCodexEvent(event: CodexEvent): void {
+    if (event.type === "activity") {
+      this.activity.codex(event.method, event.params, event.parentThreadId);
+      return;
+    }
     this.lastActivity = nowMs();
     switch (event.type) {
+      case "session.closed":
+        this.codexSession = undefined;
+        this.activity.disconnected();
+        return;
       case "thread.started":
         // Recorded before anything else can fail: this is what a later turn
         // resumes, and without it the conversation starts over.
@@ -1791,6 +1809,7 @@ This is the agent's Inbox conversation. When the person signals that something s
 
   push(): void {
     if (this.deleted) return;
+    if (!this.isLive) this.activity.disconnected();
     broadcast({ type: "chat", chatId: this.record.id, ...this.stateFields() });
     syncSleepAssertion();
   }
@@ -1825,6 +1844,11 @@ function blockKind(type: unknown): ConvEntry["kind"] | undefined {
 /// first delta happened to carry. `redactEntry(entry) === entry` is what keeps
 /// that from happening, and it is what the test asserts.
 export function redactEntry(entry: ConvEntry): ConvEntry {
+  if (entry.activity) {
+    for (const key of ["title", "command", "progress", "output", "model"] as const) {
+      if (entry.activity[key] !== undefined) entry.activity[key] = redactKnownSecrets(entry.activity[key]!);
+    }
+  }
   if (entry.text !== undefined) entry.text = redactKnownSecrets(entry.text);
   if (entry.arg !== undefined) entry.arg = redactKnownSecrets(entry.arg);
   if (entry.output !== undefined) entry.output = redactKnownSecrets(entry.output);

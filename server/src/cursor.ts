@@ -75,6 +75,7 @@ export interface CursorToolCall {
 }
 
 export type CursorEvent =
+  | { type: "session.closed" }
   | { type: "session.started"; sessionId: string; configOptions: SessionConfigOption[] }
   | { type: "turn.started" }
   | { type: "turn.completed"; response: PromptResponse }
@@ -204,10 +205,14 @@ class AcpCursorSession implements CursorSession {
       const message = chunk.trim();
       if (message) console.error(`Cursor ACP: ${message}`);
     });
-    this.child.on("error", (error) => this.connection.close(error));
+    this.child.on("error", (error) => {
+      this.connection.close(error);
+      this.close();
+    });
     this.child.on("exit", (code, signal) => {
       if (this.closed) return;
       this.connection.close(new Error(`Cursor ACP exited ${signal ?? code ?? "before the turn completed"}.`));
+      this.close();
     });
   }
 
@@ -266,6 +271,7 @@ class AcpCursorSession implements CursorSession {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.onEvent({ type: "session.closed" });
     this.active?.stop();
     this.connection.close();
     this.child.kill();
@@ -518,7 +524,7 @@ export function cursorEntry(call: CursorToolCall, turn = ""): ConvEntry {
   const location = call.locations?.[0]?.path;
   const diff = buildDiff(name, input);
   const finished = call.status === "completed" || call.status === "failed";
-  const output = finished ? toolOutput(call) : undefined;
+  const output = toolOutput(call);
   const result = output ? takeArtifacts(output) : undefined;
   return {
     id: `${turn}${call.toolCallId}`,
@@ -569,10 +575,16 @@ export async function cursorAnswer(options: {
     },
   );
   const run = session.run(options.prompt);
-  const timer = setTimeout(() => run.stop(), options.timeoutMs);
-  timer.unref?.();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      run.stop();
+      reject(new Error("Cursor took too long; choose a faster model and try again."));
+    }, options.timeoutMs);
+    timer.unref?.();
+  });
   try {
-    await run.done;
+    await Promise.race([run.done, timeout]);
     return answer || undefined;
   } finally {
     clearTimeout(timer);
