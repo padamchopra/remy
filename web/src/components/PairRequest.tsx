@@ -50,7 +50,7 @@ export function PairRequestDialog() {
       toast.error("Couldn't answer that request", { description: apiError(caught) });
     } finally {
       setBusy(false);
-      await loadPairRequests();
+      await loadPairRequests({ fresh: true });
     }
   };
 

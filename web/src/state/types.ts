@@ -456,6 +456,8 @@ export interface ServerSettings {
   repoUpdate: "off" | "hourly" | "sixHourly" | "daily";
   pullRequestMonitoringEnabled: boolean;
   pullRequestMonitoringAgentId: string;
+  notifySelf?: boolean;
+  preventSleepSupported?: boolean;
   worktreeBranchPrefix: string;
   /// Your face: empty for the default, `preset:<id>`, or a `data:` URL.
   avatar: string;
