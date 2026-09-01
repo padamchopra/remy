@@ -39,6 +39,7 @@ import { SurfaceLoading } from "@/components/Deferred";
 import { StartSubthreadDialog } from "@/components/StartSubthreadDialog";
 import { ThreadActivityTool } from "@/components/ThreadActivity";
 import { ThreadTerminal, terminalSessionId } from "@/components/ThreadTerminal";
+import { TabClose, TabCloseSpace, TabStrip, tabContentClass, tabListClass, tabTriggerClass } from "@/components/WorkbenchTabs";
 import { browserKey, githubPullRequestTarget, useSharedBrowsers, type SharedBrowserView } from "@/hooks/use-thread-tools";
 import { threadActivities } from "@/lib/thread-activity";
 import {
@@ -306,11 +307,17 @@ function GroupView({ group, focused, bench }: { group: TabGroup; focused: boolea
         onValueChange={(id) => bench.change((current) => activateTab(current, id))}
         className="min-h-0 flex-1 gap-0"
       >
-        <div className="flex h-11 shrink-0 items-center gap-1 border-b border-border pr-2 pl-2">
-          <TabsList
-            aria-label="Open tabs"
-            className="h-auto min-w-0 flex-1 justify-start gap-0.5 overflow-x-auto overflow-y-hidden rounded-none bg-transparent p-0 scrollbar-thin"
-          >
+        <TabStrip
+          actions={(
+            <>
+              {activeTab?.kind === "thread" && activeChat && !activeChat.dm && (
+                <ThreadTicket chatId={activeChat.id} onOpenTicket={bench.onOpenTicket} />
+              )}
+              {activeChat && <AddMenu group={group} chat={activeChat} bench={bench} />}
+            </>
+          )}
+        >
+          <TabsList aria-label="Open tabs" className={tabListClass}>
             {group.tabs.map((tab) => (
               <TabTrigger
                 key={tabId(tab)}
@@ -322,24 +329,13 @@ function GroupView({ group, focused, bench }: { group: TabGroup; focused: boolea
               />
             ))}
           </TabsList>
-          <div className="ml-auto flex shrink-0 items-center gap-0.5">
-            {activeTab?.kind === "thread" && activeChat && !activeChat.dm && (
-              <ThreadTicket chatId={activeChat.id} onOpenTicket={bench.onOpenTicket} />
-            )}
-            {activeChat && <AddMenu group={group} chat={activeChat} bench={bench} />}
-          </div>
-        </div>
+        </TabStrip>
 
         {group.tabs.map((tab) => {
           const id = tabId(tab);
           const active = id === group.active;
           return (
-            <TabsContent
-              key={id}
-              value={id}
-              forceMount
-              className="flex min-h-0 flex-1 flex-col overflow-hidden data-[state=inactive]:hidden"
-            >
+            <TabsContent key={id} value={id} forceMount className={tabContentClass}>
               <Surface tab={tab} visible={active} focused={focused && active} bench={bench} />
             </TabsContent>
           );
@@ -380,47 +376,18 @@ function TabTrigger({
                 child would write its own open state over the tab's active one. */}
             <TooltipTrigger asChild>
               <span className="flex min-w-0 items-center">
-                <TabsTrigger
-                  value={id}
-                  className={cn(
-                    "h-8 max-w-48 flex-none gap-1.5 rounded-md border-transparent px-2.5 text-[13px] font-normal text-muted-foreground shadow-none",
-                    "data-[state=active]:bg-foreground/8 data-[state=active]:text-foreground data-[state=active]:shadow-none dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-foreground/8",
-                    closable && "pr-1",
-                  )}
-                >
+                <TabsTrigger value={id} className={cn(tabTriggerClass, closable && "pr-1")}>
                   <Icon className="size-3.5 shrink-0" />
                   <span className="truncate">{label}</span>
                   {dot}
-                  {closable && (
-                    // Room for the close control, which sits over the tab's
-                    // trailing edge so the strip does not widen on hover.
-                    <span aria-hidden className="w-4 shrink-0" />
-                  )}
+                  {closable && <TabCloseSpace />}
                 </TabsTrigger>
               </span>
             </TooltipTrigger>
             {/* Whose tab it is, since a collection can hold more than one thread. */}
             <TooltipContent>{chat && tab.kind !== "thread" ? `${label} · ${chat.title}` : label}</TooltipContent>
           </Tooltip>
-          {closable && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              aria-label={`Close ${label}`}
-              className={cn(
-                "-ml-6 size-5 rounded-sm text-muted-foreground hover:text-foreground",
-                "[@media(hover:hover)]:opacity-0 group-hover/tab:opacity-100 focus-visible:opacity-100",
-                active && "[@media(hover:hover)]:opacity-100",
-              )}
-              onClick={(event) => {
-                event.stopPropagation();
-                bench.close(tab);
-              }}
-            >
-              <X />
-            </Button>
-          )}
+          {closable && <TabClose label={label} active={active} onClose={() => bench.close(tab)} />}
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>

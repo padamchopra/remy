@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, Check, ChevronDown, Folder, FolderGit2, GitBranch } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, Folder, FolderGit2, GitBranch, MessagesSquare, Plus, SquareTerminal } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -29,13 +29,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Skeleton } from "@/components/ui/skeleton";
 import { ComposerMenu } from "@/components/ComposerMenu";
 import { ModelPickerButton, useProvider } from "@/components/ModelPicker";
-import { PaneHeader } from "@/components/PaneHeader";
-import {
-  TerminalButton,
-  ThreadTerminal,
-  ThreadTerminalLayout,
-  terminalSessionId,
-} from "@/components/ThreadTerminal";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ThreadTerminal, terminalSessionId } from "@/components/ThreadTerminal";
+import { TabClose, TabCloseSpace, TabStrip, tabContentClass, tabListClass, tabTriggerClass } from "@/components/WorkbenchTabs";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { CLOUD_MODES, cloudModeOf, PERMISSIONS, permissionOf, type PermissionValue } from "@/lib/chat-options";
 import { apiError } from "@/lib/api-error";
@@ -45,6 +41,7 @@ import { availableAgentServers } from "@/lib/inbox";
 import { devicesForWorkspace, workspaceGroups } from "@/lib/projects";
 import type { ModelChoice } from "@/lib/providers";
 import { transport } from "@/lib/transport";
+import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
 import type { GitBranch as Branch, Server, Workspace } from "@/state/types";
 
@@ -96,7 +93,10 @@ export function ChatComposer({
   const [text, setText] = useState(() => readComposerDraft("new-thread"));
   const [busy, setBusy] = useState(false);
   const [switchingBranch, setSwitchingBranch] = useState(false);
+  // The draft pane is a strip of tabs like a thread's, with one thing to add:
+  // a terminal in the folder the thread will start in.
   const [terminalShown, setTerminalShown] = useState(false);
+  const [tab, setTab] = useState<"draft" | "terminal">("draft");
   const [terminalActive, setTerminalActive] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const checkoutDefaultsRef = useRef<string | undefined>(undefined);
@@ -301,50 +301,78 @@ export function ChatComposer({
     onAddWorkspace,
   };
 
+  const closeTerminal = () => {
+    setTerminalShown(false);
+    setTerminalActive(false);
+    setTab("draft");
+  };
+  const terminalOpen = terminalAvailable && terminalShown && Boolean(server);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <PaneHeader
-        crumbs={[
-          {
-            label: (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button type="button" variant="ghost" size="sm" className="h-auto gap-1.5 px-1">
-                    <WorkspaceMark home={home} workspace={workspace} server={server} size="sm" />
-                    {place}
-                  </Button>
-                </DropdownMenuTrigger>
-                <WorkspaceMenu {...picker} />
-              </DropdownMenu>
-            ),
-          },
-          { label: "New thread" },
-        ]}
+      <Tabs
+        value={terminalOpen ? tab : "draft"}
+        onValueChange={(value) => setTab(value === "terminal" ? "terminal" : "draft")}
+        className="min-h-0 flex-1 gap-0"
       >
-        <TerminalButton
-          active={terminalActive}
-          shown={terminalShown}
-          disabled={!terminalAvailable}
-          onClick={() => setTerminalShown((shown) => !shown)}
-        />
-      </PaneHeader>
+        <TabStrip
+          actions={(
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="ghost" size="icon-sm" aria-label="Add tab">
+                  <Plus />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  disabled={!terminalAvailable}
+                  onSelect={() => {
+                    setTerminalShown(true);
+                    setTab("terminal");
+                  }}
+                >
+                  <SquareTerminal />
+                  Terminal
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        >
+          <TabsList aria-label="Open tabs" className={tabListClass}>
+            <TabsTrigger value="draft" className={tabTriggerClass}>
+              <MessagesSquare className="size-3.5 shrink-0" />
+              <span className="truncate">New thread</span>
+            </TabsTrigger>
+            {terminalOpen && (
+              <div className="group/tab flex h-8 min-w-0 shrink-0 items-center">
+                <TabsTrigger value="terminal" className={cn(tabTriggerClass, "pr-1")}>
+                  <SquareTerminal className="size-3.5 shrink-0" />
+                  <span className="truncate">Terminal</span>
+                  {terminalActive && <span role="img" aria-label="Active" className="size-1.5 shrink-0 rounded-full bg-success-foreground" />}
+                  <TabCloseSpace />
+                </TabsTrigger>
+                <TabClose label="Terminal" active={tab === "terminal"} onClose={closeTerminal} />
+              </div>
+            )}
+          </TabsList>
+        </TabStrip>
 
-      <ThreadTerminalLayout
-        open={terminalAvailable && terminalShown}
-        layoutId={terminalId}
-        terminal={server ? (
-          <ThreadTerminal
-            serverId={server.id}
-            terminalId={terminalId}
-            cwd={terminalCwd}
-            label={place}
-            visible={terminalAvailable && terminalShown}
-            onHide={() => setTerminalShown(false)}
-            onSessionClosed={() => setTerminalShown(false)}
-            onActiveChange={setTerminalActive}
-          />
-        ) : null}
-      >
+        {terminalOpen && server && (
+          <TabsContent value="terminal" forceMount className={tabContentClass}>
+            <ThreadTerminal
+              serverId={server.id}
+              terminalId={terminalId}
+              cwd={terminalCwd}
+              label={place}
+              visible={tab === "terminal"}
+              onHide={closeTerminal}
+              onSessionClosed={closeTerminal}
+              onActiveChange={setTerminalActive}
+            />
+          </TabsContent>
+        )}
+
+        <TabsContent value="draft" forceMount className={tabContentClass}>
         <div className="flex min-h-0 flex-1 items-center justify-center p-6">
           <div className="flex w-full max-w-2xl flex-col gap-8">
           <h2 className="flex flex-wrap items-center justify-center gap-x-1.5 text-3xl font-medium leading-none tracking-tight">
@@ -467,7 +495,8 @@ export function ChatComposer({
           </form>
           </div>
         </div>
-      </ThreadTerminalLayout>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
