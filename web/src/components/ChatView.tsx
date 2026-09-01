@@ -246,6 +246,10 @@ export function ChatView({
   useEffect(() => {
     if (archived) return;
     void openChat(chat.id).catch((caught) => {
+      // With the last known transcript already on screen, the thread did open —
+      // the device it runs on is what could not be reached, and the device chip
+      // says so. Only an empty pane needs to be told why.
+      if (useStore.getState().details[chat.id]) return;
       toast.error("Couldn't open that thread", { description: apiError(caught) });
     });
     return () => closeChat(chat.id);

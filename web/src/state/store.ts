@@ -7,6 +7,7 @@ import { applyProjectIdentity } from "~/lib/projects";
 import { invalidateSharedResource, readSharedResource, seedSharedResource } from "~/lib/shared-read";
 import { byRank } from "~/lib/tickets";
 import { transport } from "~/lib/transport";
+import { readWarmCache, warmSnapshot, writeWarmCache } from "~/lib/warm-cache";
 import { fixtureChats, fixtureServers, fixtureWorkspaces } from "./fixture";
 import type {
   Agent,
@@ -262,11 +263,24 @@ const PEER_DETAIL_POLL_VISIBLE_MS = 1_000;
 const PEER_DETAIL_POLL_HIDDEN_MS = 5_000;
 const DETAIL_CACHE_LIMIT = 12;
 const CHAT_PAGE_TURNS = 12;
+/// The closest together two warm-cache writes may be. Far enough apart that a
+/// streaming turn does not pay for one frame by frame, close enough that a
+/// window is never more than a moment behind what it last knew.
+const WARM_WRITE_MS = 500;
 const detailCache = new Map<string, ChatDetail>();
 const pendingDetails = new Map<string, Promise<ChatDetail>>();
 const pushPeerServers = new Set<string>();
 let refreshRun = 0;
 let pendingRefresh: Promise<void> | undefined;
+
+/// What the last window left behind, read once so the first render already has
+/// devices, threads and the transcripts that were open. Everything here is
+/// replaced by the reads `start` fires immediately after.
+///
+/// The transcripts go into `detailCache` oldest first, so the most recent one in
+/// the snapshot is the most recent one here too.
+const warm = useFixture ? undefined : readWarmCache();
+for (const detail of [...(warm?.details ?? [])].reverse()) cacheDetail(detail);
 
 function detailKey(id: string, serverId: string): string {
   return `${serverId}:${id}`;
@@ -281,6 +295,12 @@ function cacheDetail(detail: ChatDetail): void {
     if (oldest === undefined) break;
     detailCache.delete(oldest);
   }
+}
+
+/// Most recently used first, so a snapshot that has to drop a transcript drops
+/// the one a person is least likely to open next.
+function recentDetails(): ChatDetail[] {
+  return [...detailCache.values()].reverse();
 }
 
 async function readChatDetail(id: string, serverId: string): Promise<ChatDetail> {
@@ -304,24 +324,27 @@ async function readChatDetail(id: string, serverId: string): Promise<ChatDetail>
 }
 
 export const useStore = create<State>((set, get) => ({
-  servers: useFixture ? fixtureServers : [],
-  chats: useFixture ? fixtureChats : [],
+  servers: useFixture ? fixtureServers : warm?.servers ?? [],
+  chats: useFixture ? fixtureChats : warm?.chats ?? [],
   archived: [],
-  dms: [],
-  workspaces: useFixture ? fixtureWorkspaces : [],
-  agents: [],
-  projects: [],
+  dms: warm?.dms ?? [],
+  workspaces: useFixture ? fixtureWorkspaces : warm?.workspaces ?? [],
+  agents: warm?.agents ?? [],
+  projects: warm?.projects ?? [],
   tickets: [],
   routines: [],
   pairRequests: [],
   boardDevices: [],
   boardLoading: false,
+  // A warm window has something to show while every device is still answering,
+  // so it is not "Connecting…" — but the catalogue is still out, and that is a
+  // separate flag for a separate reason.
   catalogLoading: !useFixture,
   openIds: [],
   details: {},
   detailLoading: {},
   historyLoading: {},
-  loading: !useFixture,
+  loading: !useFixture && !warm,
   connected: useFixture,
 
   start() {
@@ -388,6 +411,9 @@ export const useStore = create<State>((set, get) => ({
       // whole scalar state. Patch what is on screen rather than refetching.
       if (frame.type === "chat" && frame.chatId) set((current) => applyChatFrame(current, frame, serverId));
     });
+
+    // What is on screen becomes what the next launch opens with.
+    const warmWrites = keepWarmCache();
 
     const offStatus = transport.onStatus((serverId, pushUp) => {
       // The notify socket is a live-update channel, not reachability. In the
@@ -479,6 +505,7 @@ export const useStore = create<State>((set, get) => ({
       if (timer) clearTimeout(timer);
       if (detailTimer) clearTimeout(detailTimer);
       document.removeEventListener("visibilitychange", wakePeerPoll);
+      warmWrites.stop();
       offPush();
       offStatus();
     };
@@ -586,15 +613,14 @@ export const useStore = create<State>((set, get) => ({
             });
           } catch (error) {
             failures.set(server.id, `${server.name}: ${error instanceof Error ? error.message : String(error)}`);
+            // A machine that cannot be reached keeps everything last known
+            // about it — its threads, its inbox and its folders all still exist
+            // there, and the device chip already says it is offline. Erasing
+            // them would make an asleep laptop look like an empty one. Only
+            // unpairing removes a machine's rows, above.
             set((current) => ({
               servers: current.servers.map((entry) =>
                 entry.id === server.id ? { ...entry, online: false } : entry),
-              chats: current.chats.filter((chat) => chat.serverId !== server.id),
-              archived: current.archived.filter((chat) => chat.serverId !== server.id),
-              dms: current.dms.filter((chat) => chat.serverId !== server.id),
-              // A transient connection failure must not make that machine's
-              // workspaces disappear from the fleet catalogue.
-              workspaces: current.workspaces,
             }));
           }
         }),
@@ -1664,6 +1690,55 @@ export const useStore = create<State>((set, get) => ({
     await get().refresh();
   },
 }));
+
+/// Writes the settled part of the store to the warm cache.
+///
+/// The projection is rebuilt on a slow throttle and written only when it
+/// actually changed, so a streaming turn costs nothing: its deltas are not
+/// settled truth and never reach a snapshot in the first place. Leaving is the
+/// one moment a throttle must not swallow, so being hidden, being unloaded and
+/// being torn down each flush it.
+function keepWarmCache(): { stop: () => void } {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let ran = 0;
+  const save = () => {
+    timer = undefined;
+    const current = useStore.getState();
+    // Before the first device answers there is nothing to attribute a row to,
+    // and overwriting a good snapshot with that would be a loss. Nothing was
+    // built either, so this does not spend the interval.
+    if (current.servers.length === 0) return;
+    ran = Date.now();
+    writeWarmCache(warmSnapshot(current, recentDetails()));
+  };
+  const flush = () => {
+    if (!timer) return;
+    clearTimeout(timer);
+    save();
+  };
+  // The first settled state after a launch is written straight away rather than
+  // an interval later: a window somebody opens and closes again is exactly the
+  // one that most needs the next launch to be warm.
+  const off = useStore.subscribe(() => {
+    if (timer) return;
+    const due = WARM_WRITE_MS - (Date.now() - ran);
+    if (due <= 0) save();
+    else timer = setTimeout(save, due);
+  });
+  const flushWhenHidden = () => {
+    if (document.visibilityState === "hidden") flush();
+  };
+  window.addEventListener("pagehide", flush);
+  document.addEventListener("visibilitychange", flushWhenHidden);
+  return {
+    stop: () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", flushWhenHidden);
+      off();
+      flush();
+    },
+  };
+}
 
 /// A live frame for one chat. `entries` are the ones that changed; the scalar
 /// fields are always sent whole, so `null` means cleared rather than unchanged.

@@ -19,6 +19,8 @@ const LIVE_SAMPLES = positiveInteger(process.env.MC_LIVE_SAMPLES, 20);
 const TIMEOUT_MS = positiveInteger(process.env.MC_PERF_TIMEOUT_MS, 10_000);
 const ENTRY_COUNTS = integerList(process.env.MC_PERF_ENTRY_COUNTS, [10, 100, 500]);
 const ONLY_SCENARIO = process.env.MC_PERF_ONLY;
+/// What `warm-latency` has the fixture device take to answer. See the scenario.
+const WARM_LATENCY_MS = positiveInteger(process.env.MC_PERF_READ_DELAY_MS, 150);
 
 const targets = performanceTargets();
 const browser = await chromium.launch({
@@ -38,6 +40,8 @@ try {
     if (ONLY_SCENARIO === "thread") continue;
     if (ONLY_SCENARIO === "lifecycle") {
       results.push(...await repeatedGroup(() => runThreadLifecycle(target)));
+      results.push(await runWarmOffline(target));
+      results.push(await repeated(() => runWarmLatency(target)));
       continue;
     }
     for (const threadCount of [25, 250]) {
@@ -45,6 +49,8 @@ try {
     }
     results.push(...await runRenderIsolation(target));
     results.push(...await repeatedGroup(() => runThreadLifecycle(target)));
+    results.push(await runWarmOffline(target));
+    results.push(await repeated(() => runWarmLatency(target)));
     results.push(await repeated(() => runUnavailableDevice(target)));
     results.push(...await runPaneRoutes(target));
     results.push(await runSharedReadFailure(target));
@@ -220,6 +226,9 @@ function combineRuns(samples) {
     "catalogueReturnMs",
     "selectedDetailReturnMs",
     "firstUsefulPaintMs",
+    "usefulDetectedMs",
+    "threadDetectedMs",
+    "coldThreadMs",
     "firstLivePaintP95Ms",
     "frameRate",
     "rawFrameRate",
@@ -273,12 +282,15 @@ async function runThreadOpen(target, entryCount) {
   const opened = await openHarnessPage(target, fixture, `#/threads/${fixture.primaryThreadId}`);
   try {
     const observed = await observeUseful(opened.page, fixture.primaryTitle);
-    await waitForText(opened.page, fixture.lastEntryText);
+    // Recorded on both cold and warm opens so the one number this comparison
+    // turns on — when the thread itself was readable — is directly comparable.
+    const threadDetectedMs = await waitForText(opened.page, fixture.lastEntryText);
     const result = await snapshotResult(opened.page, {
       target: target.name,
       scenario: "cold-open",
       entryCount,
       threadCount: 25,
+      threadDetectedMs,
       ...observed,
     });
     if (entryCount === 500) {
@@ -395,6 +407,12 @@ async function runThreadLifecycle(target) {
     timeout: TIMEOUT_MS,
   });
   await observeUseful(first, fixture.lastEntryText);
+  // A window that is closed the instant it paints leaves nothing behind, so the
+  // scenario would be measuring a cold open under a warm name. Give the first
+  // window the moment it needs to record what it knew — and no more than a
+  // moment, so a build with no warm cache at all still reports its real number
+  // rather than hanging here.
+  await waitForWarmCache(first);
   await first.close();
 
   const page = await context.newPage();
@@ -404,13 +422,16 @@ async function runThreadLifecycle(target) {
     waitUntil: "domcontentloaded",
     timeout: TIMEOUT_MS,
   });
-  const warmObserved = await observeUseful(page, fixture.primaryTitle);
-  await waitForText(page, fixture.lastEntryText);
+  // A warm open is measured on the transcript rather than the sidebar row: the
+  // thread itself is what a restart used to wait a whole waterfall for, and it
+  // is what the warm cache is there to put on screen in the first frame.
+  const warmObserved = await observeUseful(page, fixture.lastEntryText);
   const warm = await snapshotResult(page, {
     target: target.name,
     scenario: "warm-open",
     entryCount: 100,
     threadCount: 25,
+    threadDetectedMs: warmObserved.usefulDetectedMs,
     ...warmObserved,
   });
 
@@ -598,22 +619,174 @@ async function runSharedReadFailure(target) {
   }
 }
 
-async function observeUseful(page, marker) {
+/// How much of a warm reopen the cache actually pays for, against a device that
+/// takes a moment to answer.
+///
+/// The default fixture answers in four milliseconds, where a warm reopen has
+/// almost nothing to skip: the whole cost is rendering, and both sides of the
+/// comparison pay it. A real daemon reads SQLite over IPC and a paired machine
+/// is on the other side of a tailnet, so this asks the same code the question a
+/// person's machine asks it. Cold and warm are measured back to back in one
+/// context so they share whatever else the machine is doing.
+async function runWarmLatency(target) {
+  const fixture = createFixture({ threadCount: 25, entryCount: 100, readDelayMs: WARM_LATENCY_MS });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  await context.addInitScript(installPerformanceBridge, fixture);
+
+  const first = await context.newPage();
+  const errors = [];
+  first.on("pageerror", (error) => errors.push(error.message));
+  await first.goto(`${target.url}#/threads/${fixture.primaryThreadId}`, {
+    waitUntil: "domcontentloaded",
+    timeout: TIMEOUT_MS,
+  });
+  const coldThreadMs = await waitForText(first, fixture.lastEntryText);
+  await waitForWarmCache(first);
+  await first.close();
+
+  const page = await context.newPage();
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(`${target.url}#/threads/${fixture.primaryThreadId}`, {
+    waitUntil: "domcontentloaded",
+    timeout: TIMEOUT_MS,
+  });
+  const observed = await observeUseful(page, fixture.lastEntryText);
+  const result = await snapshotResult(page, {
+    target: target.name,
+    scenario: "warm-latency",
+    entryCount: 100,
+    threadCount: 25,
+    readDelayMs: WARM_LATENCY_MS,
+    coldThreadMs,
+    threadDetectedMs: observed.usefulDetectedMs,
+    ...observed,
+  });
+  assertPageErrors(errors, result);
+  await context.close();
+  return result;
+}
+
+/// A warm reopen of a machine that has gone to sleep, and the reconnect after
+/// it. Every assertion here is a yes or a no rather than a duration, so it says
+/// the same thing on a busy machine as on an idle one.
+async function runWarmOffline(target) {
+  const fixture = createFixture({ threadCount: 25, entryCount: 100 });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  await context.addInitScript(installPerformanceBridge, fixture);
+
+  const first = await context.newPage();
+  await first.goto(`${target.url}#/threads/${fixture.primaryThreadId}`, {
+    waitUntil: "domcontentloaded",
+    timeout: TIMEOUT_MS,
+  });
+  await observeUseful(first, fixture.lastEntryText);
+  await waitForWarmCache(first);
+  await first.close();
+
+  const page = await context.newPage();
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await context.addInitScript(() => window.__remyPerf.unreachable());
+  await page.goto(`${target.url}#/threads/${fixture.primaryThreadId}`, {
+    waitUntil: "domcontentloaded",
+    timeout: TIMEOUT_MS,
+  });
+
+  // Nothing this window shows can have come from the device: every read it
+  // makes fails. What is on screen is what it knew, and it is on screen without
+  // waiting for the failures to come back.
+  const offlineObserved = await observeUseful(page, fixture.lastEntryText);
+  const sidebarPreserved = await page.evaluate(
+    (title) => document.body?.innerText.includes(title) === true,
+    fixture.primaryTitle,
+  );
+  await page.waitForFunction(
+    () => window.__remyPerf.requests.some((request) => request.path === "/chats" && request.ok === false),
+    undefined,
+    { timeout: TIMEOUT_MS },
+  );
+  const readsAttempted = await page.evaluate(() => {
+    const failed = window.__remyPerf.requests.filter((request) => request.ok === false).map((request) => request.path);
+    return {
+      catalogue: failed.includes("/chats"),
+      transcript: failed.some((path) => /^\/chats\/[^/]+/.test(path)),
+    };
+  });
+
+  // Then the machine wakes up. The same entries come back in the fresh read, so
+  // this is where a warm transcript would duplicate itself if merging were
+  // wrong, and where a row would keep a status nobody corrected.
+  await page.evaluate(() => {
+    window.__remyPerf.reachable();
+    window.__remyPerf.emit({ type: "chats" });
+  });
+  await page.waitForFunction(
+    () => window.__remyPerf.requests.some((request) => request.path === "/chats" && request.ok === true),
+    undefined,
+    { timeout: TIMEOUT_MS },
+  );
+  await page.waitForTimeout(300);
+  const converged = await page.evaluate((marker) => {
+    const turns = [...document.querySelectorAll("[data-virtual-turn]")].map((row) =>
+      row.getAttribute("data-virtual-turn"));
+    const text = document.body?.innerText ?? "";
+    let occurrences = 0;
+    let at = text.indexOf(marker);
+    while (at >= 0) {
+      occurrences += 1;
+      at = text.indexOf(marker, at + marker.length);
+    }
+    return { turns: turns.length, unique: new Set(turns).size, occurrences };
+  }, fixture.lastEntryText);
+
+  const result = await snapshotResult(page, {
+    target: target.name,
+    scenario: "warm-offline",
+    entryCount: 100,
+    threadCount: 25,
+    ...offlineObserved,
+    usefulPreserved: offlineObserved.neverPainted !== true && sidebarPreserved,
+    readsAttempted: readsAttempted.catalogue && readsAttempted.transcript,
+    duplicatedEntries: converged.turns - converged.unique + Math.max(0, converged.occurrences - 1),
+  });
+  assertPageErrors(errors, result);
+  await context.close();
+  return result;
+}
+
+async function waitForWarmCache(page) {
   try {
-    await waitForText(page, marker);
-    const firstUsefulPaintMs = await nextPaint(page);
-    return { firstUsefulPaintMs, neverPainted: false };
+    await page.waitForFunction(
+      () => Object.keys(localStorage).some((key) => key.startsWith("remy.warm-cache")),
+      undefined,
+      { timeout: 2_000, polling: 100 },
+    );
   } catch {
-    return { firstUsefulPaintMs: TIMEOUT_MS, neverPainted: true };
+    // Nothing was written. The warm-open result below says so on its own.
   }
 }
 
+async function observeUseful(page, marker) {
+  try {
+    const usefulDetectedMs = await waitForText(page, marker);
+    const firstUsefulPaintMs = await nextPaint(page);
+    return { firstUsefulPaintMs, usefulDetectedMs, neverPainted: false };
+  } catch {
+    return { firstUsefulPaintMs: TIMEOUT_MS, usefulDetectedMs: TIMEOUT_MS, neverPainted: true };
+  }
+}
+
+/// When the page itself first had the text, not when this process could ask.
+/// `firstUsefulPaintMs` is deliberately two frames later, because a budget
+/// should include the frame that actually shows it; anything comparing a paint
+/// against a request timestamp wants this one instead.
 async function waitForText(page, marker) {
-  await page.waitForFunction(
-    (text) => document.body?.innerText.includes(text),
+  const detected = await page.waitForFunction(
+    (text) => (document.body?.innerText.includes(text) ? performance.now() : false),
     marker,
     { timeout: TIMEOUT_MS, polling: "raf" },
   );
+  return detected.jsonValue();
 }
 
 async function setHashAndWait(page, hash, marker) {
@@ -823,6 +996,10 @@ function printResults(allResults) {
       Number.isFinite(result.catalogueReturnMs) ? `catalogue ${formatMs(result.catalogueReturnMs)}` : "",
       Number.isFinite(result.selectedDetailReturnMs) ? `detail ${formatMs(result.selectedDetailReturnMs)}` : "",
       Number.isFinite(result.firstUsefulPaintMs) ? `useful ${formatMs(result.firstUsefulPaintMs)}` : "",
+      Number.isFinite(result.usefulDetectedMs) ? `on screen ${formatMs(result.usefulDetectedMs)}` : "",
+      Number.isFinite(result.threadDetectedMs) ? `thread readable ${formatMs(result.threadDetectedMs)}` : "",
+      Number.isFinite(result.coldThreadMs) ? `cold ${formatMs(result.coldThreadMs)}` : "",
+      Number.isFinite(result.readDelayMs) ? `device answers in ${result.readDelayMs}ms` : "",
       Number.isFinite(result.firstLivePaintP95Ms) ? `live p95 ${formatMs(result.firstLivePaintP95Ms)}` : "",
       Number.isFinite(result.rawLivePaintP95Ms) && Number.isFinite(result.frameCapacity)
         ? `${formatMs(result.rawLivePaintP95Ms)} raw @ ${result.frameCapacity.toFixed(1)} fps capacity`
@@ -844,6 +1021,9 @@ function printResults(allResults) {
       Number.isFinite(result.longTaskCount) ? `${result.longTaskCount} long tasks` : "",
       Number.isFinite(result.affectedRowRenders) ? `${result.affectedRowRenders} affected row renders` : "",
       Number.isFinite(result.unrelatedRowRenders) ? `${result.unrelatedRowRenders} unrelated row renders` : "",
+      result.usefulPreserved === undefined ? "" : `known content ${result.usefulPreserved ? "kept" : "lost"}`,
+      result.readsAttempted === undefined ? "" : `fresh reads ${result.readsAttempted ? "attempted" : "skipped"}`,
+      Number.isFinite(result.duplicatedEntries) ? `${result.duplicatedEntries} duplicated entries` : "",
     ].filter(Boolean).join(" · ");
     console.log(`\n${result.target.padEnd(9)} ${result.scenario}${dataset ? ` (${dataset})` : ""}`);
     console.log(`  ${measures}`);

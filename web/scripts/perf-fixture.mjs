@@ -98,6 +98,7 @@ export function createFixture({
   agentCount = 0,
   unavailableDevice = false,
   serverId = "local",
+  readDelayMs = 4,
 } = {}) {
   const listedChats = chats(threadCount);
   const listedAgents = agents(agentCount);
@@ -140,6 +141,7 @@ export function createFixture({
     lastEntryText: detail.entries.at(-1).text,
     primaryDmId: listedDms[0]?.id,
     primaryAgentHandle: listedAgents[0]?.handle,
+    readDelayMs,
     servers: [{ id: serverId, name: "Performance fixture", url: "fixture://local", builtin: serverId === "local" }],
     responses: {
       "/peers": { name: "Performance fixture", peers: unavailableDevice ? [peer] : [] },
@@ -219,7 +221,10 @@ export function installPerformanceBridge(fixture) {
 
   async function measured(method, path, response, options = {}) {
     const start = performance.now();
-    const delay = options.delay ?? 4;
+    // How long a device takes to answer. The default keeps every existing
+    // budget where it was; raising it is how a scenario says "this daemon reads
+    // SQLite over IPC" rather than "this answer is already in the page".
+    const delay = options.delay ?? fixture.readDelayMs ?? 4;
     if (delay > 0) await wait(delay);
     const end = performance.now();
     const bytes = response === undefined ? 0 : encoder.encode(JSON.stringify(response)).byteLength;
@@ -228,6 +233,8 @@ export function installPerformanceBridge(fixture) {
       ? { ok: false, error: options.error ?? "Unavailable device" }
       : { ok: true, data: response };
   }
+
+  let offline = false;
 
   const fixtureResponse = (path) => {
     if (path.startsWith("/pull-requests?")) return fixture.responses["/pull-requests"];
@@ -275,6 +282,14 @@ export function installPerformanceBridge(fixture) {
     failNext(path, error = "Fixture read failed") {
       nextFailures.set(path, error);
     },
+    /// Every read from here on fails, the way a machine that has gone to sleep
+    /// answers. Unlike `failNext` this stays on until `reachable()`.
+    unreachable() {
+      offline = true;
+    },
+    reachable() {
+      offline = false;
+    },
     emit(payload, serverId = fixture.serverId) {
       if (!connected) return false;
       for (const handler of pushHandlers) handler(serverId, payload);
@@ -297,11 +312,14 @@ export function installPerformanceBridge(fixture) {
     version: "0.1.0",
     info: async () => ({ version: "0.1.0", name: "Performance fixture", packaged: true }),
     servers: async () => {
+      // The device list is held by this process, so it answers even when the
+      // machine behind it does not.
       const answer = await measured("GET", "electron://servers", fixture.servers);
       return answer.data;
     },
     async request(serverId, path, init = {}) {
       const method = init.method ?? "GET";
+      if (offline) return measured(method, path, undefined, { ok: false, error: "Unreachable device" });
       const failed = nextFailures.get(path);
       if (failed) {
         nextFailures.delete(path);
@@ -376,6 +394,21 @@ export function budgetFailures(result, budgets = PERFORMANCE_BUDGETS) {
   if (result.scenario === "cached-thread") {
     over(result.firstUsefulPaintMs, budgets.cachedThreadMs, "cached thread");
   }
+  // Cached content never suppresses a fresh read: a scenario that paints from
+  // what the window already knew still has to ask the device about it.
+  if (result.scenario === "warm-open" && !Number.isFinite(result.catalogueReturnMs)) {
+    failures.push("warm open painted from cache without reading the thread catalogue");
+  }
+  // Whether the paint waited for that read is not asked here. Comparing a paint
+  // against a request timestamp inverts on a loaded machine, where rendering
+  // outlasts the whole waterfall — `warm-offline` proves the same thing by
+  // taking every successful read away instead.
+  if (
+    (result.scenario === "warm-open" || result.scenario === "cached-thread")
+    && !Number.isFinite(result.selectedDetailReturnMs)
+  ) {
+    failures.push(`${result.scenario} painted from cache without reading the transcript`);
+  }
   if (result.scenario === "live-update") {
     over(result.firstLivePaintP95Ms, budgets.livePaintP95Ms, "live update p95");
     if (result.stableRowRenders > 0) failures.push(`stable transcript row rendered ${result.stableRowRenders} extra times`);
@@ -421,6 +454,30 @@ export function budgetFailures(result, budgets = PERFORMANCE_BUDGETS) {
     over(result.firstUsefulPaintMs, budgets.coldUsefulMs, "unavailable-device useful paint");
     if (result.delayFromLocalMs > budgets.unavailableDelayMs) {
       failures.push(`unavailable-device delay: ${result.delayFromLocalMs.toFixed(1)} ms > ${budgets.unavailableDelayMs} ms`);
+    }
+  }
+  // Against a device that takes a moment to answer, a warm reopen has to be the
+  // faster one. Both numbers come from the same context back to back, so this
+  // says the same thing on a fast machine and a loaded one.
+  if (result.scenario === "warm-latency" && Number.isFinite(result.coldThreadMs)) {
+    if (!(result.threadDetectedMs < result.coldThreadMs)) {
+      failures.push(
+        `warm reopen was no faster than a cold one: ${result.threadDetectedMs.toFixed(1)} ms `
+        + `against ${result.coldThreadMs.toFixed(1)} ms with the device answering in ${result.readDelayMs} ms`,
+      );
+    }
+  }
+  // A machine that cannot be reached still shows what is known about it, still
+  // asks, and still converges once it answers.
+  if (result.scenario === "warm-offline") {
+    if (result.usefulPreserved !== true) {
+      failures.push("an unreachable device lost the thread and sidebar content already known about it");
+    }
+    if (result.readsAttempted !== true) {
+      failures.push("cached content suppressed the catalogue or transcript read");
+    }
+    if (result.duplicatedEntries > 0) {
+      failures.push(`reconnect duplicated ${result.duplicatedEntries} transcript entries`);
     }
   }
   if (result.scenario === "shared-read-failure" && result.usefulPreserved !== true) {
