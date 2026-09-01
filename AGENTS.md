@@ -87,6 +87,7 @@ npm run qa:web -- --check  # current server + UI, temporary state, alternate por
 npm run shots        # Playwright PNGs of the window
 npm run live-check   # assert the window is showing threads
 npm run perf         # what each pane costs to open, and how much of it waits on another device
+npm run bundle       # what a cold start downloads, and what waits for a first open
 npm run pack:mac     # web + daemon + Electron DMG → desktop/release/
 ```
 
@@ -108,6 +109,17 @@ A server module opens its database at import time, so a test that touches state 
   sidebar over, and never behind a step that hides what is running. Anything
   that would make a thread harder to reach is the wrong shape, however good the
   new thing is.
+- **A closed work surface is not downloaded.** The browser, the terminal, a
+  pull request and its diff, the insight tools, and every section outside
+  threads reach the window on first open, through `lazy` and the `Deferred`
+  wrapper in `web/src/components/Deferred.tsx`. Opening one latches it: it stays
+  mounted from then on, so hiding its pane never takes a running browser,
+  terminal, or half-written review with it, and the second open waits for
+  nothing. A placeholder fills the box the surface will fill, so nothing moves
+  when the code lands. Keep a lazy module's light parts — a header button, the
+  hook holding its state, a label helper — out of it, or the import that draws
+  the button drags the surface back into the first load. `npm run bundle` says
+  what is in the first load and `npm run perf` times each first open.
 - **A desktop thread is a focused work log beside a work surface.** Its transcript is a narrow, identity-light reading column; its tools open beside it by default on a wide screen, in a larger resizable pane with a quiet launcher when nothing is open. Inbox conversations keep their agent identity because the person is the point there.
 - **Inbox is the agents.** Every agent has one conversation with you, made the
   first time you open it (`dmChatFor`), listed by `listDms` and never by

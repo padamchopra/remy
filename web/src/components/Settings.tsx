@@ -15,7 +15,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Boxes, ChartNoAxesCombined, Check, Cloud, Copy, Folder, GitBranch, Github, GripVertical, ImagePlus, Laptop, Monitor, Plus, RefreshCw, Smartphone, Trash2, X } from "lucide-react";
+import { Check, Cloud, Copy, Folder, Github, GripVertical, ImagePlus, Laptop, Monitor, Plus, RefreshCw, Smartphone, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import remyMark from "@/assets/remy-mark.png";
 import { Badge } from "@/components/ui/badge";
@@ -108,24 +108,11 @@ import { useStore } from "@/state/store";
 import type { Chat, ProviderMcpStatus, Server, ServerSettings, TailnetDevice, Tooling, ToolStatus } from "@/state/types";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { AnalyticsTab } from "@/components/AnalyticsSettings";
+import { SETTINGS_SECTIONS, type SettingsTab } from "@/lib/settings-sections";
 
 const AnalyticsSettings = lazy(() => import("@/components/AnalyticsSettings").then((module) => ({
   default: module.AnalyticsSettings,
 })));
-
-export type SettingsTab = "general" | "version-control" | "providers" | "devices" | "analytics";
-
-export const SETTINGS_SECTIONS: {
-  id: SettingsTab;
-  label: string;
-  icon: typeof Monitor;
-}[] = [
-  { id: "general", label: "General", icon: Monitor },
-  { id: "version-control", label: "Version control", icon: GitBranch },
-  { id: "providers", label: "Providers", icon: Boxes },
-  { id: "devices", label: "Devices", icon: Laptop },
-  { id: "analytics", label: "Analytics", icon: ChartNoAxesCombined },
-];
 
 export function SettingsPane({
   tab,

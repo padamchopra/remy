@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { PullRequestStackInfo } from "@/components/PullRequestStackInfo";
 import { PullRequestFileDiff } from "@/components/PullRequestFileDiff";
 import { PullRequestLineQuestions, PullRequestReviewComposer, PullRequestReviewProvider, usePullRequestReview } from "@/components/PullRequestReview";
-import { sameReviewSource } from "@/lib/pull-request-review";
+import { referenceLabel, sameReviewSource } from "@/lib/pull-request-review";
 import { guideFileGroups, pullRequestFileStat } from "@/lib/pull-request-guide-files";
 import type { PullRequestStack } from "@/state/types";
 import { toast } from "sonner";
@@ -1288,12 +1288,4 @@ function PullRequestLine({
     {reviewSource && <PullRequestLineQuestions source={reviewSource} index={lineIndex} />}
     </>
   );
-}
-
-export function referenceLabel(reference: Pick<ChatCodeReference, "path" | "startLine" | "endLine">): string {
-  const file = reference.path.split("/").at(-1) || reference.path;
-  const range = reference.startLine === reference.endLine
-    ? `L${reference.startLine}`
-    : `L${reference.startLine}-${reference.endLine}`;
-  return `${file} (${range})`;
 }

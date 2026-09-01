@@ -1,6 +1,7 @@
 import type { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, ReactNode, RefObject } from "react";
 import {
   forwardRef,
+  lazy,
   memo,
   useCallback,
   useEffect,
@@ -119,9 +120,8 @@ import { WorkingMarker } from "@/components/WorkingMarker";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Markdown } from "@/components/Markdown";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
-import { ThreadToolsButton, ThreadToolsSidebar, useThreadTools } from "@/components/SharedBrowser";
-import { referenceLabel } from "@/components/PullRequestView";
-import { ThreadToolsLayout } from "@/components/ThreadToolsLayout";
+import { Deferred } from "@/components/Deferred";
+import { ThreadToolsButton, ThreadToolsLayout } from "@/components/ThreadToolsLayout";
 import {
   TerminalButton,
   ThreadTerminal,
@@ -131,6 +131,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useThreadTools } from "@/hooks/use-thread-tools";
 import { apiError } from "@/lib/api-error";
 import { CLOUD_MODES, cloudModeOf, PERMISSIONS, permissionOf } from "@/lib/chat-options";
 import { deviceIcon } from "@/lib/devices";
@@ -138,11 +139,19 @@ import { displayPath } from "@/lib/path";
 import { workspaceForPath } from "@/lib/projects";
 import { PROVIDERS } from "@/lib/providers";
 import { cn } from "@/lib/utils";
+import { referenceLabel } from "@/lib/pull-request-review";
 import { workingToolGroupId } from "@/lib/working-tool";
 import { activityRunning, threadActivities } from "@/lib/thread-activity";
 import { rowAt, virtualLayout, virtualRange, type VirtualLayout, type VirtualRange } from "@/lib/virtual-list";
 import { useStore } from "@/state/store";
 import type { Agent, ArchivedThread, Chat, ChatApproval, ChatCodeReference, ChatQuestionRequest, ConvArtifact, ConvDiffLine, ConvEntry } from "@/state/types";
+
+// The tools beside a thread are closed on almost every open, so their code
+// waits for the pane rather than the thread. Once opened they stay mounted, and
+// what is running inside them survives the pane being hidden again.
+const ThreadToolsSidebar = lazy(() => import("@/components/ThreadTools").then((module) => ({
+  default: module.ThreadToolsSidebar,
+})));
 
 interface ThreadCheckpoint {
   id: string;
@@ -435,28 +444,30 @@ export function ChatView({
         open={focused && !conversational && !archived && threadTools.shown}
         threadId={chat.id}
         sidebar={(
-          <ThreadToolsSidebar
-            chatId={chat.id}
-            serverId={chat.serverId}
-            tabs={threadTools.tabs}
-            activeTab={threadTools.activeTab}
-            views={threadTools.views}
-            setActiveTab={threadTools.setActiveTab}
-            setView={threadTools.setView}
-            addBrowser={threadTools.addBrowser}
-            addAnalytics={threadTools.addAnalytics}
-            addPerformance={threadTools.addPerformance}
-            addPullRequest={threadTools.addPullRequest}
-            addActivity={threadTools.addActivity}
-            activities={activities}
-            activityConnected={activityConnected}
-            codeReferences={codeReferences}
-            onAddReference={(reference) => setCodeReferences((current) => [...current, reference])}
-            onRemoveReference={(id) => setCodeReferences((current) => current.filter((reference) => reference.id !== id))}
-            canAddBrowser={threadTools.canAddBrowser}
-            closeTab={threadTools.closeTab}
-            visible={focused && !conversational && !archived && threadTools.shown}
-          />
+          <Deferred open={focused && !conversational && !archived && threadTools.shown}>
+            <ThreadToolsSidebar
+              chatId={chat.id}
+              serverId={chat.serverId}
+              tabs={threadTools.tabs}
+              activeTab={threadTools.activeTab}
+              views={threadTools.views}
+              setActiveTab={threadTools.setActiveTab}
+              setView={threadTools.setView}
+              addBrowser={threadTools.addBrowser}
+              addAnalytics={threadTools.addAnalytics}
+              addPerformance={threadTools.addPerformance}
+              addPullRequest={threadTools.addPullRequest}
+              addActivity={threadTools.addActivity}
+              activities={activities}
+              activityConnected={activityConnected}
+              codeReferences={codeReferences}
+              onAddReference={(reference) => setCodeReferences((current) => [...current, reference])}
+              onRemoveReference={(id) => setCodeReferences((current) => current.filter((reference) => reference.id !== id))}
+              canAddBrowser={threadTools.canAddBrowser}
+              closeTab={threadTools.closeTab}
+              visible={focused && !conversational && !archived && threadTools.shown}
+            />
+          </Deferred>
         )}
       >
         <ThreadTerminalLayout

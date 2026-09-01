@@ -28,7 +28,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { SETTINGS_SECTIONS, type SettingsTab } from "@/components/Settings";
+import { SETTINGS_SECTIONS, type SettingsTab } from "@/lib/settings-sections";
 import { ProviderMark } from "@/components/ProviderMark";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { deviceIcon } from "@/lib/devices";
