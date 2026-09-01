@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
   ArrowUpRight,
@@ -43,13 +43,8 @@ import { PaneHeader } from "@/components/PaneHeader";
 import { Palette } from "@/components/Palette";
 import { AddWorkspaceDialog } from "@/components/AddWorkspace";
 import { PairRequestDialog } from "@/components/PairRequest";
-import { Board, NewTicketDialog } from "@/components/Board";
-import { MissingTicket, TicketView } from "@/components/TicketView";
-import { SettingsPane, type SettingsTab } from "@/components/Settings";
+import { Deferred, SurfaceLoading } from "@/components/Deferred";
 import type { AnalyticsTab } from "@/components/AnalyticsSettings";
-import { Inbox as InboxPane } from "@/components/Inbox";
-import { WorkspaceSettings } from "@/components/WorkspaceSettings";
-import { PullRequests } from "@/components/PullRequests";
 import { useNotifications } from "@/hooks/use-notifications";
 import { useAppLocation } from "@/hooks/use-location";
 import { useRelease } from "@/hooks/use-release";
@@ -60,6 +55,7 @@ import { agentConversation } from "@/lib/inbox";
 import { notificationsEnabled } from "@/lib/notify";
 import { devicesForWorkspace, workspaceGroups } from "@/lib/projects";
 import { sectionOf, type Route } from "@/lib/route";
+import type { SettingsTab } from "@/lib/settings-sections";
 import { WorkspaceIcon } from "@/components/WorkspaceIcon";
 import { tintOf } from "@/lib/tints";
 import { cn } from "@/lib/utils";
@@ -72,6 +68,18 @@ import {
 } from "@/lib/thread-layout";
 import { useStore } from "@/state/store";
 import type { Server } from "@/state/types";
+
+// A section is code the window only needs once somebody goes there. Threads are
+// not among them: the sidebar's thread list and a thread itself are on screen
+// from the first paint, so they stay in the first load.
+const SettingsPane = lazy(() => import("@/components/Settings").then((module) => ({ default: module.SettingsPane })));
+const Board = lazy(() => import("@/components/Board").then((module) => ({ default: module.Board })));
+const NewTicketDialog = lazy(() => import("@/components/Board").then((module) => ({ default: module.NewTicketDialog })));
+const TicketView = lazy(() => import("@/components/TicketView").then((module) => ({ default: module.TicketView })));
+const MissingTicket = lazy(() => import("@/components/TicketView").then((module) => ({ default: module.MissingTicket })));
+const InboxPane = lazy(() => import("@/components/Inbox").then((module) => ({ default: module.Inbox })));
+const WorkspaceSettings = lazy(() => import("@/components/WorkspaceSettings").then((module) => ({ default: module.WorkspaceSettings })));
+const PullRequests = lazy(() => import("@/components/PullRequests").then((module) => ({ default: module.PullRequests })));
 
 type Section = "inbox" | "chats" | "workspaces" | "tasks" | "prs";
 
@@ -538,6 +546,7 @@ export function App() {
           />
         </div>
 
+        <Suspense fallback={<SurfaceLoading />}>
         {view === "settings" ? (
           <SettingsPane
             tab={settingsTab}
@@ -746,15 +755,18 @@ export function App() {
             )}
           </main>
         )}
+        </Suspense>
       </SidebarProvider>
 
       <AddWorkspaceDialog open={addWorkspaceOpen} onOpenChange={setAddWorkspaceOpen} />
-      <NewTicketDialog
-        open={addTicketOpen}
-        onOpenChange={setAddTicketOpen}
-        projects={projects}
-        onCreated={(key) => go({ name: "ticket", key })}
-      />
+      <Deferred open={addTicketOpen}>
+        <NewTicketDialog
+          open={addTicketOpen}
+          onOpenChange={setAddTicketOpen}
+          projects={projects}
+          onCreated={(key) => go({ name: "ticket", key })}
+        />
+      </Deferred>
       {/* Wherever you are: another machine is waiting on your answer. */}
       <PairRequestDialog />
       <Palette

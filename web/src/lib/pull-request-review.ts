@@ -12,3 +12,13 @@ export function reviewReference(source: PullRequestQuestionSource, start: number
   if (!numbers.length || !comment.trim()) return undefined;
   return { id: crypto.randomUUID(), path: source.path, startLine: Math.min(...numbers), endLine: Math.max(...numbers), lines, comment: comment.trim() };
 }
+
+/// How a pinned range of a file reads wherever it is attached — the composer,
+/// a sent message, or the review it came from.
+export function referenceLabel(reference: Pick<ChatCodeReference, "path" | "startLine" | "endLine">): string {
+  const file = reference.path.split("/").at(-1) || reference.path;
+  const range = reference.startLine === reference.endLine
+    ? `L${reference.startLine}`
+    : `L${reference.startLine}-${reference.endLine}`;
+  return `${file} (${range})`;
+}

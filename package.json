@@ -16,6 +16,7 @@
     "test": "npm --prefix server test && npm --prefix mobile test",
     "shots": "npm --prefix web run shots",
     "perf": "npm --prefix web run perf",
+    "bundle": "npm --prefix web run bundle",
     "live-check": "npm --prefix web run live-check"
   }
 }

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "bundle": "node scripts/bundle.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "shots": "node scripts/shoot.mjs",

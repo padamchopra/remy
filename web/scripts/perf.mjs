@@ -22,6 +22,22 @@ const ONLY_SCENARIO = process.env.MC_PERF_ONLY;
 /// What `warm-latency` has the fixture device take to answer. See the scenario.
 const WARM_LATENCY_MS = positiveInteger(process.env.MC_PERF_READ_DELAY_MS, 150);
 
+/// Every work surface a thread leaves on the network until it opens: what the
+/// first open costs, what the second one costs, and whether the pane moved
+/// while the code was still arriving.
+///
+/// Tools after the first are added from the tab bar's menu, because the
+/// launcher is only on screen while no tool is open.
+const DEFERRED_TOOLS = [
+  { id: "browser", label: "Browser", from: "launcher" },
+  { id: "pull-request", label: "Pull request", from: "menu" },
+  { id: "analytics", label: "Analytics", from: "menu" },
+  { id: "performance", label: "Performance", from: "menu" },
+];
+
+const TERMINAL_READY = `!!document.querySelector('section[aria-label="Terminal"]')`;
+const TOOLS_READY = `!!document.querySelector('section[aria-label="Thread tools"]')`;
+
 const targets = performanceTargets();
 const browser = await chromium.launch({
   executablePath: chromiumPath(),
@@ -32,6 +48,10 @@ const results = [];
 try {
   for (const target of targets) {
     console.log(`\n${target.name} — ${target.url}`);
+    if (ONLY_SCENARIO === "surfaces") {
+      results.push(...await runDeferredSurfaces(target));
+      continue;
+    }
     if (ONLY_SCENARIO !== "lifecycle") {
       for (const entryCount of ENTRY_COUNTS) {
         results.push(await repeated(() => runThreadOpen(target, entryCount)));
@@ -53,6 +73,7 @@ try {
     results.push(await repeated(() => runWarmLatency(target)));
     results.push(await repeated(() => runUnavailableDevice(target)));
     results.push(...await runPaneRoutes(target));
+    results.push(...await runDeferredSurfaces(target));
     results.push(await runSharedReadFailure(target));
   }
 } finally {
@@ -593,6 +614,165 @@ async function runPaneRoutes(target) {
   return paneResults;
 }
 
+/// Every work surface a thread leaves on the network until it opens: what the
+/// first open costs, what the second one costs, and whether the pane moved
+/// while the code was still arriving.
+async function runDeferredSurfaces(target) {
+  const fixture = createFixture({ threadCount: 25, entryCount: 10 });
+  const opened = await openHarnessPage(target, fixture, `#/threads/${fixture.primaryThreadId}`);
+  const surfaces = [];
+  try {
+    await waitForText(opened.page, fixture.lastEntryText);
+    surfaces.push(await measureTerminal(target, opened.page, fixture));
+    surfaces.push(await measureToolsPane(target, opened.page, fixture));
+    for (const tool of DEFERRED_TOOLS) {
+      surfaces.push(await measureTool(target, opened.page, fixture, tool));
+    }
+    for (const surface of surfaces) assertPageErrors(opened.errors, surface);
+    return surfaces;
+  } finally {
+    await opened.context.close();
+  }
+}
+
+async function measureTerminal(target, page, fixture) {
+  const show = () => page.getByRole("button", { name: "Show terminal" }).click();
+  const hide = () => page.getByRole("button", { name: "Hide terminal" }).first().click();
+  const firstOpen = await timeSurface(page, { commit: show, ready: TERMINAL_READY });
+  // The shell keeps running while the drawer is shut, so shutting the drawer
+  // must not take the renderer with it.
+  await hide();
+  const keptOnHide = await page.locator('section[aria-label="Terminal"]').count() > 0;
+  const reopen = await timeSurface(page, { commit: show, ready: TERMINAL_READY });
+  await hide();
+  return snapshotResult(page, {
+    target: target.name,
+    scenario: "surface-terminal",
+    threadCount: fixture.threadCount,
+    keptOnHide,
+    // Opening a terminal starts one; the drawer cannot be measured without it.
+    allowedWrites: ["POST /terminals/"],
+    ...surfaceTimings(firstOpen, reopen),
+  });
+}
+
+async function measureToolsPane(target, page, fixture) {
+  const show = () => page.getByRole("button", { name: "Show thread tools" }).click();
+  const firstOpen = await timeSurface(page, { commit: show, ready: TOOLS_READY });
+  await page.getByRole("button", { name: "Hide thread tools" }).click();
+  const keptOnHide = await page.locator('section[aria-label="Thread tools"]').count() > 0;
+  const reopen = await timeSurface(page, { commit: show, ready: TOOLS_READY });
+  return snapshotResult(page, {
+    target: target.name,
+    scenario: "surface-thread-tools",
+    threadCount: fixture.threadCount,
+    keptOnHide,
+    ...surfaceTimings(firstOpen, reopen),
+  });
+}
+
+async function measureTool(target, page, fixture, tool) {
+  // The launcher is only on screen while no tool is open, so every tool after
+  // the first is added from the tab bar's menu.
+  const prepare = tool.from === "menu"
+    ? () => page.getByRole("button", { name: "Add tool tab" }).click()
+    : undefined;
+  const commit = tool.from === "menu"
+    ? () => page.getByRole("menuitem", { name: tool.label, exact: true }).click()
+    : () => page.getByRole("button", { name: tool.label, exact: true }).click();
+  const ready = toolReady(tool.label);
+
+  const firstOpen = await timeSurface(page, { prepare, commit, ready });
+  // Closing the tab and opening the same tool again. Its code is already in
+  // memory, so this second open never waits on the network.
+  await page.getByRole("button", { name: `Close ${tool.label} tab` }).first().click();
+  const reopen = await timeSurface(page, { prepare, commit, ready });
+  return snapshotResult(page, {
+    target: target.name,
+    scenario: `surface-${tool.id}`,
+    threadCount: fixture.threadCount,
+    // Closing a browser tab closes the browser behind it.
+    allowedWrites: [`POST /chats/${fixture.primaryThreadId}/browser`],
+    ...surfaceTimings(firstOpen, reopen),
+  });
+}
+
+/// The pair of opens as one row: what each cost, whether the placeholder was
+/// ever needed, and the worst the page moved across both.
+function surfaceTimings(firstOpen, reopen) {
+  return {
+    firstOpenMs: firstOpen.firstOpenMs,
+    loadingStateShown: firstOpen.loadingStateShown,
+    reopenMs: reopen.firstOpenMs,
+    reopenFromMemory: !reopen.loadingStateShown,
+    layoutShift: Math.max(firstOpen.layoutShift, reopen.layoutShift),
+  };
+}
+
+/// The tool's own tab is selected and its own panel has drawn something. A tab
+/// the tools pane has shown before keeps an empty hidden panel, so the panel
+/// has to be the one this tab points at rather than the first one in the pane.
+function toolReady(label) {
+  return `(() => {
+    const tools = document.querySelector('section[aria-label="Thread tools"]');
+    if (!tools) return false;
+    const selected = tools.querySelector('[role="tab"][aria-selected="true"]');
+    if (!selected || !selected.textContent.trim().startsWith(${JSON.stringify(label)})) return false;
+    const panel = document.getElementById(selected.getAttribute("aria-controls"));
+    return Boolean(panel && !panel.hidden && panel.childElementCount > 0);
+  })()`;
+}
+
+/// From the click that asks for a surface to the surface being on screen, timed
+/// inside the page so the harness's own round trips stay out of the number.
+///
+/// `prepare` is whatever has to happen first — opening a menu — and is not
+/// timed. `commit` is the click being measured.
+async function timeSurface(page, { prepare, commit, ready }) {
+  await page.evaluate(() => {
+    window.__remyPerf.resetMeasurements();
+    window.__remySurface = { clickedAt: undefined, loadingShown: false };
+    window.__remySurfaceWatch?.disconnect();
+    window.__remySurfaceWatch = new MutationObserver(() => {
+      if (document.querySelector('[data-slot="surface-loading"]')) window.__remySurface.loadingShown = true;
+    });
+    window.__remySurfaceWatch.observe(document.body, { childList: true, subtree: true });
+  });
+  await prepare?.();
+  // Armed after `prepare` so a menu opening is not mistaken for the click.
+  await page.evaluate(() => {
+    document.addEventListener(
+      "click",
+      () => { window.__remySurface.clickedAt = performance.now(); },
+      { capture: true, once: true },
+    );
+  });
+  await commit();
+  const settledAt = await page.waitForFunction(
+    `(() => {
+      if (window.__remySurface.clickedAt === undefined) return false;
+      if (document.querySelector('[data-slot="surface-loading"]')) return false;
+      return ${ready} ? performance.now() : false;
+    })()`,
+    undefined,
+    { timeout: TIMEOUT_MS },
+  ).then((handle) => handle.jsonValue());
+  await nextPaint(page);
+  const observed = await page.evaluate(() => {
+    window.__remySurfaceWatch?.disconnect();
+    return {
+      clickedAt: window.__remySurface.clickedAt,
+      loadingStateShown: window.__remySurface.loadingShown === true,
+      layoutShift: window.__remyPerf.layoutShifts.reduce((total, shift) => total + shift.value, 0),
+    };
+  });
+  return {
+    firstOpenMs: settledAt - observed.clickedAt,
+    loadingStateShown: observed.loadingStateShown,
+    layoutShift: observed.layoutShift,
+  };
+}
+
 async function runSharedReadFailure(target) {
   const fixture = createFixture({ threadCount: 25, entryCount: 10 });
   const opened = await openHarnessPage(target, fixture, "#/board");
@@ -1028,6 +1208,12 @@ function printResults(allResults) {
       Number.isFinite(result.scrollFollowDistancePx) ? `${result.scrollFollowDistancePx.toFixed(1)}px from newest` : "",
       Number.isFinite(result.idleCpuPercent) ? `idle ${result.idleCpuPercent.toFixed(2)}% CPU` : "",
       Number.isFinite(result.hiddenCpuPercent) ? `hidden ${result.hiddenCpuPercent.toFixed(2)}% CPU` : "",
+      Number.isFinite(result.firstOpenMs) ? `first open ${formatMs(result.firstOpenMs)}` : "",
+      Number.isFinite(result.reopenMs) ? `reopen ${formatMs(result.reopenMs)}` : "",
+      Number.isFinite(result.layoutShift) ? `${result.layoutShift.toFixed(3)} layout shift` : "",
+      result.loadingStateShown === undefined ? "" : `loading state ${result.loadingStateShown ? "shown" : "not needed"}`,
+      result.reopenFromMemory === undefined ? "" : `reopened ${result.reopenFromMemory ? "from memory" : "over the network"}`,
+      result.keptOnHide === undefined ? "" : `hidden pane ${result.keptOnHide ? "kept" : "discarded"}`,
       Number.isFinite(result.domSize) ? `${result.domSize} DOM nodes` : "",
       Number.isFinite(result.requestCount) ? `${result.requestCount} requests` : "",
       Number.isFinite(result.transferredBytes) ? `${formatBytes(result.transferredBytes)} transferred` : "",
@@ -1061,6 +1247,11 @@ function printResults(allResults) {
     `  large-list frame rate ≥${PERFORMANCE_BUDGETS.minimumFrameRate}fps`
     + ` · idle CPU ≤${PERFORMANCE_BUDGETS.idleCpuPercent}%`
     + ` · unavailable-device delay ≤${PERFORMANCE_BUDGETS.unavailableDelayMs}ms`,
+  );
+  console.log(
+    `  surface first open ≤${PERFORMANCE_BUDGETS.surfaceFirstOpenMs}ms`
+    + ` · surface reopen ≤${PERFORMANCE_BUDGETS.surfaceReopenMs}ms`
+    + ` · surface layout shift ≤${PERFORMANCE_BUDGETS.maxSurfaceLayoutShift}`,
   );
 }
 

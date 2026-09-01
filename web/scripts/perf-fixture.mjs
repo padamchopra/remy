@@ -9,6 +9,14 @@ export const PERFORMANCE_BUDGETS = Object.freeze({
   maxRenderedTurns: 40,
   maxHistoryAnchorShiftPx: 2,
   maxComposerShiftPx: 1,
+  /// A surface still on the network, from the click that opened it.
+  surfaceFirstOpenMs: 900,
+  /// The same surface opened again in the same window. Its code is already in
+  /// memory, so this is render work and its own first read, nothing more.
+  surfaceReopenMs: 500,
+  /// How far the page is allowed to move while a surface arrives. The loading
+  /// state fills the box the surface will fill, so the answer is nothing.
+  maxSurfaceLayoutShift: 0.01,
   /// Below this, rendering swamps every wait a cache could remove, so a
   /// comparison between a warm and a cold open stops meaning anything.
   measurableFrameRate: 30,
@@ -93,6 +101,22 @@ function dms(roster) {
     updatedAt: 1_700_000_000_000 - index,
     dm: true,
   }));
+}
+
+function usage() {
+  return {
+    inputTokens: 120_000,
+    cachedInputTokens: 640_000,
+    cacheCreationTokens: 90_000,
+    outputTokens: 38_000,
+    reasoningTokens: 12_000,
+    totalTokens: 900_000,
+    costUsd: 4.21,
+  };
+}
+
+function timing(medianMs) {
+  return { samples: 12, medianMs, p95Ms: medianMs * 2, latestMs: medianMs };
 }
 
 export function createFixture({
@@ -180,6 +204,59 @@ export function createFixture({
       "/pair/pending": { requests: [] },
       "/pull-requests": { pullRequests: [] },
       [`/chats/${primary.id}`]: detail,
+      // The tools a thread opens beside itself. Each answers the shape its
+      // surface reads, so a first-open measurement times the code arriving
+      // rather than an empty body taking a different branch.
+      [`/chats/${primary.id}/analytics`]: {
+        chatId: primary.id,
+        provider: "claude",
+        model: "fixture-model",
+        usage: usage(),
+        turns: 12,
+        toolCalls: 34,
+        skillInvocations: 2,
+        skills: [{ name: "qa", count: 2 }],
+        sessionSpanMs: 900_000,
+        measuredActiveMs: 240_000,
+        currentRunMs: 0,
+        measuredTurns: 12,
+        context: {
+          tokens: 48_000,
+          peakTokens: 52_000,
+          limit: 200_000,
+          limitEstimated: false,
+          compactions: 1,
+          droppedTokens: 0,
+        },
+        models: [{ provider: "claude", model: "fixture-model", ...usage() }],
+      },
+      [`/chats/${primary.id}/performance`]: {
+        chatId: primary.id,
+        state: "idle",
+        live: true,
+        sessionSpanMs: 900_000,
+        measuredActiveMs: 240_000,
+        currentRunMs: 0,
+        turns: 12,
+        measuredTurns: 12,
+        firstOutput: timing(820),
+        turnDuration: timing(19_400),
+        toolDuration: timing(1_250),
+        tools: { total: 34, succeeded: 32, failed: 1, stopped: 1, running: 0 },
+        failures: 1,
+        context: {
+          tokens: 48_000,
+          peakTokens: 52_000,
+          limit: 200_000,
+          limitEstimated: false,
+          compactions: 1,
+          droppedTokens: 0,
+        },
+        slowestTools: [
+          { id: "tool-1", label: "Bash npm test", durationMs: 42_000, status: "ok" },
+          { id: "tool-2", label: "Read package.json", durationMs: 120, status: "ok" },
+        ],
+      },
       ...Object.fromEntries(listedDms.map((dm) => [`/chats/${dm.id}`, {
         ...dm,
         permissionMode: "auto",
@@ -199,6 +276,7 @@ export function installPerformanceBridge(fixture) {
   const statusHandlers = new Set();
   const encoder = new TextEncoder();
   const longTasks = [];
+  const layoutShifts = [];
   const renders = [];
   const nextFailures = new Map();
   let connected = true;
@@ -217,6 +295,20 @@ export function installPerformanceBridge(fixture) {
       observer.observe({ type: "longtask", buffered: true });
     } catch {
       // Chromium versions without Long Tasks still report an empty collection.
+    }
+  }
+
+  if (typeof PerformanceObserver !== "undefined") {
+    try {
+      const observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          if (entry.hadRecentInput) continue;
+          layoutShifts.push({ start: entry.startTime, value: entry.value });
+        }
+      });
+      observer.observe({ type: "layout-shift", buffered: true });
+    } catch {
+      // Chromium versions without Layout Instability report no shifts at all.
     }
   }
 
@@ -275,11 +367,13 @@ export function installPerformanceBridge(fixture) {
   window.__remyPerf = {
     requests,
     longTasks,
+    layoutShifts,
     renders,
     fixture,
     resetMeasurements() {
       requests.length = 0;
       longTasks.length = 0;
+      layoutShifts.length = 0;
       renders.length = 0;
     },
     failNext(path, error = "Fixture read failed") {
@@ -429,6 +523,18 @@ export function budgetFailures(result, budgets = PERFORMANCE_BUDGETS) {
     }
     if (result.orderChanged) failures.push("live update changed thread order");
   }
+  // Every surface a thread leaves on the network until it is opened.
+  if (result.scenario?.startsWith("surface-")) {
+    over(result.firstOpenMs, budgets.surfaceFirstOpenMs, "first open");
+    over(result.reopenMs, budgets.surfaceReopenMs, "reopen");
+    if (result.layoutShift > budgets.maxSurfaceLayoutShift) {
+      failures.push(`layout shift while loading: ${result.layoutShift.toFixed(3)} > ${budgets.maxSurfaceLayoutShift}`);
+    }
+    if (result.keptOnHide === false) failures.push("hiding the pane discarded the surface");
+    // The exact claim behind "opened once, open from then on": a second open
+    // has nothing to wait for, so it never shows the placeholder.
+    if (result.reopenFromMemory === false) failures.push("second open fetched the surface again");
+  }
   if (result.scenario === "reconnect") {
     over(result.firstLivePaintP95Ms, budgets.livePaintP95Ms, "reconnect live paint");
   }
@@ -518,6 +624,11 @@ export function budgetFailures(result, budgets = PERFORMANCE_BUDGETS) {
   }
   if (result.neverPainted) failures.push("useful content never painted");
   if (result.pageErrors?.length) failures.push(`page errors: ${result.pageErrors.join("; ")}`);
-  if (result.mutatingRequests?.length) failures.push(`read-only guard: ${result.mutatingRequests.join(", ")}`);
+  // A scenario that drives an interaction may write what that interaction
+  // writes, and nothing else. Everything not listed is still a measurement
+  // quietly changing state.
+  const unexpectedWrites = (result.mutatingRequests ?? []).filter((request) =>
+    !(result.allowedWrites ?? []).some((allowed) => request.startsWith(allowed)));
+  if (unexpectedWrites.length) failures.push(`read-only guard: ${unexpectedWrites.join(", ")}`);
   return failures;
 }

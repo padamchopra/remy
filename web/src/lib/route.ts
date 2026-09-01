@@ -1,5 +1,5 @@
 import type { AnalyticsTab } from "@/components/AnalyticsSettings";
-import type { SettingsTab } from "@/components/Settings";
+import type { SettingsTab } from "@/lib/settings-sections";
 
 /// Where the window is, written down so a reload lands back on it.
 ///

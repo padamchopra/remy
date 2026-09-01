@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { PanelRight } from "lucide-react";
 import { usePanelRef } from "react-resizable-panels";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -123,5 +126,34 @@ export function ThreadToolsLayout({
         </div>
       </ResizablePanel>
     </ResizablePanelGroup>
+  );
+}
+
+export function ThreadToolsButton({
+  active,
+  shown,
+  onClick,
+}: {
+  active: boolean;
+  shown: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant={shown ? "secondary" : "ghost"}
+          size="icon-sm"
+          aria-label={shown ? "Hide thread tools" : "Show thread tools"}
+          onClick={onClick}
+          className="relative"
+        >
+          <PanelRight />
+          {active && <span className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-emerald-500" />}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{shown ? "Hide thread tools" : "Show thread tools"}</TooltipContent>
+    </Tooltip>
   );
 }
