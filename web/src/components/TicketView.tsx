@@ -785,12 +785,16 @@ function ActivityFeed({
             <MarkerIcon className="flex h-4 w-8 items-center justify-center">
               {activityIcon(entry)}
             </MarkerIcon>
-            <MarkerContent className="flex items-baseline gap-1.5">
-              <span className="text-foreground">{actorName(entry.actor, agents)}</span>
-              <span>{describe(entry)}</span>
-              <time className="ml-auto shrink-0 text-xs" dateTime={new Date(entry.at).toISOString()}>
-                {when(entry.at)}
-              </time>
+            <MarkerContent className="flex flex-col gap-0.5">
+              <span className="flex items-baseline gap-1.5">
+                <span className="text-foreground">{actorName(entry.actor, agents)}</span>
+                <span>{describe(entry)}</span>
+                <time className="ml-auto shrink-0 text-xs" dateTime={new Date(entry.at).toISOString()}>
+                  {when(entry.at)}
+                </time>
+              </span>
+              {/* Why the card moved, when whoever moved it said. */}
+              {entry.body ? <span>{entry.body}</span> : null}
             </MarkerContent>
           </Marker>
         </li>

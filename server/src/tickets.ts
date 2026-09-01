@@ -394,6 +394,16 @@ export function parseMentions(body: string): Mention[] {
   return [...found].map(([handle, id]) => ({ handle, id }));
 }
 
+/// The note whoever moved a ticket left with the move.
+///
+/// `body` is where a status note was written before it had a key of its own. A
+/// create event's `body` is the ticket's description rather than a note, so the
+/// fallback is only for the kind that used to carry one.
+function moveNote(event: LogEvent): string | undefined {
+  const note = event.payload.note ?? (event.kind === "status" ? event.payload.body : undefined);
+  return typeof note === "string" && note.trim() ? note : undefined;
+}
+
 export function ticketActivity(id: string): TicketActivity[] {
   const events = eventsFor("ticket", id);
   const comments = new Map<string, { actor: string; body: string; mentions: Mention[]; editedAt?: number }>();
@@ -448,7 +458,7 @@ export function ticketActivity(id: string): TicketActivity[] {
               mentions: comment.mentions,
               ...(comment.editedAt ? { editedAt: comment.editedAt } : {}),
             }
-          : event.payload.body ? { body: String(event.payload.body) } : {}),
+          : moveNote(event) ? { body: moveNote(event)! } : {}),
         detail: event.payload,
       }];
     });
@@ -587,7 +597,9 @@ export function setTicketStatus(
   append("ticket", id, "status", {
     status: value,
     actor: options.actor ?? "you",
-    ...(options.note ? { body: options.note } : {}),
+    // `note`, not `body`: the fold applies a payload's editable fields, so a
+    // note written as `body` would replace the ticket's own description.
+    ...(options.note ? { note: options.note } : {}),
     ...(options.rank ? { rank: options.rank } : {}),
     // What derived the move, under one key of its own so it can never be read
     // as a field. Nothing folds it: it is there so a rule can see what it has
@@ -785,7 +797,9 @@ export function syncTicketFromPullRequest(
 
 function applied(id: string, note: string): boolean {
   return eventsFor("ticket", id).some((event) =>
-    event.kind === "status" && event.payload.actor === "remy" && event.payload.body === note
+    event.kind === "status"
+    && event.payload.actor === "remy"
+    && (event.payload.note ?? event.payload.body) === note
   );
 }
 

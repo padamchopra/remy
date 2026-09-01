@@ -274,6 +274,24 @@ test("a ready pull request moves a ticket to PR review and a merged one closes i
   assert.ok(closed?.closedAt, "a closed ticket records when");
 });
 
+test("a status note goes on the feed, not over the ticket's description", () => {
+  const board = project("Status notes");
+  const ticket = tickets.createTicket({
+    projectId: board.id,
+    title: "Keeps its description",
+    body: "The picker drops the model when the provider changes.",
+    status: "in_progress",
+  });
+
+  tickets.syncTicketFromPullRequest(ticket.id, "ready", { note: "remy/remy#3 is ready for review." });
+
+  assert.equal(tickets.getTicket(ticket.id)?.body, "The picker drops the model when the provider changes.");
+  const feed = tickets.ticketActivity(ticket.id);
+  assert.equal(feed.find((entry) => entry.kind === "status")?.body, "remy/remy#3 is ready for review.");
+  // And the description is not repeated as a note on the line that made it.
+  assert.equal(feed.find((entry) => entry.kind === "create")?.body, undefined);
+});
+
 test("a card you move off PR review is not put back by the same pull request", () => {
   const board = project("Pull request override");
   const ticket = tickets.createTicket({ projectId: board.id, title: "More to do here", status: "in_progress" });
