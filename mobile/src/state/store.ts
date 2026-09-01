@@ -353,7 +353,7 @@ export const useStore = create<State>((set, get) => ({
         results.flatMap((r) => (r.unavailable ? [[r.server.id, r.unavailable]] : [])),
       ),
       servers: results.map((r) => r.server),
-      chats: results.flatMap((r) => r.chats).sort(byAttention),
+      chats: results.flatMap((r) => r.chats).sort(byNewest),
       dms: results.flatMap((r) => r.dms),
       workspaces: applyProjectIdentity(results.flatMap((r) => r.workspaces), get().projects),
       loading: false,
@@ -378,7 +378,7 @@ export const useStore = create<State>((set, get) => ({
       return {
         threadsUnavailable,
         servers: current.servers.map((entry) => (entry.id === serverId ? result.server : entry)),
-        chats: [...others(current.chats), ...result.chats].sort(byAttention),
+        chats: [...others(current.chats), ...result.chats].sort(byNewest),
         dms: [...others(current.dms), ...result.dms],
         workspaces: applyProjectIdentity(
           [...others(current.workspaces), ...result.workspaces],
@@ -943,7 +943,7 @@ export const useStore = create<State>((set, get) => ({
       body: { pinned },
     });
     set((current) => ({
-      chats: current.chats.map((entry) => (entry.id === id ? { ...entry, pinned } : entry)).sort(byAttention),
+      chats: current.chats.map((entry) => (entry.id === id ? { ...entry, pinned } : entry)).sort(byNewest),
     }));
   },
 
@@ -1182,13 +1182,10 @@ function nameFromPath(path: string): string {
   return part ?? "";
 }
 
-/// Pinned first, then needs-you, then working, then most recently updated. The
-/// same order the window uses.
-const RANK: Record<ChatState, number> = { needs_input: 0, working: 1, error: 2, idle: 3 };
-function byAttention(a: Chat, b: Chat): number {
+/// Pinned first, then newest thread first. The same order the window uses.
+function byNewest(a: Chat, b: Chat): number {
   return Number(b.pinned ?? false) - Number(a.pinned ?? false)
-    || RANK[a.state] - RANK[b.state]
-    || b.updatedAt - a.updatedAt;
+    || (b.createdAt ?? b.updatedAt) - (a.createdAt ?? a.updatedAt);
 }
 
 type RawAgent = Omit<Agent, "serverId">;

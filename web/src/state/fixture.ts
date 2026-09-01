@@ -21,6 +21,7 @@ export const fixtureChats: Chat[] = [
     state: "idle",
     model: "opus",
     preview: "Both PRs are open and the stack is linked.",
+    createdAt: Date.now() - 4_800_000,
     updatedAt: Date.now() - 600_000,
   },
   {
@@ -31,6 +32,7 @@ export const fixtureChats: Chat[] = [
     state: "needs_input",
     model: "sonnet",
     preview: "Approve running the migration against the live database?",
+    createdAt: Date.now() - 3_600_000,
     updatedAt: Date.now() - 120_000,
   },
   {
@@ -41,6 +43,7 @@ export const fixtureChats: Chat[] = [
     state: "working",
     model: "opus",
     preview: "Editing GuestTabsViewModel.kt",
+    createdAt: Date.now() - 1_200_000,
     updatedAt: Date.now() - 4_000,
   },
   {
@@ -51,6 +54,7 @@ export const fixtureChats: Chat[] = [
     state: "working",
     model: "sonnet",
     preview: "Updating the pull animation timing.",
+    createdAt: Date.now() - 300_000,
     updatedAt: Date.now() - 12_000,
   },
 ];
