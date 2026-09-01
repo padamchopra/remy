@@ -50,6 +50,13 @@ interface AuthoredPullRequest {
 
 const PULL_REQUEST_CACHE_KEY = "remy.pull-requests.v1";
 const PULL_REQUEST_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
+/// What is kept for the next launch, as opposed to what this window shows. A
+/// cache with no size bound is one that eventually cannot be written at all, so
+/// each device stores the pull requests somebody would actually scroll to and
+/// the least recently answered device is the first to be dropped. Neither bound
+/// touches the list on screen: that is whatever the device answered.
+const PULL_REQUEST_CACHE_PER_DEVICE = 50;
+const PULL_REQUEST_CACHE_DEVICES = 12;
 const PULL_REQUEST_POLL_MS = 60_000;
 
 function isCachedPullRequest(value: unknown): value is AuthoredPullRequest {
@@ -74,6 +81,12 @@ function isCachedPullRequest(value: unknown): value is AuthoredPullRequest {
     && typeof pullRequest.serverId === "string";
 }
 
+function boundedPullRequests(pullRequests: AuthoredPullRequest[]): AuthoredPullRequest[] {
+  return [...pullRequests]
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .slice(0, PULL_REQUEST_CACHE_PER_DEVICE);
+}
+
 function readPullRequestCache(): Map<string, AuthoredPullRequest[]> {
   try {
     const parsed = JSON.parse(localStorage.getItem(PULL_REQUEST_CACHE_KEY) ?? "null") as {
@@ -87,9 +100,10 @@ function readPullRequestCache(): Map<string, AuthoredPullRequest[]> {
       || !parsed.byServer
       || typeof parsed.byServer !== "object"
     ) return new Map();
-    return new Map(Object.entries(parsed.byServer as Record<string, unknown>).flatMap(([serverId, value]) =>
-      Array.isArray(value) ? [[serverId, value.filter(isCachedPullRequest)]] : [],
-    ));
+    return new Map(Object.entries(parsed.byServer as Record<string, unknown>)
+      .flatMap(([serverId, value]): [string, AuthoredPullRequest[]][] =>
+        Array.isArray(value) ? [[serverId, boundedPullRequests(value.filter(isCachedPullRequest))]] : [])
+      .slice(-PULL_REQUEST_CACHE_DEVICES));
   } catch {
     return new Map();
   }
@@ -106,11 +120,16 @@ function hasCachedPullRequests(serverIds: string[]): boolean {
 }
 
 function cachePullRequests(serverId: string, pullRequests: AuthoredPullRequest[]) {
+  // Re-inserted rather than replaced in place, so the map's own order is which
+  // device answered least recently — which is the order the stored copy sheds.
+  pullRequestCache.delete(serverId);
   pullRequestCache.set(serverId, pullRequests);
   try {
     localStorage.setItem(PULL_REQUEST_CACHE_KEY, JSON.stringify({
       savedAt: Date.now(),
-      byServer: Object.fromEntries(pullRequestCache),
+      byServer: Object.fromEntries([...pullRequestCache]
+        .slice(-PULL_REQUEST_CACHE_DEVICES)
+        .map(([device, rows]) => [device, boundedPullRequests(rows)])),
     }));
   } catch {
     // The in-memory snapshot still keeps navigation and refreshes stable.
