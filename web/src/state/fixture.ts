@@ -46,6 +46,32 @@ export const fixtureChats: Chat[] = [
     createdAt: Date.now() - 1_200_000,
     updatedAt: Date.now() - 4_000,
   },
+  // Two subthreads, so the sidebar's tree and the workbench's collection have
+  // something to draw.
+  {
+    id: "c3a",
+    serverId: "studio",
+    parentChatId: "c3",
+    title: "Write the Maestro flow",
+    cwd: "~/code/phere",
+    state: "working",
+    model: "sonnet",
+    preview: "Recording the guest tab happy path.",
+    createdAt: Date.now() - 900_000,
+    updatedAt: Date.now() - 30_000,
+  },
+  {
+    id: "c3b",
+    serverId: "studio",
+    parentChatId: "c3",
+    title: "Update the snapshot tests",
+    cwd: "~/code/phere",
+    state: "idle",
+    model: "sonnet",
+    preview: "Recorded 14 snapshots; all match.",
+    createdAt: Date.now() - 800_000,
+    updatedAt: Date.now() - 400_000,
+  },
   {
     id: "c4",
     serverId: "laptop",
