@@ -118,6 +118,69 @@ export async function listAuthoredPullRequests(refresh = false): Promise<Authore
   return pullRequests;
 }
 
+export interface MergedPullRequest {
+  url: string;
+  number: number;
+  title: string;
+  repository: string;
+  headRefName: string;
+  mergedAt: string | null;
+  workspaceId: string;
+}
+
+const MERGED_CACHE_TTL_MS = 60_000;
+const mergedCache = new Map<string, { at: number; pullRequests: MergedPullRequest[] }>();
+
+/// The pull requests you have merged lately in one workspace.
+///
+/// `listAuthoredPullRequests` asks only for open ones, and a merged pull request
+/// is a whole signal of its own — a ticket that landed — so this is a second,
+/// smaller question rather than a wider version of that one. `@me` is the same
+/// author: a pull request Remy opened for a ticket was opened from here.
+export async function listMergedPullRequests(workspace: Workspace, limit = 50): Promise<MergedPullRequest[]> {
+  const cached = mergedCache.get(workspace.id);
+  if (cached && Date.now() - cached.at < MERGED_CACHE_TTL_MS) return cached.pullRequests;
+  try {
+    const { stdout } = await exec(
+      "gh",
+      [
+        "pr", "list", "--author", "@me", "--state", "merged", "--limit", String(limit),
+        "--json", "url,number,title,headRefName,mergedAt",
+      ],
+      { cwd: workspace.path, timeout: 30_000 },
+    );
+    const pullRequests = parseMergedPullRequests(stdout, workspace);
+    mergedCache.set(workspace.id, { at: Date.now(), pullRequests });
+    return pullRequests;
+  } catch (error) {
+    const detail = String((error as { stderr?: unknown })?.stderr ?? error ?? "").trim();
+    if (detail && !/not logged into|not a git repository|no remotes found/i.test(detail)) {
+      console.error(`merged pull request list failed in ${workspace.path}:`, detail);
+    }
+    return [];
+  }
+}
+
+export function parseMergedPullRequests(raw: string, workspace: Workspace): MergedPullRequest[] {
+  const parsed = JSON.parse(raw || "[]");
+  if (!Array.isArray(parsed)) return [];
+  const repository = repositoryName(workspace);
+  return parsed.flatMap((value: unknown) => {
+    const pr = asRecord(value);
+    const url = stringValue(pr.url);
+    if (!url) return [];
+    return [{
+      url,
+      number: numberValue(pr.number),
+      title: stringValue(pr.title) || "Untitled pull request",
+      repository,
+      headRefName: stringValue(pr.headRefName),
+      mergedAt: stringValue(pr.mergedAt) || null,
+      workspaceId: workspace.id,
+    }];
+  });
+}
+
 async function pullRequestsForWorkspace(
   workspace: Workspace,
   unread: Map<string, PullRequestAttention>,

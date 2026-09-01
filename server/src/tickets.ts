@@ -36,6 +36,18 @@ export const TICKET_STATUSES: TicketStatus[] = [
 const DERIVED: TicketStatus[] = ["in_progress", "needs_input"];
 const STARTED_BY_ATTACHMENT: TicketStatus[] = ["backlog", "todo", "needs_input"];
 
+/// A pull request opened for review picks a ticket up wherever the work still
+/// stands; a merged one closes it. Neither touches a card you closed by hand.
+const READY_MOVES: TicketStatus[] = ["backlog", "todo", "in_progress", "needs_input"];
+const MERGED_MOVES: TicketStatus[] = [...READY_MOVES, "pr_review"];
+
+/// A sub-ticket in one of these has not started, so it does not start its
+/// parent either. Cancelled work never started.
+const NOT_STARTED: TicketStatus[] = ["backlog", "todo", "cancelled"];
+/// And the columns a parent can be started from. Closing one is deliberate,
+/// whoever did it, so a sub-ticket does not reopen it.
+const PARENT_STARTS_FROM: TicketStatus[] = ["backlog", "todo"];
+
 export interface Ticket {
   id: string;
   /// The ticket's own number. `key` is this behind the project's slug, and is
@@ -526,7 +538,7 @@ function getTicketOrThrow(id: string): TicketView {
   return ticket;
 }
 
-export function updateTicket(id: string, input: Record<string, unknown>): TicketView {
+export function updateTicket(id: string, input: Record<string, unknown>, actor = "you"): TicketView {
   if (!getTicket(id)) throw new Error("no such ticket");
   const patch = validate(input);
   if (patch.parentId === id) throw new Error("a ticket cannot be its own parent");
@@ -536,7 +548,7 @@ export function updateTicket(id: string, input: Record<string, unknown>): Ticket
     throw new Error("that ticket is already a sub-ticket");
   }
   if (Object.keys(patch).length === 0) return getTicketOrThrow(id);
-  append("ticket", id, "field", { ...patch, actor: "you" });
+  append("ticket", id, "field", { ...patch, actor });
   return getTicketOrThrow(id);
 }
 
@@ -566,7 +578,7 @@ export function prepareTicketStart(id: string): { ticket: TicketView; agentId?: 
 export function setTicketStatus(
   id: string,
   next: unknown,
-  options: { actor?: string; note?: string; rank?: string } = {},
+  options: { actor?: string; note?: string; rank?: string; derived?: Record<string, unknown> } = {},
 ): TicketView {
   const ticket = getTicket(id);
   if (!ticket) throw new Error("no such ticket");
@@ -577,6 +589,10 @@ export function setTicketStatus(
     actor: options.actor ?? "you",
     ...(options.note ? { body: options.note } : {}),
     ...(options.rank ? { rank: options.rank } : {}),
+    // What derived the move, under one key of its own so it can never be read
+    // as a field. Nothing folds it: it is there so a rule can see what it has
+    // already done to this ticket.
+    ...(options.derived ? { derived: options.derived } : {}),
   });
   return getTicketOrThrow(id);
 }
@@ -631,9 +647,13 @@ export function handoffTicket(id: string, toAgentId: string, actor = "you"): Tic
 }
 
 export function deleteTicket(id: string): void {
-  if (!getTicket(id)) throw new Error("no such ticket");
+  const ticket = getTicket(id);
+  if (!ticket) throw new Error("no such ticket");
   append("ticket", id, "tombstone", { actor: "you" });
   reproject(id);
+  // The parent has one fewer sub-ticket to wait for, and the tombstone is the
+  // last chance to know which parent that was.
+  if (ticket.parentId) syncParentTicket(id, ticket.parentId);
 }
 
 // ── threads ─────────────────────────────────────────────────────────────────
@@ -716,6 +736,126 @@ export function syncTicketFromThread(chatId: string, state: string, onDevice = d
     setTicketStatus(ticket.id, next, { actor: "remy" });
   } catch {
     // The ticket was deleted mid-turn; the thread carries on regardless.
+  }
+}
+
+/// The pull request half of the status rule.
+///
+/// A pull request somebody can review is work Remy has taken as far as it can,
+/// and a merged one is work that landed — so those are the two states that move
+/// a card. A draft moves nothing: the thread is still writing it.
+///
+/// The pull request is found on the machine that holds the repository, so this
+/// runs there; the status event syncs to every other machine like any other.
+export function syncTicketFromPullRequest(
+  id: string,
+  state: "draft" | "ready" | "merged",
+  options: { branch?: string; note?: string } = {},
+): void {
+  const ticket = getTicket(id);
+  if (!ticket) return;
+  // The branch is how a ticket finds its pull request again once the worktree it
+  // was written in is gone. Never written over one somebody else set.
+  if (options.branch && !ticket.branch) {
+    try {
+      updateTicket(id, { branch: options.branch }, "remy");
+    } catch {
+      return;
+    }
+  }
+  if (state === "draft") return;
+  const moves = state === "merged" ? MERGED_MOVES : READY_MOVES;
+  if (!moves.includes(ticket.status)) return;
+  // The ticket's own story is the record of what this rule has already done to
+  // it. One pull request moves a card once, however many times it is read; and
+  // once you have moved that card yourself, no other pull request that mentions
+  // the same ticket — a stack has several — moves it again.
+  if (options.note && applied(id, options.note)) return;
+  if (derivedBefore(id, state) && lastMove(id)?.actor === "you") return;
+  try {
+    setTicketStatus(id, state === "merged" ? "done" : "pr_review", {
+      actor: "remy",
+      derived: { pullRequest: state },
+      ...(options.note ? { note: options.note } : {}),
+    });
+  } catch {
+    // The ticket went away between reading the pull request and the write.
+  }
+}
+
+function applied(id: string, note: string): boolean {
+  return eventsFor("ticket", id).some((event) =>
+    event.kind === "status" && event.payload.actor === "remy" && event.payload.body === note
+  );
+}
+
+function derivedBefore(id: string, state: "ready" | "merged"): boolean {
+  return eventsFor("ticket", id).some((event) =>
+    event.kind === "status"
+    && (event.payload.derived as { pullRequest?: string } | undefined)?.pullRequest === state
+  );
+}
+
+/// When a ticket was last moved, and by whom. The lamport rather than the clock:
+/// two moves in the same millisecond still have an order every machine agrees
+/// on, and a machine whose clock is behind cannot look like the newer word.
+function lastMove(id: string): { lamport: number; actor: string } | undefined {
+  const moves = eventsFor("ticket", id).filter((event) => event.kind === "status");
+  const last = moves[moves.length - 1];
+  return last ? { lamport: last.lamport, actor: String(last.payload.actor ?? "you") } : undefined;
+}
+
+/// The sub-ticket half of the status rule.
+///
+/// A parent is the sum of its children: the first sub-ticket to start starts it,
+/// and it is done once every sub-ticket is closed and at least one of them
+/// finished. Sub-tickets that were all cancelled leave the parent alone — that
+/// is a call for a person.
+///
+/// `id` is the sub-ticket that changed; `parentId` is only passed when the
+/// sub-ticket is already gone and cannot say who its parent was.
+export function syncParentTicket(id: string, parentId = getTicket(id)?.parentId): void {
+  if (!parentId) return;
+  const parent = getTicket(parentId);
+  if (!parent) return;
+  // The parent's own machine rolls it up. Two paired machines both see the
+  // sub-ticket move, and only one of them should write the parent's.
+  if (parent.deviceId && parent.deviceId !== deviceId) return;
+  const children = subTickets(parent.id);
+  if (children.length === 0) return;
+  // You had the last word: nothing has happened to a sub-ticket since you moved
+  // the parent, so the roll-up has nothing to say that you have not overruled.
+  // The next sub-ticket to move puts it back in charge.
+  const yours = lastMove(parent.id);
+  if (yours?.actor === "you") {
+    const moves = children.map((child) => lastMove(child.id)?.lamport ?? 0);
+    if (yours.lamport > Math.max(0, ...moves)) return;
+  }
+
+  const closed = children.every((child) => child.status === "done" || child.status === "cancelled");
+  if (closed) {
+    const finished = children.some((child) => child.status === "done");
+    if (!finished || parent.status === "done" || parent.status === "cancelled") return;
+    return move(parent.id, "done", "Every sub-ticket is closed.");
+  }
+  if (!PARENT_STARTS_FROM.includes(parent.status)) return;
+  if (children.some((child) => !NOT_STARTED.includes(child.status))) {
+    move(parent.id, "in_progress", "A sub-ticket started.");
+  }
+}
+
+function subTickets(parentId: string): Ticket[] {
+  const rows = db
+    .prepare("select * from tickets where parent_id = ? and deleted = 0")
+    .all(parentId) as Record<string, unknown>[];
+  return rows.map(toTicket);
+}
+
+function move(id: string, next: TicketStatus, note: string): void {
+  try {
+    setTicketStatus(id, next, { actor: "remy", note });
+  } catch {
+    // The ticket went away mid-roll-up; the sub-tickets carry on regardless.
   }
 }
 

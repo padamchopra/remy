@@ -255,6 +255,134 @@ test("attaching a thread starts non-terminal work and preserves terminal states"
   }
 });
 
+test("a ready pull request moves a ticket to PR review and a merged one closes it", () => {
+  const board = project("Pull request statuses");
+  const ticket = tickets.createTicket({ projectId: board.id, title: "Ship the picker", status: "in_progress" });
+
+  // A draft is work still being written, so it moves nothing — but it does say
+  // which branch to look for the pull request on later.
+  tickets.syncTicketFromPullRequest(ticket.id, "draft", { branch: "padam/picker" });
+  assert.equal(tickets.getTicket(ticket.id)?.status, "in_progress");
+  assert.equal(tickets.getTicket(ticket.id)?.branch, "padam/picker");
+
+  tickets.syncTicketFromPullRequest(ticket.id, "ready", { note: "remy/remy#7 is ready for review." });
+  assert.equal(tickets.getTicket(ticket.id)?.status, "pr_review");
+
+  tickets.syncTicketFromPullRequest(ticket.id, "merged", { note: "remy/remy#7 is merged." });
+  const closed = tickets.getTicket(ticket.id);
+  assert.equal(closed?.status, "done");
+  assert.ok(closed?.closedAt, "a closed ticket records when");
+});
+
+test("a card you move off PR review is not put back by the same pull request", () => {
+  const board = project("Pull request override");
+  const ticket = tickets.createTicket({ projectId: board.id, title: "More to do here", status: "in_progress" });
+  const ready = "remy/remy#9 is ready for review.";
+
+  tickets.syncTicketFromPullRequest(ticket.id, "ready", { note: ready });
+  assert.equal(tickets.getTicket(ticket.id)?.status, "pr_review");
+  tickets.setTicketStatus(ticket.id, "in_progress");
+
+  // The same pull request is still open and still ready a minute later.
+  tickets.syncTicketFromPullRequest(ticket.id, "ready", { note: ready });
+  assert.equal(tickets.getTicket(ticket.id)?.status, "in_progress");
+
+  // Merging it is something new, so that does land.
+  tickets.syncTicketFromPullRequest(ticket.id, "merged", { note: "remy/remy#9 is merged." });
+  assert.equal(tickets.getTicket(ticket.id)?.status, "done");
+
+  // And once you have reopened that, no other pull request that mentions this
+  // ticket closes it again — a stack has several, and some merged long ago.
+  tickets.setTicketStatus(ticket.id, "todo");
+  tickets.syncTicketFromPullRequest(ticket.id, "merged", { note: "remy/remy#4 is merged." });
+  assert.equal(tickets.getTicket(ticket.id)?.status, "todo");
+});
+
+test("a pull request leaves a ticket you already closed alone", () => {
+  const board = project("Pull request terminal");
+  for (const status of ["done", "cancelled"] as const) {
+    const ticket = tickets.createTicket({ projectId: board.id, title: `Keep ${status}`, status });
+    tickets.syncTicketFromPullRequest(ticket.id, "merged", { note: "remy/remy#11 is merged." });
+    assert.equal(tickets.getTicket(ticket.id)?.status, status);
+  }
+});
+
+test("a parent starts with its first sub-ticket and closes when they all do", () => {
+  const board = project("Roll up");
+  const parent = tickets.createTicket({ projectId: board.id, title: "Redesign the board" });
+  const one = tickets.createTicket({ projectId: board.id, title: "Columns", parentId: parent.id });
+  const two = tickets.createTicket({ projectId: board.id, title: "Cards", parentId: parent.id });
+
+  tickets.setTicketStatus(one.id, "in_progress");
+  tickets.syncParentTicket(one.id);
+  assert.equal(tickets.getTicket(parent.id)?.status, "in_progress");
+
+  tickets.setTicketStatus(one.id, "done");
+  tickets.syncParentTicket(one.id);
+  assert.equal(tickets.getTicket(parent.id)?.status, "in_progress", "one sub-ticket left");
+
+  tickets.setTicketStatus(two.id, "done");
+  tickets.syncParentTicket(two.id);
+  assert.equal(tickets.getTicket(parent.id)?.status, "done");
+});
+
+test("sub-tickets that were all cancelled leave the parent where it is", () => {
+  const board = project("Roll up cancelled");
+  const parent = tickets.createTicket({ projectId: board.id, title: "Dropped idea" });
+  const child = tickets.createTicket({ projectId: board.id, title: "Not doing this", parentId: parent.id });
+
+  tickets.setTicketStatus(child.id, "cancelled");
+  tickets.syncParentTicket(child.id);
+  assert.equal(tickets.getTicket(parent.id)?.status, "backlog");
+});
+
+test("a closed parent is not reopened by a sub-ticket", () => {
+  const board = project("Roll up terminal");
+  for (const status of ["done", "cancelled"] as const) {
+    const parent = tickets.createTicket({ projectId: board.id, title: `Closed ${status}` });
+    const child = tickets.createTicket({ projectId: board.id, title: "Late arrival", parentId: parent.id });
+    tickets.setTicketStatus(parent.id, status);
+    tickets.setTicketStatus(child.id, "in_progress");
+    tickets.syncParentTicket(child.id);
+    assert.equal(tickets.getTicket(parent.id)?.status, status);
+  }
+});
+
+test("your move on a parent stands until a sub-ticket moves again", () => {
+  const board = project("Roll up override");
+  const parent = tickets.createTicket({ projectId: board.id, title: "Bigger than it looked" });
+  const one = tickets.createTicket({ projectId: board.id, title: "First", parentId: parent.id });
+  const two = tickets.createTicket({ projectId: board.id, title: "Second", parentId: parent.id });
+
+  tickets.setTicketStatus(one.id, "done");
+  tickets.setTicketStatus(two.id, "done");
+  tickets.syncParentTicket(two.id);
+  assert.equal(tickets.getTicket(parent.id)?.status, "done");
+
+  tickets.setTicketStatus(parent.id, "todo");
+  tickets.syncParentTicket(two.id);
+  assert.equal(tickets.getTicket(parent.id)?.status, "todo", "you had the last word");
+
+  // Until the sub-tickets have something new to say.
+  tickets.setTicketStatus(two.id, "in_progress");
+  tickets.syncParentTicket(two.id);
+  assert.equal(tickets.getTicket(parent.id)?.status, "in_progress");
+});
+
+test("deleting the last open sub-ticket closes the parent", () => {
+  const board = project("Roll up delete");
+  const parent = tickets.createTicket({ projectId: board.id, title: "Two halves" });
+  const one = tickets.createTicket({ projectId: board.id, title: "Kept", parentId: parent.id });
+  const two = tickets.createTicket({ projectId: board.id, title: "Dropped", parentId: parent.id });
+
+  tickets.setTicketStatus(one.id, "done");
+  tickets.syncParentTicket(one.id);
+  assert.equal(tickets.getTicket(parent.id)?.status, "in_progress");
+
+  tickets.deleteTicket(two.id);
+  assert.equal(tickets.getTicket(parent.id)?.status, "done");
+});
+
 test("your ticket comment continues the newest runner thread with the same body", async () => {
   const board = project("Comment continuity");
   const ticket = tickets.createTicket({ projectId: board.id, title: "Keep working" });
