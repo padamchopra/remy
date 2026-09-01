@@ -308,14 +308,9 @@ function GroupView({ group, focused, bench }: { group: TabGroup; focused: boolea
         className="min-h-0 flex-1 gap-0"
       >
         <TabStrip
-          actions={(
-            <>
-              {activeTab?.kind === "thread" && activeChat && !activeChat.dm && (
-                <ThreadTicket chatId={activeChat.id} onOpenTicket={bench.onOpenTicket} />
-              )}
-              {activeChat && <AddMenu group={group} chat={activeChat} bench={bench} />}
-            </>
-          )}
+          actions={activeTab?.kind === "thread" && activeChat && !activeChat.dm
+            ? <ThreadTicket chatId={activeChat.id} onOpenTicket={bench.onOpenTicket} />
+            : undefined}
         >
           <TabsList aria-label="Open tabs" className={tabListClass}>
             {group.tabs.map((tab) => (
@@ -329,6 +324,7 @@ function GroupView({ group, focused, bench }: { group: TabGroup; focused: boolea
               />
             ))}
           </TabsList>
+          {activeChat && <AddMenu group={group} chat={activeChat} bench={bench} />}
         </TabStrip>
 
         {group.tabs.map((tab) => {

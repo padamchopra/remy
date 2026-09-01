@@ -1,5 +1,20 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, Check, ChevronDown, Folder, FolderGit2, GitBranch, MessagesSquare, Plus, SquareTerminal } from "lucide-react";
+import {
+  Activity,
+  ArrowUp,
+  ChartNoAxesCombined,
+  Check,
+  ChevronDown,
+  Folder,
+  FolderGit2,
+  Gauge,
+  GitBranch,
+  GitPullRequest,
+  Globe2,
+  MessagesSquare,
+  Plus,
+  SquareTerminal,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,6 +30,7 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -315,29 +331,7 @@ export function ChatComposer({
         onValueChange={(value) => setTab(value === "terminal" ? "terminal" : "draft")}
         className="min-h-0 flex-1 gap-0"
       >
-        <TabStrip
-          actions={(
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button type="button" variant="ghost" size="icon-sm" aria-label="Add tab">
-                  <Plus />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  disabled={!terminalAvailable}
-                  onSelect={() => {
-                    setTerminalShown(true);
-                    setTab("terminal");
-                  }}
-                >
-                  <SquareTerminal />
-                  Terminal
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-        >
+        <TabStrip>
           <TabsList aria-label="Open tabs" className={tabListClass}>
             <TabsTrigger value="draft" className={tabTriggerClass}>
               <MessagesSquare className="size-3.5 shrink-0" />
@@ -355,6 +349,49 @@ export function ChatComposer({
               </div>
             )}
           </TabsList>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="ghost" size="icon-sm" aria-label="Add tab">
+                <Plus />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem
+                disabled={!terminalAvailable || terminalOpen}
+                onSelect={() => {
+                  setTerminalShown(true);
+                  setTab("terminal");
+                }}
+              >
+                <SquareTerminal />
+                Terminal
+              </DropdownMenuItem>
+              {/* The rest belong to a thread, and there is none until the first
+                  message. Listed so nobody wonders where they went. */}
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="font-normal text-muted-foreground">These open once the thread starts.</DropdownMenuLabel>
+              <DropdownMenuItem disabled>
+                <Globe2 />
+                Browser
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled>
+                <GitPullRequest />
+                Pull request
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled>
+                <Activity />
+                Running work
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled>
+                <ChartNoAxesCombined />
+                Analytics
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled>
+                <Gauge />
+                Performance
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </TabStrip>
 
         {terminalOpen && server && (
