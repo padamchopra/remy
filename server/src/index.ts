@@ -39,6 +39,7 @@ import {
   listTickets,
   moveTicket,
   setTicketStatus,
+  syncParentTicket,
   syncTicketFromThread,
   ticketActivity,
   ticketForChat,
@@ -180,6 +181,7 @@ import { pullRequestFileContent, validPullRequestFileRequest } from "./pull-requ
 import { askPullRequestQuestion, discoverPullRequestQuestions, readPullRequestQuestions } from "./pull-request-questions.js";
 import { validateChatCodeReferences } from "./chat-references.js";
 import { startPullRequestMonitor } from "./pull-request-monitor.js";
+import { startTicketPullRequestSync } from "./ticket-pull-requests.js";
 import {
   clearAgentPullRequestMonitoring,
   clearThreadPullRequestMonitoring,
@@ -2613,6 +2615,9 @@ seedRemyAgent();
 // GitHub state belongs to registered workspaces. The monitor nudges the thread
 // already working on a PR, or lets the default GitHub agent open one there.
 startPullRequestMonitor();
+// And what GitHub says about a ticket's own pull request: ready for review, or
+// merged. Only this machine can ask about the repositories it holds.
+startTicketPullRequestSync();
 // Then whatever this release gave Remy to say, said once.
 deliverAnnouncements();
 // An agent deleted while this machine was shut leaves its conversation behind.
@@ -2622,7 +2627,12 @@ pruneOrphanDms();
 // ticket status, a routine runs, or an agent uses a ticket tool. Keep every
 // open window live without making each writer remember to send its own frame.
 function reconcileBoardEvent(event: LogEvent): void {
-  if (event.entity === "ticket") void reconcileTicket(event.entityId);
+  if (event.entity === "ticket") {
+    void reconcileTicket(event.entityId);
+    // A sub-ticket moving is also its parent moving. Here rather than in the
+    // writer so a sub-ticket a paired machine moved rolls its parent up too.
+    syncParentTicket(event.entityId);
+  }
   if (event.entity === "agent") {
     void reconcileAgentTickets(event.entityId);
     // What an agent thinks with is what its inbox conversation thinks with,

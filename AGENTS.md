@@ -155,6 +155,16 @@ A server module opens its database at import time, so a test that touches state 
 - **The iPhone app is a client of a Mac**, never a daemon of its own. It pairs with `remy://configure?url=&token=` from Settings → Devices and reaches every other machine through that Mac.
 - **Two machines pair by asking, not by carrying a token.** `tailnet.ts` lists your devices from `tailscale status --json` and probes each for Remy — an un-tokened `/health` answers **401**, which is the positive signal. `pairing.ts` then runs the ask: one side shows a six-digit code, a person on the other compares it and allows. `/pair/request` and `/pair/status` are **the only unauthenticated routes** in the daemon, because a machine that has never paired holds no token; they disclose nothing but an opaque request id, change nothing without human approval, are capped and single-use, and are reachable only over your own tailnet. Do not add a third.
 - **The board converges, it is not copied.** Peers exchange `board_log` events against a version vector (`versionVector`, `eventsSince`, `mergeRemote` in `board-log.ts`), then replay every `reprojectAll`. A merged event keeps the device and lamport it was written with — those two are its place in the order. One high-water mark per device, never a single cursor: a peer can merge a third machine's older event after you last pulled.
+- **A ticket's status is derived, and yours to overrule.** `tickets.ts` holds
+  every rule: a working thread moves a card between In progress and Needs input,
+  a pull request opened for review moves it to PR review, a merged one closes it,
+  and a parent follows its sub-tickets — started by the first, closed once they
+  all are. The machine holding the repository is the one that asks GitHub
+  (`ticket-pull-requests.ts`) and the parent's own machine is the one that rolls
+  it up, so two paired machines write one event rather than two. Every derived
+  move is actor `remy` and carries what derived it, because the rule reads the
+  ticket's own story to see what it has already done: one pull request moves a
+  card once, and a card you moved by hand stays where you put it.
 - **A routine belongs to an agent, not a ticket.** It is created conversationally when the person asks that agent for repeated work, then managed in that agent's settings. The machine on the create event owns the clock so paired machines do not trigger it twice; each trigger tries the current device preference order and sends the prompt to the first device that can run the agent. It writes no ticket and needs no workspace. The old `recurrences` projection remains only as compatible storage, and older recurring-ticket events stay inert rather than becoming routines.
 - **Device administration and device preference are separate.** The detailed Devices list always keeps this machine first so its settings are easy to find. A compact **Preferred device order** field owns the order used when agent conversations, routines, or other work can run on any available device.
 - **The workspace agent is not a row.** `workspace` is an assignee like `you` is: it means the workspace's own default model with no persona in front of it, so work can be handed off before anybody has written an agent. `assignedAgent` in `agents.ts` is what turns either into something that can run a turn; no agent may take the handle.
