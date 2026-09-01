@@ -52,6 +52,7 @@ function valueOf(text: string, images: ImageItem[]): InlineImageComposerValue {
 export const InlineImageComposer = forwardRef<InlineImageComposerHandle, {
   ariaLabel: string;
   placeholder: string;
+  initialText?: string;
   disabled?: boolean;
   onChange(value: InlineImageComposerValue): void;
   onSubmit(): void;
@@ -60,6 +61,7 @@ export const InlineImageComposer = forwardRef<InlineImageComposerHandle, {
 }>(({
   ariaLabel,
   placeholder,
+  initialText = "",
   disabled = false,
   onChange,
   onSubmit,
@@ -67,9 +69,9 @@ export const InlineImageComposer = forwardRef<InlineImageComposerHandle, {
   onError,
 }, forwardedRef) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const textRef = useRef("");
+  const textRef = useRef(initialText);
   const imagesRef = useRef<ImageItem[]>([]);
-  const [text, setText] = useState("");
+  const [text, setText] = useState(initialText);
   const [images, setImages] = useState<ImageItem[]>([]);
   const [dragging, setDragging] = useState(false);
 

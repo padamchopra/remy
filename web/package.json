@@ -11,7 +11,7 @@
     "shots": "node scripts/shoot.mjs",
     "perf": "npm run build:perf && node scripts/perf.mjs",
     "build:perf": "tsc --noEmit && vite build",
-    "perf:test": "node --test scripts/perf-fixture.test.mjs scripts/shared-read.test.mjs scripts/warm-cache.test.mjs",
+    "perf:test": "node --test scripts/composer-draft.test.mjs scripts/perf-fixture.test.mjs scripts/shared-read.test.mjs scripts/warm-cache.test.mjs",
     "live-check": "node scripts/live-check.mjs"
   },
   "dependencies": {

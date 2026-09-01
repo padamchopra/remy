@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { readComposerDraft, writeComposerDraft } from "@/lib/composer-draft";
 import {
   ArchiveRestore,
   ArrowUp,
@@ -217,8 +218,9 @@ export function ChatView({
 
   const workspaces = useStore((s) => s.workspaces);
   const servers = useStore((s) => s.servers);
+  const initialDraft = useMemo(() => readComposerDraft(`thread:${chat.id}`), [chat.id]);
   const [draft, setDraft] = useState<InlineImageComposerValue>({
-    text: "",
+    text: initialDraft,
     attachments: [],
     uploading: false,
   });
@@ -256,10 +258,17 @@ export function ChatView({
   }, [chat.id, archived, openChat, closeChat]);
 
   useEffect(() => {
-    composerRef.current?.clear();
-    if (focused) composerRef.current?.focus();
+    setDraft({ text: initialDraft, attachments: [], uploading: false });
     setCodeReferences([]);
-  }, [chat.id, focused]);
+  }, [chat.id, initialDraft]);
+
+  useEffect(() => {
+    if (focused) composerRef.current?.focus();
+  }, [focused]);
+
+  useEffect(() => {
+    writeComposerDraft(`thread:${chat.id}`, draft.text);
+  }, [chat.id, draft.text]);
 
   // Which project this chat is in, so the breadcrumb reads as a place rather
   // than a path. A chat started in `~` belongs to no workspace and wears the
@@ -629,8 +638,10 @@ export function ChatView({
         >
           <InputGroup className="items-stretch rounded-2xl border-border/80 bg-card/95 shadow-sm">
             <InlineImageComposer
+              key={chat.id}
               ref={composerRef}
               ariaLabel="Message"
+              initialText={initialDraft}
               placeholder={
                 archived
                   ? "Unarchive to reply."

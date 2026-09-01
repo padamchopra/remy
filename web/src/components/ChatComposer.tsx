@@ -39,6 +39,7 @@ import {
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { CLOUD_MODES, cloudModeOf, PERMISSIONS, permissionOf, type PermissionValue } from "@/lib/chat-options";
 import { apiError } from "@/lib/api-error";
+import { readComposerDraft, writeComposerDraft } from "@/lib/composer-draft";
 import { deviceIcon } from "@/lib/devices";
 import { availableAgentServers } from "@/lib/inbox";
 import { devicesForWorkspace, workspaceGroups } from "@/lib/projects";
@@ -92,7 +93,7 @@ export function ChatComposer({
   const [permissionPicked, setPermissionPicked] = useState(false);
   const [checkout, setCheckout] = useState<(typeof CHECKOUTS)[number]["value"]>("main");
   const [branch, setBranch] = useState<string>();
-  const [text, setText] = useState("");
+  const [text, setText] = useState(() => readComposerDraft("new-thread"));
   const [busy, setBusy] = useState(false);
   const [switchingBranch, setSwitchingBranch] = useState(false);
   const [terminalShown, setTerminalShown] = useState(false);
@@ -104,6 +105,10 @@ export function ChatComposer({
   useEffect(() => {
     textareaRef.current?.focus();
   }, []);
+
+  useEffect(() => {
+    writeComposerDraft("new-thread", text);
+  }, [text]);
 
   const workspace = workspaces.find((entry) => entry.id === target);
   const home = target === HOME || !workspace;
@@ -277,6 +282,7 @@ export function ChatComposer({
         `/terminals/${encodeURIComponent(terminalId)}/close`,
         { method: "POST" },
       ).catch(() => undefined);
+      writeComposerDraft("new-thread", "");
       onCreated(created.id);
     } catch (caught) {
       toast.error("Couldn't start that thread", { description: apiError(caught) });
