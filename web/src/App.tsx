@@ -38,7 +38,7 @@ import { AppActionsProvider } from "@/actions/context";
 import { AppSidebar } from "@/components/AppSidebar";
 import { ChatComposer } from "@/components/ChatComposer";
 import { ChatView } from "@/components/ChatView";
-import { ThreadWorkspace } from "@/components/ThreadWorkspace";
+import { ThreadWorkbench } from "@/components/ThreadWorkbench";
 import { PaneHeader } from "@/components/PaneHeader";
 import { Palette } from "@/components/Palette";
 import { AddWorkspaceDialog } from "@/components/AddWorkspace";
@@ -59,13 +59,7 @@ import type { SettingsTab } from "@/lib/settings-sections";
 import { WorkspaceIcon } from "@/components/WorkspaceIcon";
 import { tintOf } from "@/lib/tints";
 import { cn } from "@/lib/utils";
-import {
-  addThreadPane,
-  decodeThreadLayout,
-  encodeThreadLayout,
-  threadLeaf,
-  type ThreadLayoutNode,
-} from "@/lib/thread-layout";
+import { openTab, updateWorkbench } from "@/lib/thread-workbench";
 import { useStore } from "@/state/store";
 import type { Server } from "@/state/types";
 
@@ -228,13 +222,7 @@ export function App() {
   const [addTicketOpen, setAddTicketOpen] = useState(false);
   const [creatingAgent, setCreatingAgent] = useState(false);
   const [sidebarShown, setSidebarShown] = useState(initialSidebarShown);
-  const [threadToolsShown, setThreadToolsShown] = useState<Record<string, boolean>>({});
 
-  const setThreadToolsVisibility = useCallback((threadId: string, shown: boolean) => {
-    setThreadToolsShown((current) => current[threadId] === shown
-      ? current
-      : { ...current, [threadId]: shown });
-  }, []);
   const toggleSidebar = () => {
     setSidebarShown((shown) => {
       const next = !shown;
@@ -259,6 +247,12 @@ export function App() {
   const threadStructure = useStore(useShallow((s) =>
     s.chats.map((chat) => `${chat.id}\u0000${chat.parentChatId ?? ""}`)));
   const chatIds = useStore(useShallow((s) => s.chats.map((chat) => chat.id)));
+  // The workbench is keyed by the collection, so moving between a parent and
+  // its subthreads keeps every tab mounted.
+  const routedParentId = useStore((s) => {
+    const chat = s.chats.find((entry) => entry.id === routedThreadId);
+    return chat?.parentChatId ?? routedThreadId;
+  });
   const archived = useStore((s) => s.archived);
   const allWorkspaces = useStore((s) => s.workspaces);
   const loading = useStore((s) => s.loading);
@@ -396,33 +390,25 @@ export function App() {
 
   const draftChat = () => go({ name: "threads" });
 
-  const openChat = (id: string) => go({ name: "threads", threadId: id });
-
-  const setThreadLayout = (
-    parentId: string,
-    layout: ThreadLayoutNode,
-    focus: string,
-    replace = false,
-  ) => go({
-    name: "threads",
-    threadId: parentId,
-    layout: encodeThreadLayout(layout),
-    focus,
-  }, replace);
-
-  const openBeside = (childId: string) => {
+  /// Opens a thread as the tab in front of its collection. A subthread's
+  /// collection is its parent's; `beside` puts it in a pane of its own there.
+  const openChat = (id: string, beside = false) => {
     // Creation may finish before this render's catalogue contains the child.
-    const currentChats = useStore.getState().chats;
-    const child = currentChats.find((chat) => chat.id === childId);
-    if (!child?.parentChatId) return openChat(childId);
-    const parent = currentChats.find((chat) => chat.id === child.parentChatId);
-    if (!parent) return openChat(childId);
-    const current = route.name === "threads" && route.threadId === parent.id
-      ? decodeThreadLayout(route.layout) ?? threadLeaf(parent.id)
-      : threadLeaf(parent.id);
-    const width = Math.max(1, window.innerWidth - (sidebarShown ? 240 : 0));
-    const height = Math.max(1, window.innerHeight - 48);
-    setThreadLayout(parent.id, addThreadPane(current, child.id, width, height), child.id);
+    const chat = useStore.getState().chats.find((entry) => entry.id === id);
+    if (chat) {
+      updateWorkbench(chat.parentChatId ?? chat.id, (workbench) =>
+        openTab(workbench, { kind: "thread", threadId: id }, beside ? { at: "beside" } : { at: "focused" }));
+    }
+    go({ name: "threads", threadId: id });
+  };
+
+  const openBeside = (childId: string) => openChat(childId, true);
+
+  // The thread in front changed by way of a tab, so the address says so
+  // without the back button walking through every click.
+  const focusThread = (parentId: string, threadId: string) => {
+    if (route.name === "threads" && (route.focus ?? route.threadId) === threadId) return;
+    go({ name: "threads", threadId: parentId, ...(threadId !== parentId ? { focus: threadId } : {}) }, true);
   };
 
   /// Where a conversation opens, whichever list it is in. A notification only
@@ -616,17 +602,14 @@ export function App() {
         ) : (
           <main className="flex min-w-0 flex-1 flex-col">
             {section === "chats" && routedThreadId && chatIds.includes(routedThreadId) ? (
-              <RoutedThreadWorkspace
-                key={routedThreadId}
+              <RoutedThreadWorkbench
+                key={routedParentId}
                 threadId={routedThreadId}
-                encodedLayout={route.name === "threads" ? route.layout : undefined}
                 focusedId={route.name === "threads" ? route.focus : undefined}
-                toolsShown={threadToolsShown}
-                onToolsShownChange={setThreadToolsVisibility}
                 onOpenTicket={(key) => go({ name: "ticket", key })}
-                onOpenThread={openChat}
+                onOpenThread={(id) => openChat(id)}
                 onOpenWorkspace={(workspaceId) => go({ name: "workspaces", workspaceId })}
-                onLayoutChange={setThreadLayout}
+                onFocusThread={focusThread}
               />
             ) : section === "chats" && activeArchive && archivedChat ? (
               <ChatView
@@ -795,13 +778,13 @@ export function App() {
   );
 }
 
-function RoutedThreadWorkspace({
+function RoutedThreadWorkbench({
   threadId,
   ...props
-}: Omit<ComponentProps<typeof ThreadWorkspace>, "routeThread"> & { threadId: string }) {
+}: Omit<ComponentProps<typeof ThreadWorkbench>, "routeThread"> & { threadId: string }) {
   const chat = useStore((state) => state.chats.find((entry) => entry.id === threadId));
   if (!chat) return null;
-  return <ThreadWorkspace routeThread={chat} {...props} />;
+  return <ThreadWorkbench routeThread={chat} {...props} />;
 }
 
 function EmptyState({
