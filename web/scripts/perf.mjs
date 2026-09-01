@@ -641,7 +641,7 @@ async function runWarmLatency(target) {
     timeout: TIMEOUT_MS,
   });
   const coldThreadMs = await waitForText(first, fixture.lastEntryText);
-  await waitForWarmCache(first);
+  const openedWarm = await waitForWarmCache(first);
   await first.close();
 
   const page = await context.newPage();
@@ -651,12 +651,19 @@ async function runWarmLatency(target) {
     timeout: TIMEOUT_MS,
   });
   const observed = await observeUseful(page, fixture.lastEntryText);
+  // What the cache removes is request wait; what both sides pay is rendering.
+  // On a machine slow enough that rendering swamps the wait, the comparison
+  // stops meaning anything, so record how fast this machine actually is and let
+  // the budget decide whether to hold the result to account.
+  const frameCapacity = await measureFrameCapacity(page);
   const result = await snapshotResult(page, {
     target: target.name,
     scenario: "warm-latency",
     entryCount: 100,
     threadCount: 25,
     readDelayMs: WARM_LATENCY_MS,
+    openedWarm,
+    frameCapacity,
     coldThreadMs,
     threadDetectedMs: observed.usefulDetectedMs,
     ...observed,
@@ -680,7 +687,7 @@ async function runWarmOffline(target) {
     timeout: TIMEOUT_MS,
   });
   await observeUseful(first, fixture.lastEntryText);
-  await waitForWarmCache(first);
+  const openedWarm = await waitForWarmCache(first);
   await first.close();
 
   const page = await context.newPage();
@@ -744,6 +751,7 @@ async function runWarmOffline(target) {
     scenario: "warm-offline",
     entryCount: 100,
     threadCount: 25,
+    openedWarm,
     ...offlineObserved,
     usefulPreserved: offlineObserved.neverPainted !== true && sidebarPreserved,
     readsAttempted: readsAttempted.catalogue && readsAttempted.transcript,
@@ -754,15 +762,20 @@ async function runWarmOffline(target) {
   return result;
 }
 
+/// Whether the window left a snapshot behind, which is the difference between
+/// "the warm cache did not work" and "there was no warm cache to work". A build
+/// without one, or a machine too busy to have settled yet, is reported as such
+/// rather than as content this scenario lost.
 async function waitForWarmCache(page) {
   try {
     await page.waitForFunction(
       () => Object.keys(localStorage).some((key) => key.startsWith("remy.warm-cache")),
       undefined,
-      { timeout: 2_000, polling: 100 },
+      { timeout: TIMEOUT_MS, polling: 100 },
     );
+    return true;
   } catch {
-    // Nothing was written. The warm-open result below says so on its own.
+    return false;
   }
 }
 
@@ -1021,6 +1034,7 @@ function printResults(allResults) {
       Number.isFinite(result.longTaskCount) ? `${result.longTaskCount} long tasks` : "",
       Number.isFinite(result.affectedRowRenders) ? `${result.affectedRowRenders} affected row renders` : "",
       Number.isFinite(result.unrelatedRowRenders) ? `${result.unrelatedRowRenders} unrelated row renders` : "",
+      result.openedWarm === undefined ? "" : `snapshot ${result.openedWarm ? "written" : "absent"}`,
       result.usefulPreserved === undefined ? "" : `known content ${result.usefulPreserved ? "kept" : "lost"}`,
       result.readsAttempted === undefined ? "" : `fresh reads ${result.readsAttempted ? "attempted" : "skipped"}`,
       Number.isFinite(result.duplicatedEntries) ? `${result.duplicatedEntries} duplicated entries` : "",

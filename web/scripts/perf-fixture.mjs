@@ -9,6 +9,9 @@ export const PERFORMANCE_BUDGETS = Object.freeze({
   maxRenderedTurns: 40,
   maxHistoryAnchorShiftPx: 2,
   maxComposerShiftPx: 1,
+  /// Below this, rendering swamps every wait a cache could remove, so a
+  /// comparison between a warm and a cold open stops meaning anything.
+  measurableFrameRate: 30,
 });
 
 const DEFAULT_SETTINGS = Object.freeze({
@@ -457,10 +460,16 @@ export function budgetFailures(result, budgets = PERFORMANCE_BUDGETS) {
     }
   }
   // Against a device that takes a moment to answer, a warm reopen has to be the
-  // faster one. Both numbers come from the same context back to back, so this
-  // says the same thing on a fast machine and a loaded one.
-  if (result.scenario === "warm-latency" && Number.isFinite(result.coldThreadMs)) {
-    if (!(result.threadDetectedMs < result.coldThreadMs)) {
+  // faster one. What the cache removes is request wait, so a machine too slow to
+  // render inside that wait cannot answer the question either way — it is
+  // reported rather than held to account.
+  if (result.scenario === "warm-latency") {
+    if (result.openedWarm === false) failures.push("nothing was left behind to reopen from");
+    else if (
+      Number.isFinite(result.coldThreadMs)
+      && result.frameCapacity >= budgets.measurableFrameRate
+      && !(result.threadDetectedMs < result.coldThreadMs)
+    ) {
       failures.push(
         `warm reopen was no faster than a cold one: ${result.threadDetectedMs.toFixed(1)} ms `
         + `against ${result.coldThreadMs.toFixed(1)} ms with the device answering in ${result.readDelayMs} ms`,
@@ -470,14 +479,17 @@ export function budgetFailures(result, budgets = PERFORMANCE_BUDGETS) {
   // A machine that cannot be reached still shows what is known about it, still
   // asks, and still converges once it answers.
   if (result.scenario === "warm-offline") {
-    if (result.usefulPreserved !== true) {
-      failures.push("an unreachable device lost the thread and sidebar content already known about it");
-    }
-    if (result.readsAttempted !== true) {
-      failures.push("cached content suppressed the catalogue or transcript read");
-    }
-    if (result.duplicatedEntries > 0) {
-      failures.push(`reconnect duplicated ${result.duplicatedEntries} transcript entries`);
+    if (result.openedWarm === false) failures.push("nothing was left behind to reopen from");
+    else {
+      if (result.usefulPreserved !== true) {
+        failures.push("an unreachable device lost the thread and sidebar content already known about it");
+      }
+      if (result.readsAttempted !== true) {
+        failures.push("cached content suppressed the catalogue or transcript read");
+      }
+      if (result.duplicatedEntries > 0) {
+        failures.push(`reconnect duplicated ${result.duplicatedEntries} transcript entries`);
+      }
     }
   }
   if (result.scenario === "shared-read-failure" && result.usefulPreserved !== true) {

@@ -78,9 +78,26 @@ test("passes results on the parent budgets and rejects regressions", () => {
       delayFromLocalMs: PERFORMANCE_BUDGETS.unavailableDelayMs,
     },
     { scenario: "shared-read-failure", usefulPreserved: true },
-    { scenario: "warm-latency", threadDetectedMs: 400, coldThreadMs: 900, readDelayMs: 150 },
+    {
+      scenario: "warm-latency",
+      openedWarm: true,
+      frameCapacity: 60,
+      threadDetectedMs: 400,
+      coldThreadMs: 900,
+      readDelayMs: 150,
+    },
+    {
+      // Too slow to tell either way: reported, never failed.
+      scenario: "warm-latency",
+      openedWarm: true,
+      frameCapacity: 8,
+      threadDetectedMs: 2000,
+      coldThreadMs: 900,
+      readDelayMs: 150,
+    },
     {
       scenario: "warm-offline",
+      openedWarm: true,
       usefulPreserved: true,
       readsAttempted: true,
       duplicatedEntries: 0,
@@ -125,12 +142,28 @@ test("passes results on the parent budgets and rejects regressions", () => {
     ["cached-thread painted from cache without reading the transcript"],
   );
   assert.match(
-    budgetFailures({ scenario: "warm-latency", threadDetectedMs: 900, coldThreadMs: 900, readDelayMs: 150 })[0],
+    budgetFailures({
+      scenario: "warm-latency",
+      openedWarm: true,
+      frameCapacity: 60,
+      threadDetectedMs: 900,
+      coldThreadMs: 900,
+      readDelayMs: 150,
+    })[0],
     /warm reopen was no faster than a cold one/,
   );
+  // A build with no warm cache says that, rather than being accused of losing
+  // content it never had.
+  for (const scenario of ["warm-latency", "warm-offline"]) {
+    assert.deepEqual(
+      budgetFailures({ scenario, openedWarm: false, usefulPreserved: false, readsAttempted: false }),
+      ["nothing was left behind to reopen from"],
+    );
+  }
   assert.deepEqual(
     budgetFailures({
       scenario: "warm-offline",
+      openedWarm: true,
       usefulPreserved: false,
       readsAttempted: false,
       duplicatedEntries: 3,
