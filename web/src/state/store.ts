@@ -115,6 +115,7 @@ interface State {
   openIds: string[];
   details: Record<string, ChatDetail | undefined>;
   detailLoading: Record<string, boolean | undefined>;
+  historyLoading: Record<string, boolean | undefined>;
   /// This machine's own settings and tool status. Both are read on demand by
   /// the panes that show them, not on every poll.
   settings?: ServerSettings;
@@ -192,6 +193,7 @@ interface State {
   loadRepoRun(): Promise<void>;
   updateRepos(): Promise<void>;
   openChat(id: string): Promise<void>;
+  loadEarlierEntries(id: string): Promise<void>;
   closeChat(id: string): void;
   uploadMessageImage(id: string, file: File): Promise<ChatImageAttachment>;
   sendMessage(id: string, text: string, attachments?: ChatImageAttachment[], codeReferences?: ChatCodeReference[]): Promise<void>;
@@ -258,6 +260,7 @@ const POLL_DISCONNECTED_MS = 4_000;
 const PEER_DETAIL_POLL_VISIBLE_MS = 1_000;
 const PEER_DETAIL_POLL_HIDDEN_MS = 5_000;
 const DETAIL_CACHE_LIMIT = 12;
+const CHAT_PAGE_TURNS = 12;
 const detailCache = new Map<string, ChatDetail>();
 const pendingDetails = new Map<string, Promise<ChatDetail>>();
 const pushPeerServers = new Set<string>();
@@ -283,7 +286,10 @@ async function readChatDetail(id: string, serverId: string): Promise<ChatDetail>
   const key = detailKey(id, serverId);
   const existing = pendingDetails.get(key);
   if (existing) return existing;
-  const pending = transport.request<RawChatDetail>(serverId, `/chats/${encodeURIComponent(id)}`)
+  const pending = transport.request<RawChatDetail>(
+    serverId,
+    `/chats/${encodeURIComponent(id)}?turns=${CHAT_PAGE_TURNS}`,
+  )
     .then((raw) => {
       const detail = toDetail(raw, serverId);
       cacheDetail(detail);
@@ -313,6 +319,7 @@ export const useStore = create<State>((set, get) => ({
   openIds: [],
   details: {},
   detailLoading: {},
+  historyLoading: {},
   loading: !useFixture,
   connected: useFixture,
 
@@ -347,7 +354,7 @@ export const useStore = create<State>((set, get) => ({
           void readChatDetail(detail.id, serverId).then((next) => {
             if (!get().openIds.includes(next.id)) return;
             set((state) => ({
-              details: { ...state.details, [next.id]: next },
+              details: { ...state.details, [next.id]: mergeDetailRefresh(state.details[next.id], next) },
               detailLoading: { ...state.detailLoading, [next.id]: false },
             }));
           }).catch(() => {});
@@ -432,7 +439,9 @@ export const useStore = create<State>((set, get) => ({
         if (refreshed.length > 0) {
           set((state) => ({
             details: refreshed.reduce(
-              (details, detail) => state.openIds.includes(detail.id) ? { ...details, [detail.id]: detail } : details,
+              (details, detail) => state.openIds.includes(detail.id)
+                ? { ...details, [detail.id]: mergeDetailRefresh(details[detail.id], detail) }
+                : details,
               state.details,
             ),
             detailLoading: refreshed.reduce(
@@ -1033,7 +1042,7 @@ export const useStore = create<State>((set, get) => ({
       const next = await readChatDetail(id, chat.serverId);
       if (!get().openIds.includes(id)) return;
       set((current) => ({
-        details: { ...current.details, [id]: next },
+        details: { ...current.details, [id]: mergeDetailRefresh(current.details[id], next) },
         detailLoading: { ...current.detailLoading, [id]: false },
       }));
     } catch (error) {
@@ -1043,16 +1052,50 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
+  async loadEarlierEntries(id) {
+    const detail = get().details[id];
+    const before = detail?.history?.before;
+    if (!detail || !detail.history?.hasEarlier || !before || get().historyLoading[id]) return;
+    set((current) => ({ historyLoading: { ...current.historyLoading, [id]: true } }));
+    try {
+      const raw = await transport.request<RawChatDetail>(
+        detail.serverId,
+        `/chats/${encodeURIComponent(id)}?turns=${CHAT_PAGE_TURNS}&before=${encodeURIComponent(before)}`,
+      );
+      const page = toDetail(raw, detail.serverId);
+      set((current) => {
+        const latest = current.details[id];
+        if (!latest || latest.serverId !== detail.serverId) {
+          return { historyLoading: { ...current.historyLoading, [id]: false } };
+        }
+        const known = new Set(latest.entries.map((entry) => entry.id));
+        const entries = [...page.entries.filter((entry) => !known.has(entry.id)), ...latest.entries];
+        const next = { ...latest, entries, history: page.history };
+        cacheDetail(next);
+        return {
+          details: { ...current.details, [id]: next },
+          historyLoading: { ...current.historyLoading, [id]: false },
+        };
+      });
+    } catch (error) {
+      set((current) => ({ historyLoading: { ...current.historyLoading, [id]: false } }));
+      throw error;
+    }
+  },
+
   closeChat(id) {
     set((current) => {
       const details = { ...current.details };
       const loading = { ...current.detailLoading };
+      const historyLoading = { ...current.historyLoading };
       delete details[id];
       delete loading[id];
+      delete historyLoading[id];
       return {
         openIds: current.openIds.filter((openId) => openId !== id),
         details,
         detailLoading: loading,
+        historyLoading,
       };
     });
   },
@@ -1596,6 +1639,7 @@ interface ChatFrame {
 interface RawChatDetail extends RawChat {
   permissionMode?: string;
   entries?: ConvEntry[];
+  history?: { hasEarlier?: boolean; before?: string };
   todos?: ConvTodo[];
   approval?: ChatApproval | null;
   question?: ChatQuestionRequest | null;
@@ -1620,6 +1664,12 @@ function toDetail(raw: RawChatDetail, serverId: string): ChatDetail {
     state: raw.state ?? "idle",
     action: raw.action ?? undefined,
     entries: raw.entries ?? [],
+    ...(raw.history ? {
+      history: {
+        hasEarlier: raw.history.hasEarlier === true,
+        ...(raw.history.before ? { before: raw.history.before } : {}),
+      },
+    } : {}),
     todos: raw.todos ?? [],
     approval: raw.approval ?? undefined,
     question: raw.question ?? undefined,
@@ -1628,6 +1678,27 @@ function toDetail(raw: RawChatDetail, serverId: string): ChatDetail {
     context: raw.context ?? undefined,
     workingSince: raw.workingSince ?? undefined,
   };
+}
+
+/// A fresh tail replaces the part it owns while history already loaded above
+/// it stays mounted. If the two windows no longer overlap, the fresh read wins.
+function mergeDetailRefresh(current: ChatDetail | undefined, fresh: ChatDetail): ChatDetail {
+  if (!current || current.serverId !== fresh.serverId || fresh.entries.length === 0) {
+    cacheDetail(fresh);
+    return fresh;
+  }
+  const overlap = current.entries.findIndex((entry) => entry.id === fresh.entries[0].id);
+  if (overlap < 0) {
+    cacheDetail(fresh);
+    return fresh;
+  }
+  const next = {
+    ...fresh,
+    entries: [...current.entries.slice(0, overlap), ...fresh.entries],
+    history: overlap > 0 ? current.history : fresh.history,
+  };
+  cacheDetail(next);
+  return next;
 }
 
 function patchRow(chat: Chat, frame: ChatFrame): Chat {

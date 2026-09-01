@@ -6,6 +6,9 @@ export const PERFORMANCE_BUDGETS = Object.freeze({
   minimumFrameRate: 60,
   idleCpuPercent: 1,
   unavailableDelayMs: 50,
+  maxRenderedTurns: 40,
+  maxHistoryAnchorShiftPx: 2,
+  maxComposerShiftPx: 1,
 });
 
 const DEFAULT_SETTINGS = Object.freeze({
@@ -173,7 +176,35 @@ export function installPerformanceBridge(fixture) {
 
   const fixtureResponse = (path) => {
     if (path.startsWith("/pull-requests?")) return fixture.responses["/pull-requests"];
-    return fixture.responses[path] ?? {};
+    const [pathname, query = ""] = path.split("?");
+    const response = fixture.responses[pathname];
+    const match = pathname.match(/^\/chats\/([^/]+)$/);
+    if (!match || !response || !query) return response ?? {};
+    const params = new URLSearchParams(query);
+    const turnLimit = Number(params.get("turns"));
+    if (!Number.isInteger(turnLimit) || turnLimit < 1) return response;
+    const allEntries = response.entries ?? [];
+    const before = params.get("before");
+    const end = before ? allEntries.findIndex((entry) => entry.id === before) : allEntries.length;
+    let start = end < 0 ? allEntries.length : end;
+    let turns = 0;
+    while (start > 0) {
+      const entry = allEntries[start - 1];
+      start -= 1;
+      if (entry.kind === "user") {
+        turns += 1;
+        if (turns >= turnLimit) break;
+      }
+    }
+    const entries = allEntries.slice(start, end < 0 ? allEntries.length : end);
+    return {
+      ...response,
+      entries,
+      history: {
+        hasEarlier: start > 0,
+        ...(start > 0 && entries[0] ? { before: entries[0].id } : {}),
+      },
+    };
   };
 
   window.__remyPerf = {
@@ -282,6 +313,13 @@ export function budgetFailures(result, budgets = PERFORMANCE_BUDGETS) {
   }
   if (result.scenario === "live-update") {
     over(result.firstLivePaintP95Ms, budgets.livePaintP95Ms, "live update p95");
+    if (result.stableRowRenders > 0) failures.push(`stable transcript row rendered ${result.stableRowRenders} extra times`);
+    if (result.composerShiftPx > budgets.maxComposerShiftPx) {
+      failures.push(`streaming composer shift: ${result.composerShiftPx.toFixed(1)} px > ${budgets.maxComposerShiftPx} px`);
+    }
+    if (result.scrollFollowDistancePx > 80) {
+      failures.push(`streaming scroll follow: ${result.scrollFollowDistancePx.toFixed(1)} px from newest`);
+    }
   }
   if (result.scenario === "reconnect") {
     over(result.firstLivePaintP95Ms, budgets.livePaintP95Ms, "reconnect live paint");
@@ -294,6 +332,12 @@ export function budgetFailures(result, budgets = PERFORMANCE_BUDGETS) {
   if (result.scenario === "thread-scroll" && result.entryCount === 500) {
     if (result.frameRate + 0.5 < budgets.minimumFrameRate) {
       under(result.frameRate, budgets.minimumFrameRate, "500-entry thread");
+    }
+    if (result.renderedTurns > budgets.maxRenderedTurns) {
+      failures.push(`virtual transcript rows: ${result.renderedTurns} > ${budgets.maxRenderedTurns}`);
+    }
+    if (result.largestAnchorShiftPx > budgets.maxHistoryAnchorShiftPx) {
+      failures.push(`history anchor shift: ${result.largestAnchorShiftPx.toFixed(1)} px > ${budgets.maxHistoryAnchorShiftPx} px`);
     }
   }
   if (result.scenario === "idle") {

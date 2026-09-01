@@ -60,6 +60,7 @@ import {
   deleteChatGroup,
   dmChatFor,
   getChat,
+  getChatWindow,
   interruptChat,
   listAllChats,
   listChats,
@@ -1723,8 +1724,19 @@ const server = createServer(async (req, res) => {
         }
       }
       if (req.method === "GET" && parts.length === 2) {
-        const chat = getChat(id);
-        return chat ? json(res, 200, chat) : json(res, 404, { error: "no such chat" });
+        const rawTurns = url.searchParams.get("turns");
+        const turns = rawTurns === null ? undefined : Number(rawTurns);
+        if (turns !== undefined && (!Number.isInteger(turns) || turns < 1 || turns > 50)) {
+          return json(res, 400, { error: "history pages must contain between 1 and 50 turns" });
+        }
+        try {
+          const chat = turns === undefined
+            ? getChat(id)
+            : getChatWindow(id, turns, url.searchParams.get("before") ?? undefined);
+          return chat ? json(res, 200, chat) : json(res, 404, { error: "no such chat" });
+        } catch (error) {
+          return json(res, 409, { error: (error as Error).message || "could not load that history" });
+        }
       }
       // Reading is a write, so it is a POST — and it is the client that knows
       // when a conversation is actually on screen.
