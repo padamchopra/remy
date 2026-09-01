@@ -58,8 +58,47 @@ function chats(count) {
   }));
 }
 
-export function createFixture({ threadCount = 25, entryCount = 100, unavailableDevice = false } = {}) {
+function agents(count) {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `agent-${index + 1}`,
+    name: `Performance agent ${index + 1}`,
+    handle: `performance-${index + 1}`,
+    role: `Fixture agent ${index + 1}`,
+    instructions: "Exercise Inbox rendering.",
+    provider: "claude",
+    model: "fixture-model",
+    permissionMode: "auto",
+    autoStart: false,
+    handoffTo: [],
+    gitIdentity: "off",
+  }));
+}
+
+function dms(roster) {
+  return roster.map((agent, index) => ({
+    id: `dm-${index + 1}`,
+    title: agent.name,
+    cwd: "~",
+    state: "idle",
+    provider: "claude",
+    agentId: agent.id,
+    model: "fixture-model",
+    preview: `Fixture conversation ${index + 1}`,
+    updatedAt: 1_700_000_000_000 - index,
+    dm: true,
+  }));
+}
+
+export function createFixture({
+  threadCount = 25,
+  entryCount = 100,
+  agentCount = 0,
+  unavailableDevice = false,
+  serverId = "local",
+} = {}) {
   const listedChats = chats(threadCount);
+  const listedAgents = agents(agentCount);
+  const listedDms = dms(listedAgents);
   const primary = listedChats[0];
   const detail = {
     ...primary,
@@ -92,14 +131,17 @@ export function createFixture({ threadCount = 25, entryCount = 100, unavailableD
     threadCount,
     entryCount,
     unavailableDevice,
+    serverId,
     primaryThreadId: primary.id,
     primaryTitle: primary.title,
     lastEntryText: detail.entries.at(-1).text,
-    servers: [{ id: "local", name: "Performance fixture", url: "fixture://local", builtin: true }],
+    primaryDmId: listedDms[0]?.id,
+    primaryAgentHandle: listedAgents[0]?.handle,
+    servers: [{ id: serverId, name: "Performance fixture", url: "fixture://local", builtin: serverId === "local" }],
     responses: {
       "/peers": { name: "Performance fixture", peers: unavailableDevice ? [peer] : [] },
       "/cursor-cloud/status": {},
-      "/chats": { chats: listedChats, dms: [] },
+      "/chats": { chats: listedChats, dms: listedDms },
       "/archives": { archives: [] },
       "/workspaces": { workspaces: [workspace] },
       "/board": {
@@ -110,7 +152,7 @@ export function createFixture({ threadCount = 25, entryCount = 100, unavailableD
           keyPrefix: "PERF",
           workspaceIds: [workspace.id],
         }],
-        agents: [],
+        agents: listedAgents,
         tickets: [],
         routines: [],
       },
@@ -130,6 +172,13 @@ export function createFixture({ threadCount = 25, entryCount = 100, unavailableD
       "/pair/pending": { requests: [] },
       "/pull-requests": { pullRequests: [] },
       [`/chats/${primary.id}`]: detail,
+      ...Object.fromEntries(listedDms.map((dm) => [`/chats/${dm.id}`, {
+        ...dm,
+        permissionMode: "auto",
+        entries: entries(entryCount),
+        todos: [],
+        live: true,
+      }])),
     },
   };
 }
@@ -142,7 +191,12 @@ export function installPerformanceBridge(fixture) {
   const statusHandlers = new Set();
   const encoder = new TextEncoder();
   const longTasks = [];
+  const renders = [];
   let connected = true;
+
+  window.__remyRenderProbe = (surface, id) => {
+    renders.push({ surface, id, at: performance.now() });
+  };
 
   if (typeof PerformanceObserver !== "undefined") {
     try {
@@ -179,21 +233,23 @@ export function installPerformanceBridge(fixture) {
   window.__remyPerf = {
     requests,
     longTasks,
+    renders,
     fixture,
     resetMeasurements() {
       requests.length = 0;
       longTasks.length = 0;
+      renders.length = 0;
     },
-    emit(payload, serverId = "local") {
+    emit(payload, serverId = fixture.serverId) {
       if (!connected) return false;
       for (const handler of pushHandlers) handler(serverId, payload);
       return true;
     },
-    disconnect(serverId = "local") {
+    disconnect(serverId = fixture.serverId) {
       connected = false;
       for (const handler of statusHandlers) handler(serverId, false, "Performance fixture disconnected");
     },
-    reconnect(serverId = "local") {
+    reconnect(serverId = fixture.serverId) {
       connected = true;
       for (const handler of statusHandlers) handler(serverId, true);
       for (const handler of pushHandlers) handler(serverId, { type: "hello" });
@@ -225,12 +281,12 @@ export function installPerformanceBridge(fixture) {
     },
     onPush(handler) {
       pushHandlers.add(handler);
-      queueMicrotask(() => handler("local", { type: "hello" }));
+      queueMicrotask(() => handler(fixture.serverId, { type: "hello" }));
       return () => pushHandlers.delete(handler);
     },
     onStatus(handler) {
       statusHandlers.add(handler);
-      queueMicrotask(() => handler("local", connected));
+      queueMicrotask(() => handler(fixture.serverId, connected));
       return () => statusHandlers.delete(handler);
     },
     async removeServer() {
@@ -282,6 +338,13 @@ export function budgetFailures(result, budgets = PERFORMANCE_BUDGETS) {
   }
   if (result.scenario === "live-update") {
     over(result.firstLivePaintP95Ms, budgets.livePaintP95Ms, "live update p95");
+  }
+  if (result.scenario?.startsWith("render-isolation-")) {
+    if (result.affectedRowRenders < 1) failures.push("affected row did not render");
+    if (result.unrelatedRowRenders > 0) {
+      failures.push(`render isolation: ${result.unrelatedRowRenders} unrelated row renders`);
+    }
+    if (result.orderChanged) failures.push("live update changed thread order");
   }
   if (result.scenario === "reconnect") {
     over(result.firstLivePaintP95Ms, budgets.livePaintP95Ms, "reconnect live paint");

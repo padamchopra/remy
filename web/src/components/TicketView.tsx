@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import {
   ArrowUpRight,
   CirclePlus,
@@ -138,7 +139,11 @@ export function TicketView({
   const workspaces = useStore((s) => s.workspaces);
   const boardDevices = useStore((s) => s.boardDevices);
   const agents = useStore((s) => s.agents);
-  const chats = useStore((s) => s.chats);
+  const linkedChatIds = useMemo(
+    () => new Set(ticket.threads.map((link) => link.chatId)),
+    [ticket.threads],
+  );
+  const chats = useStore(useShallow((s) => s.chats.filter((chat) => linkedChatIds.has(chat.id))));
   const tickets = useStore((s) => s.tickets);
   const settings = useStore((s) => s.settings);
   const updateTicket = useStore((s) => s.updateTicket);
@@ -1068,7 +1073,7 @@ function AttachThreadDialog({
   ticket: Ticket;
   onAttached: () => void;
 }) {
-  const chats = useStore((s) => s.chats);
+  const chats = useStore(useShallow((s) => open ? s.chats : []));
   const tickets = useStore((s) => s.tickets);
   const attachThread = useStore((s) => s.attachThread);
 

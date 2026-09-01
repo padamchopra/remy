@@ -34,12 +34,96 @@ try {
     for (const threadCount of [25, 250]) {
       results.push(await repeated(() => runSidebar(target, threadCount)));
     }
+    results.push(...await runRenderIsolation(target));
     results.push(...await repeatedGroup(() => runThreadLifecycle(target)));
     results.push(await repeated(() => runUnavailableDevice(target)));
     results.push(...await runPaneRoutes(target));
   }
 } finally {
   await browser.close();
+}
+
+async function runRenderIsolation(target) {
+  const local = createFixture({ threadCount: 25, entryCount: 10 });
+  const inbox = createFixture({ threadCount: 25, entryCount: 10, agentCount: 25 });
+  const remote = createFixture({ threadCount: 25, entryCount: 10, serverId: "peer-device" });
+  return [
+    await profileIsolatedRow({
+      target,
+      fixture: local,
+      scenario: "render-isolation-thread",
+      hash: `#/threads/${local.primaryThreadId}`,
+      rowSurface: "thread-row",
+      rowId: local.primaryThreadId,
+    }),
+    await profileIsolatedRow({
+      target,
+      fixture: inbox,
+      scenario: "render-isolation-inbox",
+      hash: `#/inbox/${inbox.primaryAgentHandle}`,
+      rowSurface: "inbox-row",
+      rowId: "agent-1",
+      chatId: inbox.primaryDmId,
+    }),
+    await profileIsolatedRow({
+      target,
+      fixture: remote,
+      scenario: "render-isolation-peer",
+      hash: `#/threads/${remote.primaryThreadId}`,
+      rowSurface: "thread-row",
+      rowId: remote.primaryThreadId,
+    }),
+  ];
+}
+
+async function profileIsolatedRow({ target, fixture, scenario, hash, rowSurface, rowId, chatId = fixture.primaryThreadId }) {
+  const opened = await openHarnessPage(target, fixture, hash);
+  try {
+    await waitForText(opened.page, fixture.lastEntryText);
+    const beforeOrder = rowSurface === "thread-row" ? await visibleThreadOrder(opened.page, fixture) : [];
+    await opened.page.evaluate(() => window.__remyPerf.resetMeasurements());
+    const marker = `${scenario} marker`;
+    await emitChatFrame(opened.page, chatId, marker);
+    await waitForText(opened.page, marker);
+    await nextPaint(opened.page);
+    const profile = await opened.page.evaluate(({ surface, affectedId }) => {
+      const rows = window.__remyPerf.renders.filter((render) => render.surface === surface);
+      return {
+        affectedRowRenders: rows.filter((render) => render.id === affectedId).length,
+        unrelatedRowRenders: rows.filter((render) => render.id !== affectedId).length,
+        renderedRowIds: [...new Set(rows.map((render) => render.id))],
+      };
+    }, { surface: rowSurface, affectedId: rowId });
+    const afterOrder = rowSurface === "thread-row" ? await visibleThreadOrder(opened.page, fixture) : [];
+    const result = await snapshotResult(opened.page, {
+      target: target.name,
+      scenario,
+      threadCount: fixture.threadCount,
+      ...profile,
+      orderChanged: beforeOrder.join("\u0000") !== afterOrder.join("\u0000"),
+    });
+    assertPageErrors(opened.errors, result);
+    return result;
+  } finally {
+    await opened.context.close();
+  }
+}
+
+async function visibleThreadOrder(page, fixture) {
+  return page.evaluate((titles) => {
+    const remaining = new Set(titles);
+    const ordered = [];
+    for (const row of document.querySelectorAll('[data-sidebar="menu-button"]')) {
+      const text = row.textContent ?? "";
+      for (const title of remaining) {
+        if (!text.includes(title)) continue;
+        ordered.push(title);
+        remaining.delete(title);
+        break;
+      }
+    }
+    return ordered;
+  }, fixture.responses["/chats"].chats.map((chat) => chat.title));
 }
 
 printResults(results);
@@ -129,6 +213,8 @@ function combineRuns(samples) {
     "transferredBytes",
     "longTaskCount",
     "longTaskDurationMs",
+    "affectedRowRenders",
+    "unrelatedRowRenders",
   ];
   const combined = { ...representative, runs: samples.length };
   for (const field of numeric) {
@@ -555,6 +641,8 @@ function printResults(allResults) {
       Number.isFinite(result.requestCount) ? `${result.requestCount} requests` : "",
       Number.isFinite(result.transferredBytes) ? `${formatBytes(result.transferredBytes)} transferred` : "",
       Number.isFinite(result.longTaskCount) ? `${result.longTaskCount} long tasks` : "",
+      Number.isFinite(result.affectedRowRenders) ? `${result.affectedRowRenders} affected row renders` : "",
+      Number.isFinite(result.unrelatedRowRenders) ? `${result.unrelatedRowRenders} unrelated row renders` : "",
     ].filter(Boolean).join(" · ");
     console.log(`\n${result.target.padEnd(9)} ${result.scenario}${dataset ? ` (${dataset})` : ""}`);
     console.log(`  ${measures}`);

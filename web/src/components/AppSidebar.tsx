@@ -1,4 +1,5 @@
-import { Fragment, useState, type ComponentType } from "react";
+import { Fragment, memo, useState, type ComponentType } from "react";
+import { useShallow } from "zustand/react/shallow";
 import {
   ArrowUpCircle,
   ChevronLeft,
@@ -33,6 +34,7 @@ import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { deviceIcon } from "@/lib/devices";
 import { modelLabel, providerLabel, PROVIDERS } from "@/lib/providers";
 import { displayPath, plainText } from "@/lib/path";
+import { reportRender } from "@/lib/render-probe";
 import { ThreadMenu } from "@/components/ThreadMenu";
 import { elapsedSince, useTicker } from "@/lib/elapsed";
 import { workspaceForPath } from "@/lib/projects";
@@ -46,11 +48,9 @@ export function AppSidebar({
   section,
   selected,
   servers,
-  scoped,
+  threadStructure,
   archived,
   workspaces,
-  needsYou,
-  unread,
   sections,
   onSection,
   onSelectChat,
@@ -67,11 +67,9 @@ export function AppSidebar({
   section: string;
   selected: string | null;
   servers: Server[];
-  scoped: Chat[];
+  threadStructure: string[];
   archived: ArchivedThread[];
   workspaces: Workspace[];
-  needsYou: number;
-  unread: number;
   sections: { id: string; label: string; icon: ComponentType<{ className?: string }> }[];
   onSection: (id: string) => void;
   onSelectChat: (id: string) => void;
@@ -83,9 +81,16 @@ export function AppSidebar({
   closeSettings: () => void;
   updateAvailable?: boolean;
 }) {
-  const now = useTicker(scoped.some((chat) => chat.workingSince));
-  const known = new Set(scoped.map((chat) => chat.id));
-  const parents = scoped.filter((chat) => !chat.parentChatId || !known.has(chat.parentChatId));
+  const topology = threadStructure.map((value) => {
+    const [id, parentChatId] = value.split("\u0000");
+    return { id: id!, parentChatId: parentChatId || undefined };
+  });
+  const known = new Set(topology.map((chat) => chat.id));
+  const parents = topology.filter((chat) => !chat.parentChatId || !known.has(chat.parentChatId));
+  const needsYou = useStore((state) => state.chats.filter((chat) => chat.state === "needs_input").length);
+  const unread = useStore((state) => state.agents.filter((agent) =>
+    state.dms.some((chat) => chat.agentId === agent.id && chat.unread),
+  ).length);
   // Before the first read answers there is nothing to say about the threads
   // yet: "No threads yet." would be a claim, and on a machine that has some it
   // is a wrong one, corrected a moment later.
@@ -166,36 +171,20 @@ export function AppSidebar({
                       </p>
                     )
                   ) : (
-                    parents.map((chat) => {
-                      const children = scoped.filter((entry) => entry.parentChatId === chat.id);
-                      const aggregate = aggregateThreadState([chat, ...children]);
-                      return (
-                        <Fragment key={chat.id}>
-                          <ThreadMenu chat={chat} onOpenThread={onSelectChat} onOpenBeside={onOpenBeside} onOpenWorkspace={onOpenWorkspace}>
-                            {(menuOpen) => <ThreadRow
-                              contextDisabled={menuOpen}
-                              chat={{ ...chat, state: aggregate }}
-                              active={selected === chat.id}
-                              workspace={workspaces[workspaceForPath(chat.cwd, workspaces)]}
-                              server={servers.find((entry) => entry.id === chat.serverId)}
-                              now={now}
-                              onSelect={() => onSelectChat(chat.id)}
-                              onOpenTicket={onOpenTicket}
-                              onOpenWorkspace={onOpenWorkspace}
-                            />}
-                          </ThreadMenu>
-                          {children.map((child) => (
-                            <ThreadMenu key={child.id} chat={child} onOpenThread={onSelectChat} onOpenBeside={onOpenBeside} onOpenWorkspace={onOpenWorkspace}>
-                              <SidebarMenuButton data-link size="sm" isActive={selected === child.id} className={cn("h-7 gap-1.5 pl-5 text-xs", threadRowHoverClass, threadRowActionSpaceClass)} onClick={() => onSelectChat(child.id)}>
-                                <CornerDownRight />
-                                <span className="min-w-0 flex-1 truncate">{child.title}</span>
-                                <ThreadState state={child.state} />
-                              </SidebarMenuButton>
-                            </ThreadMenu>
-                          ))}
-                        </Fragment>
-                      );
-                    })
+                    parents.map((chat) => (
+                      <ThreadGroup
+                        key={chat.id}
+                        id={chat.id}
+                        childIds={topology.filter((entry) => entry.parentChatId === chat.id).map((entry) => entry.id)}
+                        selected={selected}
+                        servers={servers}
+                        workspaces={workspaces}
+                        onSelectChat={onSelectChat}
+                        onOpenBeside={onOpenBeside}
+                        onOpenTicket={onOpenTicket}
+                        onOpenWorkspace={onOpenWorkspace}
+                      />
+                    ))
                   )}
                 </SidebarMenu>
               </SidebarGroupContent>
@@ -248,12 +237,108 @@ export function AppSidebar({
   );
 }
 
-function aggregateThreadState(group: Chat[]): ChatState {
-  if (group.some((chat) => chat.state === "needs_input")) return "needs_input";
-  if (group.some((chat) => chat.state === "working")) return "working";
-  if (group.some((chat) => chat.state === "error")) return "error";
+function aggregateThreadState(states: ChatState[]): ChatState {
+  if (states.includes("needs_input")) return "needs_input";
+  if (states.includes("working")) return "working";
+  if (states.includes("error")) return "error";
   return "idle";
 }
+
+function ThreadGroupInner({
+  id,
+  childIds,
+  selected,
+  servers,
+  workspaces,
+  onSelectChat,
+  onOpenBeside,
+  onOpenTicket,
+  onOpenWorkspace,
+}: {
+  id: string;
+  childIds: string[];
+  selected: string | null;
+  servers: Server[];
+  workspaces: Workspace[];
+  onSelectChat: (id: string) => void;
+  onOpenBeside: (id: string) => void;
+  onOpenTicket: (key: string) => void;
+  onOpenWorkspace: (workspaceId: string) => void;
+}) {
+  const chat = useStore((state) => state.chats.find((entry) => entry.id === id));
+  const childStates = useStore(useShallow((state) => childIds.flatMap((childId) => {
+    const child = state.chats.find((entry) => entry.id === childId);
+    return child ? [child.state] : [];
+  })));
+  if (!chat) return null;
+  const aggregate = aggregateThreadState([chat.state, ...childStates]);
+
+  return (
+    <Fragment>
+      <ThreadMenu chat={chat} onOpenThread={onSelectChat} onOpenBeside={onOpenBeside} onOpenWorkspace={onOpenWorkspace}>
+        {(menuOpen) => <ThreadRow
+          contextDisabled={menuOpen}
+          chat={aggregate === chat.state ? chat : { ...chat, state: aggregate }}
+          active={selected === chat.id}
+          workspace={workspaces[workspaceForPath(chat.cwd, workspaces)]}
+          server={servers.find((entry) => entry.id === chat.serverId)}
+          onSelect={() => onSelectChat(chat.id)}
+          onOpenTicket={onOpenTicket}
+          onOpenWorkspace={onOpenWorkspace}
+        />}
+      </ThreadMenu>
+      {childIds.map((childId) => (
+        <ChildThreadRow
+          key={childId}
+          id={childId}
+          active={selected === childId}
+          onSelectChat={onSelectChat}
+          onOpenBeside={onOpenBeside}
+          onOpenWorkspace={onOpenWorkspace}
+        />
+      ))}
+    </Fragment>
+  );
+}
+
+const ThreadGroup = memo(ThreadGroupInner, (previous, next) =>
+  previous.id === next.id
+  && previous.selected === next.selected
+  && previous.servers === next.servers
+  && previous.workspaces === next.workspaces
+  && previous.onSelectChat === next.onSelectChat
+  && previous.onOpenBeside === next.onOpenBeside
+  && previous.onOpenTicket === next.onOpenTicket
+  && previous.onOpenWorkspace === next.onOpenWorkspace
+  && previous.childIds.length === next.childIds.length
+  && previous.childIds.every((id, index) => id === next.childIds[index]));
+
+const ChildThreadRow = memo(function ChildThreadRow({
+  id,
+  active,
+  onSelectChat,
+  onOpenBeside,
+  onOpenWorkspace,
+}: {
+  id: string;
+  active: boolean;
+  onSelectChat: (id: string) => void;
+  onOpenBeside: (id: string) => void;
+  onOpenWorkspace: (workspaceId: string) => void;
+}) {
+  const chat = useStore((state) => state.chats.find((entry) => entry.id === id));
+  if (!chat) return null;
+  reportRender("thread-row", chat.id);
+  return (
+    <ThreadMenu chat={chat} onOpenThread={onSelectChat} onOpenBeside={onOpenBeside} onOpenWorkspace={onOpenWorkspace}>
+      <SidebarMenuButton data-link size="sm" isActive={active} className={cn("h-7 gap-1.5 pl-5 text-xs", threadRowHoverClass, threadRowActionSpaceClass)} onClick={() => onSelectChat(chat.id)}>
+        <CornerDownRight />
+        <span className="min-w-0 flex-1 truncate">{chat.title}</span>
+        <ThreadState state={chat.state} />
+      </SidebarMenuButton>
+    </ThreadMenu>
+  );
+});
 
 function ThreadState({ state }: { state: ChatState }) {
   const label = state === "idle"
@@ -289,7 +374,6 @@ function ThreadRow({
   active,
   workspace,
   server,
-  now,
   onSelect,
   onOpenTicket,
   onOpenWorkspace,
@@ -299,12 +383,13 @@ function ThreadRow({
   active: boolean;
   workspace?: Workspace;
   server?: Server;
-  now: number;
   onSelect: () => void;
   onOpenTicket: (key: string) => void;
   onOpenWorkspace: (workspaceId: string) => void;
 }) {
+  reportRender("thread-row", chat.id);
   const [contextOpen, setContextOpen] = useState(false);
+  const now = useTicker(Boolean(chat.workingSince));
   const DeviceIcon = deviceIcon(server?.icon);
   const place = workspace?.name ?? displayPath(chat.cwd);
   const elapsed = chat.workingSince ? elapsedSince(chat.workingSince, now) : undefined;

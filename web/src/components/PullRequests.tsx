@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { CircleDot, Folder, GitPullRequest, Layers, PanelLeftClose, PanelLeftOpen, RefreshCw, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
@@ -13,6 +14,7 @@ import { workspaceGroups, type WorkspaceGroup } from "@/lib/projects";
 import { groupPullRequests, orderPullRequests } from "@/lib/pull-request-order";
 import { transport } from "@/lib/transport";
 import { cn } from "@/lib/utils";
+import { useStore } from "@/state/store";
 import type { Chat, PullRequestStack, Server, Workspace } from "@/state/types";
 
 type PullRequestFilter = "all" | "ready" | "draft";
@@ -175,13 +177,11 @@ function needsAttention(pullRequest: AuthoredPullRequest): boolean {
 export function PullRequests({
   servers,
   workspaces,
-  chats,
   onOpenThread,
   onOpenWorkspace,
 }: {
   servers: Server[];
   workspaces: Workspace[];
-  chats: Chat[];
   onOpenThread: (id: string) => void;
   onOpenWorkspace: (id: string) => void;
 }) {
@@ -274,6 +274,10 @@ export function PullRequests({
     });
   }, [filter, pullRequests, query]);
   const selected = visible.find((pullRequest) => pullRequest.url === selectedURL);
+  const chats = useStore(useShallow((state) => selected?.worktreePath
+    ? state.chats.filter((chat) =>
+        chat.serverId === selected.serverId && inside(chat.cwd, selected.worktreePath!))
+    : []));
   const listCollapsed = listHidden && Boolean(selected);
   const listToggleLabel = listCollapsed ? "Show pull request list" : "Hide pull request list";
   const groupedWorkspaces = useMemo(() => workspaceGroups(workspaces, servers), [servers, workspaces]);

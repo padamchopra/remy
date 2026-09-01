@@ -552,20 +552,22 @@ export const useStore = create<State>((set, get) => ({
                 loading: false,
                 servers: current.servers.map((entry) =>
                   entry.id === server.id ? { ...entry, online: entry.cloud ? entry.online : true } : entry),
-                chats: [
-                  ...current.chats.filter((chat) => chat.serverId !== server.id),
-                  ...(chats.chats ?? []).map((raw) => toChat(raw, server.id)),
-                ].sort(byAttention),
+                chats: replaceServerChats(
+                  current.chats,
+                  server.id,
+                  (chats.chats ?? []).map((raw) => toChat(raw, server.id)),
+                ).sort(byAttention),
                 archived: [
                   ...current.archived.filter((chat) => chat.serverId !== server.id),
                   ...archives.map((raw) => toArchivedThread(raw, server.id)),
                 ].sort((a, b) => b.archivedAt - a.archivedAt),
                 // The inbox comes back in the same answer, so it lands with the
                 // threads rather than costing a second round trip.
-                dms: [
-                  ...current.dms.filter((chat) => chat.serverId !== server.id),
-                  ...(chats.dms ?? []).map((raw) => toChat(raw, server.id)),
-                ],
+                dms: replaceServerChats(
+                  current.dms,
+                  server.id,
+                  (chats.dms ?? []).map((raw) => toChat(raw, server.id)),
+                ),
                 // Keep the last catalogue when a paired machine is asleep. Its
                 // folders still exist there, and the device chip already says the
                 // machine is offline. A successful empty answer still clears it.
@@ -1632,7 +1634,7 @@ function toDetail(raw: RawChatDetail, serverId: string): ChatDetail {
 
 function patchRow(chat: Chat, frame: ChatFrame): Chat {
   if (chat.id !== frame.chatId) return chat;
-  return {
+  const next: Chat = {
     ...chat,
     state: frame.state ?? chat.state,
     title: frame.title ?? chat.title,
@@ -1641,19 +1643,35 @@ function patchRow(chat: Chat, frame: ChatFrame): Chat {
       frame.workingSince === undefined ? chat.workingSince : (frame.workingSince ?? undefined),
     ...(frame.unread === undefined ? {} : { unread: frame.unread }),
   };
+  return sameChat(chat, next) ? chat : next;
 }
 
 function applyChatFrame(current: State, frame: ChatFrame, serverId: string): Partial<State> {
   // The row in the list is patched in place rather than re-sorted: a chat that
   // is streaming would otherwise walk up and down the sidebar on every frame.
   // A frame does not say which list its conversation is in, so both are asked.
-  const chats = current.chats.map((chat) => patchRow(chat, frame));
-  const dms = current.dms.map((chat) => patchRow(chat, frame));
+  const chats = patchChatList(current.chats, frame, serverId);
+  const dms = patchChatList(current.dms, frame, serverId);
   const detail = current.details[frame.chatId ?? ""];
   const details = detail && detail.serverId === serverId
     ? { ...current.details, [detail.id]: mergeDetail(detail, frame) }
     : current.details;
-  return { chats, dms, details };
+  if (chats === current.chats && dms === current.dms && details === current.details) return current;
+  return {
+    ...(chats === current.chats ? {} : { chats }),
+    ...(dms === current.dms ? {} : { dms }),
+    ...(details === current.details ? {} : { details }),
+  };
+}
+
+function patchChatList(chats: Chat[], frame: ChatFrame, serverId: string): Chat[] {
+  const index = chats.findIndex((chat) => chat.id === frame.chatId && chat.serverId === serverId);
+  if (index < 0) return chats;
+  const next = patchRow(chats[index]!, frame);
+  if (next === chats[index]) return chats;
+  const patched = chats.slice();
+  patched[index] = next;
+  return patched;
 }
 
 function mergeDetail(detail: ChatDetail, frame: ChatFrame): ChatDetail {
@@ -1710,6 +1728,25 @@ function toChat(raw: RawChat, serverId: string): Chat {
     ...(raw.pinned ? { pinned: true } : {}),
     ...(raw.parentChatId ? { parentChatId: raw.parentChatId } : {}),
   };
+}
+
+function replaceServerChats(current: Chat[], serverId: string, incoming: Chat[]): Chat[] {
+  const previous = new Map(
+    current.filter((chat) => chat.serverId === serverId).map((chat) => [chat.id, chat]),
+  );
+  return [
+    ...current.filter((chat) => chat.serverId !== serverId),
+    ...incoming.map((chat) => {
+      const existing = previous.get(chat.id);
+      return existing && sameChat(existing, chat) ? existing : chat;
+    }),
+  ];
+}
+
+function sameChat(left: Chat, right: Chat): boolean {
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)] as (keyof Chat)[]);
+  for (const key of keys) if (left[key] !== right[key]) return false;
+  return true;
 }
 
 function toArchivedThread(raw: RawArchive, serverId: string): ArchivedThread {
