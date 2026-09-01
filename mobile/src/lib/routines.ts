@@ -19,6 +19,23 @@ export function clockTime(hour: number, minute: number): string {
   return at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
+/// The day the next run lands on. Only the day: the cadence beside it has
+/// already said the hour, and saying it twice reads as two different facts.
+export function whenNext(at: number): string {
+  const due = new Date(at);
+  const midnight = new Date();
+  midnight.setHours(0, 0, 0, 0);
+  const days = Math.floor((due.getTime() - midnight.getTime()) / 86_400_000);
+  if (days <= 0) return "today";
+  if (days === 1) return "tomorrow";
+  if (days < 7) return WEEKDAYS[due.getDay()];
+  return due.toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    ...(due.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
+  });
+}
+
 export function cadenceSummary(routine: Pick<Routine, "cadence" | "hour" | "minute" | "weekday" | "day">): string {
   const time = clockTime(routine.hour, routine.minute);
   if (routine.cadence === "daily") return `Every day at ${time}`;

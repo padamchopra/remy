@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { Animated, Easing, Keyboard, Pressable, StyleSheet, Text, View } from "react-native";
-import { PanelLeft, PanelLeftClose, Plus } from "lucide-react-native";
+import { PanelLeft, PanelLeftClose, Plus, SlidersHorizontal } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { color, space, type } from "../theme";
 import { agentConversation } from "../lib/inbox";
 import { useDevicePreferenceOrder, useStore } from "../state/store";
 import { AppSidebar, type AppSection } from "./AppSidebar";
+import { ThreadMenu } from "./ThreadMenu";
 import { GlassButton } from "./GlassButton";
 import { InboxScreen } from "../screens/InboxScreen";
 import { ThreadScreen } from "../screens/ThreadScreen";
@@ -24,10 +25,14 @@ const DRAWER_EASING = Easing.bezier(0.32, 0.72, 0, 1);
 export function PairedShell({
   openThreadRef,
   onPairAnother,
+  onOpenAgent,
   onUnpair,
 }: {
   openThreadRef: MutableRefObject<(id: string) => void>;
   onPairAnother: () => void;
+  /// An agent's own screen, pushed on top: a long form gets the whole width and
+  /// the thread list stays one back-tap away.
+  onOpenAgent: (agentId: string) => void;
   onUnpair: (url: string) => void;
 }) {
   const insets = useSafeAreaInsets();
@@ -202,8 +207,19 @@ export function PairedShell({
             <Plus size={18} color={color.foreground} />
           </Pressable>
         ) : section === "threads" && thread ? (
-          <Pressable onPress={newThread} accessibilityLabel="New thread" style={styles.plus}>
-            <Plus size={18} color={color.foreground} />
+          <View style={styles.actions}>
+            <ThreadMenu chat={thread} onGone={newThread} />
+            <Pressable onPress={newThread} accessibilityLabel="New thread" style={styles.plus}>
+              <Plus size={18} color={color.foreground} />
+            </Pressable>
+          </View>
+        ) : section === "inbox" && inboxAgent ? (
+          <Pressable
+            onPress={() => onOpenAgent(inboxAgent.id)}
+            accessibilityLabel={`${inboxAgent.name} settings`}
+            style={styles.plus}
+          >
+            <SlidersHorizontal size={18} color={color.foreground} />
           </Pressable>
         ) : (
           <View style={styles.plus} />
@@ -214,7 +230,7 @@ export function PairedShell({
         {section === "inbox" && inboxDm ? (
           <ThreadScreen key={inboxDm.id} id={inboxDm.id} onOpenArtifact={openArtifact} />
         ) : section === "inbox" ? (
-          <InboxScreen onOpen={setInboxAgentId} />
+          <InboxScreen onOpen={setInboxAgentId} onSettings={onOpenAgent} />
         ) : section === "board" && composingTicket ? (
           <NewTicketScreen
             onCreated={(key) => {
@@ -294,6 +310,7 @@ const styles = StyleSheet.create({
   },
   title: { flex: 1 },
   plus: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  actions: { flexDirection: "row", alignItems: "center" },
   body: { flex: 1, overflow: "hidden" },
   dim: {
     ...StyleSheet.absoluteFill,

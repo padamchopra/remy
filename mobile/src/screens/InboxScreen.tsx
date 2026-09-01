@@ -1,21 +1,31 @@
-import { useEffect } from "react";
-import { Bot, Repeat } from "lucide-react-native";
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import { Bot, Repeat, SlidersHorizontal } from "lucide-react-native";
+import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { color, radius, space, type } from "../theme";
 import { agentConversation } from "../lib/inbox";
 import { plainText } from "../lib/path";
 import { cadenceSummary } from "../lib/routines";
 import { useDevicePreferenceOrder, useStore } from "../state/store";
+import { apiError } from "../lib/api-error";
+import { AgentMark } from "../components/AgentMark";
+import { Button } from "../components/Button";
 import { EmptyState } from "../components/Empty";
 import { StateBadge } from "../components/Badge";
 import type { Agent, Chat, Routine } from "../state/types";
 
 /// The inbox: one conversation per agent, on whichever Mac holds it.
 ///
-/// Writing and editing an agent stays on the Mac — the phone is a remote, and
-/// a paragraph of instructions is not something to type here. This is where you
-/// talk to the ones that exist.
-export function InboxScreen({ onOpen }: { onOpen: (agentId: string) => void }) {
+/// Everything about an agent lives here rather than in a settings pane, because
+/// an agent is somebody you talk to. Tapping a row opens the conversation; its
+/// own screen — name, instructions, what it thinks with, its routines — opens
+/// on top from the row's settings control.
+export function InboxScreen({
+  onOpen,
+  onSettings,
+}: {
+  onOpen: (agentId: string) => void;
+  onSettings: (agentId: string) => void;
+}) {
   const agents = useStore((s) => s.agents);
   const dms = useStore((s) => s.dms);
   const servers = useStore((s) => s.servers);
@@ -27,7 +37,23 @@ export function InboxScreen({ onOpen }: { onOpen: (agentId: string) => void }) {
   const error = useStore((s) => s.error);
   const refresh = useStore((s) => s.refresh);
   const loadBoard = useStore((s) => s.loadBoard);
+  const saveAgent = useStore((s) => s.saveAgent);
+  const [creating, setCreating] = useState(false);
   const named = servers.length > 1;
+
+  // A new agent starts as a blank somebody. Everything about it is on its own
+  // screen, so that is where you land.
+  const create = async () => {
+    setCreating(true);
+    try {
+      const agent = await saveAgent(undefined, { name: "New agent" });
+      onSettings(agent.id);
+    } catch (caught) {
+      Alert.alert("Couldn't add an agent", apiError(caught));
+    } finally {
+      setCreating(false);
+    }
+  };
 
   useEffect(() => {
     void loadBoard().catch(() => {
@@ -49,7 +75,8 @@ export function InboxScreen({ onOpen }: { onOpen: (agentId: string) => void }) {
         <EmptyState
           icon={<Bot size={22} color={color.mutedForeground} />}
           title={error ? (named ? "Can't reach your Macs" : "Can't reach this Mac") : "No agents yet"}
-          detail={error ?? "Write one on your Mac, then talk to it here."}
+          detail={error ?? "Write one to hand work to, then talk to it here."}
+          action={error ? undefined : <Button label="Add an agent" busy={creating} onPress={() => void create()} />}
         />
       </View>
     );
@@ -72,8 +99,10 @@ export function InboxScreen({ onOpen }: { onOpen: (agentId: string) => void }) {
           routines={routines.filter((routine) => routine.agentId === agent.id)}
           routinesUnknown={missing[agent.serverId]?.includes("routines") === true}
           onPress={() => onOpen(agent.id)}
+          onSettings={() => onSettings(agent.id)}
         />
       ))}
+      <Button label="Add an agent" variant="outline" busy={creating} onPress={() => void create()} />
     </ScrollView>
   );
 }
@@ -85,6 +114,7 @@ function AgentRow({
   routines,
   routinesUnknown,
   onPress,
+  onSettings,
 }: {
   agent: Agent;
   dm?: Chat;
@@ -94,6 +124,7 @@ function AgentRow({
   /// which is not the same as the agent having none.
   routinesUnknown: boolean;
   onPress: () => void;
+  onSettings: () => void;
 }) {
   const preview = dm?.preview ? plainText(dm.preview) : agent.role;
   const next = routines.filter((routine) => routine.enabled).sort((a, b) => a.nextRunAt - b.nextRunAt)[0];
@@ -101,11 +132,19 @@ function AgentRow({
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.row, pressed && styles.pressed]}>
       <View style={styles.header}>
-        <Bot size={16} color={color.mutedForeground} />
+        <AgentMark agent={agent} size={22} />
         <Text style={[type.callout, styles.title, dm?.unread && styles.strong]} numberOfLines={1}>
           {agent.name}
         </Text>
         {dm?.state === "working" ? <StateBadge state="working" /> : dm?.unread ? <View style={styles.dot} /> : null}
+        <Pressable
+          onPress={onSettings}
+          hitSlop={8}
+          accessibilityLabel={`${agent.name} settings`}
+          style={styles.settings}
+        >
+          <SlidersHorizontal size={16} color={color.mutedForeground} />
+        </Pressable>
       </View>
       {preview ? (
         <Text style={[styles.preview, dm?.unread && styles.strong]} numberOfLines={2}>
@@ -152,4 +191,5 @@ const styles = StyleSheet.create({
   preview: { ...type.caption, color: color.mutedForeground },
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: color.primary },
   routine: { flexDirection: "row", alignItems: "center", gap: 6 },
+  settings: { paddingHorizontal: 4, paddingVertical: 2 },
 });

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { isMissingRoute } from "../lib/api-error";
 import { codeFor, type DeviceIconId } from "../lib/devices";
-import { agentConversation, availableAgentServers } from "../lib/inbox";
+import { agentConversation, availableAgentServers, preferredServer } from "../lib/inbox";
 import { applyProjectIdentity } from "../lib/projects";
 import { PROVIDERS, type Provider } from "../lib/providers";
 import { transport } from "../lib/transport";
@@ -153,8 +153,18 @@ interface State {
   /// The pull request on the open thread's branch, or nothing when the branch
   /// has none and when the Mac is too old to be asked.
   threadPullRequest(id: string): Promise<PullRequestSummary | undefined>;
+  /// Writes an agent, or creates one when `id` is absent.
+  saveAgent(id: string | undefined, patch: Record<string, unknown>): Promise<Agent>;
+  deleteAgent(id: string): Promise<void>;
+  saveRoutine(id: string, patch: Record<string, unknown>): Promise<Routine>;
+  deleteRoutine(id: string): Promise<void>;
+  runRoutine(id: string): Promise<Routine>;
   archiveThread(id: string): Promise<void>;
   deleteThread(id: string): Promise<void>;
+  renameThread(id: string, title: string): Promise<void>;
+  pinThread(id: string, pinned: boolean): Promise<void>;
+  /// Ends the run a thread is in without sending anything.
+  stopThread(id: string): Promise<void>;
   createTicket(input: { projectId: string; title: string; body?: string; parentId?: string }): Promise<Ticket>;
   updateTicket(id: string, patch: Record<string, unknown>): Promise<void>;
   moveTicket(id: string, status: TicketStatus): Promise<void>;
@@ -829,6 +839,71 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
+  async saveAgent(id, patch) {
+    const existing = id ? get().agents.find((agent) => agent.id === id) : undefined;
+    // A new agent belongs on the Mac this phone would run it on.
+    const serverId = existing?.serverId
+      ?? preferredServer(get().servers, deviceOrderOf(get()))?.id;
+    if (!serverId) throw new Error("This Mac isn't connected.");
+    const body = await transport.request<{ agent: RawAgent }>(
+      serverId,
+      id ? `/agents/${encodeURIComponent(id)}` : "/agents",
+      { method: id ? "PATCH" : "POST", body: patch },
+    );
+    const agent = { ...body.agent, serverId } as Agent;
+    set((current) => ({ agents: replace(current.agents, agent) }));
+    void get().loadBoard(serverId).catch(() => {});
+    return agent;
+  },
+
+  async deleteAgent(id) {
+    const agent = get().agents.find((entry) => entry.id === id);
+    if (!agent) return;
+    await transport.request(agent.serverId, `/agents/${encodeURIComponent(id)}`, { method: "DELETE" });
+    // Deleting an agent deletes its conversation; `listDms` stops answering
+    // with it, so both lists are read again rather than patched.
+    set((current) => ({ agents: current.agents.filter((entry) => entry.id !== id) }));
+    await get().refreshServer(agent.serverId).catch(() => {});
+    void get().loadBoard(agent.serverId).catch(() => {});
+  },
+
+  async saveRoutine(id, patch) {
+    const existing = get().routines.find((entry) => entry.id === id);
+    if (!existing) throw new Error("That routine is gone.");
+    const body = await transport.request<{ routine: RawRoutine }>(
+      existing.serverId,
+      `/routines/${encodeURIComponent(id)}`,
+      { method: "PATCH", body: patch },
+    );
+    const routine = { ...body.routine, serverId: existing.serverId } as Routine;
+    set((current) => ({ routines: replace(current.routines, routine) }));
+    void get().loadBoard(existing.serverId).catch(() => {});
+    return routine;
+  },
+
+  async deleteRoutine(id) {
+    const routine = get().routines.find((entry) => entry.id === id);
+    if (!routine) return;
+    await transport.request(routine.serverId, `/routines/${encodeURIComponent(id)}`, { method: "DELETE" });
+    set((current) => ({ routines: current.routines.filter((entry) => entry.id !== id) }));
+    void get().loadBoard(routine.serverId).catch(() => {});
+  },
+
+  async runRoutine(id) {
+    const routine = get().routines.find((entry) => entry.id === id);
+    if (!routine) throw new Error("That routine is gone.");
+    const body = await transport.request<{ routine: RawRoutine }>(
+      routine.serverId,
+      `/routines/${encodeURIComponent(id)}/run`,
+      { method: "POST", body: {} },
+    );
+    const updated = { ...body.routine, serverId: routine.serverId } as Routine;
+    set((current) => ({ routines: replace(current.routines, updated) }));
+    // The run starts a turn, so the thread list has something new in it.
+    await get().refreshServer(routine.serverId).catch(() => {});
+    return updated;
+  },
+
   async archiveThread(id) {
     const chat = get().chats.find((entry) => entry.id === id);
     if (!chat) return;
@@ -843,6 +918,43 @@ export const useStore = create<State>((set, get) => ({
     await get().refreshServer(chat.serverId);
     // A deleted thread was a ticket's linked thread until a moment ago.
     await get().loadBoard(chat.serverId).catch(() => {});
+  },
+
+  async renameThread(id, title) {
+    const chat = get().chats.find((entry) => entry.id === id);
+    if (!chat) return;
+    const trimmed = title.trim();
+    if (!trimmed || trimmed === chat.title) return;
+    await transport.request(chat.serverId, `/chats/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: { title: trimmed },
+    });
+    set((current) => ({
+      chats: current.chats.map((entry) => (entry.id === id ? { ...entry, title: trimmed } : entry)),
+      detail: current.detail?.id === id ? { ...current.detail, title: trimmed } : current.detail,
+    }));
+  },
+
+  async pinThread(id, pinned) {
+    const chat = get().chats.find((entry) => entry.id === id);
+    if (!chat) return;
+    await transport.request(chat.serverId, `/chats/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: { pinned },
+    });
+    set((current) => ({
+      chats: current.chats.map((entry) => (entry.id === id ? { ...entry, pinned } : entry)).sort(byAttention),
+    }));
+  },
+
+  async stopThread(id) {
+    const chat = get().chats.find((entry) => entry.id === id)
+      ?? get().dms.find((entry) => entry.id === id);
+    if (!chat) return;
+    await transport.request(chat.serverId, `/chats/${encodeURIComponent(id)}/stop`, {
+      method: "POST",
+      body: {},
+    });
   },
 
   async updateTicket(id, patch) {
@@ -1096,6 +1208,15 @@ interface BoardSlice {
 }
 
 const slices = new Map<string, BoardSlice>();
+
+/// One row in place, or appended when it is new. The board slice it came from
+/// answers with it too on the next read; this is so the screen you are on does
+/// not wait for that.
+function replace<T extends { id: string }>(rows: T[], row: T): T[] {
+  return rows.some((entry) => entry.id === row.id)
+    ? rows.map((entry) => (entry.id === row.id ? row : entry))
+    : [...rows, row];
+}
 
 function onlyPaired<T>(rows: Record<string, T>, paired: Set<string>): Record<string, T> {
   const kept = Object.entries(rows).filter(([id]) => paired.has(id));

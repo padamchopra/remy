@@ -15,7 +15,9 @@ import { useStore } from "./src/state/store";
 import type { RootStackParamList } from "./src/navigation";
 import { PairRequestModal } from "./src/components/PairRequest";
 import { PairedShell } from "./src/components/PairedShell";
+import { AgentScreen } from "./src/screens/AgentScreen";
 import { PairScreen } from "./src/screens/PairScreen";
+import { RoutineScreen } from "./src/screens/RoutineScreen";
 import { ScanScreen } from "./src/screens/ScanScreen";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -76,8 +78,23 @@ function PairedApp({
             <PairedShell
               openThreadRef={openThreadFromOutside}
               onPairAnother={() => navRef.isReady() && navRef.navigate("Pair")}
+              onOpenAgent={(agentId) => navRef.isReady() && navRef.navigate("Agent", { agentId })}
               onUnpair={onUnpair}
             />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="Agent" options={{ title: "Agent" }}>
+          {({ navigation, route }) => (
+            <AgentScreen
+              agentId={route.params.agentId}
+              onOpenRoutine={(routineId) => navigation.navigate("Routine", { routineId })}
+              onDeleted={() => navigation.navigate("Home")}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="Routine" options={{ title: "Routine" }}>
+          {({ navigation, route }) => (
+            <RoutineScreen routineId={route.params.routineId} onDone={() => navigation.goBack()} />
           )}
         </Stack.Screen>
         <Stack.Screen name="Pair" options={{ title: "Pair another Mac" }}>

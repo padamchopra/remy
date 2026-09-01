@@ -12,6 +12,11 @@ import {
   type Provider,
   type ProviderModel,
 } from "../lib/providers";
+
+/// Not a model but the absence of one: a caller that follows the Mac's own
+/// default rather than choosing. Stored as inheritance, so changing the Mac's
+/// default reaches everything holding it. Mirrors `REMY_DEFAULT` in the window.
+export const REMY_DEFAULT = "default";
 import { MenuEmpty, MenuItem, MenuSeparator, Popover } from "./ComposerMenu";
 
 /// Picking what a thread thinks with.
@@ -26,6 +31,9 @@ export function ModelPicker({
   onPick,
   /// Keeps a running thread on the provider that owns its transcript.
   onlyProvider,
+  /// Offers following the Mac's thread default, for an agent or a workspace.
+  allowDefault,
+  defaultChoice,
   /// Said in place of the effort step on a Mac too old to accept one.
   effortUnavailable,
   style,
@@ -34,11 +42,14 @@ export function ModelPicker({
   value: ModelChoice;
   onPick: (choice: ModelChoice) => void;
   onlyProvider?: string;
+  allowDefault?: boolean;
+  defaultChoice?: ModelChoice;
   effortUnavailable?: boolean;
   style?: StyleProp<ViewStyle>;
 }) {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState<ModelChoice>();
+  const inherited = allowDefault === true && value.provider === REMY_DEFAULT;
   const shown = onlyProvider
     ? providers.filter((provider) => provider.id === onlyProvider)
     : offeredProviders(providers);
@@ -85,7 +96,7 @@ export function ModelPicker({
       >
         <Box size={14} color={color.mutedForeground} />
         <Text style={styles.label} numberOfLines={1}>
-          {modelLabel(providers, value)}
+          {inherited ? inheritedLabel(providers, defaultChoice) : modelLabel(providers, value)}
         </Text>
         <ChevronDown size={14} color={color.mutedForeground} />
       </Pressable>
@@ -114,37 +125,51 @@ export function ModelPicker({
               />
             ))}
           </>
-        ) : shown.length === 0 ? (
-          // Only reachable when this thread runs on a provider the catalogue in
-          // hand has never heard of — a newer Mac that has not answered yet.
-          <MenuEmpty>This Mac hasn't said what this thread can run on.</MenuEmpty>
         ) : (
-          shown.map((provider, index) => (
-            <View key={provider.id}>
-              {index > 0 ? <MenuSeparator /> : null}
-              <Text style={styles.heading}>
-                {provider.available === false
-                  ? `${provider.label} — not installed here`
-                  : provider.enabled === false
-                    ? `${provider.label} — turned off`
-                    : provider.label}
-              </Text>
-              {provider.models.map((model) => (
+          <>
+            {allowDefault ? (
+              <>
                 <MenuItem
-                  key={`${provider.id}:${model.value}`}
                   icon={Box}
-                  label={model.context ? `${model.label} (${model.context})` : model.label}
-                  detail={
-                    provider.id === value.provider && model.value === value.model
-                      ? effortLabel(providers, value)
-                      : undefined
-                  }
-                  selected={provider.id === value.provider && model.value === value.model}
-                  onPress={() => chooseModel(provider, model)}
+                  label={inheritedLabel(providers, defaultChoice)}
+                  selected={inherited}
+                  onPress={() => pick({ provider: REMY_DEFAULT, model: "", effort: "" })}
                 />
-              ))}
-            </View>
-          ))
+                <MenuSeparator />
+              </>
+            ) : null}
+            {shown.length === 0 ? (
+              // Only reachable when this thread runs on a provider the catalogue
+              // in hand has never heard of — a newer Mac that has not answered.
+              <MenuEmpty>This Mac hasn't said what this thread can run on.</MenuEmpty>
+            ) : (
+              shown.map((provider, index) => (
+                <View key={provider.id}>
+                  {index > 0 ? <MenuSeparator /> : null}
+                  <Text style={styles.heading}>
+                    {provider.available === false
+                      ? `${provider.label} — not installed here`
+                      : provider.enabled === false
+                        ? `${provider.label} — turned off`
+                        : provider.label}
+                  </Text>
+                  {provider.models.map((model) => {
+                    const on = !inherited && provider.id === value.provider && model.value === value.model;
+                    return (
+                      <MenuItem
+                        key={`${provider.id}:${model.value}`}
+                        icon={Box}
+                        label={model.context ? `${model.label} (${model.context})` : model.label}
+                        detail={on ? effortLabel(providers, value) : undefined}
+                        selected={on}
+                        onPress={() => chooseModel(provider, model)}
+                      />
+                    );
+                  })}
+                </View>
+              ))
+            )}
+          </>
         )}
         {!effortStep && effortUnavailable ? (
           <Text style={styles.note}>Reasoning effort needs a newer Remy on this Mac.</Text>
@@ -152,6 +177,13 @@ export function ModelPicker({
       </Popover>
     </>
   );
+}
+
+/// What "follow the Mac" currently resolves to, so inheriting is a visible
+/// choice rather than a blank.
+function inheritedLabel(providers: Provider[], choice?: ModelChoice): string {
+  if (!choice) return "Remy default";
+  return `Remy default · ${modelLabel(providers, choice)}`;
 }
 
 const styles = StyleSheet.create({
