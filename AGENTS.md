@@ -120,7 +120,7 @@ A server module opens its database at import time, so a test that touches state 
   hook holding its state, a label helper — out of it, or the import that draws
   the button drags the surface back into the first load. `npm run bundle` says
   what is in the first load and `npm run perf` times each first open.
-- **A desktop thread is a focused work log beside a work surface.** Its transcript is a narrow, identity-light reading column; its tools open beside it by default on a wide screen, in a larger resizable pane with a quiet launcher when nothing is open. Inbox conversations keep their agent identity because the person is the point there.
+- **A desktop thread is a workbench of tabs.** Everything open for a main thread — its transcript, each subthread, each tool — is a tab in that thread's collection (`web/src/lib/thread-workbench.ts`), shown as a strip or as panes side by side, and never mixed with another main thread's. A tool opened from the transcript lands beside it; a tab stays mounted behind the one in front, so a terminal keeps its shell. The layout is remembered per thread on this device, and the URL names only the thread in front. The transcript stays a narrow, identity-light reading column; inbox conversations keep their agent identity because the person is the point there.
 - **Inbox is the agents.** Every agent has one conversation with you, made the
   first time you open it (`dmChatFor`), listed by `listDms` and never by
   `listChats` — a thread is work in a repository, and this is not. It opens in

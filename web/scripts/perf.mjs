@@ -26,17 +26,15 @@ const WARM_LATENCY_MS = positiveInteger(process.env.MC_PERF_READ_DELAY_MS, 150);
 /// first open costs, what the second one costs, and whether the pane moved
 /// while the code was still arriving.
 ///
-/// Tools after the first are added from the tab bar's menu, because the
-/// launcher is only on screen while no tool is open.
+/// Every tool is a tab in the thread's workbench, added from the strip's menu.
 const DEFERRED_TOOLS = [
-  { id: "browser", label: "Browser", from: "launcher" },
-  { id: "pull-request", label: "Pull request", from: "menu" },
-  { id: "analytics", label: "Analytics", from: "menu" },
-  { id: "performance", label: "Performance", from: "menu" },
+  { id: "browser", label: "Browser" },
+  { id: "pull-request", label: "Pull request" },
+  { id: "analytics", label: "Analytics" },
+  { id: "performance", label: "Performance" },
 ];
 
 const TERMINAL_READY = `!!document.querySelector('section[aria-label="Terminal"]')`;
-const TOOLS_READY = `!!document.querySelector('section[aria-label="Thread tools"]')`;
 
 const targets = performanceTargets();
 const browser = await chromium.launch({
@@ -624,7 +622,6 @@ async function runDeferredSurfaces(target) {
   try {
     await waitForText(opened.page, fixture.lastEntryText);
     surfaces.push(await measureTerminal(target, opened.page, fixture));
-    surfaces.push(await measureToolsPane(target, opened.page, fixture));
     for (const tool of DEFERRED_TOOLS) {
       surfaces.push(await measureTool(target, opened.page, fixture, tool));
     }
@@ -635,57 +632,43 @@ async function runDeferredSurfaces(target) {
   }
 }
 
+/// Opens a tool from the strip's menu. The menu is not part of the measurement.
+function addTab(page, label) {
+  return {
+    prepare: () => page.getByRole("button", { name: "Add tab" }).first().click(),
+    commit: () => page.getByRole("menuitem", { name: label, exact: true }).click(),
+  };
+}
+
 async function measureTerminal(target, page, fixture) {
-  const show = () => page.getByRole("button", { name: "Show terminal" }).click();
-  const hide = () => page.getByRole("button", { name: "Hide terminal" }).first().click();
-  const firstOpen = await timeSurface(page, { commit: show, ready: TERMINAL_READY });
-  // The shell keeps running while the drawer is shut, so shutting the drawer
-  // must not take the renderer with it.
-  await hide();
+  const open = addTab(page, "Terminal");
+  const firstOpen = await timeSurface(page, { ...open, ready: TERMINAL_READY });
+  // The shell keeps running behind another tab, so bringing the transcript
+  // forward must not take the renderer with it.
+  await page.getByRole("tab", { name: fixture.primaryTitle }).click();
   const keptOnHide = await page.locator('section[aria-label="Terminal"]').count() > 0;
-  const reopen = await timeSurface(page, { commit: show, ready: TERMINAL_READY });
-  await hide();
+  const back = () => page.getByRole("tab", { name: "Terminal" }).click();
+  const reopen = await timeSurface(page, { commit: back, ready: TERMINAL_READY });
+  await page.getByRole("button", { name: "Close Terminal" }).first().click();
   return snapshotResult(page, {
     target: target.name,
     scenario: "surface-terminal",
     threadCount: fixture.threadCount,
     keptOnHide,
-    // Opening a terminal starts one; the drawer cannot be measured without it.
+    // Opening a terminal starts one; the tab cannot be measured without it.
     allowedWrites: ["POST /terminals/"],
     ...surfaceTimings(firstOpen, reopen),
   });
 }
 
-async function measureToolsPane(target, page, fixture) {
-  const show = () => page.getByRole("button", { name: "Show thread tools" }).click();
-  const firstOpen = await timeSurface(page, { commit: show, ready: TOOLS_READY });
-  await page.getByRole("button", { name: "Hide thread tools" }).click();
-  const keptOnHide = await page.locator('section[aria-label="Thread tools"]').count() > 0;
-  const reopen = await timeSurface(page, { commit: show, ready: TOOLS_READY });
-  return snapshotResult(page, {
-    target: target.name,
-    scenario: "surface-thread-tools",
-    threadCount: fixture.threadCount,
-    keptOnHide,
-    ...surfaceTimings(firstOpen, reopen),
-  });
-}
-
 async function measureTool(target, page, fixture, tool) {
-  // The launcher is only on screen while no tool is open, so every tool after
-  // the first is added from the tab bar's menu.
-  const prepare = tool.from === "menu"
-    ? () => page.getByRole("button", { name: "Add tool tab" }).click()
-    : undefined;
-  const commit = tool.from === "menu"
-    ? () => page.getByRole("menuitem", { name: tool.label, exact: true }).click()
-    : () => page.getByRole("button", { name: tool.label, exact: true }).click();
+  const { prepare, commit } = addTab(page, tool.label);
   const ready = toolReady(tool.label);
 
   const firstOpen = await timeSurface(page, { prepare, commit, ready });
   // Closing the tab and opening the same tool again. Its code is already in
   // memory, so this second open never waits on the network.
-  await page.getByRole("button", { name: `Close ${tool.label} tab` }).first().click();
+  await page.getByRole("button", { name: `Close ${tool.label}` }).first().click();
   const reopen = await timeSurface(page, { prepare, commit, ready });
   return snapshotResult(page, {
     target: target.name,
@@ -709,17 +692,16 @@ function surfaceTimings(firstOpen, reopen) {
   };
 }
 
-/// The tool's own tab is selected and its own panel has drawn something. A tab
-/// the tools pane has shown before keeps an empty hidden panel, so the panel
-/// has to be the one this tab points at rather than the first one in the pane.
+/// The tool's own tab is in front of its group and its own panel has drawn
+/// something. Every tab keeps a panel mounted behind the front one, so the
+/// panel has to be the one this tab points at rather than the first in the group.
 function toolReady(label) {
   return `(() => {
-    const tools = document.querySelector('section[aria-label="Thread tools"]');
-    if (!tools) return false;
-    const selected = tools.querySelector('[role="tab"][aria-selected="true"]');
-    if (!selected || !selected.textContent.trim().startsWith(${JSON.stringify(label)})) return false;
+    const selected = [...document.querySelectorAll('[role="tab"][aria-selected="true"]')]
+      .find((tab) => tab.textContent.trim().startsWith(${JSON.stringify(label)}));
+    if (!selected) return false;
     const panel = document.getElementById(selected.getAttribute("aria-controls"));
-    return Boolean(panel && !panel.hidden && panel.childElementCount > 0);
+    return Boolean(panel && getComputedStyle(panel).display !== "none" && panel.childElementCount > 0);
   })()`;
 }
 

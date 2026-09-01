@@ -82,7 +82,7 @@
   --radius: 0.625rem;
   --control-radius: 0.5rem;
   --sidebar-content-inset: 0.5rem;
-  --sidebar-width: 13rem;
+  --sidebar-width: 15rem;
   --sidebar-row-content-inset: 0.625rem;
   --command-shell-inset: 0.5rem;
   --command-content-inset: 1rem;
@@ -94,7 +94,12 @@
 
   /* Dark is the only scheme wired up today. Every token has a light value in
      the `.light` block below, so enabling it is a class on <html>. */
-  --background: oklch(14.5% 0 0);
+
+  /* Two surfaces. The chrome — title bar and sidebar — is the darkest thing in
+     the window, and the pane sits on it as a lighter, bordered panel; card and
+     popover step up from the pane. The chrome keeps the old background value so
+     the Electron window's `backgroundColor` still matches it while loading. */
+  --background: oklch(19% 0 0);
   --foreground: oklch(97% 0 0);
   --card: color-mix(in srgb, var(--background) 97%, #fff);
   --card-foreground: var(--foreground);
@@ -135,14 +140,16 @@
   --chart-4: var(--warning);
   --chart-5: var(--info);
 
-  --sidebar: var(--card);
+  --sidebar: oklch(14.5% 0 0);
   --sidebar-foreground: var(--foreground);
   --sidebar-border: var(--border);
   --sidebar-row-hover: color-mix(in srgb, var(--sidebar) 96%, var(--sidebar-foreground));
-  --sidebar-row-selected: color-mix(in srgb, var(--sidebar) 96%, var(--sidebar-foreground));
+  --sidebar-row-selected: color-mix(in srgb, var(--sidebar) 93%, var(--sidebar-foreground));
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: var(--accent);
+  /* A step brighter than the pane's accent: the chrome is darker, so the same
+     4% would read as nothing. */
+  --sidebar-accent: oklch(100% 0 0 / 7%);
   --sidebar-accent-foreground: var(--foreground);
   --sidebar-ring: var(--ring);
 }
@@ -170,7 +177,7 @@ html.electron {
   --error: oklch(63.7% 0.237 25.331);
   --error-foreground: oklch(50.5% 0.213 27.518);
   --info-foreground: oklch(48.8% 0.243 264.376);
-  --sidebar: oklch(98.5% 0 0);
+  --sidebar: oklch(96.5% 0 0);
   --sidebar-row-hover: oklch(99.2% 0 0);
   --sidebar-row-selected: #fff;
   --sidebar-primary: var(--primary);
