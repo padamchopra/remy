@@ -145,6 +145,7 @@ export function installPerformanceBridge(fixture) {
   const statusHandlers = new Set();
   const encoder = new TextEncoder();
   const longTasks = [];
+  const nextFailures = new Map();
   let connected = true;
 
   if (typeof PerformanceObserver !== "undefined") {
@@ -215,6 +216,9 @@ export function installPerformanceBridge(fixture) {
       requests.length = 0;
       longTasks.length = 0;
     },
+    failNext(path, error = "Fixture read failed") {
+      nextFailures.set(path, error);
+    },
     emit(payload, serverId = "local") {
       if (!connected) return false;
       for (const handler of pushHandlers) handler(serverId, payload);
@@ -242,6 +246,11 @@ export function installPerformanceBridge(fixture) {
     },
     async request(serverId, path, init = {}) {
       const method = init.method ?? "GET";
+      const failed = nextFailures.get(path);
+      if (failed) {
+        nextFailures.delete(path);
+        return measured(method, path, undefined, { ok: false, error: failed });
+      }
       if (serverId === "local" && path.startsWith("/peers/unavailable-device/api/")) {
         return measured(method, path, undefined, {
           delay: 1_200,
@@ -349,6 +358,30 @@ export function budgetFailures(result, budgets = PERFORMANCE_BUDGETS) {
     over(result.firstUsefulPaintMs, budgets.coldUsefulMs, "unavailable-device useful paint");
     if (result.delayFromLocalMs > budgets.unavailableDelayMs) {
       failures.push(`unavailable-device delay: ${result.delayFromLocalMs.toFixed(1)} ms > ${budgets.unavailableDelayMs} ms`);
+    }
+  }
+  if (result.scenario === "shared-read-failure" && result.usefulPreserved !== true) {
+    failures.push("failed refresh removed useful board state");
+  }
+  if (result.scenario?.startsWith("pane-")) {
+    const sharedPaths = new Set([
+      "/server/providers",
+      "/server/settings",
+      "/board",
+      "/pair/pending",
+      "/server/identity",
+    ]);
+    for (const request of result.requests ?? []) {
+      if (request.method === "GET" && sharedPaths.has(request.path) && request.count > 1) {
+        failures.push(`shared read ${request.path}: ${request.count} requests > 1`);
+      }
+    }
+    if (result.scenario === "pane-threads") {
+      const providers = (result.requests ?? []).find((request) =>
+        request.method === "GET" && request.path === "/server/providers");
+      if (providers?.count !== 1) {
+        failures.push(`Threads provider catalogue: ${providers?.count ?? 0} requests != 1`);
+      }
     }
   }
   if (result.neverPainted) failures.push("useful content never painted");

@@ -46,6 +46,7 @@ try {
     results.push(...await repeatedGroup(() => runThreadLifecycle(target)));
     results.push(await repeated(() => runUnavailableDevice(target)));
     results.push(...await runPaneRoutes(target));
+    results.push(await runSharedReadFailure(target));
   }
 } finally {
   await browser.close();
@@ -483,6 +484,32 @@ async function runPaneRoutes(target) {
     }
   }
   return paneResults;
+}
+
+async function runSharedReadFailure(target) {
+  const fixture = createFixture({ threadCount: 25, entryCount: 10 });
+  const opened = await openHarnessPage(target, fixture, "#/board");
+  try {
+    await waitForText(opened.page, "Performance workspace");
+    await opened.page.evaluate(() => {
+      window.__remyPerf.resetMeasurements();
+      window.__remyPerf.failNext("/board");
+      window.__remyPerf.emit({ type: "board" });
+    });
+    await opened.page.waitForFunction(() =>
+      window.__remyPerf.requests.some((request) => request.path === "/board" && request.ok === false));
+    const usefulPreserved = await opened.page.evaluate(() =>
+      document.body?.innerText.includes("Performance workspace") === true);
+    const result = await snapshotResult(opened.page, {
+      target: target.name,
+      scenario: "shared-read-failure",
+      usefulPreserved,
+    });
+    assertPageErrors(opened.errors, result);
+    return result;
+  } finally {
+    await opened.context.close();
+  }
 }
 
 async function observeUseful(page, marker) {
