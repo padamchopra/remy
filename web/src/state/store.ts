@@ -62,6 +62,7 @@ interface RawChat {
   model?: string;
   effort?: string;
   preview?: string;
+  createdAt?: number;
   updatedAt?: number;
   workingSince?: number | null;
   dm?: boolean;
@@ -593,7 +594,7 @@ export const useStore = create<State>((set, get) => ({
                   current.chats,
                   server.id,
                   (chats.chats ?? []).map((raw) => toChat(raw, server.id)),
-                ).sort(byAttention),
+                ).sort(byNewest),
                 archived: [
                   ...current.archived.filter((chat) => chat.serverId !== server.id),
                   ...archives.map((raw) => toArchivedThread(raw, server.id)),
@@ -887,9 +888,10 @@ export const useStore = create<State>((set, get) => ({
         cwd,
         state: "working",
         preview: text,
+        createdAt: Date.now(),
         updatedAt: Date.now(),
       };
-      set((current) => ({ chats: [chat, ...current.chats].sort(byAttention) }));
+      set((current) => ({ chats: [chat, ...current.chats].sort(byNewest) }));
       return { id: chat.id, serverId };
     }
 
@@ -1916,6 +1918,7 @@ function toChat(raw: RawChat, serverId: string): Chat {
     model: raw.model,
     effort: raw.effort,
     preview: raw.preview,
+    createdAt: raw.createdAt,
     updatedAt: raw.updatedAt ?? 0,
     workingSince: raw.workingSince ?? undefined,
     ...(raw.dm ? { dm: true } : {}),
@@ -2047,10 +2050,10 @@ function nameFromPath(path: string): string {
   return part ?? "";
 }
 
-/// Needs-you first, then working, then most recently updated.
-const RANK: Record<ChatState, number> = { needs_input: 0, working: 1, error: 2, idle: 3 };
-function byAttention(a: Chat, b: Chat): number {
+/// Pinned first, then newest thread first. Creation time rather than activity
+/// keeps a row where you left it: a thread you started an hour ago does not
+/// walk up the list every time it says something.
+function byNewest(a: Chat, b: Chat): number {
   return Number(b.pinned ?? false) - Number(a.pinned ?? false)
-    || RANK[a.state] - RANK[b.state]
-    || b.updatedAt - a.updatedAt;
+    || (b.createdAt ?? b.updatedAt) - (a.createdAt ?? a.updatedAt);
 }

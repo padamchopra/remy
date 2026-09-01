@@ -66,6 +66,9 @@ export interface Chat {
   model?: string;
   effort?: string;
   preview?: string;
+  /// When the thread was started. What the thread list is ordered by, so a row
+  /// keeps its place while the work in it moves on.
+  createdAt?: number;
   updatedAt: number;
   /// When the current run of work began. Absent once the chat settles, so a
   /// row only shows a clock while there is something to time.
