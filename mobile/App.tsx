@@ -15,7 +15,9 @@ import { useStore } from "./src/state/store";
 import type { RootStackParamList } from "./src/navigation";
 import { PairRequestModal } from "./src/components/PairRequest";
 import { PairedShell } from "./src/components/PairedShell";
+import { AgentScreen } from "./src/screens/AgentScreen";
 import { PairScreen } from "./src/screens/PairScreen";
+import { RoutineScreen } from "./src/screens/RoutineScreen";
 import { ScanScreen } from "./src/screens/ScanScreen";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -42,17 +44,22 @@ function PairedApp({
 }) {
   const start = useStore((s) => s.start);
   const loadSettings = useStore((s) => s.loadSettings);
+  const loadProviders = useStore((s) => s.loadProviders);
   const loadBoard = useStore((s) => s.loadBoard);
   const anyOnline = useStore((s) => s.servers.some((server) => server.online));
 
   useEffect(() => start(), [start]);
 
+  // A Mac on a current build resyncs itself when its live stream opens. This is
+  // for one whose stream never does — an older build, or a tunnel that will not
+  // hold a socket — so its defaults and its catalogue still arrive.
   useEffect(() => {
     if (!anyOnline) return;
     void loadSettings().catch(() => {});
+    void loadProviders().catch(() => {});
     void loadBoard().catch(() => {});
     void registerPush().catch(() => {});
-  }, [anyOnline, loadSettings, loadBoard]);
+  }, [anyOnline, loadSettings, loadProviders, loadBoard]);
 
   useEffect(() => listenForNotificationTap((id) => openThreadFromOutside.current(id)), []);
 
@@ -71,8 +78,23 @@ function PairedApp({
             <PairedShell
               openThreadRef={openThreadFromOutside}
               onPairAnother={() => navRef.isReady() && navRef.navigate("Pair")}
+              onOpenAgent={(agentId) => navRef.isReady() && navRef.navigate("Agent", { agentId })}
               onUnpair={onUnpair}
             />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="Agent" options={{ title: "Agent" }}>
+          {({ navigation, route }) => (
+            <AgentScreen
+              agentId={route.params.agentId}
+              onOpenRoutine={(routineId) => navigation.navigate("Routine", { routineId })}
+              onDeleted={() => navigation.navigate("Home")}
+            />
+          )}
+        </Stack.Screen>
+        <Stack.Screen name="Routine" options={{ title: "Routine" }}>
+          {({ navigation, route }) => (
+            <RoutineScreen routineId={route.params.routineId} onDone={() => navigation.goBack()} />
           )}
         </Stack.Screen>
         <Stack.Screen name="Pair" options={{ title: "Pair another Mac" }}>

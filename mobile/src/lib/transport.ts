@@ -133,6 +133,16 @@ function connectOne(pairing: Pairing): void {
     if (sockets.get(origin) !== ws) return;
     try {
       const payload: unknown = JSON.parse(String(event.data));
+      const frame = payload && typeof payload === "object" && !Array.isArray(payload)
+        ? payload as { type?: unknown; serverId?: unknown; payload?: unknown }
+        : undefined;
+      // A paired Mac relays its own peers' frames wrapped in `peer-frame`.
+      // Unwrapped here, so a frame about a thread on the studio arrives under
+      // the studio's id rather than under the Mac that forwarded it.
+      if (frame?.type === "peer-frame" && typeof frame.serverId === "string") {
+        for (const handler of pushHandlers) handler(frame.serverId, frame.payload);
+        return;
+      }
       for (const handler of pushHandlers) handler(serverId, payload);
     } catch {
       // Not JSON; not worth dropping the socket over.
@@ -195,9 +205,15 @@ export const transport: Transport = {
   },
 
   async servers() {
-    routes.clear();
-    if (pairings.length === 0) return [];
+    if (pairings.length === 0) {
+      routes.clear();
+      return [];
+    }
 
+    // Built beside the live table and swapped in at the end. Clearing first
+    // meant a request that landed mid-sweep — and there are more of them now
+    // that one Mac can be re-read on its own — failed as "not paired".
+    const next = new Map<string, Route>();
     const directUrls = new Set(pairings.map((entry) => originOf(entry.url)));
     const seenIds = new Set<string>();
     const seenUrls = new Set<string>();
@@ -220,7 +236,7 @@ export const transport: Transport = {
           listed = {};
         }
         if (!seenIds.has(id) && !seenUrls.has(origin)) {
-          routes.set(id, { pairing });
+          next.set(id, { pairing });
           seenIds.add(id);
           seenUrls.add(origin);
           out.push(withAppearance(toDirect(listed.name || name, origin, health.ok === true, id, listed.icon, listed.tint)));
@@ -228,14 +244,14 @@ export const transport: Transport = {
         for (const peer of listed.peers ?? []) {
           const peerOrigin = originOf(peer.url);
           if (directUrls.has(peerOrigin) || seenIds.has(peer.id) || seenUrls.has(peerOrigin)) continue;
-          routes.set(peer.id, { pairing, peerId: peer.id });
+          next.set(peer.id, { pairing, peerId: peer.id });
           seenIds.add(peer.id);
           seenUrls.add(peerOrigin);
           out.push(withAppearance(toPeer(peer)));
         }
         if (cursorCloud.visible) {
           const cloudId = `${id}:cursor-cloud`;
-          routes.set(cloudId, { pairing, cloud: true });
+          next.set(cloudId, { pairing, cloud: true });
           out.push({
             id: cloudId,
             name: pairings.length > 1 ? `${listed.name || name} · Cursor Cloud` : "Cursor Cloud",
@@ -250,12 +266,14 @@ export const transport: Transport = {
         }
       } catch {
         if (seenUrls.has(origin)) continue;
-        routes.set(id, { pairing });
+        next.set(id, { pairing });
         seenIds.add(id);
         seenUrls.add(origin);
         out.push(withAppearance(toDirect(name, origin, false, id)));
       }
     }
+    routes.clear();
+    for (const [id, route] of next) routes.set(id, route);
     return out;
   },
 

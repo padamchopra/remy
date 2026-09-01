@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SquareKanban } from "lucide-react-native";
 import { color, radius, space, type } from "../theme";
-import { BOARD_COLUMNS, STATUS_LABEL } from "../lib/tickets";
+import { BOARD_COLUMNS, STATUS_LABEL, byRank, subTicketProgress, topLevel } from "../lib/tickets";
 import { useStore } from "../state/store";
 import { EmptyState } from "../components/Empty";
 import { Button } from "../components/Button";
@@ -20,7 +20,8 @@ export function BoardScreen({
   const loading = useStore((s) => s.boardLoading);
   const loadBoard = useStore((s) => s.loadBoard);
   const anyOnline = useStore((s) => s.servers.some((server) => server.online));
-  const open = tickets.filter((ticket) => ticket.status !== "cancelled");
+  // A sub-ticket belongs on its parent, where its progress is already counted.
+  const open = topLevel(tickets).filter((ticket) => ticket.status !== "cancelled");
 
   useEffect(() => {
     if (anyOnline) void loadBoard().catch(() => {});
@@ -46,13 +47,18 @@ export function BoardScreen({
   return (
     <ScrollView style={styles.wrap} contentContainerStyle={styles.content}>
       {BOARD_COLUMNS.map((status) => {
-        const column = open.filter((ticket) => ticket.status === status);
+        const column = open.filter((ticket) => ticket.status === status).sort(byRank);
         if (column.length === 0) return null;
         return (
           <View key={status} style={styles.column}>
             <Text style={type.caption}>{STATUS_LABEL[status]}</Text>
             {column.map((ticket) => (
-              <TicketCard key={ticket.id} ticket={ticket} onPress={() => onOpen(ticket.key)} />
+              <TicketCard
+                key={ticket.id}
+                ticket={ticket}
+                progress={subTicketProgress(tickets, ticket)}
+                onPress={() => onOpen(ticket.key)}
+              />
             ))}
           </View>
         );
@@ -61,10 +67,20 @@ export function BoardScreen({
   );
 }
 
-function TicketCard({ ticket, onPress }: { ticket: Ticket; onPress: () => void }) {
+function TicketCard({
+  ticket,
+  progress,
+  onPress,
+}: {
+  ticket: Ticket;
+  progress: { done: number; total: number };
+  onPress: () => void;
+}) {
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.card, pressed && { backgroundColor: color.accent }]}>
-      <Text style={type.caption}>{ticket.key}</Text>
+      <Text style={type.caption}>
+        {progress.total > 0 ? `${ticket.key} · ${progress.done}/${progress.total}` : ticket.key}
+      </Text>
       <Text style={type.callout}>{ticket.title}</Text>
     </Pressable>
   );
