@@ -6,6 +6,9 @@ export const PERFORMANCE_BUDGETS = Object.freeze({
   minimumFrameRate: 60,
   idleCpuPercent: 1,
   unavailableDelayMs: 50,
+  maxRenderedTurns: 40,
+  maxHistoryAnchorShiftPx: 2,
+  maxComposerShiftPx: 1,
 });
 
 const DEFAULT_SETTINGS = Object.freeze({
@@ -192,6 +195,7 @@ export function installPerformanceBridge(fixture) {
   const encoder = new TextEncoder();
   const longTasks = [];
   const renders = [];
+  const nextFailures = new Map();
   let connected = true;
 
   window.__remyRenderProbe = (surface, id) => {
@@ -227,7 +231,35 @@ export function installPerformanceBridge(fixture) {
 
   const fixtureResponse = (path) => {
     if (path.startsWith("/pull-requests?")) return fixture.responses["/pull-requests"];
-    return fixture.responses[path] ?? {};
+    const [pathname, query = ""] = path.split("?");
+    const response = fixture.responses[pathname];
+    const match = pathname.match(/^\/chats\/([^/]+)$/);
+    if (!match || !response || !query) return response ?? {};
+    const params = new URLSearchParams(query);
+    const turnLimit = Number(params.get("turns"));
+    if (!Number.isInteger(turnLimit) || turnLimit < 1) return response;
+    const allEntries = response.entries ?? [];
+    const before = params.get("before");
+    const end = before ? allEntries.findIndex((entry) => entry.id === before) : allEntries.length;
+    let start = end < 0 ? allEntries.length : end;
+    let turns = 0;
+    while (start > 0) {
+      const entry = allEntries[start - 1];
+      start -= 1;
+      if (entry.kind === "user") {
+        turns += 1;
+        if (turns >= turnLimit) break;
+      }
+    }
+    const entries = allEntries.slice(start, end < 0 ? allEntries.length : end);
+    return {
+      ...response,
+      entries,
+      history: {
+        hasEarlier: start > 0,
+        ...(start > 0 && entries[0] ? { before: entries[0].id } : {}),
+      },
+    };
   };
 
   window.__remyPerf = {
@@ -239,6 +271,9 @@ export function installPerformanceBridge(fixture) {
       requests.length = 0;
       longTasks.length = 0;
       renders.length = 0;
+    },
+    failNext(path, error = "Fixture read failed") {
+      nextFailures.set(path, error);
     },
     emit(payload, serverId = fixture.serverId) {
       if (!connected) return false;
@@ -267,6 +302,11 @@ export function installPerformanceBridge(fixture) {
     },
     async request(serverId, path, init = {}) {
       const method = init.method ?? "GET";
+      const failed = nextFailures.get(path);
+      if (failed) {
+        nextFailures.delete(path);
+        return measured(method, path, undefined, { ok: false, error: failed });
+      }
       if (serverId === "local" && path.startsWith("/peers/unavailable-device/api/")) {
         return measured(method, path, undefined, {
           delay: 1_200,
@@ -338,6 +378,13 @@ export function budgetFailures(result, budgets = PERFORMANCE_BUDGETS) {
   }
   if (result.scenario === "live-update") {
     over(result.firstLivePaintP95Ms, budgets.livePaintP95Ms, "live update p95");
+    if (result.stableRowRenders > 0) failures.push(`stable transcript row rendered ${result.stableRowRenders} extra times`);
+    if (result.composerShiftPx > budgets.maxComposerShiftPx) {
+      failures.push(`streaming composer shift: ${result.composerShiftPx.toFixed(1)} px > ${budgets.maxComposerShiftPx} px`);
+    }
+    if (result.scrollFollowDistancePx > 80) {
+      failures.push(`streaming scroll follow: ${result.scrollFollowDistancePx.toFixed(1)} px from newest`);
+    }
   }
   if (result.scenario?.startsWith("render-isolation-")) {
     if (result.affectedRowRenders < 1) failures.push("affected row did not render");
@@ -358,6 +405,12 @@ export function budgetFailures(result, budgets = PERFORMANCE_BUDGETS) {
     if (result.frameRate + 0.5 < budgets.minimumFrameRate) {
       under(result.frameRate, budgets.minimumFrameRate, "500-entry thread");
     }
+    if (result.renderedTurns > budgets.maxRenderedTurns) {
+      failures.push(`virtual transcript rows: ${result.renderedTurns} > ${budgets.maxRenderedTurns}`);
+    }
+    if (result.largestAnchorShiftPx > budgets.maxHistoryAnchorShiftPx) {
+      failures.push(`history anchor shift: ${result.largestAnchorShiftPx.toFixed(1)} px > ${budgets.maxHistoryAnchorShiftPx} px`);
+    }
   }
   if (result.scenario === "idle") {
     if (result.idleCpuPercent > budgets.idleCpuPercent) {
@@ -368,6 +421,30 @@ export function budgetFailures(result, budgets = PERFORMANCE_BUDGETS) {
     over(result.firstUsefulPaintMs, budgets.coldUsefulMs, "unavailable-device useful paint");
     if (result.delayFromLocalMs > budgets.unavailableDelayMs) {
       failures.push(`unavailable-device delay: ${result.delayFromLocalMs.toFixed(1)} ms > ${budgets.unavailableDelayMs} ms`);
+    }
+  }
+  if (result.scenario === "shared-read-failure" && result.usefulPreserved !== true) {
+    failures.push("failed refresh removed useful board state");
+  }
+  if (result.scenario?.startsWith("pane-")) {
+    const sharedPaths = new Set([
+      "/server/providers",
+      "/server/settings",
+      "/board",
+      "/pair/pending",
+      "/server/identity",
+    ]);
+    for (const request of result.requests ?? []) {
+      if (request.method === "GET" && sharedPaths.has(request.path) && request.count > 1) {
+        failures.push(`shared read ${request.path}: ${request.count} requests > 1`);
+      }
+    }
+    if (result.scenario === "pane-threads") {
+      const providers = (result.requests ?? []).find((request) =>
+        request.method === "GET" && request.path === "/server/providers");
+      if (providers?.count !== 1) {
+        failures.push(`Threads provider catalogue: ${providers?.count ?? 0} requests != 1`);
+      }
     }
   }
   if (result.neverPainted) failures.push("useful content never painted");

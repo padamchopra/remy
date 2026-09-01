@@ -58,6 +58,7 @@ import { formatPairCode, hostLabel, parsePairingLink } from "@/lib/pairing";
 import { displayPath } from "@/lib/path";
 import { workspaceForPath } from "@/lib/projects";
 import { fetchLatestRelease, isNewer, summarizeNotes, type RemyRelease } from "@/lib/release";
+import { invalidateSharedResource, readSharedResource, seedSharedResource } from "@/lib/shared-read";
 import { transport } from "@/lib/transport";
 import type { TintId } from "@/lib/tints";
 import { cn } from "@/lib/utils";
@@ -104,7 +105,7 @@ import {
 import { IDENTITIES } from "@/components/AgentSettings";
 import { useAppUpdate, type AppUpdatePhase } from "@/hooks/use-app-update";
 import { useStore } from "@/state/store";
-import type { Chat, ProviderMcpStatus, Server, TailnetDevice, Tooling, ToolStatus } from "@/state/types";
+import type { Chat, ProviderMcpStatus, Server, ServerSettings, TailnetDevice, Tooling, ToolStatus } from "@/state/types";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { AnalyticsTab } from "@/components/AnalyticsSettings";
 
@@ -1102,6 +1103,8 @@ function ProvidersPane({ deviceId, onDevice }: { deviceId?: string; onDevice: (d
   const [unavailableDeviceId, setUnavailableDeviceId] = useState<string>();
   const [mcpBusy, setMcpBusy] = useState<string>();
   const loadGeneration = useRef(0);
+  const stateRef = useRef<ProviderDeviceState | undefined>(undefined);
+  stateRef.current = state;
   const selectedState = state?.serverId === selectedId ? state : undefined;
   const unavailable = unavailableDeviceId === selectedId;
   const loading = !selectedState && !unavailable;
@@ -1110,14 +1113,18 @@ function ProvidersPane({ deviceId, onDevice }: { deviceId?: string; onDevice: (d
   const load = useCallback(async (showLoading = true) => {
     if (!selectedId) return;
     const generation = ++loadGeneration.current;
-    if (showLoading) {
+    if (showLoading && stateRef.current?.serverId !== selectedId) {
       setState(undefined);
     }
     setUnavailableDeviceId(undefined);
     try {
       const [tooling, providerResponse, mcpResponse] = await Promise.all([
         transport.request<Tooling>(selectedId, "/server/tooling"),
-        transport.request<{ providers?: Provider[] }>(selectedId, "/server/providers"),
+        readSharedResource(
+          "providers",
+          selectedId,
+          () => transport.request<{ providers?: Provider[] }>(selectedId, "/server/providers"),
+        ),
         transport.request<{ providers?: ProviderMcpStatus[] }>(selectedId, "/server/mcp").catch(() => undefined),
       ]);
       if (generation !== loadGeneration.current) return;
@@ -1128,7 +1135,9 @@ function ProvidersPane({ deviceId, onDevice }: { deviceId?: string; onDevice: (d
         mcpProviders: Object.fromEntries((mcpResponse?.providers ?? []).map((entry) => [entry.provider, entry])),
       });
     } catch {
-      if (generation === loadGeneration.current) setUnavailableDeviceId(selectedId);
+      if (generation === loadGeneration.current && stateRef.current?.serverId !== selectedId) {
+        setUnavailableDeviceId(selectedId);
+      }
     }
   }, [selectedId]);
 
@@ -1143,6 +1152,7 @@ function ProvidersPane({ deviceId, onDevice }: { deviceId?: string; onDevice: (d
         method: "PATCH",
         body: { enabled },
       });
+      invalidateSharedResource("providers", selected.id);
       await load(false);
       if (selected.local) await loadLocalProviders();
     } catch (caught) {
@@ -1501,7 +1511,12 @@ function DevicesPane() {
               onUnpair={() => void unpair(server)}
               onUpdate={async (patch) => {
                 if (server.local) {
-                  await transport.request(server.id, "/server/identity", { method: "PATCH", body: patch });
+                  const identity = await transport.request<Identity>(
+                    server.id,
+                    "/server/identity",
+                    { method: "PATCH", body: patch },
+                  );
+                  seedSharedResource("identity", server.id, identity);
                 }
                 await updateServer(server.id, patch);
               }}
@@ -2000,8 +2015,11 @@ function NotificationSourceSwitch({
   useEffect(() => {
     let cancelled = false;
     const request = server.local
-      ? transport
-        .request<{ notifySelf?: boolean }>(server.id, "/server/settings")
+      ? readSharedResource(
+        "settings",
+        server.id,
+        () => transport.request<ServerSettings>(server.id, "/server/settings"),
+      )
         .then((settings) => settings.notifySelf !== false)
       : homeDeviceId
         ? transport
@@ -2009,7 +2027,6 @@ function NotificationSourceSwitch({
           .then((answer) => answer.peers?.find((peer) => peer.id === homeDeviceId)?.notify === true)
         : Promise.reject(new Error("This device is still starting."));
 
-    setOn(undefined);
     void request
       .then((next) => {
         if (!cancelled) setOn(next);
@@ -2029,10 +2046,11 @@ function NotificationSourceSwitch({
     setSaving(true);
     try {
       if (server.local) {
-        await transport.request(server.id, "/server/settings", {
+        const settings = await transport.request<ServerSettings>(server.id, "/server/settings", {
           method: "PATCH",
           body: { notifySelf: next },
         });
+        seedSharedResource("settings", server.id, settings);
       } else {
         if (!homeId || !homeDeviceId) throw new Error("This device is still starting.");
         await transport.request(server.id, `/peers/${encodeURIComponent(homeDeviceId)}`, {
@@ -2088,12 +2106,12 @@ function ReachableField({ serverId, identity }: { serverId: string; identity?: I
   const toggle = async (next: boolean) => {
     setSaving(true);
     try {
-      setChanged(
-        await transport.request<Identity>(serverId, "/server/identity", {
-          method: "PATCH",
-          body: { exposed: next },
-        }),
-      );
+      const changedIdentity = await transport.request<Identity>(serverId, "/server/identity", {
+        method: "PATCH",
+        body: { exposed: next },
+      });
+      setChanged(changedIdentity);
+      seedSharedResource("identity", serverId, changedIdentity);
       toast.success(next ? "Your other machines can reach this one." : "Nothing else can reach this machine.");
     } catch (caught) {
       toast.error(next ? "Couldn't make this machine reachable" : "Couldn't close this machine off", {
@@ -2470,8 +2488,11 @@ function useIdentity(serverId: string | undefined): Identity | undefined {
   useEffect(() => {
     if (!serverId) return;
     let cancelled = false;
-    void transport
-      .request<Identity>(serverId, "/server/identity")
+    void readSharedResource(
+      "identity",
+      serverId,
+      () => transport.request<Identity>(serverId, "/server/identity"),
+    )
       .then((answer) => {
         if (!cancelled) setIdentity(answer);
       })
@@ -2494,8 +2515,11 @@ function StayAwakeField({ serverId }: { serverId: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    void transport
-      .request<{ preventSleep?: string; preventSleepSupported?: boolean }>(serverId, "/server/settings")
+    void readSharedResource(
+      "settings",
+      serverId,
+      () => transport.request<ServerSettings>(serverId, "/server/settings"),
+    )
       .then((settings) => {
         if (cancelled) return;
         setMode(stayAwakeMode(settings.preventSleep) ?? "off");
@@ -2520,10 +2544,11 @@ function StayAwakeField({ serverId }: { serverId: string }) {
     setMode(value);
     setSaving(true);
     try {
-      await transport.request(serverId, "/server/settings", {
+      const settings = await transport.request<ServerSettings>(serverId, "/server/settings", {
         method: "PATCH",
         body: { preventSleep: value },
       });
+      seedSharedResource("settings", serverId, settings);
     } catch {
       setMode(previous);
       toast.error("Couldn't update that setting", { description: "Try again in a bit." });

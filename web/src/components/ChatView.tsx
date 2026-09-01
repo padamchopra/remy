@@ -1,5 +1,15 @@
-import type { FormEvent, KeyboardEvent, MouseEvent, ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, ReactNode, RefObject } from "react";
+import {
+  forwardRef,
+  memo,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ArchiveRestore,
   ArrowUp,
@@ -130,15 +140,23 @@ import { PROVIDERS } from "@/lib/providers";
 import { cn } from "@/lib/utils";
 import { workingToolGroupId } from "@/lib/working-tool";
 import { activityRunning, threadActivities } from "@/lib/thread-activity";
+import { rowAt, virtualLayout, virtualRange, type VirtualLayout, type VirtualRange } from "@/lib/virtual-list";
 import { useStore } from "@/state/store";
 import type { Agent, ArchivedThread, Chat, ChatApproval, ChatCodeReference, ChatQuestionRequest, ConvArtifact, ConvDiffLine, ConvEntry } from "@/state/types";
-
-const INITIAL_FEED_ENTRIES = 80;
 
 interface ThreadCheckpoint {
   id: string;
   userText: string;
   assistantText?: string;
+}
+
+function useStableOptionalCallback<Arguments extends unknown[]>(
+  callback: ((...args: Arguments) => void) | undefined,
+): ((...args: Arguments) => void) | undefined {
+  const callbackRef = useRef(callback);
+  callbackRef.current = callback;
+  const stable = useCallback((...args: Arguments) => callbackRef.current?.(...args), []);
+  return callback ? stable : undefined;
 }
 
 /// One open chat: its feed, whatever it is waiting on, and the box to answer in.
@@ -187,6 +205,8 @@ export function ChatView({
   const loading = useStore((s) => s.detailLoading[chat.id] === true);
   const openChat = useStore((s) => s.openChat);
   const closeChat = useStore((s) => s.closeChat);
+  const loadEarlierEntries = useStore((s) => s.loadEarlierEntries);
+  const historyLoading = useStore((s) => s.historyLoading[chat.id] === true);
   const sendMessage = useStore((s) => s.sendMessage);
   const uploadMessageImage = useStore((s) => s.uploadMessageImage);
   const restoreThread = useStore((s) => s.restoreThread);
@@ -207,7 +227,8 @@ export function ChatView({
   const [localToolsShown, setLocalToolsShown] = useState(false);
   const [terminalShown, setTerminalShown] = useState(false);
   const [terminalActive, setTerminalActive] = useState(false);
-  const [fullFeed, setFullFeed] = useState(false);
+  const transcriptRef = useRef<VirtualTranscriptHandle>(null);
+  const [activeCheckpoint, setActiveCheckpoint] = useState<string | undefined>(undefined);
   const composerRef = useRef<InlineImageComposerHandle>(null);
   const threadTools = useThreadTools(
     chat.id,
@@ -216,6 +237,11 @@ export function ChatView({
     onToolsShownChange ?? setLocalToolsShown,
     !archived && focused,
   );
+  const stableOpenTicket = useStableOptionalCallback(onOpenTicket);
+  const stableOpenThread = useStableOptionalCallback(onOpenThread);
+  const stableOpenWorkspace = useStableOptionalCallback(onOpenWorkspace);
+  const stableOpenRoutine = useStableOptionalCallback(onOpenRoutine);
+  const stableOpenLink = useStableOptionalCallback(threadTools.openLink);
 
   useEffect(() => {
     if (archived) return;
@@ -271,29 +297,13 @@ export function ChatView({
   const state = open?.state ?? chat.state;
   const working = state === "working";
   const entries = open?.entries ?? [];
-  useEffect(() => {
-    if (fullFeed || entries.length <= INITIAL_FEED_ENTRIES) return;
-    const reveal = () => setFullFeed(true);
-    if (typeof window.requestIdleCallback === "function") {
-      const idle = window.requestIdleCallback(reveal, { timeout: 1_500 });
-      return () => window.cancelIdleCallback(idle);
-    }
-    const timer = setTimeout(reveal, 0);
-    return () => clearTimeout(timer);
-  }, [entries.length, fullFeed]);
-  const renderedEntries = useMemo(
-    () => fullFeed || entries.length <= INITIAL_FEED_ENTRIES
-      ? entries
-      : entries.slice(-INITIAL_FEED_ENTRIES),
-    [entries, fullFeed],
-  );
   const visibleEntries = useMemo(
-    () => renderedEntries.filter(
+    () => entries.filter(
       (entry) => !entry.activity && (conversational
         ? entry.kind === "user" || entry.kind === "assistant" || Boolean(entry.artifacts?.length)
         : entry.kind !== "thinking" || Boolean(entry.text?.trim())),
     ),
-    [conversational, renderedEntries],
+    [conversational, entries],
   );
   const feedItems = useMemo(() => groupToolEntries(visibleEntries), [visibleEntries]);
   const workingToolId = useMemo(() => workingToolGroupId(visibleEntries, working), [visibleEntries, working]);
@@ -315,6 +325,11 @@ export function ChatView({
     }),
     [conversational, feedTurns],
   );
+  useEffect(() => {
+    setActiveCheckpoint((current) => checkpoints.some((checkpoint) => checkpoint.id === current)
+      ? current
+      : checkpoints.at(-1)?.id);
+  }, [checkpoints]);
   const approval = open?.approval;
   const question = open?.question;
 
@@ -463,9 +478,12 @@ export function ChatView({
             count={visibleEntries.length}
             working={working}
             checkpoints={checkpoints}
+            activeCheckpoint={activeCheckpoint}
+            onActiveCheckpoint={setActiveCheckpoint}
+            transcriptRef={transcriptRef}
             className="min-h-0 flex-1"
           >
-            <div className="mx-auto flex w-full max-w-[44rem] flex-1 flex-col gap-5 px-6 py-7 [overflow-anchor:none]">
+            <div className="mx-auto flex w-full max-w-[44rem] flex-1 flex-col px-6 py-7 [overflow-anchor:none]">
           {loading && visibleEntries.length === 0 ? (
             <FeedSkeleton />
           ) : visibleEntries.length === 0 ? (
@@ -483,62 +501,48 @@ export function ChatView({
               </Empty>
             )
           ) : (
-            feedTurns.map((turn, turnIndex) => {
-              const checkpoint = conversational ? undefined : turn.checkpoint;
-              const renderItem = (item: FeedItem, sticky = false) => item.kind === "tools" ? (
-                <ToolGroup
-                  key={`tools:${item.entries[0].id}`}
-                  entries={item.entries}
-                  working={item.entries[0].id === workingToolId}
-                  onOpenTicket={onOpenTicket}
-                  onOpenThread={onOpenThread}
-                  onOpenWorkspace={onOpenWorkspace}
-                  onOpenRoutine={onOpenRoutine}
-                />
-              ) : (
-                <Entry
-                  key={item.entry.id}
-                  entry={item.entry}
-                  provider={provider?.id ?? "claude"}
-                  name={persona?.name ?? provider?.label ?? "Claude"}
-                  persona={persona}
-                  lead={item.lead}
-                  checkpoint={sticky ? checkpoint?.id : undefined}
-                  onOpenLink={!conversational && !archived ? threadTools.openLink : undefined}
-                />
-              );
-
-              return (
-                <section
-                  key={checkpoint?.id ?? `feed:${turnIndex}`}
-                  data-checkpoint-section={checkpoint?.id}
-                  className={cn(
-                    "flex min-w-0 flex-col gap-4",
-                    checkpoint && "group/checkpoint -mb-4",
-                  )}
-                >
-                  {renderItem(turn.items[0], Boolean(checkpoint))}
-                  {checkpoint && (
-                    <span
-                      aria-hidden="true"
-                      data-checkpoint-spacer
-                      className="pointer-events-none -mt-4 block h-0 shrink-0"
-                    />
-                  )}
-                  {turn.items.slice(1).map((item) => renderItem(item))}
-                  {checkpoint && (
-                    <span
-                      aria-hidden="true"
-                      className="pointer-events-none -mt-4 block h-4 shrink-0"
-                    />
-                  )}
-                </section>
-              );
-            })
+            <>
+              {open?.history?.hasEarlier && (
+                <div className="flex h-11 shrink-0 items-start justify-center">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={historyLoading}
+                    onClick={() => {
+                      transcriptRef.current?.preserveVisibleMessage();
+                      void loadEarlierEntries(chat.id).catch((caught) => {
+                        toast.error("Couldn't load earlier messages", { description: apiError(caught) });
+                      });
+                    }}
+                  >
+                    {historyLoading ? "Loading earlier messages…" : "Load earlier messages"}
+                  </Button>
+                </div>
+              )}
+              <VirtualTranscript
+                ref={transcriptRef}
+                turns={feedTurns}
+                workingToolId={workingToolId}
+                provider={provider?.id ?? "claude"}
+                name={persona?.name ?? provider?.label ?? "Claude"}
+                persona={persona}
+                conversational={conversational}
+                archived={Boolean(archived)}
+                onOpenTicket={stableOpenTicket}
+                onOpenThread={stableOpenThread}
+                onOpenWorkspace={stableOpenWorkspace}
+                onOpenRoutine={stableOpenRoutine}
+                onOpenLink={stableOpenLink}
+                onActiveCheckpoint={setActiveCheckpoint}
+              />
+            </>
           )}
 
           {working && (
-            <WorkingMarker provider={provider?.id ?? "claude"} label={provider?.label ?? "Claude"} workingSince={chat.workingSince} />
+            <div className="pt-5">
+              <WorkingMarker provider={provider?.id ?? "claude"} label={provider?.label ?? "Claude"} workingSince={chat.workingSince} />
+            </div>
           )}
 
           {(approval || question || open?.error) && (
@@ -803,6 +807,9 @@ function ScrollFeed({
   count,
   working,
   checkpoints,
+  activeCheckpoint,
+  onActiveCheckpoint,
+  transcriptRef,
   className,
   children,
 }: {
@@ -810,6 +817,9 @@ function ScrollFeed({
   count: number;
   working: boolean;
   checkpoints: ThreadCheckpoint[];
+  activeCheckpoint?: string;
+  onActiveCheckpoint: (id: string | undefined) => void;
+  transcriptRef: RefObject<VirtualTranscriptHandle | null>;
   className?: string;
   children: ReactNode;
 }) {
@@ -817,7 +827,7 @@ function ScrollFeed({
   const pinned = useRef(true);
   const checkpointTarget = useRef<number | undefined>(undefined);
   const checkpointTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const [activeCheckpoint, setActiveCheckpoint] = useState(checkpoints.at(-1)?.id);
+  const stickySection = useRef<HTMLElement | undefined>(undefined);
   const [hoveredCheckpoint, setHoveredCheckpoint] = useState<number | undefined>(undefined);
 
   useEffect(() => {
@@ -825,6 +835,9 @@ function ScrollFeed({
     checkpointTarget.current = undefined;
     setHoveredCheckpoint(undefined);
     clearTimeout(checkpointTimer.current);
+    return () => {
+      clearTimeout(checkpointTimer.current);
+    };
   }, [chatId]);
 
   const refreshScrollState = (viewport: HTMLElement) => {
@@ -837,98 +850,105 @@ function ScrollFeed({
     }
 
     const sections = [...(rootRef.current?.querySelectorAll<HTMLElement>("[data-checkpoint-section]") ?? [])];
-    let latestStuck: string | undefined;
-    let latestStuckTop: number | undefined;
+    const transcript = rootRef.current?.querySelector<HTMLElement>("[data-virtual-transcript]");
     const stickyEdge = viewport.scrollTop + 12;
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    for (const section of sections) {
+    const positions = sections.map((section) => ({
+      section,
+      top: (transcript?.offsetTop ?? 0)
+        + (section.closest<HTMLElement>("[data-virtual-turn]")?.offsetTop ?? section.offsetTop),
+    }));
+    const active = positions.filter((candidate) => candidate.top <= stickyEdge).at(-1);
+
+    const reset = (section: HTMLElement | undefined) => {
+      if (!section) return;
       const message = section.querySelector<HTMLElement>("[data-checkpoint-message]");
-      if (!message) continue;
-      const content = message.querySelector<HTMLElement>("[data-slot=message-content]");
-      const avatar = message.querySelector<HTMLElement>("[data-slot=message-avatar]");
-      const header = message.querySelector<HTMLElement>("[data-slot=message-header]");
-      const bubble = message.querySelector<HTMLElement>("[data-slot=bubble-content]");
-      const footer = message.querySelector<HTMLElement>("[data-slot=message-footer]");
+      const content = message?.querySelector<HTMLElement>("[data-slot=message-content]");
+      const avatar = message?.querySelector<HTMLElement>("[data-slot=message-avatar]");
+      const header = message?.querySelector<HTMLElement>("[data-slot=message-header]");
+      const bubble = message?.querySelector<HTMLElement>("[data-slot=bubble-content]");
+      const footer = message?.querySelector<HTMLElement>("[data-slot=message-footer]");
       const spacer = section.querySelector<HTMLElement>("[data-checkpoint-spacer]");
-      if (!content || !bubble || !spacer) continue;
+      content?.style.removeProperty("gap");
+      header?.style.removeProperty("height");
+      header?.style.removeProperty("opacity");
+      bubble?.style.removeProperty("height");
+      footer?.style.removeProperty("height");
+      avatar?.style.removeProperty("opacity");
+      spacer?.style.removeProperty("height");
+      message?.style.removeProperty("--checkpoint-avatar-y");
+      message?.style.removeProperty("--checkpoint-reminder-y");
+      section.removeAttribute("data-stuck");
+      message?.removeAttribute("data-stuck");
+      message?.removeAttribute("data-compacted");
+      message?.removeAttribute("data-sticky-active");
+    };
 
-      if (!section.style.getPropertyValue("--checkpoint-natural-message-height")) {
-        const bubbleStyle = window.getComputedStyle(bubble);
-        const lineHeight = Number.parseFloat(bubbleStyle.lineHeight);
-        const compactBubbleHeight = lineHeight
-          + Number.parseFloat(bubbleStyle.paddingTop)
-          + Number.parseFloat(bubbleStyle.paddingBottom)
-          + Number.parseFloat(bubbleStyle.borderTopWidth)
-          + Number.parseFloat(bubbleStyle.borderBottomWidth);
-        section.style.setProperty("--checkpoint-natural-message-height", `${message.getBoundingClientRect().height}px`);
-        section.style.setProperty("--checkpoint-natural-bubble-height", `${bubble.getBoundingClientRect().height}px`);
-        section.style.setProperty("--checkpoint-natural-header-height", `${header?.getBoundingClientRect().height ?? 0}px`);
-        section.style.setProperty("--checkpoint-natural-footer-height", `${footer?.getBoundingClientRect().height ?? 0}px`);
-        section.style.setProperty("--checkpoint-natural-gap", window.getComputedStyle(content).rowGap);
-        section.style.setProperty("--checkpoint-compact-bubble-height", `${compactBubbleHeight}px`);
-      }
+    if (stickySection.current !== active?.section) reset(stickySection.current);
+    stickySection.current = active?.section;
+    if (!active) return;
 
-      const stuck = section.offsetTop <= stickyEdge;
-      const naturalMessageHeight = Number.parseFloat(section.style.getPropertyValue("--checkpoint-natural-message-height"));
-      const naturalBubbleHeight = Number.parseFloat(section.style.getPropertyValue("--checkpoint-natural-bubble-height"));
-      const naturalHeaderHeight = Number.parseFloat(section.style.getPropertyValue("--checkpoint-natural-header-height"));
-      const naturalFooterHeight = Number.parseFloat(section.style.getPropertyValue("--checkpoint-natural-footer-height"));
-      const naturalGap = Number.parseFloat(section.style.getPropertyValue("--checkpoint-natural-gap"));
-      const compactBubbleHeight = Number.parseFloat(section.style.getPropertyValue("--checkpoint-compact-bubble-height"));
-      const collapseDistance = Math.max(0, naturalMessageHeight - compactBubbleHeight);
-      const progress = reducedMotion
-        ? (stuck ? 1 : 0)
-        : Math.max(0, Math.min(1, (stickyEdge - section.offsetTop) / Math.max(1, collapseDistance)));
-      const remaining = 1 - progress;
+    const section = active.section;
+    const message = section.querySelector<HTMLElement>("[data-checkpoint-message]");
+    const content = message?.querySelector<HTMLElement>("[data-slot=message-content]");
+    const avatar = message?.querySelector<HTMLElement>("[data-slot=message-avatar]");
+    const header = message?.querySelector<HTMLElement>("[data-slot=message-header]");
+    const bubble = message?.querySelector<HTMLElement>("[data-slot=bubble-content]");
+    const footer = message?.querySelector<HTMLElement>("[data-slot=message-footer]");
+    const spacer = section.querySelector<HTMLElement>("[data-checkpoint-spacer]");
+    if (!message || !content || !bubble || !spacer) return;
 
-      content.style.gap = `${naturalGap * remaining}px`;
-      if (header) {
-        header.style.height = `${naturalHeaderHeight * remaining}px`;
-        header.style.opacity = `${remaining}`;
-      }
-      bubble.style.height = `${compactBubbleHeight + (naturalBubbleHeight - compactBubbleHeight) * remaining}px`;
-      if (footer) footer.style.height = `${naturalFooterHeight * remaining}px`;
-      message.style.setProperty("--checkpoint-avatar-y", `${-32 * remaining}px`);
-      if (avatar?.hasAttribute("data-sequential-avatar")) avatar.style.opacity = `${progress}`;
-      spacer.style.height = `${Math.max(0, naturalMessageHeight - message.getBoundingClientRect().height)}px`;
-      section.toggleAttribute("data-stuck", stuck);
-      message.toggleAttribute("data-stuck", stuck);
-      message.toggleAttribute("data-compacted", progress >= 0.999);
-      if (stuck) {
-        latestStuck = section.dataset.checkpointSection;
-        latestStuckTop = section.offsetTop;
-      }
+    if (!section.style.getPropertyValue("--checkpoint-natural-message-height")) {
+      const bubbleStyle = window.getComputedStyle(bubble);
+      const lineHeight = Number.parseFloat(bubbleStyle.lineHeight);
+      const compactBubbleHeight = lineHeight
+        + Number.parseFloat(bubbleStyle.paddingTop)
+        + Number.parseFloat(bubbleStyle.paddingBottom)
+        + Number.parseFloat(bubbleStyle.borderTopWidth)
+        + Number.parseFloat(bubbleStyle.borderBottomWidth);
+      section.style.setProperty("--checkpoint-natural-message-height", `${message.getBoundingClientRect().height}px`);
+      section.style.setProperty("--checkpoint-natural-bubble-height", `${bubble.getBoundingClientRect().height}px`);
+      section.style.setProperty("--checkpoint-natural-header-height", `${header?.getBoundingClientRect().height ?? 0}px`);
+      section.style.setProperty("--checkpoint-natural-footer-height", `${footer?.getBoundingClientRect().height ?? 0}px`);
+      section.style.setProperty("--checkpoint-natural-gap", window.getComputedStyle(content).rowGap);
+      section.style.setProperty("--checkpoint-compact-bubble-height", `${compactBubbleHeight}px`);
     }
 
-    let latestVisibleMessage: string | undefined;
-    let firstVisibleBubbleTop: number | undefined;
+    const naturalMessageHeight = Number.parseFloat(section.style.getPropertyValue("--checkpoint-natural-message-height"));
+    const naturalBubbleHeight = Number.parseFloat(section.style.getPropertyValue("--checkpoint-natural-bubble-height"));
+    const naturalHeaderHeight = Number.parseFloat(section.style.getPropertyValue("--checkpoint-natural-header-height"));
+    const naturalFooterHeight = Number.parseFloat(section.style.getPropertyValue("--checkpoint-natural-footer-height"));
+    const naturalGap = Number.parseFloat(section.style.getPropertyValue("--checkpoint-natural-gap"));
+    const compactBubbleHeight = Number.parseFloat(section.style.getPropertyValue("--checkpoint-compact-bubble-height"));
+    const collapseDistance = Math.max(0, naturalMessageHeight - compactBubbleHeight);
+    const progress = reducedMotion
+      ? 1
+      : Math.max(0, Math.min(1, (stickyEdge - active.top) / Math.max(1, collapseDistance)));
+    const remaining = 1 - progress;
+    content.style.gap = `${naturalGap * remaining}px`;
+    if (header) {
+      header.style.height = `${naturalHeaderHeight * remaining}px`;
+      header.style.opacity = `${remaining}`;
+    }
+    bubble.style.height = `${compactBubbleHeight + (naturalBubbleHeight - compactBubbleHeight) * remaining}px`;
+    if (footer) footer.style.height = `${naturalFooterHeight * remaining}px`;
+    message.style.setProperty("--checkpoint-avatar-y", `${-32 * remaining}px`);
+    if (avatar?.hasAttribute("data-sequential-avatar")) avatar.style.opacity = `${progress}`;
+    spacer.style.height = `${Math.max(0, naturalMessageHeight - message.getBoundingClientRect().height)}px`;
+    section.setAttribute("data-stuck", "");
+    message.setAttribute("data-stuck", "");
+    message.toggleAttribute("data-compacted", progress >= 0.999);
+    message.setAttribute("data-sticky-active", "");
+
+    const next = positions.find((candidate) => candidate.top > active.top);
+    const nextBubble = next?.section.querySelector<HTMLElement>("[data-slot=bubble-content]");
     const viewportRect = viewport.getBoundingClientRect();
-    for (const section of sections) {
-      if (section.hasAttribute("data-stuck")) continue;
-      const bubble = section.querySelector<HTMLElement>("[data-slot=bubble-content]");
-      if (!bubble) continue;
-      const bubbleRect = bubble.getBoundingClientRect();
-      if (bubbleRect.top < viewportRect.bottom && bubbleRect.bottom > viewportRect.top) {
-        firstVisibleBubbleTop ??= bubbleRect.top;
-        latestVisibleMessage = section.dataset.checkpointSection;
-      }
-    }
-
-    const visibleBubbleDepth = firstVisibleBubbleTop === undefined
-      ? 0
-      : Math.max(0, viewportRect.bottom - firstVisibleBubbleTop);
-    const stickyTravel = latestStuckTop === undefined
-      ? 0
-      : Math.max(0, stickyEdge - latestStuckTop);
-    const scrollOutDistance = Math.min(visibleBubbleDepth, stickyTravel);
-    for (const section of sections) {
-      const message = section.querySelector<HTMLElement>("[data-checkpoint-message]");
-      if (!message) continue;
-      const current = section.hasAttribute("data-stuck") && section.dataset.checkpointSection === latestStuck;
-      message.toggleAttribute("data-sticky-active", current);
-      message.style.setProperty("--checkpoint-reminder-y", `${current ? -scrollOutDistance : 0}px`);
-    }
-    setActiveCheckpoint(latestVisibleMessage ?? latestStuck);
+    const nextRect = nextBubble?.getBoundingClientRect();
+    const visibleBubbleDepth = nextRect && nextRect.top < viewportRect.bottom && nextRect.bottom > viewportRect.top
+      ? Math.max(0, viewportRect.bottom - nextRect.top)
+      : 0;
+    const stickyTravel = Math.max(0, stickyEdge - active.top);
+    message.style.setProperty("--checkpoint-reminder-y", `${-Math.min(visibleBubbleDepth, stickyTravel)}px`);
   };
 
   useEffect(() => {
@@ -947,31 +967,27 @@ function ScrollFeed({
     };
     const observer = new ResizeObserver(refresh);
     if (content) observer.observe(content);
+    const scrollEnded = () => refreshScrollState(viewport);
+    viewport.addEventListener("scrollend", scrollEnded);
     refresh();
     return () => {
       observer.disconnect();
+      viewport.removeEventListener("scrollend", scrollEnded);
       cancelAnimationFrame(frame);
     };
   }, [chatId, count, working]);
 
   const scrollToCheckpoint = (id: string) => {
     pinned.current = false;
-    setActiveCheckpoint(id);
-    const root = rootRef.current;
-    const viewport = root?.querySelector<HTMLElement>("[data-slot=scroll-area-viewport]");
-    const section = [...(root?.querySelectorAll<HTMLElement>("[data-checkpoint-section]") ?? [])]
-      .find((candidate) => candidate.dataset.checkpointSection === id);
-    if (!viewport || !section) return;
-    const target = Math.max(0, section.offsetTop - 12);
+    onActiveCheckpoint(id);
+    const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+    const target = transcriptRef.current?.scrollToKey(id, behavior);
+    if (target === undefined) return;
     checkpointTarget.current = target;
     clearTimeout(checkpointTimer.current);
     checkpointTimer.current = setTimeout(() => {
       checkpointTarget.current = undefined;
     }, 1_500);
-    viewport.scrollTo({
-      top: target,
-      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
-    });
   };
 
   const resolvedHoveredCheckpoint = hoveredCheckpoint !== undefined && hoveredCheckpoint < checkpoints.length
@@ -1012,7 +1028,13 @@ function ScrollFeed({
         onScrollCapture={(event) => {
           const viewport = event.target as HTMLElement;
           if (viewport?.dataset?.slot !== "scroll-area-viewport") return;
-          refreshScrollState(viewport);
+          const distance = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+          if (checkpointTarget.current === undefined) {
+            pinned.current = distance < 80;
+          } else if (Math.abs(viewport.scrollTop - checkpointTarget.current) < 2) {
+            checkpointTarget.current = undefined;
+            clearTimeout(checkpointTimer.current);
+          }
         }}
       >
         {children}
@@ -1187,6 +1209,331 @@ function groupFeedTurns(items: FeedItem[]): FeedTurn[] {
 
   return turns;
 }
+
+interface VirtualTranscriptHandle {
+  preserveVisibleMessage(): void;
+  scrollToKey(key: string, behavior: ScrollBehavior): number | undefined;
+}
+
+interface TranscriptTurnProps {
+  turn: FeedTurn;
+  workingToolId?: string;
+  provider: string;
+  name: string;
+  persona?: Agent;
+  conversational: boolean;
+  archived: boolean;
+  onOpenTicket?: (key: string) => void;
+  onOpenThread?: (id: string) => void;
+  onOpenWorkspace?: (workspaceId: string) => void;
+  onOpenRoutine?: () => void;
+  onOpenLink?: (href: string) => void;
+}
+
+function feedTurnKey(turn: FeedTurn, index: number): string {
+  const first = turn.items[0];
+  return turn.checkpoint?.id
+    ?? (first?.kind === "entry" ? first.entry.id : first?.entries[0]?.id)
+    ?? `turn:${index}`;
+}
+
+function sameFeedTurn(left: FeedTurn, right: FeedTurn): boolean {
+  if (left.checkpoint !== right.checkpoint || left.items.length !== right.items.length) return false;
+  return left.items.every((item, index) => {
+    const other = right.items[index];
+    if (item.kind !== other?.kind) return false;
+    if (item.kind === "entry" && other.kind === "entry") {
+      return item.entry === other.entry && item.lead === other.lead;
+    }
+    if (item.kind === "tools" && other.kind === "tools") {
+      return item.entries.length === other.entries.length
+        && item.entries.every((entry, entryIndex) => entry === other.entries[entryIndex]);
+    }
+    return false;
+  });
+}
+
+const TranscriptTurn = memo(function TranscriptTurn({
+  turn,
+  workingToolId,
+  provider,
+  name,
+  persona,
+  conversational,
+  archived,
+  onOpenTicket,
+  onOpenThread,
+  onOpenWorkspace,
+  onOpenRoutine,
+  onOpenLink,
+}: TranscriptTurnProps) {
+  const renders = useRef(0);
+  renders.current += 1;
+  const checkpoint = conversational ? undefined : turn.checkpoint;
+  const renderItem = (item: FeedItem, sticky = false) => item.kind === "tools" ? (
+    <ToolGroup
+      key={`tools:${item.entries[0].id}`}
+      entries={item.entries}
+      working={item.entries[0].id === workingToolId}
+      onOpenTicket={onOpenTicket}
+      onOpenThread={onOpenThread}
+      onOpenWorkspace={onOpenWorkspace}
+      onOpenRoutine={onOpenRoutine}
+    />
+  ) : (
+    <Entry
+      key={item.entry.id}
+      entry={item.entry}
+      provider={provider}
+      name={name}
+      persona={persona}
+      lead={item.lead}
+      checkpoint={sticky ? checkpoint?.id : undefined}
+      onOpenLink={!conversational && !archived ? onOpenLink : undefined}
+    />
+  );
+
+  return (
+    <section
+      data-checkpoint-section={checkpoint?.id}
+      data-transcript-render-count={renders.current}
+      className={cn(
+        "flex min-w-0 flex-col gap-4",
+        checkpoint && "group/checkpoint -mb-4",
+      )}
+    >
+      {renderItem(turn.items[0], Boolean(checkpoint))}
+      {checkpoint && (
+        <span
+          aria-hidden="true"
+          data-checkpoint-spacer
+          className="pointer-events-none -mt-4 block h-0 shrink-0"
+        />
+      )}
+      {turn.items.slice(1).map((item) => renderItem(item))}
+      {checkpoint && (
+        <span aria-hidden="true" className="pointer-events-none -mt-4 block h-4 shrink-0" />
+      )}
+    </section>
+  );
+}, (previous, next) => (
+  sameFeedTurn(previous.turn, next.turn)
+  && previous.workingToolId === next.workingToolId
+  && previous.provider === next.provider
+  && previous.name === next.name
+  && previous.persona === next.persona
+  && previous.conversational === next.conversational
+  && previous.archived === next.archived
+  && previous.onOpenTicket === next.onOpenTicket
+  && previous.onOpenThread === next.onOpenThread
+  && previous.onOpenWorkspace === next.onOpenWorkspace
+  && previous.onOpenRoutine === next.onOpenRoutine
+  && previous.onOpenLink === next.onOpenLink
+));
+
+interface VirtualTurnProps extends TranscriptTurnProps {
+  rowKey: string;
+  top: number;
+  onSize: (key: string, size: number) => void;
+}
+
+function VirtualTurn({ rowKey, top, onSize, ...turnProps }: VirtualTurnProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    const measure = () => onSize(rowKey, node.getBoundingClientRect().height);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [onSize, rowKey]);
+  return (
+    <div
+      ref={ref}
+      data-virtual-turn={rowKey}
+      className="absolute inset-x-0 pb-5"
+      style={{ top } as CSSProperties}
+    >
+      <TranscriptTurn {...turnProps} />
+    </div>
+  );
+}
+
+const VIRTUAL_TURN_ESTIMATE = 280;
+const VIRTUAL_TURN_GAP = 0;
+const VIRTUAL_OVERSCAN = 2_000;
+const VIRTUAL_WINDOW_STEP = 2_000;
+
+const VirtualTranscript = forwardRef<VirtualTranscriptHandle, Omit<TranscriptTurnProps, "turn"> & {
+  turns: FeedTurn[];
+  onActiveCheckpoint: (id: string | undefined) => void;
+}>(function VirtualTranscript({ turns, onActiveCheckpoint, ...turnProps }, forwardedRef) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLElement | undefined>(undefined);
+  const measured = useRef(new Map<string, number>());
+  const anchor = useRef<{ key: string; offset: number } | undefined>(undefined);
+  const anchorTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const frame = useRef(0);
+  const [measurementVersion, setMeasurementVersion] = useState(0);
+  const [range, setRange] = useState<VirtualRange>(() => ({
+    start: Math.max(0, turns.length - 8),
+    end: turns.length - 1,
+  }));
+  const keys = useMemo(() => turns.map(feedTurnKey), [turns]);
+  const layout = useMemo(
+    () => virtualLayout(keys, measured.current, VIRTUAL_TURN_ESTIMATE, VIRTUAL_TURN_GAP),
+    [keys, measurementVersion],
+  );
+  const layoutRef = useRef<VirtualLayout>(layout);
+  const keysRef = useRef(keys);
+  const turnsRef = useRef(turns);
+  layoutRef.current = layout;
+  keysRef.current = keys;
+  turnsRef.current = turns;
+
+  const refreshRange = useCallback(() => {
+    cancelAnimationFrame(frame.current);
+    frame.current = requestAnimationFrame(() => {
+      const viewport = viewportRef.current;
+      const container = containerRef.current;
+      if (!viewport || !container) return;
+      const relativeTop = Math.max(0, viewport.scrollTop - container.offsetTop);
+      const windowTop = Math.floor(relativeTop / VIRTUAL_WINDOW_STEP) * VIRTUAL_WINDOW_STEP;
+      const next = virtualRange(
+        layoutRef.current,
+        windowTop,
+        viewport.clientHeight + VIRTUAL_WINDOW_STEP,
+        VIRTUAL_OVERSCAN,
+      );
+      setRange((current) => current.start === next.start && current.end === next.end ? current : next);
+
+      if (turnsRef.current.length === 0) {
+        onActiveCheckpoint(undefined);
+        return;
+      }
+      let activeIndex = rowAt(
+        layoutRef.current,
+        relativeTop + Math.max(0, viewport.clientHeight - 1),
+      );
+      while (activeIndex >= 0 && !turnsRef.current[activeIndex]?.checkpoint) activeIndex -= 1;
+      onActiveCheckpoint(turnsRef.current[activeIndex]?.checkpoint?.id);
+    });
+  }, [onActiveCheckpoint]);
+
+  const onSize = useCallback((key: string, size: number) => {
+    const previous = measured.current.get(key);
+    if (previous !== undefined && Math.abs(previous - size) < 0.5) return;
+    measured.current.set(key, size);
+    setMeasurementVersion((version) => version + 1);
+    if (anchor.current) {
+      clearTimeout(anchorTimer.current);
+      anchorTimer.current = setTimeout(() => { anchor.current = undefined; }, 1_000);
+    }
+  }, []);
+
+  useLayoutEffect(() => {
+    const viewport = containerRef.current?.closest<HTMLElement>("[data-slot=scroll-area-viewport]");
+    if (!viewport) return;
+    viewportRef.current = viewport;
+    const observer = new ResizeObserver(refreshRange);
+    observer.observe(viewport);
+    const scrollEnded = () => refreshRange();
+    viewport.addEventListener("scrollend", scrollEnded);
+    refreshRange();
+    return () => {
+      observer.disconnect();
+      viewport.removeEventListener("scrollend", scrollEnded);
+      cancelAnimationFrame(frame.current);
+      if (viewportRef.current === viewport) viewportRef.current = undefined;
+    };
+  }, [refreshRange]);
+
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    const container = containerRef.current;
+    const saved = anchor.current;
+    if (viewport && container && saved) {
+      const index = keys.indexOf(saved.key);
+      if (index >= 0) {
+        viewport.scrollTop = container.offsetTop + layout.starts[index] + saved.offset;
+        container.dataset.historyAnchorApplied = saved.key;
+      }
+    }
+    refreshRange();
+  }, [keys, layout, refreshRange]);
+
+  useEffect(() => {
+    const current = new Set(keys);
+    for (const key of measured.current.keys()) {
+      if (!current.has(key)) measured.current.delete(key);
+    }
+  }, [keys]);
+
+  useEffect(() => () => {
+    clearTimeout(anchorTimer.current);
+  }, []);
+
+  useImperativeHandle(forwardedRef, () => ({
+    preserveVisibleMessage() {
+      const viewport = viewportRef.current;
+      const container = containerRef.current;
+      if (!viewport || !container || keysRef.current.length === 0) return;
+      const relativeTop = Math.max(0, viewport.scrollTop - container.offsetTop);
+      const viewportTop = viewport.getBoundingClientRect().top;
+      const visible = [...container.querySelectorAll<HTMLElement>("[data-virtual-turn]")]
+        .find((row) => row.getBoundingClientRect().bottom > viewportTop);
+      const key = visible?.dataset.virtualTurn;
+      if (key) {
+        clearTimeout(anchorTimer.current);
+        const viewportOffset = visible.getBoundingClientRect().top - viewportTop;
+        anchor.current = { key, offset: -viewportOffset };
+        container.dataset.historyAnchor = key;
+        container.dataset.historyAnchorViewportOffset = String(viewportOffset);
+      } else {
+        const index = rowAt(layoutRef.current, relativeTop);
+        const fallback = keysRef.current[index];
+        if (fallback) anchor.current = { key: fallback, offset: relativeTop - layoutRef.current.starts[index] };
+      }
+    },
+    scrollToKey(key, behavior) {
+      const viewport = viewportRef.current;
+      const container = containerRef.current;
+      const index = keysRef.current.indexOf(key);
+      if (!viewport || !container || index < 0) return undefined;
+      clearTimeout(anchorTimer.current);
+      anchor.current = undefined;
+      const top = Math.max(0, container.offsetTop + layoutRef.current.starts[index] - 12);
+      viewport.scrollTo({ top, behavior });
+      return top;
+    },
+  }), []);
+
+  const rendered: number[] = [];
+  for (let index = range.start; index <= range.end; index += 1) {
+    if (turns[index]) rendered.push(index);
+  }
+
+  return (
+    <div
+      ref={containerRef}
+      data-virtual-transcript
+      className="relative min-w-0 shrink-0"
+      style={{ height: layout.total }}
+    >
+      {rendered.map((index) => (
+        <VirtualTurn
+          key={keys[index]}
+          rowKey={keys[index]}
+          top={layout.starts[index]}
+          turn={turns[index]}
+          onSize={onSize}
+          {...turnProps}
+        />
+      ))}
+    </div>
+  );
+});
 
 /// `lead` marks the first entry of a run. Only that one wears the avatar and
 /// the name; the rest keep the column so the run stays aligned, and say nothing

@@ -56,6 +56,7 @@ import {
   saveEntry,
   trimEntries,
 } from "./chat-storage.js";
+import { chatWindow, type ChatHistory } from "./chat-window.js";
 import { config } from "./config.js";
 import { suggestName } from "./namer.js";
 import { remyMcpProcess } from "./mcp-process.js";
@@ -227,6 +228,7 @@ export interface ChatSummary {
 export interface ChatDetail extends ChatSummary {
   entries: ConvEntry[];
   todos: ConvTodo[];
+  history?: ChatHistory;
   approval?: ChatApproval;
   question?: ChatQuestionRequest;
 }
@@ -497,6 +499,11 @@ export class Chat {
       approval: this.approval,
       question: this.question,
     };
+  }
+
+  detailWindow(turns: number, before?: string): ChatDetail {
+    const page = chatWindow(this.record.entries, turns, before);
+    return { ...this.detail(), ...page };
   }
 
   // ── sending ──────────────────────────────────────────────────────────────
@@ -2040,6 +2047,10 @@ export function dmChatFor(agentId: string): ChatSummary {
 
 export function getChat(id: string): ChatDetail | undefined {
   return chats.get(id)?.detail();
+}
+
+export function getChatWindow(id: string, turns: number, before?: string): ChatDetail | undefined {
+  return chats.get(id)?.detailWindow(turns, before);
 }
 
 /// Moves an agent's inbox conversation onto what that agent now thinks with.

@@ -67,6 +67,7 @@ test("passes results on the parent budgets and rejects regressions", () => {
       firstUsefulPaintMs: PERFORMANCE_BUDGETS.coldUsefulMs,
       delayFromLocalMs: PERFORMANCE_BUDGETS.unavailableDelayMs,
     },
+    { scenario: "shared-read-failure", usefulPreserved: true },
   ];
   assert.deepEqual(passing.flatMap((result) => budgetFailures(result)), []);
 
@@ -90,5 +91,34 @@ test("passes results on the parent budgets and rejects regressions", () => {
   assert.match(
     budgetFailures({ scenario: "pane-devices", mutatingRequests: ["PATCH /server/identity"] })[0],
     /read-only guard/,
+  );
+  assert.match(
+    budgetFailures({ scenario: "shared-read-failure", usefulPreserved: false })[0],
+    /removed useful board state/,
+  );
+});
+
+test("allows each shared resource once on every primary pane", () => {
+  const requests = [
+    { method: "GET", path: "/server/providers", count: 1 },
+    { method: "GET", path: "/server/settings", count: 1 },
+    { method: "GET", path: "/board", count: 1 },
+    { method: "GET", path: "/pair/pending", count: 1 },
+    { method: "GET", path: "/server/identity", count: 1 },
+  ];
+  for (const pane of ["threads", "workspaces", "tasks", "pull-requests", "devices"]) {
+    assert.deepEqual(budgetFailures({ scenario: `pane-${pane}`, requests }), []);
+  }
+
+  assert.match(
+    budgetFailures({
+      scenario: "pane-devices",
+      requests: [{ method: "GET", path: "/server/settings", count: 2 }],
+    })[0],
+    /shared read \/server\/settings/,
+  );
+  assert.match(
+    budgetFailures({ scenario: "pane-threads", requests: [] })[0],
+    /Threads provider catalogue/,
   );
 });

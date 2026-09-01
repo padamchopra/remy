@@ -4,6 +4,7 @@ import { agentConversation, availableAgentServers } from "~/lib/inbox";
 import type { TintId } from "~/lib/tints";
 import type { Provider } from "~/lib/providers";
 import { applyProjectIdentity } from "~/lib/projects";
+import { invalidateSharedResource, readSharedResource, seedSharedResource } from "~/lib/shared-read";
 import { byRank } from "~/lib/tickets";
 import { transport } from "~/lib/transport";
 import { fixtureChats, fixtureServers, fixtureWorkspaces } from "./fixture";
@@ -115,6 +116,7 @@ interface State {
   openIds: string[];
   details: Record<string, ChatDetail | undefined>;
   detailLoading: Record<string, boolean | undefined>;
+  historyLoading: Record<string, boolean | undefined>;
   /// This machine's own settings and tool status. Both are read on demand by
   /// the panes that show them, not on every poll.
   settings?: ServerSettings;
@@ -192,6 +194,7 @@ interface State {
   loadRepoRun(): Promise<void>;
   updateRepos(): Promise<void>;
   openChat(id: string): Promise<void>;
+  loadEarlierEntries(id: string): Promise<void>;
   closeChat(id: string): void;
   uploadMessageImage(id: string, file: File): Promise<ChatImageAttachment>;
   sendMessage(id: string, text: string, attachments?: ChatImageAttachment[], codeReferences?: ChatCodeReference[]): Promise<void>;
@@ -208,10 +211,10 @@ interface State {
 
   /// The board. Read on demand by the pane that shows it rather than on every
   /// poll — a board nobody is looking at costs nothing.
-  loadBoard(): Promise<void>;
+  loadBoard(options?: { fresh?: boolean }): Promise<void>;
   /// Machines asking to pair with this one, waiting on you.
   pairRequests: PairRequest[];
-  loadPairRequests(): Promise<void>;
+  loadPairRequests(options?: { fresh?: boolean }): Promise<void>;
   createTicket(input: {
     projectId: string;
     title: string;
@@ -258,6 +261,7 @@ const POLL_DISCONNECTED_MS = 4_000;
 const PEER_DETAIL_POLL_VISIBLE_MS = 1_000;
 const PEER_DETAIL_POLL_HIDDEN_MS = 5_000;
 const DETAIL_CACHE_LIMIT = 12;
+const CHAT_PAGE_TURNS = 12;
 const detailCache = new Map<string, ChatDetail>();
 const pendingDetails = new Map<string, Promise<ChatDetail>>();
 const pushPeerServers = new Set<string>();
@@ -283,7 +287,10 @@ async function readChatDetail(id: string, serverId: string): Promise<ChatDetail>
   const key = detailKey(id, serverId);
   const existing = pendingDetails.get(key);
   if (existing) return existing;
-  const pending = transport.request<RawChatDetail>(serverId, `/chats/${encodeURIComponent(id)}`)
+  const pending = transport.request<RawChatDetail>(
+    serverId,
+    `/chats/${encodeURIComponent(id)}?turns=${CHAT_PAGE_TURNS}`,
+  )
     .then((raw) => {
       const detail = toDetail(raw, serverId);
       cacheDetail(detail);
@@ -313,6 +320,7 @@ export const useStore = create<State>((set, get) => ({
   openIds: [],
   details: {},
   detailLoading: {},
+  historyLoading: {},
   loading: !useFixture,
   connected: useFixture,
 
@@ -347,7 +355,7 @@ export const useStore = create<State>((set, get) => ({
           void readChatDetail(detail.id, serverId).then((next) => {
             if (!get().openIds.includes(next.id)) return;
             set((state) => ({
-              details: { ...state.details, [next.id]: next },
+              details: { ...state.details, [next.id]: mergeDetailRefresh(state.details[next.id], next) },
               detailLoading: { ...state.detailLoading, [next.id]: false },
             }));
           }).catch(() => {});
@@ -361,7 +369,7 @@ export const useStore = create<State>((set, get) => ({
       // A board frame says a ticket, agent or project changed — on this machine
       // or on one of the machines paired with it.
       if (frame.type === "board") {
-        void get().loadBoard();
+        void get().loadBoard({ fresh: true });
         return;
       }
       // A machine was paired or unpaired. Every window onto this daemon shows
@@ -373,7 +381,7 @@ export const useStore = create<State>((set, get) => ({
       // A machine is asking to pair. Somebody is standing at it waiting for an
       // answer, so this is the one frame that must not wait for a poll.
       if (frame.type === "pair-requests") {
-        void get().loadPairRequests();
+        void get().loadPairRequests({ fresh: true });
         return;
       }
       // A turn streams as `chat` frames: the entries that changed, plus the
@@ -432,7 +440,9 @@ export const useStore = create<State>((set, get) => ({
         if (refreshed.length > 0) {
           set((state) => ({
             details: refreshed.reduce(
-              (details, detail) => state.openIds.includes(detail.id) ? { ...details, [detail.id]: detail } : details,
+              (details, detail) => state.openIds.includes(detail.id)
+                ? { ...details, [detail.id]: mergeDetailRefresh(details[detail.id], detail) }
+                : details,
               state.details,
             ),
             detailLoading: refreshed.reduce(
@@ -901,7 +911,11 @@ export const useStore = create<State>((set, get) => ({
   async loadSettings() {
     const server = localServer(get().servers);
     if (!server) return;
-    const settings = await transport.request<ServerSettings>(server.id, "/server/settings");
+    const settings = await readSharedResource(
+      "settings",
+      server.id,
+      () => transport.request<ServerSettings>(server.id, "/server/settings"),
+    );
     set({ settings });
   },
 
@@ -914,6 +928,7 @@ export const useStore = create<State>((set, get) => ({
       method: "PATCH",
       body: patch,
     });
+    seedSharedResource("settings", server.id, settings);
     set({ settings });
   },
 
@@ -926,7 +941,11 @@ export const useStore = create<State>((set, get) => ({
   async loadProviders() {
     const server = localServer(get().servers);
     if (!server) return;
-    const body = await transport.request<{ providers?: Provider[] }>(server.id, "/server/providers");
+    const body = await readSharedResource(
+      "providers",
+      server.id,
+      () => transport.request<{ providers?: Provider[] }>(server.id, "/server/providers"),
+    );
     if (body.providers?.length) set({ providers: body.providers });
   },
 
@@ -938,10 +957,12 @@ export const useStore = create<State>((set, get) => ({
       `/server/providers/${encodeURIComponent(provider)}`,
       { method: "PATCH", body: { enabled } },
     );
+    seedSharedResource("settings", server.id, settings);
+    invalidateSharedResource("providers", server.id);
     set({ settings });
     await get().loadProviders();
     await get().refresh();
-    await get().loadBoard();
+    await get().loadBoard({ fresh: true });
   },
 
   async loadMcpProviders() {
@@ -1035,7 +1056,7 @@ export const useStore = create<State>((set, get) => ({
       const next = await readChatDetail(id, chat.serverId);
       if (!get().openIds.includes(id)) return;
       set((current) => ({
-        details: { ...current.details, [id]: next },
+        details: { ...current.details, [id]: mergeDetailRefresh(current.details[id], next) },
         detailLoading: { ...current.detailLoading, [id]: false },
       }));
     } catch (error) {
@@ -1045,16 +1066,50 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
+  async loadEarlierEntries(id) {
+    const detail = get().details[id];
+    const before = detail?.history?.before;
+    if (!detail || !detail.history?.hasEarlier || !before || get().historyLoading[id]) return;
+    set((current) => ({ historyLoading: { ...current.historyLoading, [id]: true } }));
+    try {
+      const raw = await transport.request<RawChatDetail>(
+        detail.serverId,
+        `/chats/${encodeURIComponent(id)}?turns=${CHAT_PAGE_TURNS}&before=${encodeURIComponent(before)}`,
+      );
+      const page = toDetail(raw, detail.serverId);
+      set((current) => {
+        const latest = current.details[id];
+        if (!latest || latest.serverId !== detail.serverId) {
+          return { historyLoading: { ...current.historyLoading, [id]: false } };
+        }
+        const known = new Set(latest.entries.map((entry) => entry.id));
+        const entries = [...page.entries.filter((entry) => !known.has(entry.id)), ...latest.entries];
+        const next = { ...latest, entries, history: page.history };
+        cacheDetail(next);
+        return {
+          details: { ...current.details, [id]: next },
+          historyLoading: { ...current.historyLoading, [id]: false },
+        };
+      });
+    } catch (error) {
+      set((current) => ({ historyLoading: { ...current.historyLoading, [id]: false } }));
+      throw error;
+    }
+  },
+
   closeChat(id) {
     set((current) => {
       const details = { ...current.details };
       const loading = { ...current.detailLoading };
+      const historyLoading = { ...current.historyLoading };
       delete details[id];
       delete loading[id];
+      delete historyLoading[id];
       return {
         openIds: current.openIds.filter((openId) => openId !== id),
         details,
         detailLoading: loading,
+        historyLoading,
       };
     });
   },
@@ -1158,7 +1213,7 @@ export const useStore = create<State>((set, get) => ({
     detailCache.delete(detailKey(id, chat.serverId));
     await get().refresh();
     // The thread let go of any ticket it was on, so the board is stale.
-    await get().loadBoard().catch(() => {});
+    await get().loadBoard({ fresh: true }).catch(() => {});
   },
 
   // ── the board ─────────────────────────────────────────────────────────────
@@ -1168,20 +1223,25 @@ export const useStore = create<State>((set, get) => ({
 
   /// Only ever asked of the daemon on this machine: a request to pair with
   /// another machine is that machine's business to answer, not ours.
-  async loadPairRequests() {
+  async loadPairRequests(options) {
     if (useFixture) return;
     const home = get().servers.find((server) => server.local) ?? get().servers[0];
     if (!home) return;
+    if (options?.fresh) invalidateSharedResource("pairing", home.id);
     try {
-      const answer = await transport.request<{ requests?: PairRequest[] }>(home.id, "/pair/pending");
+      const answer = await readSharedResource(
+        "pairing",
+        home.id,
+        () => transport.request<{ requests?: PairRequest[] }>(home.id, "/pair/pending"),
+      );
       set({ pairRequests: answer.requests ?? [] });
     } catch {
-      // A daemon from before pairing landed has none, which is the same as none.
-      set({ pairRequests: [] });
+      // Keep requests already on screen while an older or unavailable daemon
+      // cannot answer. A successful empty response is what clears them.
     }
   },
 
-  async loadBoard() {
+  async loadBoard(options) {
     if (useFixture) return;
     const servers = await transport.servers();
     // The board is read from the machines this window holds a daemon of, and a
@@ -1198,18 +1258,26 @@ export const useStore = create<State>((set, get) => ({
       set({ agents: [], projects: [], tickets: [], routines: [], boardDevices: [], boardLoading: false });
       return;
     }
+    if (options?.fresh) {
+      for (const server of asked) invalidateSharedResource("board", server.id);
+    }
     if (get().tickets.length === 0) set({ boardLoading: true });
     const results = await Promise.all(
       asked.map(async (server) => {
         try {
-          const board = await transport.request<{
-            deviceId?: string;
-            agents?: RawAgent[];
-            projects?: RawProject[];
-            tickets?: RawTicket[];
-            routines?: RawRoutine[];
-          }>(server.id, "/board");
+          const board = await readSharedResource(
+            "board",
+            server.id,
+            () => transport.request<{
+              deviceId?: string;
+              agents?: RawAgent[];
+              projects?: RawProject[];
+              tickets?: RawTicket[];
+              routines?: RawRoutine[];
+            }>(server.id, "/board"),
+          );
           return {
+            serverId: server.id,
             devices: board.deviceId ? [{ deviceId: board.deviceId, serverId: server.id }] : [],
             agents: (board.agents ?? []).map((raw) => ({ ...raw, serverId: server.id }) as Agent),
             projects: (board.projects ?? []).map((raw) => ({
@@ -1225,8 +1293,9 @@ export const useStore = create<State>((set, get) => ({
             routines: (board.routines ?? []).map((raw) => ({ ...raw, serverId: server.id }) as Routine),
           };
         } catch {
-          // An older server has no board, which is not worth an error banner.
-          return { devices: [], agents: [], projects: [], tickets: [], routines: [] };
+          // A failed device contributes no replacement rows. Its useful board
+          // state remains in the store until a successful read can replace it.
+          return undefined;
         }
       }),
     );
@@ -1240,14 +1309,37 @@ export const useStore = create<State>((set, get) => ({
       .filter((server) => server.peer)
       .map((server) => ({ deviceId: server.id, serverId: server.id }));
     set((current) => {
-      const projects = dedupe(results.flatMap((r) => r.projects));
+      const answered = results.filter((result): result is NonNullable<typeof result> => result !== undefined);
+      const answeredServerIds = new Set(answered.map((result) => result.serverId));
+      const agents = dedupe([
+        ...current.agents.filter((row) => !answeredServerIds.has(row.serverId)),
+        ...answered.flatMap((result) => result.agents),
+      ]);
+      const projects = dedupe([
+        ...current.projects.filter((row) => !answeredServerIds.has(row.serverId)),
+        ...answered.flatMap((result) => result.projects),
+      ]);
+      const tickets = dedupe([
+        ...current.tickets.filter((row) => !answeredServerIds.has(row.serverId)),
+        ...answered.flatMap((result) => result.tickets),
+      ]);
+      const routines = dedupe([
+        ...current.routines.filter((row) => !answeredServerIds.has(row.serverId)),
+        ...answered.flatMap((result) => result.routines),
+      ]);
       return {
-        agents: dedupe(results.flatMap((r) => r.agents)),
+        agents,
         projects,
         workspaces: applyProjectIdentity(current.workspaces, projects),
-        tickets: dedupe(results.flatMap((r) => r.tickets)).sort(byRank),
-        routines: dedupe(results.flatMap((r) => r.routines)).sort((a, b) => a.nextRunAt - b.nextRunAt),
-        boardDevices: [...results.flatMap((r) => r.devices), ...paired],
+        tickets: tickets.sort(byRank),
+        routines: routines.sort((a, b) => a.nextRunAt - b.nextRunAt),
+        boardDevices: [
+          ...current.boardDevices.filter((entry) =>
+            !answeredServerIds.has(entry.serverId)
+            && !paired.some((peer) => peer.serverId === entry.serverId)),
+          ...answered.flatMap((result) => result.devices),
+          ...paired,
+        ],
         boardLoading: false,
       };
     });
@@ -1261,7 +1353,7 @@ export const useStore = create<State>((set, get) => ({
     });
     const ticket = toTicket(body.ticket, server);
     set((current) => ({ tickets: withTicket(current.tickets, ticket) }));
-    void get().loadBoard().catch(() => {});
+    void get().loadBoard({ fresh: true }).catch(() => {});
     return ticket;
   },
 
@@ -1279,7 +1371,7 @@ export const useStore = create<State>((set, get) => ({
     );
     const chatId = body.chat?.id;
     if (!chatId) throw new Error("Couldn't start that thread.");
-    await Promise.all([get().refresh(), get().loadBoard()]);
+    await Promise.all([get().refresh(), get().loadBoard({ fresh: true })]);
     return { id: chatId, serverId: target };
   },
 
@@ -1296,7 +1388,7 @@ export const useStore = create<State>((set, get) => ({
     // change, for what a write moves elsewhere — a parent's progress ring, a
     // sub-ticket, a sibling's rank.
     set((current) => ({ tickets: withTicket(current.tickets, toTicket(body.ticket, ticket.serverId)) }));
-    void get().loadBoard().catch(() => {});
+    void get().loadBoard({ fresh: true }).catch(() => {});
   },
 
   async moveTicket(id, status, before, after) {
@@ -1315,7 +1407,7 @@ export const useStore = create<State>((set, get) => ({
       );
       set((current) => ({ tickets: withTicket(current.tickets, toTicket(body.ticket, ticket.serverId)) }));
     } finally {
-      void get().loadBoard().catch(() => {});
+      void get().loadBoard({ fresh: true }).catch(() => {});
     }
   },
 
@@ -1328,7 +1420,7 @@ export const useStore = create<State>((set, get) => ({
       { method: "POST", body: { body } },
     );
     set((current) => ({ tickets: withTicket(current.tickets, toTicket(answer.ticket, ticket.serverId)) }));
-    void get().loadBoard().catch(() => {});
+    void get().loadBoard({ fresh: true }).catch(() => {});
   },
 
   async editTicketComment(id, commentId, body) {
@@ -1356,7 +1448,7 @@ export const useStore = create<State>((set, get) => ({
     if (!ticket) return;
     await transport.request(ticket.serverId, `/tickets/${encodeURIComponent(id)}`, { method: "DELETE" });
     set((current) => ({ tickets: current.tickets.filter((entry) => entry.id !== id) }));
-    void get().loadBoard().catch(() => {});
+    void get().loadBoard({ fresh: true }).catch(() => {});
   },
 
   async ticketActivity(id) {
@@ -1390,7 +1482,7 @@ export const useStore = create<State>((set, get) => ({
       },
     );
     set((current) => ({ tickets: withTicket(current.tickets, toTicket(body.ticket, ticket.serverId)) }));
-    void get().loadBoard().catch(() => {});
+    void get().loadBoard({ fresh: true }).catch(() => {});
   },
 
   async detachThread(ticketId, chatId, deviceId) {
@@ -1402,7 +1494,7 @@ export const useStore = create<State>((set, get) => ({
       { method: "DELETE" },
     );
     set((current) => ({ tickets: withTicket(current.tickets, toTicket(body.ticket, ticket.serverId)) }));
-    void get().loadBoard().catch(() => {});
+    void get().loadBoard({ fresh: true }).catch(() => {});
   },
 
   async ticketFromThread(chatId) {
@@ -1415,7 +1507,7 @@ export const useStore = create<State>((set, get) => ({
     );
     const ticket = toTicket(body.ticket, chat.serverId);
     set((current) => ({ tickets: withTicket(current.tickets, ticket) }));
-    void get().loadBoard().catch(() => {});
+    void get().loadBoard({ fresh: true }).catch(() => {});
     return ticket;
   },
 
@@ -1429,7 +1521,7 @@ export const useStore = create<State>((set, get) => ({
     );
     const routine = { ...body.routine, serverId: existing.serverId } as Routine;
     set((current) => ({ routines: withRoutine(current.routines, routine) }));
-    void get().loadBoard().catch(() => {});
+    void get().loadBoard({ fresh: true }).catch(() => {});
     return routine;
   },
 
@@ -1438,7 +1530,7 @@ export const useStore = create<State>((set, get) => ({
     if (!routine) return;
     await transport.request(routine.serverId, `/routines/${encodeURIComponent(id)}`, { method: "DELETE" });
     set((current) => ({ routines: current.routines.filter((entry) => entry.id !== id) }));
-    void get().loadBoard().catch(() => {});
+    void get().loadBoard({ fresh: true }).catch(() => {});
   },
 
   async runRoutine(id) {
@@ -1451,7 +1543,7 @@ export const useStore = create<State>((set, get) => ({
     );
     const updated = { ...body.routine, serverId: routine.serverId } as Routine;
     set((current) => ({ routines: withRoutine(current.routines, updated) }));
-    void get().loadBoard().catch(() => {});
+    void get().loadBoard({ fresh: true }).catch(() => {});
     return updated;
   },
 
@@ -1466,7 +1558,7 @@ export const useStore = create<State>((set, get) => ({
     );
     const agent = { ...body.agent, serverId: server } as Agent;
     set((current) => ({ agents: withRow(current.agents, agent) }));
-    void get().loadBoard().catch(() => {});
+    void get().loadBoard({ fresh: true }).catch(() => {});
     return agent;
   },
 
@@ -1475,7 +1567,7 @@ export const useStore = create<State>((set, get) => ({
     if (!agent) return;
     await transport.request(agent.serverId, `/agents/${encodeURIComponent(id)}`, { method: "DELETE" });
     set((current) => ({ agents: current.agents.filter((entry) => entry.id !== id) }));
-    void get().loadBoard().catch(() => {});
+    void get().loadBoard({ fresh: true }).catch(() => {});
   },
 
   async openDm(agent) {
@@ -1527,7 +1619,7 @@ export const useStore = create<State>((set, get) => ({
       `/projects/${encodeURIComponent(id)}`,
       { method: "PATCH", body: patch },
     );
-    await get().loadBoard();
+    await get().loadBoard({ fresh: true });
     return { ...body.project, serverId: project.serverId, workspaceIds: project.workspaceIds } as Project;
   },
 
@@ -1598,6 +1690,7 @@ interface ChatFrame {
 interface RawChatDetail extends RawChat {
   permissionMode?: string;
   entries?: ConvEntry[];
+  history?: { hasEarlier?: boolean; before?: string };
   todos?: ConvTodo[];
   approval?: ChatApproval | null;
   question?: ChatQuestionRequest | null;
@@ -1622,6 +1715,12 @@ function toDetail(raw: RawChatDetail, serverId: string): ChatDetail {
     state: raw.state ?? "idle",
     action: raw.action ?? undefined,
     entries: raw.entries ?? [],
+    ...(raw.history ? {
+      history: {
+        hasEarlier: raw.history.hasEarlier === true,
+        ...(raw.history.before ? { before: raw.history.before } : {}),
+      },
+    } : {}),
     todos: raw.todos ?? [],
     approval: raw.approval ?? undefined,
     question: raw.question ?? undefined,
@@ -1630,6 +1729,27 @@ function toDetail(raw: RawChatDetail, serverId: string): ChatDetail {
     context: raw.context ?? undefined,
     workingSince: raw.workingSince ?? undefined,
   };
+}
+
+/// A fresh tail replaces the part it owns while history already loaded above
+/// it stays mounted. If the two windows no longer overlap, the fresh read wins.
+function mergeDetailRefresh(current: ChatDetail | undefined, fresh: ChatDetail): ChatDetail {
+  if (!current || current.serverId !== fresh.serverId || fresh.entries.length === 0) {
+    cacheDetail(fresh);
+    return fresh;
+  }
+  const overlap = current.entries.findIndex((entry) => entry.id === fresh.entries[0].id);
+  if (overlap < 0) {
+    cacheDetail(fresh);
+    return fresh;
+  }
+  const next = {
+    ...fresh,
+    entries: [...current.entries.slice(0, overlap), ...fresh.entries],
+    history: overlap > 0 ? current.history : fresh.history,
+  };
+  cacheDetail(next);
+  return next;
 }
 
 function patchRow(chat: Chat, frame: ChatFrame): Chat {

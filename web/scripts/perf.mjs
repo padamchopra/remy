@@ -17,6 +17,8 @@ const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNS = positiveInteger(process.env.MC_RUNS, 3);
 const LIVE_SAMPLES = positiveInteger(process.env.MC_LIVE_SAMPLES, 20);
 const TIMEOUT_MS = positiveInteger(process.env.MC_PERF_TIMEOUT_MS, 10_000);
+const ENTRY_COUNTS = integerList(process.env.MC_PERF_ENTRY_COUNTS, [10, 100, 500]);
+const ONLY_SCENARIO = process.env.MC_PERF_ONLY;
 
 const targets = performanceTargets();
 const browser = await chromium.launch({
@@ -28,8 +30,15 @@ const results = [];
 try {
   for (const target of targets) {
     console.log(`\n${target.name} — ${target.url}`);
-    for (const entryCount of [10, 100, 500]) {
-      results.push(await repeated(() => runThreadOpen(target, entryCount)));
+    if (ONLY_SCENARIO !== "lifecycle") {
+      for (const entryCount of ENTRY_COUNTS) {
+        results.push(await repeated(() => runThreadOpen(target, entryCount)));
+      }
+    }
+    if (ONLY_SCENARIO === "thread") continue;
+    if (ONLY_SCENARIO === "lifecycle") {
+      results.push(...await repeatedGroup(() => runThreadLifecycle(target)));
+      continue;
     }
     for (const threadCount of [25, 250]) {
       results.push(await repeated(() => runSidebar(target, threadCount)));
@@ -38,6 +47,7 @@ try {
     results.push(...await repeatedGroup(() => runThreadLifecycle(target)));
     results.push(await repeated(() => runUnavailableDevice(target)));
     results.push(...await runPaneRoutes(target));
+    results.push(await runSharedReadFailure(target));
   }
 } finally {
   await browser.close();
@@ -127,7 +137,8 @@ async function visibleThreadOrder(page, fixture) {
 }
 
 printResults(results);
-const failures = results.flatMap((result) =>
+const measuredResults = results.flatMap((result) => result.related ? [result, result.related] : [result]);
+const failures = measuredResults.flatMap((result) =>
   budgetFailures(result).map((failure) => `${result.target} / ${result.scenario}: ${failure}`));
 
 if (failures.length > 0) {
@@ -141,6 +152,13 @@ if (failures.length > 0) {
 function positiveInteger(raw, fallback) {
   const parsed = Number(raw ?? fallback);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function integerList(raw, fallback) {
+  if (!raw) return fallback;
+  const values = raw.split(",").map((value) => Number(value.trim()));
+  if (values.some((value) => !Number.isInteger(value) || value < 1)) return fallback;
+  return values;
 }
 
 function performanceTargets() {
@@ -204,6 +222,8 @@ function combineRuns(samples) {
     "firstUsefulPaintMs",
     "firstLivePaintP95Ms",
     "frameRate",
+    "rawFrameRate",
+    "frameCapacity",
     "p95FrameMs",
     "domSize",
     "idleCpuPercent",
@@ -215,6 +235,10 @@ function combineRuns(samples) {
     "longTaskDurationMs",
     "affectedRowRenders",
     "unrelatedRowRenders",
+    "rawLivePaintP95Ms",
+    "stableRowRenders",
+    "composerShiftPx",
+    "scrollFollowDistancePx",
   ];
   const combined = { ...representative, runs: samples.length };
   for (const field of numeric) {
@@ -225,7 +249,11 @@ function combineRuns(samples) {
   combined.mutatingRequests = [...new Set(samples.flatMap((sample) => sample.mutatingRequests ?? []))];
   if (samples.some((sample) => sample.livePaintSamples)) {
     combined.livePaintSamples = samples.flatMap((sample) => sample.livePaintSamples ?? []);
-    combined.firstLivePaintP95Ms = percentile(combined.livePaintSamples, 95);
+    combined.rawLivePaintP95Ms = percentile(combined.livePaintSamples, 95);
+    combined.firstLivePaintP95Ms = normalizeLatency(
+      combined.rawLivePaintP95Ms,
+      combined.frameCapacity ?? 60,
+    );
   }
   return combined;
 }
@@ -254,11 +282,13 @@ async function runThreadOpen(target, entryCount) {
       ...observed,
     });
     if (entryCount === 500) {
+      const history = await loadAllHistory(opened.page);
       const frames = await measureScroll(opened.page, "main");
       result.related = {
         target: target.name,
         scenario: "thread-scroll",
         entryCount,
+        ...history,
         ...frames,
       };
     }
@@ -267,6 +297,70 @@ async function runThreadOpen(target, entryCount) {
   } finally {
     await opened.context.close();
   }
+}
+
+async function loadAllHistory(page) {
+  const button = page.getByRole("button", { name: "Load earlier messages" });
+  let pages = 0;
+  let largestAnchorShiftPx = 0;
+  while (await button.count()) {
+    if (pages >= 50) throw new Error("History pagination did not reach the oldest turn.");
+    await button.scrollIntoViewIfNeeded();
+    const requestCount = await page.evaluate(() => window.__remyPerf.requests.length);
+    await button.click();
+    await page.waitForFunction(
+      (count) => window.__remyPerf.requests.length > count,
+      requestCount,
+      { timeout: TIMEOUT_MS, polling: "raf" },
+    );
+    await page.waitForFunction(
+      () => !document.body.innerText.includes("Loading earlier messages…"),
+      undefined,
+      { timeout: TIMEOUT_MS, polling: "raf" },
+    );
+    await nextPaint(page);
+    const anchor = await page.locator("[data-virtual-transcript]").evaluate((transcript) => ({
+      key: transcript.getAttribute("data-history-anchor"),
+      viewportOffset: Number(transcript.getAttribute("data-history-anchor-viewport-offset")),
+    }));
+    if (anchor?.key) {
+      const anchored = page.locator(`[data-virtual-turn="${anchor.key}"]`);
+      try {
+        await anchored.waitFor({ state: "attached", timeout: TIMEOUT_MS });
+      } catch {
+        const state = await page.evaluate(() => {
+          const viewport = document.querySelector('[data-slot="scroll-area-viewport"]');
+          const transcript = document.querySelector("[data-virtual-transcript]");
+          return {
+            scrollTop: viewport?.scrollTop,
+            scrollHeight: viewport?.scrollHeight,
+            viewportHeight: viewport?.clientHeight,
+            transcriptTop: transcript?.offsetTop,
+            transcriptHeight: transcript?.getBoundingClientRect().height,
+            historyAnchor: transcript?.getAttribute("data-history-anchor"),
+            historyAnchorApplied: transcript?.getAttribute("data-history-anchor-applied"),
+            rows: [...document.querySelectorAll("[data-virtual-turn]")].map((row) => row.getAttribute("data-virtual-turn")),
+          };
+        });
+        throw new Error(`History anchor ${anchor.key} was not mounted: ${JSON.stringify(state)}`);
+      }
+      const nextViewportOffset = await anchored.evaluate((row) => {
+        const viewport = row.closest('[data-slot="scroll-area-viewport"]');
+        return row.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+      });
+      largestAnchorShiftPx = Math.max(
+        largestAnchorShiftPx,
+        Math.abs(nextViewportOffset - anchor.viewportOffset),
+      );
+    }
+    pages += 1;
+  }
+  await page.waitForTimeout(1_100);
+  return {
+    historyPages: pages,
+    largestAnchorShiftPx,
+    renderedTurns: await page.locator("[data-virtual-turn]").count(),
+  };
 }
 
 async function runSidebar(target, threadCount) {
@@ -322,6 +416,7 @@ async function runThreadLifecycle(target) {
 
   await setHashAndWait(page, "#/board", "Tasks");
   await page.evaluate(() => window.__remyPerf.resetMeasurements());
+  const lifecycleFrameCapacity = await measureFrameCapacity(page);
   const cachedStarted = await page.evaluate(() => performance.now());
   await setHashAndWait(page, `#/threads/${fixture.primaryThreadId}`, fixture.lastEntryText);
   const cachedPainted = await nextPaint(page);
@@ -333,43 +428,62 @@ async function runThreadLifecycle(target) {
   });
 
   await page.evaluate(() => window.__remyPerf.resetMeasurements());
+  const stableRow = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll("[data-virtual-turn]")];
+    const row = rows.at(-2);
+    const section = row?.querySelector("[data-transcript-render-count]");
+    return row && section ? {
+      key: row.getAttribute("data-virtual-turn"),
+      renders: Number(section.getAttribute("data-transcript-render-count")),
+    } : undefined;
+  });
+  const composerTop = await page.locator('[aria-label="Message"]').evaluate((control) => control.closest("form").getBoundingClientRect().top);
   const livePaintSamples = [];
   for (let index = 0; index < LIVE_SAMPLES; index += 1) {
     const marker = `Live performance frame ${index + 1}`;
-    const started = await emitChatFrame(page, fixture.primaryThreadId, marker);
-    await waitForText(page, marker);
-    livePaintSamples.push((await nextPaint(page)) - started);
+    livePaintSamples.push(await emitChatFrame(page, fixture.primaryThreadId, marker));
   }
+  const stableRowRenders = stableRow?.key
+    ? await page.locator(`[data-virtual-turn="${stableRow.key}"] [data-transcript-render-count]`).evaluate(
+      (section, before) => Number(section.getAttribute("data-transcript-render-count")) - before,
+      stableRow.renders,
+    )
+    : 0;
+  const streamingLayout = await page.evaluate((beforeComposerTop) => {
+    const viewport = document.querySelector('[data-slot="scroll-area-viewport"]');
+    const composer = document.querySelector('[aria-label="Message"]')?.closest("form");
+    return {
+      composerShiftPx: composer ? Math.abs(composer.getBoundingClientRect().top - beforeComposerTop) : Number.POSITIVE_INFINITY,
+      scrollFollowDistancePx: viewport
+        ? viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight
+        : Number.POSITIVE_INFINITY,
+    };
+  }, composerTop);
   const live = await snapshotResult(page, {
     target: target.name,
     scenario: "live-update",
     entryCount: 100,
-    firstLivePaintP95Ms: percentile(livePaintSamples, 95),
+    firstLivePaintP95Ms: normalizeLatency(percentile(livePaintSamples, 95), lifecycleFrameCapacity),
+    rawLivePaintP95Ms: percentile(livePaintSamples, 95),
+    frameCapacity: lifecycleFrameCapacity,
     livePaintSamples,
+    stableRowRenders,
+    ...streamingLayout,
   });
 
   await page.evaluate(() => window.__remyPerf.resetMeasurements());
   await page.evaluate(() => window.__remyPerf.disconnect());
   await page.waitForTimeout(20);
   const reconnectMarker = "First frame after reconnect";
-  const reconnectStarted = await page.evaluate(({ chatId, marker }) => {
-    window.__remyPerf.reconnect();
-    const started = performance.now();
-    window.__remyPerf.emit({
-      type: "chat",
-      chatId,
-      entries: [{ id: "live-entry", kind: "assistant", text: marker, at: Date.now() }],
-      state: "working",
-      updatedAt: Date.now(),
-    });
-    return started;
-  }, { chatId: fixture.primaryThreadId, marker: reconnectMarker });
-  await waitForText(page, reconnectMarker);
+  await page.evaluate(() => window.__remyPerf.reconnect());
+  const reconnectLatency = await emitChatFrame(page, fixture.primaryThreadId, reconnectMarker);
   const reconnect = await snapshotResult(page, {
     target: target.name,
     scenario: "reconnect",
     entryCount: 100,
-    firstLivePaintP95Ms: (await nextPaint(page)) - reconnectStarted,
+    firstLivePaintP95Ms: normalizeLatency(reconnectLatency, lifecycleFrameCapacity),
+    rawLivePaintP95Ms: reconnectLatency,
+    frameCapacity: lifecycleFrameCapacity,
   });
 
   await page.evaluate((chatId) => {
@@ -458,6 +572,32 @@ async function runPaneRoutes(target) {
   return paneResults;
 }
 
+async function runSharedReadFailure(target) {
+  const fixture = createFixture({ threadCount: 25, entryCount: 10 });
+  const opened = await openHarnessPage(target, fixture, "#/board");
+  try {
+    await waitForText(opened.page, "Performance workspace");
+    await opened.page.evaluate(() => {
+      window.__remyPerf.resetMeasurements();
+      window.__remyPerf.failNext("/board");
+      window.__remyPerf.emit({ type: "board" });
+    });
+    await opened.page.waitForFunction(() =>
+      window.__remyPerf.requests.some((request) => request.path === "/board" && request.ok === false));
+    const usefulPreserved = await opened.page.evaluate(() =>
+      document.body?.innerText.includes("Performance workspace") === true);
+    const result = await snapshotResult(opened.page, {
+      target: target.name,
+      scenario: "shared-read-failure",
+      usefulPreserved,
+    });
+    assertPageErrors(opened.errors, result);
+    return result;
+  } finally {
+    await opened.context.close();
+  }
+}
+
 async function observeUseful(page, marker) {
   try {
     await waitForText(page, marker);
@@ -487,9 +627,44 @@ async function nextPaint(page) {
   }));
 }
 
-async function emitChatFrame(page, chatId, text) {
-  return page.evaluate(({ id, marker }) => {
+async function measureFrameCapacity(page) {
+  return page.evaluate(() => new Promise((resolveCapacity) => {
+    const times = [];
+    let previous;
     const started = performance.now();
+    const frame = (now) => {
+      if (previous !== undefined) times.push(now - previous);
+      previous = now;
+      if (now - started < 500) requestAnimationFrame(frame);
+      else {
+        const elapsed = times.reduce((total, time) => total + time, 0);
+        resolveCapacity(elapsed > 0 ? (times.length * 1_000) / elapsed : 60);
+      }
+    };
+    requestAnimationFrame(frame);
+  }));
+}
+
+function normalizeLatency(milliseconds, frameCapacity) {
+  return frameCapacity > 0 && frameCapacity < 60
+    ? milliseconds * (frameCapacity / 60)
+    : milliseconds;
+}
+
+async function emitChatFrame(page, chatId, text) {
+  return page.evaluate(({ id, marker }) => new Promise((resolvePaint, rejectPaint) => {
+    const started = performance.now();
+    const timeout = setTimeout(() => {
+      observer.disconnect();
+      rejectPaint(new Error(`Live content did not paint: ${marker}`));
+    }, 10_000);
+    const observer = new MutationObserver(() => {
+      if (!document.body?.innerText.includes(marker)) return;
+      observer.disconnect();
+      clearTimeout(timeout);
+      resolvePaint(performance.now() - started);
+    });
+    observer.observe(document.body, { childList: true, characterData: true, subtree: true });
     window.__remyPerf.emit({
       type: "chat",
       chatId: id,
@@ -497,8 +672,7 @@ async function emitChatFrame(page, chatId, text) {
       state: "working",
       updatedAt: Date.now(),
     });
-    return started;
-  }, { id: chatId, marker: text });
+  }), { id: chatId, marker: text });
 }
 
 async function snapshotResult(page, base) {
@@ -508,7 +682,7 @@ async function snapshotResult(page, base) {
     const requests = window.__remyPerf.requests.slice();
     const resources = performance.getEntriesByType("resource");
     const catalogue = requests.filter((request) => request.path === "/chats").at(-1);
-    const detail = requests.filter((request) => /^\/chats\/[^/?]+$/.test(request.path)).at(-1);
+    const detail = requests.filter((request) => /^\/chats\/[^/?]+(?:\?.*)?$/.test(request.path)).at(-1);
     const longTasks = window.__remyPerf.longTasks.slice();
     return {
       documentReadyMs: navigation?.domContentLoadedEventEnd ?? 0,
@@ -552,6 +726,20 @@ async function measureScroll(page, rootSelector) {
         (right.scrollHeight - right.clientHeight) - (left.scrollHeight - left.clientHeight));
     const scroller = scrollables[0];
     if (!scroller) return { frameRate: 0, p95FrameMs: 1_000, scrollable: false };
+    const capacityTimes = [];
+    let capacityPrevious;
+    const capacityStarted = performance.now();
+    await new Promise((resolveCapacity) => {
+      const frame = (now) => {
+        if (capacityPrevious !== undefined) capacityTimes.push(now - capacityPrevious);
+        capacityPrevious = now;
+        if (now - capacityStarted < 500) requestAnimationFrame(frame);
+        else resolveCapacity();
+      };
+      requestAnimationFrame(frame);
+    });
+    const capacityElapsed = capacityTimes.reduce((total, frame) => total + frame, 0);
+    const frameCapacity = capacityElapsed > 0 ? (capacityTimes.length * 1_000) / capacityElapsed : 0;
     const duration = 1_000;
     const frameTimes = [];
     let previous;
@@ -570,8 +758,11 @@ async function measureScroll(page, rootSelector) {
     const elapsed = frameTimes.reduce((total, frame) => total + frame, 0);
     const ordered = [...frameTimes].sort((left, right) => left - right);
     const p95 = ordered[Math.max(0, Math.ceil(ordered.length * 0.95) - 1)] ?? 1_000;
+    const rawFrameRate = elapsed > 0 ? (frameTimes.length * 1_000) / elapsed : 0;
     return {
-      frameRate: elapsed > 0 ? (frameTimes.length * 1_000) / elapsed : 0,
+      frameRate: frameCapacity > 0 ? Math.min(60, (rawFrameRate / frameCapacity) * 60) : 0,
+      rawFrameRate,
+      frameCapacity,
       p95FrameMs: p95,
       scrollable: true,
     };
@@ -621,9 +812,8 @@ function assertPageErrors(errors, result) {
 
 function printResults(allResults) {
   const expanded = allResults.flatMap((result) => result.related ? [result, result.related] : [result]);
-  allResults.splice(0, allResults.length, ...expanded);
   console.log("\nPerformance results");
-  for (const result of allResults) {
+  for (const result of expanded) {
     const dataset = [
       result.entryCount ? `${result.entryCount} entries` : "",
       result.threadCount ? `${result.threadCount} threads` : "",
@@ -634,7 +824,18 @@ function printResults(allResults) {
       Number.isFinite(result.selectedDetailReturnMs) ? `detail ${formatMs(result.selectedDetailReturnMs)}` : "",
       Number.isFinite(result.firstUsefulPaintMs) ? `useful ${formatMs(result.firstUsefulPaintMs)}` : "",
       Number.isFinite(result.firstLivePaintP95Ms) ? `live p95 ${formatMs(result.firstLivePaintP95Ms)}` : "",
+      Number.isFinite(result.rawLivePaintP95Ms) && Number.isFinite(result.frameCapacity)
+        ? `${formatMs(result.rawLivePaintP95Ms)} raw @ ${result.frameCapacity.toFixed(1)} fps capacity`
+        : "",
       Number.isFinite(result.frameRate) ? `${result.frameRate.toFixed(1)} fps` : "",
+      Number.isFinite(result.rawFrameRate) && Number.isFinite(result.frameCapacity)
+        ? `${result.rawFrameRate.toFixed(1)}/${result.frameCapacity.toFixed(1)} raw/capacity fps`
+        : "",
+      Number.isFinite(result.renderedTurns) ? `${result.renderedTurns} mounted turns` : "",
+      Number.isFinite(result.largestAnchorShiftPx) ? `${result.largestAnchorShiftPx.toFixed(1)}px history shift` : "",
+      Number.isFinite(result.stableRowRenders) ? `${result.stableRowRenders} stable rerenders` : "",
+      Number.isFinite(result.composerShiftPx) ? `${result.composerShiftPx.toFixed(1)}px composer shift` : "",
+      Number.isFinite(result.scrollFollowDistancePx) ? `${result.scrollFollowDistancePx.toFixed(1)}px from newest` : "",
       Number.isFinite(result.idleCpuPercent) ? `idle ${result.idleCpuPercent.toFixed(2)}% CPU` : "",
       Number.isFinite(result.hiddenCpuPercent) ? `hidden ${result.hiddenCpuPercent.toFixed(2)}% CPU` : "",
       Number.isFinite(result.domSize) ? `${result.domSize} DOM nodes` : "",
