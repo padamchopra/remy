@@ -23,9 +23,7 @@ import {
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarSeparator,
 } from "@/components/ui/sidebar";
-import { Badge } from "@/components/ui/badge";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { SETTINGS_SECTIONS, type SettingsTab } from "@/lib/settings-sections";
@@ -97,7 +95,7 @@ export function AppSidebar({
   const stillLooking = useStore((s) => s.loading);
 
   return (
-    <Sidebar collapsible="none" className="border-r border-sidebar-border">
+    <Sidebar collapsible="none">
       {view === "settings" ? (
         <>
           <SidebarHeader>
@@ -133,14 +131,26 @@ export function AppSidebar({
           <SidebarGroup>
             <SidebarGroupContent>
               <SidebarMenu>
+                {/* The one you are in is the bright one; the rest step back a
+                    shade, so the sidebar has a hierarchy before it has colour.
+                    Counts are quiet numbers, not badges. */}
                 {sections.map(({ id, label, icon: Icon }) => (
                   <SidebarMenuItem key={id}>
-                    <SidebarMenuButton data-link isActive={section === id} onClick={() => onSection(id)}>
+                    <SidebarMenuButton
+                      data-link
+                      isActive={section === id}
+                      className="h-9 gap-2.5 px-2.5 text-sidebar-foreground/80"
+                      onClick={() => onSection(id)}
+                    >
                       <Icon />
                       <span>{label}</span>
                     </SidebarMenuButton>
-                    {id === "inbox" && unread > 0 && <SidebarMenuBadge>{unread}</SidebarMenuBadge>}
-                    {id === "chats" && needsYou > 0 && <SidebarMenuBadge>{needsYou}</SidebarMenuBadge>}
+                    {id === "inbox" && unread > 0 && (
+                      <SidebarMenuBadge className="right-2.5 text-muted-foreground">{unread}</SidebarMenuBadge>
+                    )}
+                    {id === "chats" && needsYou > 0 && (
+                      <SidebarMenuBadge className="right-2.5 text-muted-foreground">{needsYou}</SidebarMenuBadge>
+                    )}
                   </SidebarMenuItem>
                 ))}
               </SidebarMenu>
@@ -211,11 +221,10 @@ export function AppSidebar({
       )}
 
       <SidebarFooter>
-        <SidebarSeparator />
         <SidebarMenu>
           {view !== "settings" && updateAvailable && (
             <SidebarMenuItem>
-              <SidebarMenuButton data-link onClick={() => openSettings("general")}>
+              <SidebarMenuButton data-link className="h-9 gap-2.5 px-2.5 text-sidebar-foreground/80" onClick={() => openSettings("general")}>
                 <ArrowUpCircle />
                 <span>Update available</span>
               </SidebarMenuButton>
@@ -225,6 +234,7 @@ export function AppSidebar({
             <SidebarMenuButton
               data-link
               isActive={view === "settings"}
+              className="h-9 gap-2.5 px-2.5 text-sidebar-foreground/80"
               onClick={() => openSettings(view === "settings" ? settingsTab : "general")}
             >
               <Settings2 />
@@ -334,13 +344,16 @@ const ChildThreadRow = memo(function ChildThreadRow({
       <SidebarMenuButton data-link size="sm" isActive={active} className={cn("h-7 gap-1.5 pl-5 text-xs", threadRowHoverClass, threadRowActionSpaceClass)} onClick={() => onSelectChat(chat.id)}>
         <CornerDownRight />
         <span className="min-w-0 flex-1 truncate">{chat.title}</span>
-        <ThreadState state={chat.state} />
+        <ThreadStateDot state={chat.state} />
       </SidebarMenuButton>
     </ThreadMenu>
   );
 });
 
-function ThreadState({ state }: { state: ChatState }) {
+/// What the thread is doing, as a dot: colour is the state, and the word is
+/// there on hover and for a screen reader. A pill on every row made the list
+/// read as a status board; most rows are done, and done is not news.
+function ThreadStateDot({ state }: { state: ChatState }) {
   const label = state === "idle"
     ? "Done"
     : state === "needs_input"
@@ -348,18 +361,21 @@ function ThreadState({ state }: { state: ChatState }) {
       : state === "working"
         ? "Working"
         : "Error";
-  const variant = state === "idle"
-    ? "secondary"
+  const tone = state === "idle"
+    ? "bg-muted-foreground/35"
     : state === "needs_input"
-      ? "warning"
+      ? "bg-warning"
       : state === "working"
-        ? "info"
-        : "destructive";
+        ? "bg-info animate-pulse motion-reduce:animate-none"
+        : "bg-destructive";
 
   return (
-    <Badge variant={variant} className="h-[18px] px-1.5 py-0 text-[10px] leading-4">
-      {state === "working" ? <span className="shimmer">{label}</span> : label}
-    </Badge>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span role="img" aria-label={label} className={cn("size-2 shrink-0 rounded-full", tone)} />
+      </TooltipTrigger>
+      <TooltipContent side="right">{label}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -401,17 +417,34 @@ function ThreadRow({
       data-link
       isActive={active}
       className={cn(
-        "h-auto flex-col items-stretch gap-1 py-2",
-        threadRowActionSpaceClass,
+        // Only the title line clears the hover action; the lines under it
+        // are narrow enough already.
+        "h-auto flex-col items-stretch gap-1 py-2 pr-2",
         threadRowHoverClass,
       )}
       onClick={onSelect}
     >
-      {/* A linked ticket is the most useful destination; otherwise the
-          workspace names where the thread lives. The workspace mark remains
-          stable so either row is recognisable before it is read. */}
-      <span className="flex min-w-0 items-center gap-1.5 text-[11px] leading-none font-normal text-muted-foreground">
+      {/* The title leads, marked with where it lives and closed by what it is
+          doing. The same anatomy as an archived row, with two quiet lines
+          under it: what was last said, then where and with what it runs. */}
+      <span className="flex min-w-0 items-center gap-1.5 pr-4">
         <WorkspaceMark home={!workspace} workspace={workspace} server={server} size="sm" />
+        <span className="min-w-0 flex-1 truncate">{chat.title}</span>
+        {chat.pinned && <Pin className="size-3 shrink-0 text-muted-foreground" aria-label="Pinned" />}
+        <ThreadStateDot state={chat.state} />
+      </span>
+
+      {chat.preview && (
+        <span className="truncate pl-[22px] text-xs font-normal text-muted-foreground">{plainText(chat.preview)}</span>
+      )}
+
+      {/* A linked ticket is the most useful destination; otherwise the
+          workspace names where the thread lives. Marks rather than words for
+          the rest, so none of it competes with the title. */}
+      <span className="flex min-w-0 items-center gap-1.5 pl-[22px] text-[11px] leading-none font-normal text-muted-foreground">
+        {/* The place is bounded and the model gives way first: the place tells
+            rows apart, the model is the same on most of them. */}
+        <span className="max-w-[55%] shrink-0 truncate">
         {ticket ? (
           // A key, not a button: this row is already a button, and one inside
           // another is not markup a browser will honour. The click is stopped
@@ -419,7 +452,7 @@ function ThreadRow({
           <span
             role="link"
             tabIndex={0}
-            className="min-w-0 flex-1 truncate rounded font-mono text-[10px] text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            className="rounded font-mono text-[10px] text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             onClick={(event) => {
               event.stopPropagation();
               onOpenTicket(ticket.key);
@@ -434,26 +467,10 @@ function ThreadRow({
             {ticket.key}
           </span>
         ) : (
-          <span className="min-w-0 flex-1 truncate">{place}</span>
+          place
         )}
-      </span>
-
-      <span className="flex min-w-0 items-center gap-1.5">
-        <span className="min-w-0 flex-1 truncate">{chat.title}</span>
-        {chat.pinned && <Pin className="size-3 shrink-0 text-muted-foreground" aria-label="Pinned" />}
-        <ThreadState state={chat.state} />
-      </span>
-
-      {chat.preview && (
-        <span className="line-clamp-2 text-xs leading-snug text-muted-foreground">{plainText(chat.preview)}</span>
-      )}
-
-      {/* Marks, not words, so they don't compete with the title. What the
-          thread thinks with opens the line and where it runs closes it, so
-          neither edge is left standing empty. */}
-      <span className="flex min-w-0 items-center gap-1.5 text-[11px] font-normal text-muted-foreground">
-        <ThreadModel provider={chat.provider} model={chat.model} />
-        <span className="flex-1" />
+        </span>
+        <ThreadModel provider={chat.provider} model={chat.model} className="min-w-0 flex-1" />
         {elapsed && (
           <span className="flex shrink-0 items-center gap-1 tabular-nums">
             <Clock className="size-3" />
@@ -560,16 +577,16 @@ function ThreadContext({
 
 /// What the thread thinks with: its provider's glyph, and the model beside it
 /// where one was picked rather than left to that provider's own default.
-function ThreadModel({ provider, model }: { provider?: string; model?: string }) {
+function ThreadModel({ provider, model, className }: { provider?: string; model?: string; className?: string }) {
   const providers = useStore((s) => s.providers) ?? PROVIDERS;
   const name = providerLabel(providers, provider);
   const label = modelLabel(providers, { provider: provider ?? "claude", model: model ?? "" });
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span className="flex shrink-0 items-center gap-0.5">
-          <ProviderMark provider={provider} className="size-3" />
-          {model && <span className="text-muted-foreground">{label}</span>}
+        <span className={cn("flex shrink-0 items-center gap-0.5", className)}>
+          <ProviderMark provider={provider} className="size-3 shrink-0" />
+          {model && <span className="min-w-0 truncate text-muted-foreground">{label}</span>}
         </span>
       </TooltipTrigger>
       <TooltipContent>

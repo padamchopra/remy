@@ -420,7 +420,7 @@ export function App() {
     const current = route.name === "threads" && route.threadId === parent.id
       ? decodeThreadLayout(route.layout) ?? threadLeaf(parent.id)
       : threadLeaf(parent.id);
-    const width = Math.max(1, window.innerWidth - (sidebarShown ? 208 : 0));
+    const width = Math.max(1, window.innerWidth - (sidebarShown ? 240 : 0));
     const height = Math.max(1, window.innerHeight - 48);
     setThreadLayout(parent.id, addThreadPane(current, child.id, width, height), child.id);
   };
@@ -481,10 +481,11 @@ export function App() {
         registerWorkspace: () => setAddWorkspaceOpen(true),
       }}
     >
-    <div className="flex h-full flex-col bg-background text-foreground">
-      {/* Titlebar. Draggable, with the leading inset clearing the traffic lights. */}
+    <div className="flex h-full flex-col bg-sidebar text-foreground">
+      {/* Titlebar. Draggable, with the leading inset clearing the traffic lights.
+          It and the sidebar are one surface, the chrome; the pane sits on it. */}
       <header
-        className="app-drag flex shrink-0 items-center gap-3 border-b border-border bg-sidebar pr-3"
+        className="app-drag flex shrink-0 items-center gap-3 pr-2"
         style={{ height: "var(--workspace-topbar-height)", paddingLeft: "var(--titlebar-traffic-light-inset)" }}
       >
         <Tooltip>
@@ -521,7 +522,7 @@ export function App() {
           inert={!sidebarShown}
           className={cn(
             "min-h-0 shrink-0 overflow-hidden transition-[width] duration-200 ease-out motion-reduce:transition-none",
-            sidebarShown ? "w-52" : "w-0",
+            sidebarShown ? "w-60" : "w-0",
           )}
         >
           <AppSidebar
@@ -546,6 +547,18 @@ export function App() {
           />
         </div>
 
+        {/* The pane is a panel set into the chrome. Whatever is open — a thread,
+            the board, settings — sits on the same lighter, bordered surface, so
+            the window reads as one place with one thing in front of you. */}
+        <div
+          className={cn(
+            "flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-background shadow-sm",
+            // The margin moves with the sidebar's width, so hiding it slides
+            // the pane rather than nudging it and then sliding it.
+            "mr-2 mb-2 transition-[margin] duration-200 ease-out motion-reduce:transition-none",
+            sidebarShown ? "ml-0" : "ml-2",
+          )}
+        >
         <Suspense fallback={<SurfaceLoading />}>
         {view === "settings" ? (
           <SettingsPane
@@ -756,6 +769,7 @@ export function App() {
           </main>
         )}
         </Suspense>
+        </div>
       </SidebarProvider>
 
       <AddWorkspaceDialog open={addWorkspaceOpen} onOpenChange={setAddWorkspaceOpen} />
