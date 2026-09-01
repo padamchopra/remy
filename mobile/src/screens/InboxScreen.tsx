@@ -137,13 +137,16 @@ function AgentRow({
           {agent.name}
         </Text>
         {dm?.state === "working" ? <StateBadge state="working" /> : dm?.unread ? <View style={styles.dot} /> : null}
+        {/* Its own 44pt target, and it has to beat the row it sits inside: a
+            press that reaches the card instead opens the conversation, which is
+            the opposite of what was asked for. */}
         <Pressable
           onPress={onSettings}
-          hitSlop={8}
+          onStartShouldSetResponder={() => true}
           accessibilityLabel={`${agent.name} settings`}
-          style={styles.settings}
+          style={({ pressed }) => [styles.settings, pressed && styles.settingsOn]}
         >
-          <SlidersHorizontal size={16} color={color.mutedForeground} />
+          <SlidersHorizontal size={18} color={color.foreground} />
         </Pressable>
       </View>
       {preview ? (
@@ -191,5 +194,14 @@ const styles = StyleSheet.create({
   preview: { ...type.caption, color: color.mutedForeground },
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: color.primary },
   routine: { flexDirection: "row", alignItems: "center", gap: 6 },
-  settings: { paddingHorizontal: 4, paddingVertical: 2 },
+  settings: {
+    width: 44,
+    height: 44,
+    marginRight: -10,
+    marginVertical: -12,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius.full,
+  },
+  settingsOn: { backgroundColor: color.accent },
 });

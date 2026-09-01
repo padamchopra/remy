@@ -136,7 +136,11 @@ export function ComposeScreen({ onCreated }: { onCreated: (id: string) => void }
   // device this thread will run on rather than whichever answered first.
   const settings = useServerSettings(server?.id);
   const providers = useProviders(server?.id);
-  const noEffort = Boolean(server) && !useSupportsEffort(server?.id);
+  // Read unconditionally: `Boolean(server) && !useSupportsEffort(...)` skips the
+  // hook whenever no device is picked yet, which changes the hook order between
+  // renders and takes the composer down with it.
+  const effortSupported = useSupportsEffort(server?.id);
+  const noEffort = Boolean(server) && !effortSupported;
   const cloud = server?.cloud === true;
   const git = Boolean(!home && workspace && workspace.worktrees.length > 0);
   const mainBranch =

@@ -3,7 +3,7 @@ import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Clock } from "lucide-react-native";
 import { color, space, type } from "../theme";
 import { apiError } from "../lib/api-error";
-import { CADENCE_LABEL, WEEKDAYS, cadenceSummary, clockTime } from "../lib/routines";
+import { CADENCE_LABEL, WEEKDAYS, cadenceSummary, clockHour } from "../lib/routines";
 import { useStore } from "../state/store";
 import type { Cadence } from "../state/types";
 import { Button } from "../components/Button";
@@ -18,7 +18,7 @@ const CADENCES = (Object.keys(CADENCE_LABEL) as Cadence[]).map((value) => ({
 
 const HOURS = Array.from({ length: 24 }, (_, hour) => ({
   value: String(hour),
-  label: clockTime(hour, 0),
+  label: clockHour(hour),
 }));
 
 const MINUTES = Array.from({ length: 60 }, (_, minute) => ({
@@ -115,7 +115,7 @@ export function RoutineScreen({ routineId, onDone }: { routineId: string; onDone
         <View style={styles.row}>
           <ComposerMenu
             icon={Clock}
-            label={clockTime(hour, minute)}
+            label={clockHour(hour)}
             value={String(hour)}
             onChange={(value) => setHour(Number(value))}
             options={HOURS}

@@ -290,37 +290,51 @@ function RoutineRow({ routine, onEdit }: { routine: Routine; onEdit: () => void 
     }
   };
 
+  // The schedule gets the full width and the actions get their own row: sharing
+  // one line clipped "due tomorrow" and "paused", which is the half of the
+  // sentence worth reading.
   return (
     <View style={styles.routine}>
-      <Repeat size={14} color={color.mutedForeground} />
-      <View style={styles.routineText}>
-        <Text style={type.callout} numberOfLines={1}>{routine.name}</Text>
-        <Text style={type.caption} numberOfLines={1}>
-          {routine.enabled
-            ? `${cadenceSummary(routine)} · due ${whenNext(routine.nextRunAt)}`
-            : `${cadenceSummary(routine)} · paused`}
-          {routine.lastError ? " · last run failed" : ""}
-        </Text>
+      <View style={styles.routineHead}>
+        <Repeat size={14} color={color.mutedForeground} />
+        <View style={styles.routineText}>
+          <Text style={type.callout} numberOfLines={1}>{routine.name}</Text>
+          <Text style={type.caption} numberOfLines={2}>
+            {routine.enabled
+              ? `${cadenceSummary(routine)} · due ${whenNext(routine.nextRunAt)}`
+              : `${cadenceSummary(routine)} · paused`}
+            {routine.lastError ? " · last run failed" : ""}
+          </Text>
+        </View>
       </View>
-      <Pressable
-        onPress={() => void act(() => saveRoutine(routine.id, { enabled: !routine.enabled }))}
-        disabled={busy}
-        accessibilityLabel={routine.enabled ? `Pause ${routine.name}` : `Resume ${routine.name}`}
-        style={styles.routineAction}
-      >
-        <Text style={styles.routineActionLabel}>{routine.enabled ? "Pause" : "Resume"}</Text>
-      </Pressable>
-      <Pressable
-        onPress={() => void act(() => runRoutine(routine.id))}
-        disabled={busy}
-        accessibilityLabel={`Run ${routine.name} now`}
-        style={styles.routineAction}
-      >
-        <Play size={14} color={color.foreground} />
-      </Pressable>
-      <Pressable onPress={onEdit} accessibilityLabel={`Edit ${routine.name}`} style={styles.routineAction} data-link>
-        <Pencil size={14} color={color.foreground} />
-      </Pressable>
+      <View style={styles.routineActions}>
+        <Pressable
+          onPress={() => void act(() => saveRoutine(routine.id, { enabled: !routine.enabled }))}
+          disabled={busy}
+          accessibilityLabel={routine.enabled ? `Pause ${routine.name}` : `Resume ${routine.name}`}
+          style={({ pressed }) => [styles.routineAction, pressed && styles.routineActionOn]}
+        >
+          <Text style={styles.routineActionLabel}>{routine.enabled ? "Pause" : "Resume"}</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => void act(() => runRoutine(routine.id))}
+          disabled={busy}
+          accessibilityLabel={`Run ${routine.name} now`}
+          style={({ pressed }) => [styles.routineAction, pressed && styles.routineActionOn]}
+        >
+          <Play size={14} color={color.foreground} />
+          <Text style={styles.routineActionLabel}>Run now</Text>
+        </Pressable>
+        <Pressable
+          onPress={onEdit}
+          accessibilityLabel={`Edit ${routine.name}`}
+          style={({ pressed }) => [styles.routineAction, pressed && styles.routineActionOn]}
+          data-link
+        >
+          <Pencil size={14} color={color.foreground} />
+          <Text style={styles.routineActionLabel}>Edit</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -404,17 +418,25 @@ const styles = StyleSheet.create({
   },
   faceOn: { borderColor: color.primary },
   routine: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
     borderWidth: 1,
     borderColor: color.border,
     backgroundColor: color.card,
     borderRadius: radius.lg,
     padding: 10,
+    gap: 8,
   },
+  routineHead: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
   routineText: { flex: 1, minWidth: 0, gap: 2 },
-  routineAction: { paddingHorizontal: 8, paddingVertical: 6, minHeight: 32, justifyContent: "center" },
+  routineActions: { flexDirection: "row", alignItems: "center", gap: 4, flexWrap: "wrap" },
+  routineAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 10,
+    minHeight: 36,
+    borderRadius: radius.sm,
+  },
+  routineActionOn: { backgroundColor: color.accent },
   routineActionLabel: { fontSize: 13, color: color.foreground },
   danger: {
     borderWidth: 1,

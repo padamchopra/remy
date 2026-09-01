@@ -36,6 +36,14 @@ export function whenNext(at: number): string {
   });
 }
 
+/// Just the hour, for a control that owns only the hour. Pairing it with a
+/// minute control while it still says ":00" reads as two different times.
+export function clockHour(hour: number): string {
+  const at = new Date();
+  at.setHours(hour, 0, 0, 0);
+  return at.toLocaleTimeString(undefined, { hour: "numeric" });
+}
+
 export function cadenceSummary(routine: Pick<Routine, "cadence" | "hour" | "minute" | "weekday" | "day">): string {
   const time = clockTime(routine.hour, routine.minute);
   if (routine.cadence === "daily") return `Every day at ${time}`;

@@ -29,6 +29,7 @@ import { workspaceForPath } from "../lib/projects";
 import { pairChoice, providerOf } from "../lib/providers";
 import { useProviders, useStore, useSupportsEffort } from "../state/store";
 import type {
+  Agent,
   ChatApproval,
   ChatQuestionRequest,
   ConvArtifact,
@@ -42,6 +43,7 @@ import { Button } from "../components/Button";
 import { ComposerMenu } from "../components/ComposerMenu";
 import { EmptyState } from "../components/Empty";
 import { Markdown } from "../components/Markdown";
+import { AgentMark } from "../components/AgentMark";
 import { ModelPicker } from "../components/ModelPicker";
 
 export function ThreadScreen({
@@ -67,6 +69,7 @@ export function ThreadScreen({
   const setChatOptions = useStore((s) => s.setChatOptions);
   const workspaces = useStore((s) => s.workspaces);
   const servers = useStore((s) => s.servers);
+  const agents = useStore((s) => s.agents);
   const threadPullRequest = useStore((s) => s.threadPullRequest);
   const serverId = chat?.serverId;
   const providers = useProviders(serverId);
@@ -116,7 +119,12 @@ export function ThreadScreen({
   const cloud = server?.cloud === true;
   const permission = cloud ? cloudModeOf(open?.permissionMode) : permissionOf(open?.permissionMode);
   const provider = open?.provider ?? chat.provider ?? "claude";
-  const agentName = cloud ? "Cursor Cloud" : providerOf(providers, provider)?.label ?? "Claude";
+  // An inbox conversation keeps its agent's identity: the person is the point
+  // there, and "Claude" is not who they think they are talking to. A thread is
+  // work in a repository, so it says what is running it.
+  const agent = agents.find((entry) => entry.id === (open?.agentId ?? chat.agentId));
+  const speaker = agent?.name
+    ?? (cloud ? "Cursor Cloud" : providerOf(providers, provider)?.label ?? "Claude");
   const asks = cloud || providerOf(providers, provider)?.approvals !== false;
 
   const submit = async () => {
@@ -156,7 +164,13 @@ export function ThreadScreen({
           <Text style={[type.body, { color: color.mutedForeground }]}>Send a message to get this thread going.</Text>
         ) : (
           entries.map((entry) => (
-            <Entry key={entry.id} entry={entry} agentName={agentName} onOpenArtifact={onOpenArtifact} />
+            <Entry
+              key={entry.id}
+              entry={entry}
+              speaker={speaker}
+              mark={agent}
+              onOpenArtifact={onOpenArtifact}
+            />
           ))
         )}
         {open?.approval ? (
@@ -222,7 +236,9 @@ export function ThreadScreen({
           ) : null}
         </View>
         {!asks && (open?.permissionMode ?? "default") === "default" ? (
-          <Text style={type.caption}>{agentName} can't stop to ask, so Ask keeps it read-only.</Text>
+          <Text style={type.caption}>
+            {`${providerOf(providers, provider)?.label ?? "This provider"} can't stop to ask, so Ask keeps it read-only.`}
+          </Text>
         ) : null}
         <View style={styles.box}>
           <TextInput
@@ -248,11 +264,15 @@ export function ThreadScreen({
 
 function Entry({
   entry,
-  agentName,
+  speaker,
+  mark,
   onOpenArtifact,
 }: {
   entry: ConvEntry;
-  agentName: string;
+  speaker: string;
+  /// The agent whose conversation this is, when it is one. Its face goes beside
+  /// its name, the way it does on its own row in the Inbox.
+  mark?: Agent;
   onOpenArtifact?: (artifact: ConvArtifact) => void;
 }) {
   // Work the provider is running beside the turn arrives on its own entry.
@@ -270,7 +290,10 @@ function Entry({
   if (entry.kind === "assistant") {
     return (
       <View style={styles.claude}>
-        <Text style={[styles.speaker, { color: color.claude }]}>{agentName}</Text>
+        <View style={styles.speakerRow}>
+          {mark ? <AgentMark agent={mark} size={16} /> : null}
+          <Text style={[styles.speaker, { color: mark ? color.foreground : color.claude }]}>{speaker}</Text>
+        </View>
         <Markdown text={entry.text ?? ""} />
       </View>
     );
@@ -540,6 +563,7 @@ const styles = StyleSheet.create({
   you: { alignItems: "flex-end", gap: 4 },
   claude: { gap: 4 },
   speaker: { ...type.caption, fontWeight: "600" },
+  speakerRow: { flexDirection: "row", alignItems: "center", gap: 5 },
   bubbleYou: {
     backgroundColor: color.card,
     borderRadius: radius.xl,
