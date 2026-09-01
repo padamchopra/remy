@@ -423,6 +423,26 @@ function migrate(database: DatabaseSync): void {
   // replaced them, and a table nothing reads is worth dropping rather than
   // carrying.
   database.exec("drop table if exists loops");
+  try {
+    database.exec("alter table recurrences add column every_minutes integer");
+  } catch {
+    // Column already exists on databases created after this migration.
+  }
+  try {
+    database.exec("alter table recurrences add column body_path text");
+  } catch {
+    // Column already exists on databases created after this migration.
+  }
+  try {
+    database.exec("alter table agents add column directives text");
+  } catch {
+    // Column already exists on databases created after this migration.
+  }
+  try {
+    database.exec("alter table agents add column directives_path text");
+  } catch {
+    // Column already exists on databases created after this migration.
+  }
   database.exec("pragma user_version = 9");
 }
 

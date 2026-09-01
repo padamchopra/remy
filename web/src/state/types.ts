@@ -136,6 +136,8 @@ export interface PathSuggestion {
   path: string;
   name: string;
   repo: boolean;
+  /// A file rather than a folder, so choosing it finishes.
+  file?: boolean;
 }
 
 export interface WorkspaceIconMatch {
@@ -524,6 +526,11 @@ export interface Agent {
   handle: string;
   role?: string;
   instructions: string;
+  /// Standing directives passed into every task this agent runs. Its own
+  /// conversation is not a task and never receives them.
+  directives?: string;
+  /// A markdown file the directives are read from instead, on every turn.
+  directivesPath?: string;
   provider: string;
   model?: string;
   effort?: string;
@@ -606,7 +613,7 @@ export interface Ticket {
   threads: TicketThread[];
 }
 
-export type Cadence = "daily" | "weekdays" | "weekly" | "monthly";
+export type Cadence = "interval" | "daily" | "weekdays" | "weekly" | "monthly";
 
 export interface Routine {
   id: string;
@@ -617,6 +624,10 @@ export interface Routine {
   cadence: Cadence;
   hour: number;
   minute: number;
+  /// Minutes between runs when the cadence is an interval.
+  everyMinutes?: number;
+  /// A markdown file the instruction is read from instead, on every run.
+  promptPath?: string;
   weekday?: number;
   day?: number;
   enabled: boolean;

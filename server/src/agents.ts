@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { append, applyFields, entityIds, eventsFor } from "./board-log.js";
 import type { ChatPermissionMode } from "./chat.js";
-import { config } from "./config.js";
+import { config, expandHome } from "./config.js";
 import { db, runTransaction } from "./db.js";
 import { providerEffort, providerId, providerModel, type ProviderId } from "./providers.js";
 import {
@@ -36,6 +37,13 @@ export interface Agent {
   handle: string;
   role?: string;
   instructions: string;
+  /// Standing instructions passed into every task this agent runs, because a
+  /// new thread inherits nothing but its prompt. Its own conversation is not a
+  /// task and never receives them; `instructions` are what shape that.
+  directives?: string;
+  /// A markdown file to take the directives from instead, read on every turn so
+  /// editing the file changes the next one.
+  directivesPath?: string;
   /// `default` follows this machine's thread default when a thread starts.
   provider: AgentProvider;
   /// In its provider's own naming. Absent leaves the choice to whatever that
@@ -77,6 +85,8 @@ const EDITABLE = [
   "handle",
   "role",
   "instructions",
+  "directives",
+  "directivesPath",
   "provider",
   "model",
   "effort",
@@ -97,6 +107,8 @@ const LOCKED = [
   "handle",
   "role",
   "instructions",
+  "directives",
+  "directivesPath",
   "avatar",
   "tint",
   "handoffTo",
@@ -155,6 +167,15 @@ function text(value: unknown, max: number): string | undefined {
 
 // ── projection ──────────────────────────────────────────────────────────────
 
+/// An empty string is the absence of a directive rather than one that says
+/// nothing, so clearing the field in the window reads back as unset everywhere.
+function normalize(agent: Agent): Agent {
+  const next = { ...agent };
+  if (!next.directives) delete next.directives;
+  if (!next.directivesPath) delete next.directivesPath;
+  return next;
+}
+
 function fold(id: string): Agent | undefined {
   const events = eventsFor("agent", id);
   if (events.length === 0) return undefined;
@@ -179,11 +200,11 @@ function fold(id: string): Agent | undefined {
         createdAt: event.at,
         updatedAt: event.at,
       };
-      agent = applyFields(agent, event.payload, EDITABLE);
+      agent = normalize(applyFields(agent, event.payload, EDITABLE));
       continue;
     }
     if (!agent || event.kind !== "field") continue;
-    agent = { ...applyFields(agent, event.payload, EDITABLE), updatedAt: event.at };
+    agent = normalize({ ...applyFields(agent, event.payload, EDITABLE), updatedAt: event.at });
   }
   // Derived last, from the handle the fold settled on, so a renamed handle
   // takes its address with it.
@@ -198,13 +219,15 @@ function fold(id: string): Agent | undefined {
 function write(agent: Agent): void {
   db.prepare(
     `insert into agents (
-       id, name, handle, role, instructions, provider, model, effort, permission_mode,
+       id, name, handle, role, instructions, directives, directives_path,
+       provider, model, effort, permission_mode,
        avatar, tint, auto_start, handoff_to, git_identity, git_name, git_email,
        preset, created_at, updated_at, deleted
-     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
      on conflict(id) do update set
        name = excluded.name, handle = excluded.handle, role = excluded.role,
-       instructions = excluded.instructions, provider = excluded.provider,
+       instructions = excluded.instructions, directives = excluded.directives,
+       directives_path = excluded.directives_path, provider = excluded.provider,
        model = excluded.model, effort = excluded.effort, permission_mode = excluded.permission_mode,
        avatar = excluded.avatar, tint = excluded.tint, auto_start = excluded.auto_start,
        handoff_to = excluded.handoff_to, git_identity = excluded.git_identity,
@@ -216,6 +239,8 @@ function write(agent: Agent): void {
     agent.handle,
     agent.role ?? null,
     agent.instructions,
+    agent.directives ?? null,
+    agent.directivesPath ?? null,
     agent.provider,
     agent.model ?? null,
     agent.effort ?? null,
@@ -265,6 +290,8 @@ function toAgent(row: Record<string, unknown>): Agent {
     handle: String(row.handle),
     ...(row.role ? { role: String(row.role) } : {}),
     instructions: String(row.instructions ?? ""),
+    ...(row.directives ? { directives: String(row.directives) } : {}),
+    ...(row.directives_path ? { directivesPath: String(row.directives_path) } : {}),
     provider: agentProvider(row.provider),
     ...(row.model ? { model: String(row.model) } : {}),
     ...(row.effort ? { effort: String(row.effort) } : {}),
@@ -299,6 +326,30 @@ export function getAgent(id: string): Agent | undefined {
     | Record<string, unknown>
     | undefined;
   return row ? toAgent(row) : undefined;
+}
+
+/// The directives an agent hands to a task, as the block that prefixes a turn.
+/// A linked file is read here rather than stored, so editing it changes the next
+/// turn. When it cannot be read the task still runs and says so: an agent
+/// nobody can reach is worse than one missing its directives.
+export async function directivePrompt(agentId: string): Promise<string | undefined> {
+  const agent = getAgent(agentId);
+  if (!agent) return undefined;
+  let body = agent.directives?.trim();
+  if (agent.directivesPath) {
+    try {
+      body = (await readFile(expandHome(agent.directivesPath), "utf8")).trim();
+    } catch {
+      body = `Remy could not read the directives file at ${agent.directivesPath}.`;
+    }
+  }
+  if (!body) return undefined;
+  return [
+    "<remy_directive_context>",
+    "Standing directives for work you do as this agent. Follow them unless the person says otherwise.",
+    body.slice(0, 8000),
+    "</remy_directive_context>",
+  ].join("\n");
 }
 
 export function agentByHandle(handle: string): Agent | undefined {
@@ -402,6 +453,12 @@ function validate(input: Record<string, unknown>, existing?: Agent): Record<stri
   }
   if (input.role !== undefined) patch.role = text(input.role, 80) ?? "";
   if (input.instructions !== undefined) patch.instructions = text(input.instructions, 8000) ?? "";
+  if (input.directives !== undefined) patch.directives = text(input.directives, 8000) ?? "";
+  if (input.directivesPath !== undefined) {
+    const path = text(input.directivesPath, 1024);
+    if (path && !/\.md$/i.test(path)) throw new Error("pick a markdown file");
+    patch.directivesPath = path ?? "";
+  }
   // Provider and model are one choice: moving an agent to Codex takes its model
   // with it, to Codex's default rather than to a Claude alias Codex would refuse.
   if (input.provider !== undefined || input.model !== undefined || input.effort !== undefined) {

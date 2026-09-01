@@ -565,6 +565,9 @@ export interface PathSuggestion {
   path: string;
   name: string;
   repo: boolean;
+  /// A file rather than a folder, so the picker finishes on it instead of
+  /// drilling in. Only ever set when a caller asked for an extension.
+  file?: boolean;
 }
 
 const PATH_SUGGESTION_LIMIT = 16;
@@ -592,7 +595,10 @@ const SKIP_PATH_NAMES = new Set([
 
 /// Directory autocomplete for the add-workspace picker. One level at a time:
 /// type a prefix, pick a folder, keep going. Git checkouts sort first.
-export function suggestWorkspacePaths(query: string): PathSuggestion[] {
+/// Folders, plus files of one extension when a caller asks — a routine's
+/// instruction and an agent's directives both live in a markdown file, and
+/// nobody should have to type a path from memory.
+export function suggestWorkspacePaths(query: string, ext?: string): PathSuggestion[] {
   try {
     const trimmed = query.trim();
     const home = homedir();
@@ -604,12 +610,13 @@ export function suggestWorkspacePaths(query: string): PathSuggestion[] {
     const prefix = slash ? "" : basename(expanded);
     if (!isDirectory(dir)) return [];
 
+    const suffix = ext ? `.${ext.replace(/^\./, "").toLowerCase()}` : undefined;
     const results: PathSuggestion[] = [];
     const seen = new Set<string>();
-    const push = (path: string, name: string) => {
+    const push = (path: string, name: string, file = false) => {
       if (seen.has(path) || results.length >= PATH_SUGGESTION_LIMIT) return;
       seen.add(path);
-      results.push({ path, name, repo: isGitCheckout(path) });
+      results.push({ path, name, repo: !file && isGitCheckout(path), ...(file ? { file: true } : {}) });
     };
 
     if (!slash && isDirectory(expanded)) {
@@ -618,12 +625,16 @@ export function suggestWorkspacePaths(query: string): PathSuggestion[] {
 
     const allowHidden = prefix.startsWith(".");
     const needle = prefix.toLowerCase();
-    const entries = readdirSync(dir, { withFileTypes: true })
+    const wanted = (entry: { name: string }) => {
+      if (!allowHidden && entry.name.startsWith(".")) return false;
+      if (SKIP_PATH_NAMES.has(entry.name.toLowerCase())) return false;
+      return !needle || entry.name.toLowerCase().startsWith(needle);
+    };
+    const listing = readdirSync(dir, { withFileTypes: true });
+    const entries = listing
       .filter((entry) => {
         if (!entry.isDirectory() && !entry.isSymbolicLink()) return false;
-        if (!allowHidden && entry.name.startsWith(".")) return false;
-        if (SKIP_PATH_NAMES.has(entry.name.toLowerCase())) return false;
-        if (needle && !entry.name.toLowerCase().startsWith(needle)) return false;
+        if (!wanted(entry)) return false;
         return isDirectory(join(dir, entry.name));
       })
       .sort((a, b) => {
@@ -632,6 +643,14 @@ export function suggestWorkspacePaths(query: string): PathSuggestion[] {
         return Number(isGitCheckout(bPath)) - Number(isGitCheckout(aPath)) || a.name.localeCompare(b.name);
       });
 
+    // Files first when one was asked for: the folders below are the way to more
+    // of them, but the one you want is probably already here.
+    if (suffix) {
+      const files = listing
+        .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(suffix) && wanted(entry))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      for (const entry of files) push(join(dir, entry.name), entry.name, true);
+    }
     for (const entry of entries) push(join(dir, entry.name), entry.name);
     return results;
   } catch {

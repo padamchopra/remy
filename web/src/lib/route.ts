@@ -13,6 +13,9 @@ export type Route =
   // open is part of where the window is. Addressed by handle, which is what
   // somebody types and what a mention already says.
   | { name: "inbox"; agent?: string }
+  // A list across every agent, so it is a place of its own rather than a
+  // property of whichever agent is open.
+  | { name: "routines" }
   | { name: "threads"; threadId?: string; layout?: string; focus?: string }
   | { name: "workspaces"; workspaceId?: string }
   | { name: "board"; scope?: string }
@@ -33,7 +36,7 @@ const SETTINGS_TABS: SettingsTab[] = [
 ];
 
 /// The section a route belongs to, which is what the sidebar highlights.
-export function sectionOf(route: Route): "inbox" | "chats" | "workspaces" | "prs" | "tasks" {
+export function sectionOf(route: Route): "inbox" | "chats" | "workspaces" | "prs" | "tasks" | "routines" {
   if (route.name === "threads") return "chats";
   if (route.name === "settings") return "chats";
   if (route.name === "board" || route.name === "ticket") return "tasks";
@@ -47,6 +50,7 @@ export function parseLocation(hash: string): AppLocation {
   const rest = tail ? decodeURIComponent(tail) : undefined;
 
   if (head === "inbox") return { route: { name: "inbox", ...(rest ? { agent: rest } : {}) } };
+  if (head === "routines") return { route: { name: "routines" } };
   if (head === "workspaces") return { route: { name: "workspaces", workspaceId: rest } };
   if (head === "pull-requests") return { route: { name: "prs" } };
   // Older links to recurring tickets land on the board now that routines live
@@ -113,6 +117,8 @@ export function formatLocation({ route }: AppLocation): string {
                 }`
               : route.name === "prs"
                 ? "/pull-requests"
-                : `/inbox${route.agent ? `/${encodeURIComponent(route.agent)}` : ""}`;
+                : route.name === "routines"
+                  ? "/routines"
+                  : `/inbox${route.agent ? `/${encodeURIComponent(route.agent)}` : ""}`;
   return `#${path}`;
 }
