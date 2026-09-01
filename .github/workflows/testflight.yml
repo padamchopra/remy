@@ -1,17 +1,49 @@
 name: TestFlight
 
 on:
+  # A merge that changes the phone app submits it. The nightly is the safety net
+  # for a merge whose submission never ran or did not finish.
+  push:
+    branches: [main]
+  schedule:
+    - cron: "20 0 * * *"
   workflow_dispatch:
 
 permissions:
-  contents: read
+  # Write, so the marker branch can record what was submitted.
+  contents: write
 
 concurrency:
   group: testflight
   cancel-in-progress: false
 
 jobs:
+  # The phone app is the only thing in this build, so a merge that leaves
+  # `mobile/` alone has nothing to submit and spends no EAS build on it.
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+      sha: ${{ steps.decide.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # History, so the marker branch can be compared with this commit.
+          fetch-depth: 0
+
+      - id: decide
+        uses: ./.github/actions/build-needed
+        with:
+          branch: nightly/testflight
+          paths: |
+            mobile/**
+            .github/workflows/testflight.yml
+            .github/actions/**
+            :(exclude,glob)**/*.md
+
   submit:
+    needs: preflight
+    if: needs.preflight.outputs.build == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -62,3 +94,11 @@ jobs:
         env:
           EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
         run: eas build --platform ios --profile testflight --auto-submit --non-interactive --no-wait
+
+      # Last, so a submission that was never queued is one the next run retries.
+      # EAS finishes the build after this, so a failure on their side is a
+      # rebuild you ask for by hand.
+      - uses: ./.github/actions/mark-shipped
+        with:
+          branch: nightly/testflight
+          sha: ${{ needs.preflight.outputs.sha }}

@@ -1,14 +1,22 @@
 name: Mac
 
 on:
-  # A release is a nightly, not a consequence of merging. Run it at 00:05 UTC,
-  # or on demand when a merge is worth shipping straight away.
+  # A merge that changes what the app is made of ships it. The nightly is the
+  # safety net for a merge whose build never ran or did not finish.
+  push:
+    branches: [main]
   schedule:
     - cron: "5 0 * * *"
   workflow_dispatch:
 
 permissions:
   contents: write
+
+# Signing and notarising take minutes. Let a run finish rather than cancelling
+# it under a second merge; the marker branch keeps the two from shipping twice.
+concurrency:
+  group: mac
+  cancel-in-progress: false
 
 jobs:
   # Decide on a cheap runner whether there is anything to ship, so a quiet day
@@ -17,46 +25,27 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       build: ${{ steps.decide.outputs.build }}
+      sha: ${{ steps.decide.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # Tags and history, so the last release's commit can be resolved.
+          # History, so the marker branch can be compared with this commit.
           fetch-depth: 0
 
-      - name: Anything new since the last release?
-        id: decide
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # A run someone asked for is a decision, not a schedule; always build.
-          if [ "${{ github.event_name }}" != "schedule" ]; then
-            echo "Asked for by hand — building."
-            echo "build=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          tag="$(gh release view --json tagName --jq .tagName 2>/dev/null || true)"
-          if [ -z "$tag" ]; then
-            echo "No release yet — building the first one."
-            echo "build=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          released="$(git rev-list -n 1 "$tag" 2>/dev/null || true)"
-          if [ -z "$released" ]; then
-            echo "Cannot resolve $tag to a commit — building rather than guessing."
-            echo "build=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [ "$released" = "$GITHUB_SHA" ]; then
-            echo "$tag is already this commit ($GITHUB_SHA) — nothing to ship."
-            echo "build=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "$(git rev-list --count "$released..$GITHUB_SHA") commit(s) since $tag — building."
-          echo "build=true" >> "$GITHUB_OUTPUT"
+      - id: decide
+        uses: ./.github/actions/build-needed
+        with:
+          branch: nightly/mac
+          # The DMG is the window, the daemon and the web build together, so a
+          # change to any of them changes the app somebody downloads.
+          paths: |
+            desktop/**
+            server/**
+            web/**
+            package.json
+            .github/workflows/mac.yml
+            .github/actions/**
+            :(exclude,glob)**/*.md
 
   dmg:
     needs: preflight
@@ -139,3 +128,9 @@ jobs:
           replacesArtifacts: true
           makeLatest: true
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Last, so a release that did not happen is one the next run tries again.
+      - uses: ./.github/actions/mark-shipped
+        with:
+          branch: nightly/mac
+          sha: ${{ needs.preflight.outputs.sha }}
