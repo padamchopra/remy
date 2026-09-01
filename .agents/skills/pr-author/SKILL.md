@@ -18,7 +18,7 @@ Lead with required media, then use `## Summary`, `## Changes`, `## Review notes`
 - **Media:** Put image tables at the very top of the body, before any heading, introduction, badge, or status note. Every image belongs in a Markdown table with descriptive column headers, such as `Code review` and `Guided review`, or `Before` and `After` for a comparison. Use readable alt text and keep the table narrow enough to judge the images. Put labeled video links below all image tables and above `## Summary`. With videos only, lead with the videos. Never collapse required media or add empty media placeholders.
 - **Summary:** A short paragraph explaining the problem and the outcome, not an inventory of the implementation.
 - **Changes:** A few themed bullets describing what changes for the user or reviewer. Group related work rather than listing each file, commit, follow-up, or test.
-- **Review notes:** Important decisions, review focus, limitations, unresolved questions, breaking changes, migrations, or rollout requirements. Keep anything that could change an approval visible. Omit this section when there is nothing material to call out.
+- **Review notes:** Only what could reverse an approval — a decision a reviewer might disagree with, a limitation, a missing verification, a breaking change, a migration, a rollout requirement. Why the code works is not a review note. Omit the section when there is nothing material to call out.
 - **Testing:** A brief statement of what was verified and the relevant limits of that verification. Keep failures and important untested behavior visible; move commands, individual scenarios, and supporting results into a collapsed `Detailed validation` section.
 
 Optional implementation context goes in a separate collapsed `Implementation details` section after Testing. Use `<details>` with a descriptive `<summary>` and blank lines around its Markdown content. Omit empty or unhelpful collapsible sections.
@@ -71,6 +71,35 @@ Tests and isolated interaction checks pass; model responses use a disposable pro
 - Isolated interaction checks cover file controls, inline questions, and retry behavior.
 
 </details>
+```
+
+## Length
+
+A reviewer reads the body once, before the diff, and everything above the first collapsed section fits on one screen.
+
+Each bullet is one line. A bullet that needs two is two bullets, or a cut.
+
+Mechanism goes in `Implementation details`, collapsed. If a sentence explains how the change works rather than what a reviewer should decide, it belongs there or nowhere.
+
+Numbers earn their place by changing a decision. One measurement that shows the outcome beats four that corroborate it.
+
+BAD
+```
+## Review notes
+
+- **Every bound applies reading as well as writing**, and a stored value over the character bound is discarded before it is parsed, so opening a window never means reading an unbounded amount of anything. A snapshot that cannot fit even with no transcripts leaves nothing behind, because one that can never be updated is worse than opening cold.
+- **The default fixture cannot show this win, by construction.** It answers in 4 ms, where a warm reopen has almost nothing to skip and both sides pay the same rendering cost; before and after are a wash there (697 ms against 727 ms). `warm-latency` exists because a real daemon reads SQLite over IPC and a paired machine is on the other side of a tailnet. Its comparison is relative and measured cold-then-warm in one browser context, so it says the same thing on a loaded machine as an idle one.
+- Tickets, routines and archived threads are deliberately not cached: a board has no natural size, and nothing opens on an archive.
+- Settings are not cached either. They are read on demand through the shared-read path, and a stale default model in the composer would be a worse lie than a brief absence.
+```
+
+GOOD
+```
+## Review notes
+
+- The parent's 150 ms warm figure is still missed. What remains is first render rather than the request waterfall — REMY-35 and REMY-36.
+- The default fixture answers in 4 ms, where a warm reopen has nothing to skip. `warm-latency` asks at 150 ms instead: 744 ms warm against 1270 ms cold.
+- No completed run across both targets yet; this machine is shared with an Android build. A two-target run is queued.
 ```
 
 ## Evidence state
