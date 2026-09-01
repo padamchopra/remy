@@ -52,6 +52,7 @@ interface ApiThread {
   model?: string;
   agentId?: string;
   preview?: string;
+  ticketKey?: string;
   entries?: {
     kind: string;
     text?: string;
@@ -471,7 +472,8 @@ server.registerTool("list_threads", {
   const listed = threads.chats ?? [];
   return ok(listed.slice(0, 50).map((thread) => {
     const owner = snapshot.agents?.find((entry) => entry.id === thread.agentId)?.handle;
-    return `${thread.id} [${thread.state}] ${thread.title}\n${thread.cwd}${owner ? `\n@${owner}` : ""}`;
+    const key = thread.ticketKey ? ` ${thread.ticketKey}` : "";
+    return `${thread.id} [${thread.state}]${key} ${thread.title}\n${thread.cwd}${owner ? `\n@${owner}` : ""}`;
   }).join("\n\n") || "There are no threads on this machine.");
 });
 

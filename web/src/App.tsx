@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ComponentProps } from "
 import { useShallow } from "zustand/react/shallow";
 import {
   ArrowUpRight,
+  Clock3,
   Folder,
   GitPullRequest,
   Inbox,
@@ -48,6 +49,7 @@ import { MissingTicket, TicketView } from "@/components/TicketView";
 import { SettingsPane, type SettingsTab } from "@/components/Settings";
 import type { AnalyticsTab } from "@/components/AnalyticsSettings";
 import { Inbox as InboxPane } from "@/components/Inbox";
+import { Routines } from "@/components/Routines";
 import { WorkspaceSettings } from "@/components/WorkspaceSettings";
 import { PullRequests } from "@/components/PullRequests";
 import { useNotifications } from "@/hooks/use-notifications";
@@ -73,7 +75,7 @@ import {
 import { useStore } from "@/state/store";
 import type { Server } from "@/state/types";
 
-type Section = "inbox" | "chats" | "workspaces" | "tasks" | "prs";
+type Section = "inbox" | "chats" | "workspaces" | "tasks" | "prs" | "routines";
 
 const APP_SIDEBAR_KEY = "remy.app-sidebar.shown";
 
@@ -99,6 +101,7 @@ const SECTIONS: { id: Section; label: string; icon: typeof Inbox }[] = [
   { id: "workspaces", label: "Workspaces", icon: Folder },
   { id: "tasks", label: "Tasks", icon: SquareKanban },
   { id: "prs", label: "Pull requests", icon: GitPullRequest },
+  { id: "routines", label: "Routines", icon: Clock3 },
 ];
 
 function DeviceAvatarGroup({ devices, onOpen }: { devices: Server[]; onOpen: () => void }) {
@@ -163,9 +166,10 @@ function DeviceAvatarGroup({ devices, onOpen }: { devices: Server[]; onOpen: () 
   );
 }
 
-// Inbox draws its own: what is missing there is an agent, not a thread.
+// Inbox and Routines draw their own: what is missing there is an agent or a
+// routine, not a thread.
 const EMPTY: Record<
-  Exclude<Section, "inbox">,
+  Exclude<Section, "inbox" | "routines">,
   { title: string; detail: string; action: "none" | "chat" | "workspace"; icon: typeof Inbox }
 > = {
   chats: {
@@ -575,6 +579,11 @@ export function App() {
             onOpenThread={openChat}
             onOpenWorkspace={(workspaceId) => go({ name: "workspaces", workspaceId })}
           />
+        ) : route.name === "routines" ? (
+          <Routines
+            agents={roster}
+            onOpenAgent={(handle) => go({ name: "inbox", agent: handle })}
+          />
         ) : route.name === "inbox" ? (
           <InboxPane
             agents={roster}
@@ -648,7 +657,7 @@ export function App() {
             {section === "workspaces" ? (
               groupedWorkspaces.length === 0 ? (
                 <EmptyState
-                  section={section as Exclude<Section, "inbox">}
+                  section={section as Exclude<Section, "inbox" | "routines">}
                   loading={loading}
                   error={error}
                   hasServers={servers.length > 0}
@@ -734,7 +743,7 @@ export function App() {
               )
             ) : (
               <EmptyState
-                section={section as Exclude<Section, "inbox">}
+                section={section as Exclude<Section, "inbox" | "routines">}
                 loading={loading}
                 error={error}
                 hasServers={servers.length > 0}
@@ -786,7 +795,7 @@ function EmptyState({
   onAddConnection,
   onAddWorkspace,
 }: {
-  section: Exclude<Section, "inbox">;
+  section: Exclude<Section, "inbox" | "routines">;
   loading: boolean;
   error?: string;
   hasServers: boolean;

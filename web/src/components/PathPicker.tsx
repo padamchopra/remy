@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Folder, FolderGit2 } from "lucide-react";
+import { FileText, Folder, FolderGit2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Command,
@@ -22,9 +22,10 @@ import { displayPath } from "@/lib/path";
 import { useStore } from "@/state/store";
 import type { PathSuggestion } from "@/state/types";
 
-/// Choosing a folder on the machine, by typing a bit and arrowing through what
-/// is there. Nobody should have to type a full path from memory, so this is the
-/// one picker every path setting uses.
+/// Choosing a path on the machine, by typing a bit and arrowing through what is
+/// there. Nobody should have to type a full path from memory, so this is the one
+/// picker every path setting uses. Pass `ext` to list files of that extension
+/// alongside the folders; choosing one of those finishes rather than drills in.
 
 export function PathPicker({
   value,
@@ -32,6 +33,7 @@ export function PathPicker({
   onSubmit,
   autoFocus,
   serverId,
+  ext,
 }: {
   value: string;
   onChange: (path: string) => void;
@@ -39,6 +41,7 @@ export function PathPicker({
   onSubmit: (path: string) => void;
   autoFocus?: boolean;
   serverId?: string;
+  ext?: string;
 }) {
   const suggestPaths = useStore((s) => s.suggestPaths);
   const [suggestions, setSuggestions] = useState<PathSuggestion[]>([]);
@@ -48,7 +51,7 @@ export function PathPicker({
     let cancelled = false;
     // Typing walks the tree, so the ask is debounced rather than sent per key.
     const timer = setTimeout(() => {
-      void suggestPaths(value, serverId).then((next) => {
+      void suggestPaths(value, serverId, ext).then((next) => {
         if (!cancelled) setSuggestions(next);
       });
     }, 120);
@@ -56,7 +59,7 @@ export function PathPicker({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [value, serverId, suggestPaths]);
+  }, [value, serverId, ext, suggestPaths]);
 
   const highlightedPath = () =>
     suggestions.find((item) => item.path.toLowerCase() === highlighted.current.toLowerCase())?.path;
@@ -79,24 +82,29 @@ export function PathPicker({
       <CommandInput
         value={value}
         onValueChange={onChange}
-        placeholder="~/code/my-project"
+        placeholder={ext ? `~/notes/how-we-build.${ext}` : "~/code/my-project"}
         autoFocus={autoFocus}
         className="font-mono text-[13px]"
       />
       <CommandList className="max-h-[240px]">
-        <CommandEmpty>No folders match.</CommandEmpty>
+        <CommandEmpty>{ext ? `No folders or .${ext} files match.` : "No folders match."}</CommandEmpty>
         {suggestions.length > 0 && (
           <CommandGroup>
             {suggestions.map((item) => (
               <CommandItem
                 key={item.path}
                 value={item.path}
-                // Selecting drills in rather than finishing: a folder you can
-                // open is usually on the way to the one you want.
-                onSelect={() => onChange(`${displayPath(item.path).replace(/\/+$/, "")}/`)}
+                // Selecting a folder drills in rather than finishing: one you
+                // can open is usually on the way to the one you want. A file is
+                // the answer itself.
+                onSelect={() => (item.file
+                  ? onSubmit(displayPath(item.path))
+                  : onChange(`${displayPath(item.path).replace(/\/+$/, "")}/`))}
                 className="font-mono text-[12px]"
               >
-                {item.repo ? (
+                {item.file ? (
+                  <FileText className="size-3.5 shrink-0 text-muted-foreground" />
+                ) : item.repo ? (
                   <FolderGit2 className="size-3.5 shrink-0 text-primary" />
                 ) : (
                   <Folder className="size-3.5 shrink-0 text-muted-foreground" />

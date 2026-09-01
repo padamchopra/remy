@@ -25,8 +25,10 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { AgentIconPicker } from "@/components/AgentIconPicker";
+import { MarkdownPathField } from "@/components/MarkdownPathField";
 import { AgentMark } from "@/components/AgentAvatar";
 import { AgentRoutines } from "@/components/AgentRoutines";
 import { EditableName } from "@/components/EditableName";
@@ -86,6 +88,7 @@ export function AgentSettings({
   // Text fields are held here while they are being typed and written when the
   // field is left, so a paragraph is one save rather than one per character.
   const [draft, setDraft] = useState<Record<string, string>>({});
+  const [fromFile, setFromFile] = useState(Boolean(agent.directivesPath));
   const text = (key: keyof Agent) => draft[key] ?? ((agent[key] as string | undefined) ?? "");
 
   const save = async (patch: Record<string, unknown>, what: string) => {
@@ -239,6 +242,48 @@ export function AgentSettings({
           onChange={(event) => setDraft((c) => ({ ...c, instructions: event.target.value }))}
           onBlur={commit("instructions", "the instructions")}
         />
+      </Field>
+
+      <Separator />
+
+      <Field>
+        <FieldLabel htmlFor={fromFile ? "agent-directives-path" : "agent-directives"}>Directives</FieldLabel>
+        <FieldDescription className="text-xs">
+          Passed into every task this agent runs, not into this conversation. Never put credentials here.
+        </FieldDescription>
+        <Tabs
+          value={fromFile ? "file" : "text"}
+          onValueChange={(value) => {
+            const next = value === "file";
+            setFromFile(next);
+            if (!next && text("directivesPath")) void save({ directivesPath: "" }, "the directives");
+          }}
+        >
+          <TabsList>
+            <TabsTrigger value="text">Write them</TabsTrigger>
+            <TabsTrigger value="file">Use a file</TabsTrigger>
+          </TabsList>
+        </Tabs>
+        {fromFile ? (
+          <MarkdownPathField
+            id="agent-directives-path"
+            value={text("directivesPath")}
+            placeholder="Pick a markdown file"
+            onChange={(path) => {
+              setDraft((c) => ({ ...c, directivesPath: path }));
+              void save({ directivesPath: path }, "the directives");
+            }}
+          />
+        ) : (
+          <Textarea
+            id="agent-directives"
+            className="min-h-40 font-normal"
+            value={text("directives")}
+            placeholder="How to build, how to test, anything a task needs to know."
+            onChange={(event) => setDraft((c) => ({ ...c, directives: event.target.value }))}
+            onBlur={commit("directives", "the directives")}
+          />
+        )}
       </Field>
 
       <Separator />

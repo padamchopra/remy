@@ -352,6 +352,30 @@ export function ticketForChat(chatId: string, onDevice = deviceId): TicketView |
   return row?.ticket_id ? getTicket(row.ticket_id) : undefined;
 }
 
+/// The ticket key a thread carries. One join and one row, so a summary can show
+/// it without loading the whole ticket the way `ticketForChat` does.
+export function ticketKeyForChat(chatId: string, onDevice = deviceId): string | undefined {
+  const row = db.prepare(
+    `select t.key as key from ticket_threads tt
+       join tickets t on t.id = tt.ticket_id
+      where tt.chat_id = ? and tt.device_id = ? and t.deleted = 0`,
+  ).get(chatId, onDevice) as { key?: string } | undefined;
+  return row?.key ? String(row.key) : undefined;
+}
+
+/// Every thread's ticket key on this device in one query, so listing the threads
+/// costs one lookup rather than one per row.
+export function ticketKeysByChat(onDevice = deviceId): Map<string, string> {
+  const rows = db.prepare(
+    `select tt.chat_id as chatId, t.key as key from ticket_threads tt
+       join tickets t on t.id = tt.ticket_id
+      where tt.device_id = ? and t.deleted = 0`,
+  ).all(onDevice) as { chatId?: string; key?: string }[];
+  const keys = new Map<string, string>();
+  for (const row of rows) if (row.chatId && row.key) keys.set(String(row.chatId), String(row.key));
+  return keys;
+}
+
 const ACTIVITY_KINDS = new Set(["create", "status", "comment", "handoff", "link", "unlink", "field"]);
 
 /// The ticket's story, newest last. This is the log itself — there is no second

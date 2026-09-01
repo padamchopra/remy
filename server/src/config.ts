@@ -193,15 +193,19 @@ function enabledProviders(value: unknown): ProviderId[] {
 }
 
 /// A worktree root has to be somewhere `git worktree add` can actually write,
+/// `~` expanded, because a client that asks for a path is showing somebody a
+/// home-relative one.
+export function expandHome(value: string): string {
+  return value === "~" || value.startsWith("~/") ? join(homedir(), value.slice(1)) : value;
+}
+
 /// so it is an absolute path or nothing. `~` is expanded here because the
 /// clients that set it are showing people a home-relative path.
 export function worktreeRootPath(value: unknown): string {
   if (typeof value !== "string") return "";
   const trimmed = value.trim();
   if (!trimmed) return "";
-  const expanded = trimmed === "~" || trimmed.startsWith("~/")
-    ? join(homedir(), trimmed.slice(1))
-    : trimmed;
+  const expanded = expandHome(trimmed);
   return isAbsolute(expanded) ? expanded.replace(/\/+$/, "") : "";
 }
 

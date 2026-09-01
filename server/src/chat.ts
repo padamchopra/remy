@@ -13,7 +13,7 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { agentCommand } from "./agent.js";
-import { getAgent, gitIdentityEnv, resolvedAgentModel, type Agent } from "./agents.js";
+import { directivePrompt, getAgent, gitIdentityEnv, resolvedAgentModel, type Agent } from "./agents.js";
 import { memoryPrompt } from "./agent-memories.js";
 import { deviceId } from "./board-log.js";
 import {
@@ -89,7 +89,13 @@ import { codeReferencePrompt } from "./chat-references.js";
 import { ThreadActivityTracker } from "./thread-activity.js";
 import { claudeTicketMcpServer, ticketPromptContext } from "./ticket-tools.js";
 import { remyToolToken } from "./ticket-tool-auth.js";
-import { forgetChat, linkTicketFromWorkPrompt, syncTicketFromThread } from "./tickets.js";
+import {
+  forgetChat,
+  linkTicketFromWorkPrompt,
+  syncTicketFromThread,
+  ticketKeyForChat,
+  ticketKeysByChat,
+} from "./tickets.js";
 import { readChatImage } from "./chat-attachments.js";
 import { uploadRoot } from "./uploads.js";
 import { nameDetachedWorktree } from "./workspaces.js";
@@ -207,6 +213,9 @@ export interface ChatSummary {
   pinned?: boolean;
   /// The parent thread this parallel session belongs to.
   parentChatId?: string;
+  /// The ticket this thread is doing the work for, so an agent looking for the
+  /// thread that owns REMY-12 can find it without guessing from the folder.
+  ticketKey?: string;
   createdAt: number;
   updatedAt: number;
   state: ChatState;
@@ -429,7 +438,8 @@ export class Chat {
     }
   }
 
-  summary(): ChatSummary {
+  summary(ticketKeys?: Map<string, string>): ChatSummary {
+    const ticketKey = ticketKeys ? ticketKeys.get(this.record.id) : ticketKeyForChat(this.record.id);
     const lastText = [...this.record.entries]
       .reverse()
       .find((e) => (e.kind === "assistant" || e.kind === "user") && e.text?.trim());
@@ -446,6 +456,7 @@ export class Chat {
       ...(this.unread() ? { unread: true } : {}),
       ...(this.record.pinned ? { pinned: true } : {}),
       ...(this.record.parentChatId ? { parentChatId: this.record.parentChatId } : {}),
+      ...(ticketKey ? { ticketKey } : {}),
       createdAt: this.record.createdAt,
       updatedAt: this.record.updatedAt,
       state: this.state,
@@ -544,7 +555,12 @@ This is the agent's Inbox conversation. When the person signals that something s
       : undefined;
     const referenceContext = codeReferencePrompt(safeReferences);
     const remembered = this.record.agentId ? await memoryPrompt(this.record.agentId, this.record.cwd) : undefined;
-    const agentText = [remembered, ticketContext, routineContext, referenceContext, agentContext, safeText]
+    // Directives travel into work, not into the conversation you are having
+    // with an agent — that is what its instructions are for.
+    const directives = this.record.agentId && !this.record.dm
+      ? await directivePrompt(this.record.agentId)
+      : undefined;
+    const agentText = [remembered, directives, ticketContext, routineContext, referenceContext, agentContext, safeText]
       .filter(Boolean)
       .join("\n\n");
     const agentPrompt: ChatPrompt = { text: agentText, attachments };
@@ -1914,7 +1930,10 @@ export function chatsUnavailable(): string | undefined {
 }
 
 function summaries(): ChatSummary[] {
-  return [...chats.values()].map((chat) => chat.summary()).sort((a, b) => b.updatedAt - a.updatedAt);
+  const ticketKeys = ticketKeysByChat();
+  return [...chats.values()]
+    .map((chat) => chat.summary(ticketKeys))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 /// The threads: work in a repository. An agent's inbox conversation is not one

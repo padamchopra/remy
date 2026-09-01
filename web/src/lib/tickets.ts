@@ -42,9 +42,10 @@ export function people(agents: Agent[], workspaceName?: string): Person[] {
   ];
 }
 
-export const CADENCES: Cadence[] = ["daily", "weekdays", "weekly", "monthly"];
+export const CADENCES: Cadence[] = ["interval", "daily", "weekdays", "weekly", "monthly"];
 
 export const CADENCE_LABEL: Record<Cadence, string> = {
+  interval: "On an interval",
   daily: "Every day",
   weekdays: "Every weekday",
   weekly: "Every week",
@@ -59,9 +60,12 @@ export function cadenceSummary(recurrence: {
   cadence: Cadence;
   hour: number;
   minute: number;
+  everyMinutes?: number;
   weekday?: number;
   day?: number;
 }): string {
+  // An interval says no hour, so it never gets a time appended.
+  if (recurrence.cadence === "interval") return `Every ${recurrence.everyMinutes ?? 15} minutes`;
   const time = clockTime(recurrence.hour, recurrence.minute);
   if (recurrence.cadence === "daily") return `Every day at ${time}`;
   if (recurrence.cadence === "weekdays") return `Every weekday at ${time}`;
@@ -90,6 +94,30 @@ export function whenNext(at: number): string {
   if (days === 1) return "tomorrow";
   if (days < 7) return WEEKDAYS[due.getDay()];
   return shortDate(at);
+}
+
+/// When the next run lands. A sub-daily cadence never said an hour, so this is
+/// the only place one appears; a daily or weekly one already did.
+export function whenNextRun(routine: { cadence: Cadence; nextRunAt: number }): string {
+  if (routine.cadence !== "interval") return whenNext(routine.nextRunAt);
+  const due = new Date(routine.nextRunAt);
+  return clockTime(due.getHours(), due.getMinutes());
+}
+
+/// A routine's whole state on one line: how often, then when it next lands or
+/// that it is paused. The error, when there is one, goes on its own line.
+export function routineSummary(routine: {
+  cadence: Cadence;
+  hour: number;
+  minute: number;
+  everyMinutes?: number;
+  weekday?: number;
+  day?: number;
+  enabled: boolean;
+  nextRunAt: number;
+}): string {
+  const cadence = cadenceSummary(routine);
+  return routine.enabled ? `${cadence} · due ${whenNextRun(routine)}` : `${cadence} · paused`;
 }
 
 /// The machine a ticket runs on. `deviceId` is the durable answer and survives

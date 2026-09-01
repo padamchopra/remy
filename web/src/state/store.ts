@@ -158,7 +158,7 @@ interface State {
     patch: { name?: string; icon?: string | null; tint?: string | null; provider?: string | null; model?: string | null; effort?: string | null },
   ): Promise<void>;
   removeWorkspace(id: string): Promise<void>;
-  suggestPaths(query: string, serverId?: string): Promise<PathSuggestion[]>;
+  suggestPaths(query: string, serverId?: string, ext?: string): Promise<PathSuggestion[]>;
   suggestWorkspaceIcons(id: string, query: string): Promise<WorkspaceIconMatch[]>;
   workspaceFile(id: string, path: string): Promise<{ mime: string; data: string } | undefined>;
   loadWorkspaceWorktrees(id: string, serverId?: string): Promise<GitWorktree[]>;
@@ -238,7 +238,7 @@ interface State {
   /// Turns a thread you are already in into a ticket, adopting its worktree and
   /// branch rather than opening new ones.
   ticketFromThread(chatId: string): Promise<Ticket>;
-  saveRoutine(id: string, patch: Record<string, unknown>): Promise<Routine>;
+  saveRoutine(id: string | undefined, patch: Record<string, unknown>): Promise<Routine>;
   deleteRoutine(id: string): Promise<void>;
   runRoutine(id: string): Promise<Routine>;
   saveAgent(id: string | undefined, patch: Record<string, unknown>): Promise<Agent>;
@@ -730,14 +730,14 @@ export const useStore = create<State>((set, get) => ({
     await get().refresh();
   },
 
-  async suggestPaths(query, serverId) {
+  async suggestPaths(query, serverId, ext) {
     if (useFixture) return [];
     const server = get().servers.find((entry) => entry.id === serverId) ?? localServer(get().servers);
     if (!server?.online) return [];
     try {
       const listed = await transport.request<{ paths?: PathSuggestion[] }>(
         server.id,
-        `/paths?q=${encodeURIComponent(query)}`,
+        `/paths?q=${encodeURIComponent(query)}${ext ? `&ext=${encodeURIComponent(ext)}` : ""}`,
       );
       return listed.paths ?? [];
     } catch {
@@ -1538,14 +1538,18 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async saveRoutine(id, patch) {
-    const existing = get().routines.find((entry) => entry.id === id);
-    if (!existing) throw new Error("That routine is gone.");
+    const existing = id ? get().routines.find((entry) => entry.id === id) : undefined;
+    if (id && !existing) throw new Error("That routine is gone.");
+    // A new routine is made here, because the machine that takes the request is
+    // the one whose clock ends up owning it.
+    const server = existing?.serverId ?? localServer(get().servers)?.id;
+    if (!server) throw new Error("This machine isn't connected.");
     const body = await transport.request<{ routine: RawRoutine }>(
-      existing.serverId,
-      `/routines/${encodeURIComponent(id)}`,
-      { method: "PATCH", body: patch },
+      server,
+      id ? `/routines/${encodeURIComponent(id)}` : "/routines",
+      { method: id ? "PATCH" : "POST", body: patch },
     );
-    const routine = { ...body.routine, serverId: existing.serverId } as Routine;
+    const routine = { ...body.routine, serverId: server } as Routine;
     set((current) => ({ routines: withRoutine(current.routines, routine) }));
     void get().loadBoard({ fresh: true }).catch(() => {});
     return routine;

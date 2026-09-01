@@ -1302,14 +1302,17 @@ const server = createServer(async (req, res) => {
       });
     }
 
-    // A routine can be created conversationally only by the agent whose Inbox
-    // conversation is running. The full app token may manage existing routines
-    // in agent settings, but cannot create one outside that conversation.
+    // An agent may create a routine only inside its own Inbox conversation, so
+    // no agent can schedule work that runs as somebody else. The window's own
+    // token has no conversation to be scoped to and names the agent instead.
     if (req.method === "POST" && url.pathname === "/routines") {
-      if (externalProvider || !scopedChatId || !scopedChat?.dm || !scopedAgentId) {
+      if (externalProvider || (scopedChatId && (!scopedChat?.dm || !scopedAgentId))) {
         return json(res, 403, { error: "routines can be created only in an agent conversation" });
       }
       const body = await readJson(req);
+      // An instruction file is the person's to choose in the window. A path an
+      // agent could set is a way to read any file on the machine into a prompt.
+      if (scopedAgentId) delete body.promptPath;
       try {
         const routine = createRoutine({
           ...body,
@@ -1834,7 +1837,13 @@ const server = createServer(async (req, res) => {
         try {
           const attachments = validateChatImages(id, body.attachments);
           const codeReferences = validateChatCodeReferences(body.codeReferences);
-          await sendChatMessage(id, String(body.text ?? ""), attachments, codeReferences);
+          // Hidden context is the daemon's to add — a routine run uses it to say
+          // what it is. An agent must not be able to put instructions in front
+          // of a model that the person cannot see in the transcript.
+          const agentContext = scopedChatId || externalProvider || typeof body.agentContext !== "string"
+            ? undefined
+            : body.agentContext;
+          await sendChatMessage(id, String(body.text ?? ""), attachments, codeReferences, agentContext);
           return json(res, 200, { ok: true });
         } catch (error) {
           return json(res, 409, { error: (error as Error).message || "could not send the message" });
@@ -2084,7 +2093,12 @@ const server = createServer(async (req, res) => {
     }
 
     if (url.pathname === "/paths" && req.method === "GET") {
-      return json(res, 200, { paths: suggestWorkspacePaths(url.searchParams.get("q") ?? "") });
+      return json(res, 200, {
+        paths: suggestWorkspacePaths(
+          url.searchParams.get("q") ?? "",
+          url.searchParams.get("ext") ?? undefined,
+        ),
+      });
     }
 
     if (url.pathname === "/archives" && req.method === "GET") {
