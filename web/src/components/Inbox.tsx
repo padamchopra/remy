@@ -27,9 +27,10 @@ import { PaneHeader } from "@/components/PaneHeader";
 import { apiError } from "@/lib/api-error";
 import { agentConversation, availableAgentServers } from "@/lib/inbox";
 import { plainText } from "@/lib/path";
+import { reportRender } from "@/lib/render-probe";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
-import type { Agent, Chat } from "@/state/types";
+import type { Agent } from "@/state/types";
 
 /// The inbox: your agents, and the conversation with the one you picked.
 ///
@@ -63,7 +64,6 @@ export function Inbox({
   onOpenWorkspace: (workspaceId: string) => void;
   onDeleted: () => void;
 }) {
-  const dms = useStore((s) => s.dms);
   const servers = useStore((s) => s.servers);
   const preferenceOrder = useStore((s) => s.settings?.devicePreferenceOrder);
   const online = availableAgentServers(servers, preferenceOrder).length > 0;
@@ -82,7 +82,8 @@ export function Inbox({
                   <AgentRow
                     agent={agent}
                     active={selected?.id === agent.id}
-                    dm={agentConversation(agent.id, dms, servers, preferenceOrder)}
+                    servers={servers}
+                    preferenceOrder={preferenceOrder}
                     online={online}
                     onSelect={() => onSelectAgent(agent.handle)}
                   />
@@ -133,16 +134,20 @@ export function Inbox({
 function AgentRow({
   agent,
   active,
-  dm,
+  servers,
+  preferenceOrder,
   online,
   onSelect,
 }: {
   agent: Agent;
   active: boolean;
-  dm?: Chat;
+  servers: ReturnType<typeof useStore.getState>["servers"];
+  preferenceOrder?: string[];
   online: boolean;
   onSelect: () => void;
 }) {
+  const dm = useStore((state) => agentConversation(agent.id, state.dms, servers, preferenceOrder));
+  reportRender("inbox-row", agent.id);
   const preview = dm?.preview ? plainText(dm.preview) : agent.role;
 
   return (
@@ -218,7 +223,6 @@ function Conversation({
   onOpenWorkspace: (workspaceId: string) => void;
   onDeleted: () => void;
 }) {
-  const dms = useStore((s) => s.dms);
   const openDm = useStore((s) => s.openDm);
   const readChat = useStore((s) => s.readChat);
   const settings = useStore((s) => s.settings);
@@ -226,7 +230,12 @@ function Conversation({
   const [failed, setFailed] = useState<string | undefined>();
   const [editing, setEditing] = useState(false);
 
-  const chat = agentConversation(agent.id, dms, servers, settings?.devicePreferenceOrder);
+  const chat = useStore((state) => agentConversation(
+    agent.id,
+    state.dms,
+    servers,
+    settings?.devicePreferenceOrder,
+  ));
   const headerLabel = (
     <span className="flex min-w-0 items-center gap-2">
       <AgentMark agent={agent} animate="always" className="size-6" />

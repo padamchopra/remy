@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { GitFork, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
@@ -41,17 +42,13 @@ export function ThreadWorkspace({
   onOpenWorkspace: (workspaceId: string) => void;
   onLayoutChange: (parentId: string, layout: ThreadLayoutNode, focus: string, replace?: boolean) => void;
 }) {
-  const chats = useStore((state) => state.chats);
   const workspaces = useStore((state) => state.workspaces);
   const servers = useStore((state) => state.servers);
   const agents = useStore((state) => state.agents);
-  const parent = routeThread.parentChatId
-    ? chats.find((chat) => chat.id === routeThread.parentChatId) ?? routeThread
-    : routeThread;
-  const group = useMemo(
-    () => chats.filter((chat) => chat.id === parent.id || chat.parentChatId === parent.id),
-    [chats, parent.id],
-  );
+  const parentId = routeThread.parentChatId ?? routeThread.id;
+  const group = useStore(useShallow((state) =>
+    state.chats.filter((chat) => chat.id === parentId || chat.parentChatId === parentId)));
+  const parent = group.find((chat) => chat.id === parentId) ?? routeThread;
   const allowed = new Set(group.map((chat) => chat.id));
   const decoded = decodeThreadLayout(encodedLayout);
   const decodedIds = decoded ? threadIds(decoded) : [];

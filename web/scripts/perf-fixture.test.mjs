@@ -16,6 +16,10 @@ test("builds each required deterministic data size", () => {
   for (const threadCount of [25, 250]) {
     assert.equal(createFixture({ threadCount }).responses["/chats"].chats.length, threadCount);
   }
+  const inbox = createFixture({ agentCount: 25 });
+  assert.equal(inbox.responses["/board"].agents.length, 25);
+  assert.equal(inbox.responses["/chats"].dms.length, 25);
+  assert.equal(inbox.responses[`/chats/${inbox.primaryDmId}`].entries.length, 100);
 });
 
 test("adds an unavailable device without changing the local catalogue", () => {
@@ -48,6 +52,12 @@ test("passes results on the parent budgets and rejects regressions", () => {
     { scenario: "warm-open", firstUsefulPaintMs: PERFORMANCE_BUDGETS.warmUsefulMs },
     { scenario: "cached-thread", firstUsefulPaintMs: PERFORMANCE_BUDGETS.cachedThreadMs },
     { scenario: "live-update", firstLivePaintP95Ms: PERFORMANCE_BUDGETS.livePaintP95Ms },
+    {
+      scenario: "render-isolation-thread",
+      affectedRowRenders: 1,
+      unrelatedRowRenders: 0,
+      orderChanged: false,
+    },
     { scenario: "reconnect", firstLivePaintP95Ms: PERFORMANCE_BUDGETS.livePaintP95Ms },
     { scenario: "sidebar", threadCount: 250, frameRate: PERFORMANCE_BUDGETS.minimumFrameRate },
     { scenario: "thread-scroll", entryCount: 500, frameRate: PERFORMANCE_BUDGETS.minimumFrameRate },
@@ -64,6 +74,15 @@ test("passes results on the parent budgets and rejects regressions", () => {
   assert.match(
     budgetFailures({ scenario: "live-update", firstLivePaintP95Ms: PERFORMANCE_BUDGETS.livePaintP95Ms + 1 })[0],
     /live update p95/,
+  );
+  assert.match(
+    budgetFailures({
+      scenario: "render-isolation-inbox",
+      affectedRowRenders: 1,
+      unrelatedRowRenders: 1,
+      orderChanged: false,
+    })[0],
+    /render isolation/,
   );
   assert.match(
     budgetFailures({ scenario: "idle", idleCpuPercent: PERFORMANCE_BUDGETS.idleCpuPercent + 0.1 })[0],

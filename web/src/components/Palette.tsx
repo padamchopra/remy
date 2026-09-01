@@ -1,4 +1,5 @@
 import type { ComponentType } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { MessagesSquare } from "lucide-react";
 import { useAppActions } from "@/actions/context";
 import { Badge } from "@/components/ui/badge";
@@ -15,7 +16,10 @@ import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { Separator } from "@/components/ui/separator";
 import { displayPath } from "@/lib/path";
 import { cn } from "@/lib/utils";
+import { useStore } from "@/state/store";
 import type { Chat } from "@/state/types";
+
+const NO_CHATS: Chat[] = [];
 
 /// Everything addressable, behind ⌘K.
 ///
@@ -25,18 +29,17 @@ import type { Chat } from "@/state/types";
 export function Palette({
   open,
   onOpenChange,
-  chats,
   sections,
   onOpenChat,
   onOpenSection,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  chats: Chat[];
   sections: { id: string; label: string; icon: ComponentType<{ className?: string }> }[];
   onOpenChat: (id: string) => void;
   onOpenSection: (id: string) => void;
 }) {
+  const chats = useStore(useShallow((state) => open ? state.chats : NO_CHATS));
   const { actions, run: runAction } = useAppActions();
   const run = (fn: () => void) => () => {
     onOpenChange(false);

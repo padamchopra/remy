@@ -14,6 +14,7 @@ import { apiError } from "@/lib/api-error";
 import { transport } from "@/lib/transport";
 import { threadGroup, threadIsRunning, threadLink, threadWorkspace } from "@/lib/thread-menu";
 import { useStore } from "@/state/store";
+import { useShallow } from "zustand/react/shallow";
 import type { ArchivedThread, Chat } from "@/state/types";
 
 interface MenuAction {
@@ -33,7 +34,7 @@ export function ThreadMenu({ chat, archive, children, onOpenThread, onOpenBeside
   onOpenBeside?: (id: string) => void;
   onOpenWorkspace?: (id: string) => void;
 }) {
-  const chats = useStore((state) => state.chats);
+  const group = useStore(useShallow((state) => threadGroup(chat, state.chats)));
   const archives = useStore((state) => state.archived);
   const workspaces = useStore((state) => state.workspaces);
   const servers = useStore((state) => state.servers);
@@ -50,7 +51,6 @@ export function ThreadMenu({ chat, archive, children, onOpenThread, onOpenBeside
   const server = servers.find((entry) => entry.id === chat.serverId);
   const online = server?.online === true;
   const cloud = server?.cloud === true;
-  const group = threadGroup(chat, chats);
   const running = group.some(threadIsRunning);
   const childCount = archive
     ? archives.filter((entry) => entry.serverId === archive.serverId && archive.chatId && entry.parentChatId === archive.chatId).length

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
+import { useShallow } from "zustand/react/shallow";
 import {
   ArrowUpRight,
   Folder,
@@ -211,6 +212,7 @@ export function App() {
     ? route.deviceId
     : undefined;
   const selected = route.name === "threads" ? (route.focus ?? route.threadId ?? null) : null;
+  const routedThreadId = route.name === "threads" ? route.threadId : undefined;
   const workspaceSettingsId = route.name === "workspaces" ? (route.workspaceId ?? null) : null;
 
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -246,7 +248,9 @@ export function App() {
   const closeSettings = () => go({ name: "threads" });
 
   const servers = useStore((s) => s.servers);
-  const allChats = useStore((s) => s.chats);
+  const threadStructure = useStore(useShallow((s) =>
+    s.chats.map((chat) => `${chat.id}\u0000${chat.parentChatId ?? ""}`)));
+  const chatIds = useStore(useShallow((s) => s.chats.map((chat) => chat.id)));
   const archived = useStore((s) => s.archived);
   const allWorkspaces = useStore((s) => s.workspaces);
   const loading = useStore((s) => s.loading);
@@ -258,11 +262,9 @@ export function App() {
   const projects = useStore((s) => s.projects);
   const agents = useStore((s) => s.agents);
   const boardLoading = useStore((s) => s.boardLoading);
-  const dms = useStore((s) => s.dms);
   const saveAgent = useStore((s) => s.saveAgent);
   const loadBoard = useStore((s) => s.loadBoard);
   const release = useRelease();
-  const settings = useStore((s) => s.settings);
   const openProviderSettings = useCallback(() => {
     const local = servers.find((server) => server.local);
     navigate({
@@ -297,10 +299,6 @@ export function App() {
     });
   }, [anyServerOnline, loadBoard]);
 
-  // Every device at once: that a thread runs somewhere else is what the row's
-  // device mark says, not something to filter the list down to.
-  const scoped = allChats;
-  const chats = scoped;
   const groupedWorkspaces = useMemo(
     () => workspaceGroups(allWorkspaces, servers),
     [allWorkspaces, servers],
@@ -320,12 +318,9 @@ export function App() {
   const inboxAgent = inboxHandle
     ? roster.find((entry) => entry.handle === inboxHandle)
     : roster[0];
-  const inboxDm = inboxAgent
-    ? agentConversation(inboxAgent.id, dms, servers, settings?.devicePreferenceOrder)
-    : undefined;
-  const unread = roster.filter((agent) =>
-    dms.some((chat) => chat.agentId === agent.id && chat.unread),
-  ).length;
+  const inboxDmId = useStore((state) => inboxAgent
+    ? agentConversation(inboxAgent.id, state.dms, state.servers, state.settings?.devicePreferenceOrder)?.id
+    : undefined);
 
   const newAgent = async () => {
     setCreatingAgent(true);
@@ -370,8 +365,6 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const routedThreadId = route.name === "threads" ? route.threadId : undefined;
-  const active = chats.find((chat) => chat.id === routedThreadId) ?? null;
   const activeArchive = archived.find((thread) => thread.id === routedThreadId) ?? null;
   const archivedChat = activeArchive ? {
     id: activeArchive.id,
@@ -386,7 +379,6 @@ export function App() {
     preview: activeArchive.preview,
     updatedAt: activeArchive.archivedAt,
   } : null;
-  const needsYou = scoped.filter((chat) => chat.state === "needs_input").length;
   const openWorkspace = allWorkspaces.find((workspace) => workspace.id === workspaceSettingsId) ?? null;
   // Tickets are addressed by key, which is what someone pastes into a message.
   const openTicket = route.name === "ticket" ? tickets.find((ticket) => ticket.key === route.key) : undefined;
@@ -429,7 +421,7 @@ export function App() {
   /// carries an id, and an inbox conversation opened as a thread would land on
   /// a route that cannot find it.
   const openConversation = (id: string) => {
-    const dm = dms.find((chat) => chat.id === id);
+    const dm = useStore.getState().dms.find((chat) => chat.id === id);
     const agent = dm && roster.find((entry) => entry.id === dm.agentId);
     if (agent) go({ name: "inbox", agent: agent.handle });
     else openChat(id);
@@ -441,7 +433,7 @@ export function App() {
     enabled: notificationsEnabled(),
     // What is already on screen, so a banner is not raised for it: a thread, or
     // the conversation the inbox has open.
-    openThreadId: selected ?? (route.name === "inbox" ? inboxDm?.id ?? null : null),
+    openThreadId: selected ?? (route.name === "inbox" ? inboxDmId ?? null : null),
     onOpen: openConversation,
   });
 
@@ -466,11 +458,11 @@ export function App() {
   useEffect(() => {
     if (!routedThreadId || catalogLoading) return;
     if (
-      allChats.some((chat) => chat.id === routedThreadId)
+      chatIds.includes(routedThreadId)
       || archived.some((thread) => thread.id === routedThreadId)
     ) return;
     go({ name: "threads" }, true);
-  }, [routedThreadId, catalogLoading, allChats, archived]);
+  }, [routedThreadId, catalogLoading, chatIds, archived]);
 
   return (
     <AppActionsProvider
@@ -530,11 +522,9 @@ export function App() {
             section={section}
             selected={selected}
             servers={servers}
-            scoped={scoped}
+            threadStructure={threadStructure}
             archived={archived}
             workspaces={allWorkspaces}
-            needsYou={needsYou}
-            unread={unread}
             sections={SECTIONS}
             onSection={(id) => go(routeForSection(id as Section))}
             onSelectChat={openChat}
@@ -582,7 +572,6 @@ export function App() {
           <PullRequests
             servers={servers}
             workspaces={allWorkspaces}
-            chats={allChats}
             onOpenThread={openChat}
             onOpenWorkspace={(workspaceId) => go({ name: "workspaces", workspaceId })}
           />
@@ -604,10 +593,10 @@ export function App() {
           <WorkspaceSettings key={`${openWorkspace.serverId}:${openWorkspace.id}`} workspace={openWorkspace} onBack={() => go({ name: "workspaces" })} />
         ) : (
           <main className="flex min-w-0 flex-1 flex-col">
-            {section === "chats" && active ? (
-              <ThreadWorkspace
-                key={active.id}
-                routeThread={active}
+            {section === "chats" && routedThreadId && chatIds.includes(routedThreadId) ? (
+              <RoutedThreadWorkspace
+                key={routedThreadId}
+                threadId={routedThreadId}
                 encodedLayout={route.name === "threads" ? route.layout : undefined}
                 focusedId={route.name === "threads" ? route.focus : undefined}
                 toolsShown={threadToolsShown}
@@ -771,7 +760,6 @@ export function App() {
       <Palette
         open={paletteOpen}
         onOpenChange={setPaletteOpen}
-        chats={scoped}
         onOpenChat={openChat}
         onOpenSection={(id) => go(routeForSection(id as Section))}
         sections={SECTIONS}
@@ -779,6 +767,15 @@ export function App() {
     </div>
     </AppActionsProvider>
   );
+}
+
+function RoutedThreadWorkspace({
+  threadId,
+  ...props
+}: Omit<ComponentProps<typeof ThreadWorkspace>, "routeThread"> & { threadId: string }) {
+  const chat = useStore((state) => state.chats.find((entry) => entry.id === threadId));
+  if (!chat) return null;
+  return <ThreadWorkspace routeThread={chat} {...props} />;
 }
 
 function EmptyState({

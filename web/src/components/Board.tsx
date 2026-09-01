@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import {
   DndContext,
   DragOverlay,
@@ -112,7 +113,11 @@ export function Board({
   const projects = useStore((s) => s.projects);
   const tickets = useStore((s) => s.tickets);
   const agents = useStore((s) => s.agents);
-  const chats = useStore((s) => s.chats);
+  const linkedChatIds = useMemo(
+    () => new Set(tickets.flatMap((ticket) => ticket.threads.map((link) => link.chatId))),
+    [tickets],
+  );
+  const chats = useStore(useShallow((s) => s.chats.filter((chat) => linkedChatIds.has(chat.id))));
   const workspaces = useStore((s) => s.workspaces);
   const servers = useStore((s) => s.servers);
   const boardDevices = useStore((s) => s.boardDevices);
