@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "shots": "node scripts/shoot.mjs",
-    "perf": "node scripts/perf.mjs",
+    "perf": "npm run build:perf && node scripts/perf.mjs",
+    "build:perf": "tsc --noEmit && vite build",
+    "perf:test": "node --test scripts/perf-fixture.test.mjs",
     "live-check": "node scripts/live-check.mjs"
   },
   "dependencies": {
