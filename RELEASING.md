@@ -2,11 +2,18 @@
 
 ## TestFlight
 
-The `TestFlight` workflow queues a store-signed iOS build only when you run it
-from the Actions tab, then hands the finished build to TestFlight. EAS keeps the
-iOS build number and increments it for every build. The version shown in
-TestFlight is `0.1.<run>`, where `run` is that TestFlight workflow's run number.
-For example, TestFlight workflow run 12 publishes version `0.1.12`.
+The `TestFlight` workflow queues a store-signed iOS build, then hands the
+finished build to TestFlight. It runs when a merge to main changes `mobile/`, at
+00:20 UTC nightly, and on demand from the Actions tab. A merge that leaves the
+phone app alone spends no EAS build on it — see **What decides a build** below.
+
+EAS keeps the iOS build number and increments it for every build. The version
+shown in TestFlight is `0.1.<run>`, where `run` is that TestFlight workflow's run
+number. For example, TestFlight workflow run 12 publishes version `0.1.12`.
+
+The workflow hands the build to EAS and stops rather than waiting on it, so
+`nightly/testflight` records what was queued. A build that EAS fails after that
+is one to ask for by hand from the Actions tab.
 
 The upload goes to TestFlight only. It does not submit the app for App Review.
 Remy declares that it uses only standard or exempt encryption in its Expo iOS
@@ -37,8 +44,8 @@ compliance questionnaire.
 6. Run `npx eas-cli@latest credentials --platform ios` from `mobile/` with the
    `testflight` profile. Configure the iOS distribution credentials and an App
    Store Connect API key for EAS Submit.
-7. Open Actions → TestFlight → Run workflow, choose `main`, and run it whenever
-   you want a new TestFlight build.
+7. Merge a change to `mobile/`, wait for the nightly, or open Actions →
+   TestFlight → Run workflow to build straight away.
 
 ## Mac builds
 
@@ -47,10 +54,10 @@ macOS will not open a downloaded app unless Apple has notarized it, so the
 GitHub release. Without the secrets below that job fails on purpose, so an
 unsigned build never ships.
 
-It runs at 00:05 UTC nightly, and on demand from the Actions tab when a merge is
-worth shipping sooner. A night with nothing new stops before the build — a
-release that is the same commit as the last one is only a new number. Asking for
-a run by hand always builds.
+It runs when a merge to main changes what the app is made of — `desktop/`,
+`server/` or `web/`, which the DMG carries together — at 00:05 UTC nightly, and
+on demand from the Actions tab. A merge that only touches the phone app or the
+docs signs and notarises nothing. See **What decides a build** below.
 
 The tag is `{major}.{minor}.{run}` from `package.json` plus the workflow run
 number (`v0.1.5`, `v0.1.6`, …), so each build is its own release. Do not bump
@@ -75,7 +82,33 @@ number (`v0.1.5`, `v0.1.6`, …), so each build is its own release. Do not bump
    | `APPLE_API_ISSUER` | the Issuer UUID |
    | `APPLE_TEAM_ID` | 10-character Team ID |
 
-5. Wait for the nightly, or run the **Mac** workflow from the Actions tab.
+5. Merge a change to the app, wait for the nightly, or run the **Mac** workflow
+   from the Actions tab.
+
+## What decides a build
+
+Both workflows ask the same question before spending a runner, and each keeps
+its answer in a branch: `nightly/mac` and `nightly/testflight` hold the commit
+that target last shipped. A run builds when something it ships changed between
+that marker and the head of main, and moves the marker only after the build
+succeeds — so a build that fails is one the next merge or the next night tries
+again, and a quiet day ships nothing.
+
+The two triggers share one marker, which is why a nightly is usually silent: the
+merge already shipped that commit. The nightly is the safety net for a merge
+whose build never ran or did not finish.
+
+The branches need no setup. Neither exists until the first build creates it, and
+until it does, the first run of each workflow builds once whatever changed. A
+run you ask for by hand always builds, and only main moves a marker, so a build
+from a branch leaves the nightly's measurement alone.
+
+Nothing reads these branches but the workflows. Deleting one makes the next run
+build once and write it again.
+
+Markdown is excluded, so a docs-only merge ships nothing. Editing the workflow
+or `.github/actions/` counts as a change, because it changes how the build is
+made.
 
 ## Building locally
 

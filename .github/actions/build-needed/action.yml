@@ -1,0 +1,74 @@
+name: Build needed
+description: Whether anything a target ships has changed since its marker branch last shipped one.
+
+# The marker branch is the whole memory of this decision: it holds the commit a
+# target last shipped, so a merge and the nightly ask the same question and
+# neither ships a commit the other already did. A build that fails leaves the
+# marker where it was, so the next merge or the next night tries again.
+
+inputs:
+  branch:
+    description: Marker branch holding the commit this target last shipped.
+    required: true
+  paths:
+    description: One git pathspec per line. Only a change under one of these warrants a build.
+    required: true
+
+outputs:
+  build:
+    description: "true when this commit is worth building."
+    value: ${{ steps.decide.outputs.build }}
+  sha:
+    description: The commit a build would ship, and the marker branch would move to.
+    value: ${{ steps.decide.outputs.sha }}
+
+runs:
+  using: composite
+  steps:
+    - id: decide
+      shell: bash
+      env:
+        BRANCH: ${{ inputs.branch }}
+        PATHS: ${{ inputs.paths }}
+        EVENT: ${{ github.event_name }}
+      run: |
+        set -eu
+        sha="$(git rev-parse HEAD)"
+        echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+        ship() { echo "$1"; echo "build=true" >> "$GITHUB_OUTPUT"; exit 0; }
+        skip() { echo "$1"; echo "build=false" >> "$GITHUB_OUTPUT"; exit 0; }
+
+        # A run someone asked for is a decision, not a schedule.
+        if [ "$EVENT" = "workflow_dispatch" ]; then
+          ship "Asked for by hand — building $sha."
+        fi
+
+        # fetch-depth: 0 is the contract, but never answer from history we lack.
+        if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+          git fetch --quiet --no-tags --unshallow origin
+        fi
+        git fetch --quiet --no-tags origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" || true
+
+        marker="$(git rev-parse --verify --quiet "refs/remotes/origin/$BRANCH" || true)"
+        if [ -z "$marker" ]; then
+          ship "No $BRANCH yet — building the first one."
+        fi
+        if [ "$marker" = "$sha" ]; then
+          skip "$BRANCH already holds $sha — nothing new to ship."
+        fi
+
+        # One pathspec per argument, so an exclude stays its own pathspec.
+        set --
+        while IFS= read -r spec; do
+          [ -n "$spec" ] || continue
+          set -- "$@" "$spec"
+        done <<< "$PATHS"
+
+        changed="$(git diff --name-only "$marker" "$sha" -- "$@")"
+        if [ -z "$changed" ]; then
+          skip "Nothing this build ships changed between $marker and $sha."
+        fi
+        echo "Changed since $BRANCH ($marker):"
+        printf '%s\n' "$changed" | sed 's/^/  /'
+        ship "Building $sha."

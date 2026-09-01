@@ -1,0 +1,43 @@
+name: Mark shipped
+description: Fast-forward a target's marker branch to the commit it just shipped.
+
+inputs:
+  branch:
+    description: Marker branch to move.
+    required: true
+  sha:
+    description: The commit that shipped.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        BRANCH: ${{ inputs.branch }}
+        SHA: ${{ inputs.sha }}
+      run: |
+        set -eu
+        # A build job clones one commit deep. Ancestry needs the history behind
+        # it, and a shallow answer here would quietly strand the marker.
+        if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+          git fetch --quiet --no-tags --unshallow origin
+        else
+          git fetch --quiet --no-tags origin main
+        fi
+
+        # Only main is shippable. A build asked for from another branch is worth
+        # having, but it is not what the next run should measure itself against.
+        if ! git merge-base --is-ancestor "$SHA" origin/main; then
+          echo "::notice::$SHA is not on main — leaving $BRANCH where it is."
+          exit 0
+        fi
+
+        # A plain push is fast-forward only. It is refused when another run has
+        # already carried the branch past this commit, which is the right answer.
+        if git push origin "$SHA:refs/heads/$BRANCH"; then
+          echo "$BRANCH now holds $SHA."
+        else
+          echo "::notice::$BRANCH already holds this commit or a later one."
+        fi
