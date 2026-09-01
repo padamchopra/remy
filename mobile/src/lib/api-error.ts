@@ -9,24 +9,45 @@ export function apiError(error: unknown): string {
   return raw;
 }
 
+/// A failure that still knows the code it came back with. A 404 from a Mac on
+/// an older build means "this one cannot do that", which reads differently from
+/// "that failed" — and the sentence alone cannot be asked which it was.
+export interface HttpError extends Error {
+  status: number;
+}
+
+export function statusOf(error: unknown): number | undefined {
+  if (error && typeof error === "object" && "status" in error) {
+    const status = (error as { status?: unknown }).status;
+    if (typeof status === "number") return status;
+  }
+  return undefined;
+}
+
+/// True when the Mac that answered does not have this route at all.
+export function isMissingRoute(error: unknown): boolean {
+  return statusOf(error) === 404;
+}
+
 /// Turns a failed HTTP body into a sentence a person can act on. Tailscale
 /// Serve answers empty 502s and HTML interstitials rather than Remy's JSON.
-export function httpError(status: number, text: string): Error {
+export function httpError(status: number, text: string): HttpError {
+  const carry = (message: string): HttpError => Object.assign(new Error(message), { status });
   try {
     const parsed = JSON.parse(text) as { error?: unknown };
-    if (typeof parsed.error === "string" && parsed.error.trim()) return new Error(parsed.error);
+    if (typeof parsed.error === "string" && parsed.error.trim()) return carry(parsed.error);
   } catch {
     // Not JSON — Tailscale pages, empty 502s, raw text.
   }
   if (/not on (your |the )?tailnet|connect to your tailnet/i.test(text)) {
-    return new Error("This iPhone is not on your tailnet. Open Tailscale and try again.");
+    return carry("This iPhone is not on your tailnet. Open Tailscale and try again.");
   }
   if (status === 502 || status === 503 || status === 504) {
-    return new Error("That Mac isn't running Remy.");
+    return carry("That Mac isn't running Remy.");
   }
   const trimmed = text.trim();
-  if (trimmed && trimmed.length < 200 && !trimmed.startsWith("<")) return new Error(trimmed);
-  return new Error(`Couldn't reach that Mac (${status}).`);
+  if (trimmed && trimmed.length < 200 && !trimmed.startsWith("<")) return carry(trimmed);
+  return carry(`Couldn't reach that Mac (${status}).`);
 }
 
 export function chatIdFrom(error: unknown): string | undefined {

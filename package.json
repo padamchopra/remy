@@ -13,7 +13,7 @@
     "build": "npm --prefix web run build && npm --prefix desktop run build",
     "pack:mac": "npm --prefix web run build && npm --prefix desktop run pack:mac",
     "typecheck": "npm --prefix web run typecheck && npm --prefix desktop run typecheck && npm --prefix mobile run typecheck",
-    "test": "npm --prefix server test",
+    "test": "npm --prefix server test && npm --prefix mobile test",
     "shots": "npm --prefix web run shots",
     "perf": "npm --prefix web run perf",
     "live-check": "npm --prefix web run live-check"

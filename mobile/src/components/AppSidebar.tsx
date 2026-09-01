@@ -35,11 +35,13 @@ export function AppSidebar({
   const agents = useStore((s) => s.agents);
   const workspaces = useStore((s) => s.workspaces);
   const servers = useStore((s) => s.servers);
+  const threadsUnavailable = useStore((s) => s.threadsUnavailable);
   const needsYou = chats.filter((chat) => chat.state === "needs_input").length;
-  // Only what the roster lists: a conversation whose agent is not on this board
-  // has nothing here to open, so counting it would be a badge you cannot clear.
-  const unread = dms.filter((chat) =>
-    chat.unread && agents.some((agent) => agent.id === chat.agentId)).length;
+  // Agents, not conversations: an agent replicated to two Macs is still one row
+  // in the Inbox, and a conversation whose agent is not on this board has
+  // nothing here to open, so counting either would be a badge you cannot clear.
+  const unread = agents.filter((agent) =>
+    dms.some((chat) => chat.agentId === agent.id && chat.unread)).length;
   const many = servers.length > 1;
 
   return (
@@ -71,7 +73,14 @@ export function AppSidebar({
         </Pressable>
       </View>
       <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
-        {chats.length === 0 ? (
+        {Object.entries(threadsUnavailable).map(([id, reason]) => (
+          <Text key={id} style={[type.caption, { paddingHorizontal: 10 }]}>
+            {many
+              ? `${servers.find((server) => server.id === id)?.name ?? "A Mac"} can't hold threads: ${reason}`
+              : `This Mac can't hold threads: ${reason}`}
+          </Text>
+        ))}
+        {chats.length === 0 && Object.keys(threadsUnavailable).length === 0 ? (
           <Text style={[type.caption, { paddingHorizontal: 10 }]}>No threads yet.</Text>
         ) : (
           chats.map((chat) => (

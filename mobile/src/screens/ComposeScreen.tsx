@@ -9,13 +9,22 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { ArrowUp, Box, ChevronDown, Folder, FolderGit2, GitBranch } from "lucide-react-native";
+import { ArrowUp, ChevronDown, Folder, FolderGit2, GitBranch } from "lucide-react-native";
 import { color, radius, space } from "../theme";
 import { apiError, chatIdFrom } from "../lib/api-error";
-import { CLOUD_MODES, cloudModeOf, MODELS, PERMISSIONS, modelLabel, permissionOf, type PermissionValue } from "../lib/chat-options";
+import { CLOUD_MODES, cloudModeOf, PERMISSIONS, permissionOf, type PermissionValue } from "../lib/chat-options";
 import { deviceIcon } from "../lib/devices";
-import { useStore } from "../state/store";
-import type { GitBranch as Branch, Server, Workspace } from "../state/types";
+import { preferredServer } from "../lib/inbox";
+import { pairChoice, providerOf, type ModelChoice } from "../lib/providers";
+import {
+  useDevicePreferenceOrder,
+  useProviders,
+  useServerSettings,
+  useStore,
+  useSupportsEffort,
+} from "../state/store";
+import type { GitBranch as Branch, Workspace } from "../state/types";
+import { ModelPicker } from "../components/ModelPicker";
 import {
   ComposerMenu,
   MenuEmpty,
@@ -48,10 +57,6 @@ function worktreeBase(branch?: string | null, mode?: "remote" | "local"): string
   return mode === "local" ? name : `origin/${name}`;
 }
 
-function preferredServer(servers: Server[]): Server | undefined {
-  return servers.find((server) => server.home) ?? servers.find((server) => server.online) ?? servers[0];
-}
-
 function mainPath(workspace?: Workspace): string {
   if (!workspace) return "~";
   return workspace.worktrees.find((entry) => entry.isMain)?.path ?? workspace.path;
@@ -66,11 +71,12 @@ export function ComposeScreen({ onCreated }: { onCreated: (id: string) => void }
   );
   const createChat = useStore((s) => s.createChat);
   const checkoutBranch = useStore((s) => s.checkoutBranch);
-  const settings = useStore((s) => s.settings);
   const loadSettings = useStore((s) => s.loadSettings);
+  const loadProviders = useStore((s) => s.loadProviders);
+  const deviceOrder = useDevicePreferenceOrder();
   const [target, setTarget] = useState<string | undefined>(workspaces[0]?.id);
   const [serverId, setServerId] = useState(() => workspaces[0]?.serverId ?? preferredServer(servers)?.id ?? "");
-  const [model, setModel] = useState("");
+  const [choice, setChoice] = useState<ModelChoice>({ provider: "claude", model: "", effort: "" });
   const [modelPicked, setModelPicked] = useState(false);
   const [permissionMode, setPermissionMode] = useState<PermissionValue>("default");
   const [permissionPicked, setPermissionPicked] = useState(false);
@@ -84,7 +90,11 @@ export function ComposeScreen({ onCreated }: { onCreated: (id: string) => void }
 
   useEffect(() => {
     void loadSettings().catch(() => {});
-  }, [loadSettings]);
+    void loadProviders().catch(() => {
+      // Each Mac says elsewhere that it is unreachable; the catalogue this app
+      // ships with is enough to paint the picker.
+    });
+  }, [loadSettings, loadProviders]);
 
   useEffect(() => {
     const show = Keyboard.addListener("keyboardWillChangeFrame", (event) => {
@@ -105,9 +115,8 @@ export function ComposeScreen({ onCreated }: { onCreated: (id: string) => void }
       setServerId(workspaces[0].serverId);
       return;
     }
-    const preferred = preferredServer(servers);
-    if (preferred) setTarget(HOME);
-  }, [target, workspaces, servers]);
+    if (preferredServer(servers, deviceOrder)) setTarget(HOME);
+  }, [target, workspaces, servers, deviceOrder]);
 
   const workspace = target && target !== HOME ? workspaces.find((entry) => entry.id === target) : undefined;
   const home = !workspace;
@@ -121,8 +130,13 @@ export function ComposeScreen({ onCreated }: { onCreated: (id: string) => void }
       })
     : [];
   const server = home
-    ? servers.find((entry) => entry.id === serverId) ?? preferredServer(servers)
-    : servers.find((entry) => entry.id === workspace.serverId) ?? preferredServer(servers);
+    ? servers.find((entry) => entry.id === serverId) ?? preferredServer(servers, deviceOrder)
+    : servers.find((entry) => entry.id === workspace.serverId) ?? preferredServer(servers, deviceOrder);
+  // Every Mac holds its own defaults and its own catalogue, so both follow the
+  // device this thread will run on rather than whichever answered first.
+  const settings = useServerSettings(server?.id);
+  const providers = useProviders(server?.id);
+  const noEffort = Boolean(server) && !useSupportsEffort(server?.id);
   const cloud = server?.cloud === true;
   const git = Boolean(!home && workspace && workspace.worktrees.length > 0);
   const mainBranch =
@@ -134,20 +148,39 @@ export function ComposeScreen({ onCreated }: { onCreated: (id: string) => void }
   const canSend = Boolean(text.trim() && server && !busy);
   const permission = cloud ? cloudModeOf(permissionMode) : permissionOf(permissionMode);
   const PermissionIcon = permission.icon;
+  const providerName = providerOf(providers, choice.provider)?.label ?? "This provider";
+  const asks = cloud || providerOf(providers, choice.provider)?.approvals !== false;
   const checkoutLabel = CHECKOUTS.find((entry) => entry.value === checkout)?.label ?? "Main checkout";
   const CheckoutIcon = checkout === "worktree" ? FolderGit2 : Folder;
   const branchName = branch ?? mainBranch;
 
-  // The workspace's own model if it has one, the Mac's otherwise. The provider
-  // is left to the Mac either way: it knows which workspace this folder is.
+  // The workspace's own choice if it has one, the Mac's otherwise — and then
+  // yours for as long as the composer is open.
   useEffect(() => {
     if (cloud) {
-      setModel("");
+      setChoice({ provider: "cursor", model: "", effort: "" });
       return;
     }
     if (modelPicked) return;
-    setModel((workspace?.provider ? workspace.model : settings?.defaultModel) ?? "");
-  }, [workspace?.provider, workspace?.model, settings?.defaultModel, modelPicked, cloud]);
+    setChoice(
+      workspace?.provider
+        ? { provider: workspace.provider, model: workspace.model ?? "", effort: workspace.effort ?? "" }
+        : {
+            provider: settings?.defaultProvider ?? "claude",
+            model: settings?.defaultModel ?? "",
+            effort: settings?.defaultEffort ?? "",
+          },
+    );
+  }, [
+    workspace?.provider,
+    workspace?.model,
+    workspace?.effort,
+    settings?.defaultProvider,
+    settings?.defaultModel,
+    settings?.defaultEffort,
+    modelPicked,
+    cloud,
+  ]);
 
   useEffect(() => {
     if (permissionPicked) return;
@@ -206,7 +239,9 @@ export function ComposeScreen({ onCreated }: { onCreated: (id: string) => void }
         cwd,
         text,
         serverId: server.id,
-        model: model || undefined,
+        provider: choice.provider,
+        model: choice.model,
+        effort: noEffort ? "" : choice.effort ?? "",
         permissionMode,
       });
       onCreated(created.id);
@@ -255,15 +290,14 @@ export function ComposeScreen({ onCreated }: { onCreated: (id: string) => void }
             {cloud ? (
               <Text style={styles.cloudModel}>Cursor Cloud default</Text>
             ) : (
-              <ComposerMenu
-                icon={Box}
-                label={modelLabel(model)}
-                value={model}
-                onChange={(value) => {
+              <ModelPicker
+                providers={providers}
+                value={choice}
+                effortUnavailable={noEffort}
+                onPick={(next) => {
                   setModelPicked(true);
-                  setModel(value);
+                  setChoice(pairChoice(providers, next));
                 }}
-                options={MODELS}
               />
             )}
             <ComposerMenu
@@ -313,6 +347,9 @@ export function ComposeScreen({ onCreated }: { onCreated: (id: string) => void }
             ) : null}
           </View>
         </View>
+        {!asks && permissionMode === "default" ? (
+          <Text style={styles.note}>{providerName} can't stop to ask, so Ask keeps it read-only.</Text>
+        ) : null}
         {error ? <Text style={styles.error}>{error}</Text> : null}
       </ScrollView>
 
@@ -524,6 +561,7 @@ const styles = StyleSheet.create({
   git: { marginLeft: "auto", flexDirection: "row", alignItems: "center", flexShrink: 1, minWidth: 0 },
   checkout: { flexShrink: 0 },
   error: { color: color.destructive, fontSize: 13, textAlign: "center" },
+  note: { color: color.mutedForeground, fontSize: 12, textAlign: "center" },
   pressed: { backgroundColor: color.accent },
   branch: {
     flexDirection: "row",

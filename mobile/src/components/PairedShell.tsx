@@ -3,7 +3,8 @@ import { Animated, Easing, Keyboard, Pressable, StyleSheet, Text, View } from "r
 import { PanelLeft, PanelLeftClose, Plus } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { color, space, type } from "../theme";
-import { useStore } from "../state/store";
+import { agentConversation } from "../lib/inbox";
+import { useDevicePreferenceOrder, useStore } from "../state/store";
 import { AppSidebar, type AppSection } from "./AppSidebar";
 import { GlassButton } from "./GlassButton";
 import { InboxScreen } from "../screens/InboxScreen";
@@ -15,7 +16,7 @@ import { NewTicketScreen } from "../screens/NewTicketScreen";
 import { DevicesScreen } from "../screens/DevicesScreen";
 import { WorkspacesScreen } from "../screens/WorkspacesScreen";
 import { WorkspaceScreen } from "../screens/WorkspaceScreen";
-import type { Pairing } from "../lib/session";
+import type { ConvArtifact } from "../state/types";
 
 const DRAWER_WIDTH = 300;
 const DRAWER_EASING = Easing.bezier(0.32, 0.72, 0, 1);
@@ -33,7 +34,10 @@ export function PairedShell({
   const chats = useStore((s) => s.chats);
   const dms = useStore((s) => s.dms);
   const agents = useStore((s) => s.agents);
+  const servers = useStore((s) => s.servers);
   const tickets = useStore((s) => s.tickets);
+  const workspaces = useStore((s) => s.workspaces);
+  const deviceOrder = useDevicePreferenceOrder();
   const loading = useStore((s) => s.loading);
   const openDm = useStore((s) => s.openDm);
   const readChat = useStore((s) => s.readChat);
@@ -51,7 +55,9 @@ export function PairedShell({
   const thread = threadId ? chats.find((chat) => chat.id === threadId) : undefined;
   const ticket = ticketKey ? tickets.find((entry) => entry.key === ticketKey) : undefined;
   const inboxAgent = inboxAgentId ? agents.find((agent) => agent.id === inboxAgentId) : undefined;
-  const inboxDm = inboxAgent ? dms.find((chat) => chat.agentId === inboxAgent.id) : undefined;
+  const inboxDm = inboxAgent
+    ? agentConversation(inboxAgent.id, dms, servers, deviceOrder)
+    : undefined;
 
   // The conversation is made the first time you open the agent, and reading it
   // is opening it.
@@ -93,6 +99,36 @@ export function PairedShell({
   };
 
   openThreadRef.current = openThread;
+
+  /// What a Remy tool made, opened where it lives. A thing this phone cannot
+  /// see — a ticket on a Mac that is not answering, a workspace that was never
+  /// registered here — is left where it is rather than sent to an empty pane.
+  const openArtifact = (artifact: ConvArtifact) => {
+    if (artifact.kind === "ticket" && artifact.key) {
+      if (!tickets.some((entry) => entry.key === artifact.key)) return;
+      setSection("board");
+      setThreadId(undefined);
+      setInboxAgentId(undefined);
+      setComposingTicket(false);
+      setWorkspaceId(undefined);
+      setTicketKey(artifact.key);
+      return;
+    }
+    if (artifact.kind === "thread" && artifact.id) {
+      if (!chats.some((entry) => entry.id === artifact.id) && !dms.some((entry) => entry.id === artifact.id)) return;
+      openThread(artifact.id);
+      return;
+    }
+    if (artifact.kind === "workspace" && artifact.id) {
+      if (!workspaces.some((entry) => entry.id === artifact.id)) return;
+      setSection("workspaces");
+      setThreadId(undefined);
+      setInboxAgentId(undefined);
+      setTicketKey(undefined);
+      setComposingTicket(false);
+      setWorkspaceId(artifact.id);
+    }
+  };
 
   const newThread = () => {
     setSection("threads");
@@ -176,7 +212,7 @@ export function PairedShell({
 
       <View style={styles.body}>
         {section === "inbox" && inboxDm ? (
-          <ThreadScreen key={inboxDm.id} id={inboxDm.id} />
+          <ThreadScreen key={inboxDm.id} id={inboxDm.id} onOpenArtifact={openArtifact} />
         ) : section === "inbox" ? (
           <InboxScreen onOpen={setInboxAgentId} />
         ) : section === "board" && composingTicket ? (
@@ -197,7 +233,7 @@ export function PairedShell({
         ) : section === "devices" ? (
           <DevicesScreen onPairAnother={onPairAnother} onUnpair={onUnpair} />
         ) : thread ? (
-          <ThreadScreen key={thread.id} id={thread.id} />
+          <ThreadScreen key={thread.id} id={thread.id} onOpenArtifact={openArtifact} />
         ) : (
           <ComposeScreen onCreated={openThread} />
         )}

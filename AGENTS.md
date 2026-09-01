@@ -82,7 +82,7 @@ anyone using worktrees already has.
 
 ```sh
 npm run typecheck    # web + desktop + mobile
-npm test             # server: tsc, then node --test on dist/*.test.js
+npm test             # server: tsc, then node --test on dist/*.test.js; then the phone's contract rules
 npm run qa:web -- --check  # current server + UI, temporary state, alternate ports
 npm run shots        # Playwright PNGs of the window
 npm run live-check   # assert the window is showing threads

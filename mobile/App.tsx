@@ -42,17 +42,22 @@ function PairedApp({
 }) {
   const start = useStore((s) => s.start);
   const loadSettings = useStore((s) => s.loadSettings);
+  const loadProviders = useStore((s) => s.loadProviders);
   const loadBoard = useStore((s) => s.loadBoard);
   const anyOnline = useStore((s) => s.servers.some((server) => server.online));
 
   useEffect(() => start(), [start]);
 
+  // A Mac on a current build resyncs itself when its live stream opens. This is
+  // for one whose stream never does — an older build, or a tunnel that will not
+  // hold a socket — so its defaults and its catalogue still arrive.
   useEffect(() => {
     if (!anyOnline) return;
     void loadSettings().catch(() => {});
+    void loadProviders().catch(() => {});
     void loadBoard().catch(() => {});
     void registerPush().catch(() => {});
-  }, [anyOnline, loadSettings, loadBoard]);
+  }, [anyOnline, loadSettings, loadProviders, loadBoard]);
 
   useEffect(() => listenForNotificationTap((id) => openThreadFromOutside.current(id)), []);
 

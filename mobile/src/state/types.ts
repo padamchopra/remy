@@ -39,9 +39,26 @@ export interface Chat {
   state: ChatState;
   provider?: string;
   model?: string;
+  /// How much reasoning this thread asks its model for. Empty leaves the
+  /// choice to whatever that provider is configured with.
+  effort?: string;
+  permissionMode?: string;
   preview?: string;
+  createdAt?: number;
   updatedAt: number;
   workingSince?: number;
+  /// What the thread is doing right now, when it is doing something.
+  action?: string;
+  /// Pinned threads lead the list on every client of that Mac.
+  pinned?: boolean;
+  /// The parent thread this parallel session belongs to.
+  parentChatId?: string;
+  turns?: number;
+  costUsd?: number;
+  context?: ContextUsage;
+  /// True while the Mac is holding a live agent process for this thread.
+  live?: boolean;
+  error?: string;
   /// True when this is an agent's inbox conversation rather than work in a
   /// repository. One per agent, and never listed with the threads.
   dm?: boolean;
@@ -73,9 +90,10 @@ export interface Workspace {
   icon?: string | null;
   tint?: string | null;
   /// What a thread started here runs on, when this workspace does not follow
-  /// the Mac. Null in both means it does.
+  /// the Mac. Null in all three means it does.
   provider?: string | null;
   model?: string | null;
+  effort?: string | null;
   worktrees: GitWorktree[];
   virtual?: boolean;
 }
@@ -87,7 +105,9 @@ export interface PathSuggestion {
 }
 
 export interface ConvEntry {
-  activity?: unknown;
+  /// Work the provider is running beside the turn — a subagent, or a shell
+  /// command. Carried on its own entry so it survives a reconnect.
+  activity?: ThreadActivity;
   id: string;
   kind: "user" | "assistant" | "thinking" | "tool";
   at?: number;
@@ -104,6 +124,61 @@ export interface ConvEntry {
   adds?: number;
   dels?: number;
   questions?: ConvQuestion[];
+  /// What a Remy tool made on this call, shown as a card that opens it.
+  artifacts?: ConvArtifact[];
+  /// Images sent with a message.
+  attachments?: ChatImageAttachment[];
+  /// Review comments attached from the thread's Changes tool.
+  codeReferences?: ChatCodeReference[];
+}
+
+/// Mirrors `ThreadActivity` in `server/src/thread-activity.ts`.
+export interface ThreadActivity {
+  id: string;
+  kind: "subagent" | "shell";
+  provider: string;
+  title: string;
+  status: "running" | "waiting" | "idle" | "completed" | "failed" | "stopped" | "unknown";
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
+  parentId?: string;
+  taskId?: string;
+  toolUseId?: string;
+  model?: string;
+  background?: boolean;
+  command?: string;
+  progress?: string;
+  output?: string;
+  tokens?: number;
+  toolCount?: number;
+}
+
+/// Mirrors `ConvArtifact` in `server/src/remy-artifacts.ts`. A ticket is
+/// addressed by key, a thread and a workspace by id.
+export interface ConvArtifact {
+  kind: "ticket" | "thread" | "workspace" | "routine";
+  key?: string;
+  id?: string;
+  title: string;
+  detail?: string;
+}
+
+export interface ChatImageAttachment {
+  /// Minted by the Mac that owns the thread. The phone never sends a path.
+  id: string;
+  name: string;
+  mimeType: "image/gif" | "image/jpeg" | "image/png" | "image/webp";
+  sizeBytes: number;
+}
+
+export interface ChatCodeReference {
+  id: string;
+  path: string;
+  startLine: number;
+  endLine: number;
+  comment: string;
+  lines: { kind: "add" | "del" | "ctx"; oldLine: number | null; newLine: number | null; text: string }[];
 }
 
 export interface ConvDiffLine {
@@ -167,6 +242,7 @@ export interface ChatDetail {
   cwd: string;
   provider?: string;
   model?: string;
+  effort?: string;
   permissionMode?: string;
   state: ChatState;
   action?: string;
@@ -177,15 +253,44 @@ export interface ChatDetail {
   context?: ContextUsage;
   live?: boolean;
   error?: string;
+  /// The agent whose inbox conversation this is, when it is one.
+  dm?: boolean;
+  agentId?: string;
+  pinned?: boolean;
+  parentChatId?: string;
+  turns?: number;
+  costUsd?: number;
 }
 
+/// The pull request on a thread's branch. Mirrors `PullRequestSummary` in
+/// `server/src/git.ts`.
+export interface PullRequestSummary {
+  url: string;
+  number: number;
+  title: string;
+  headRefName: string;
+  state: string;
+}
+
+/// What one paired Mac answers with at `GET /server/settings`. Every field an
+/// older Mac may not have is optional, so a missing one reads as "it never
+/// said" rather than as a value the phone then writes back.
 export interface ServerSettings {
   preventSleep: "off" | "whileBusy" | "always";
+  preventSleepSupported?: boolean;
   defaultCheckout: "main" | "worktree";
   worktreeBase: "remote" | "local";
   worktreeRoot: string;
+  defaultProvider: string;
   defaultModel: string;
+  /// Absent from a Mac from before reasoning effort was a choice.
+  defaultEffort?: string;
+  /// Providers that Mac offers for new work. Absent means it offers all of them.
+  enabledProviders?: string[];
+  remyProvider?: string;
   remyModel: string;
+  remyEffort?: string;
+  /// Starred models, as `provider:model`.
   favoriteModels: string[];
   repoUpdate: "off" | "hourly" | "sixHourly" | "daily";
   worktreeBranchPrefix: string;
@@ -193,12 +298,15 @@ export interface ServerSettings {
   deviceName: string;
   deviceIcon: string;
   deviceTint: string;
+  /// The order this Mac tries paired devices for work with no workspace.
+  devicePreferenceOrder?: string[];
   /// Absent from a Mac that predates automatic Tailnet repair.
   tailscaleServeEnabled?: boolean;
   defaultGitIdentity: "off" | "author";
-  defaultProvider: string;
   /// Absent from a Mac on an older build, which started every thread on Ask.
   defaultPermissionMode?: string;
+  pullRequestMonitoringEnabled?: boolean;
+  pullRequestMonitoringAgentId?: string;
   notifySelf?: boolean;
 }
 
@@ -209,9 +317,12 @@ export interface Agent {
   handle: string;
   role?: string;
   instructions: string;
+  /// `default` follows the Mac's own thread default.
   provider: string;
   model?: string;
+  effort?: string;
   permissionMode: string;
+  avatar?: string;
   tint?: string;
   autoStart: boolean;
   handoffTo: string[];
@@ -222,6 +333,35 @@ export interface Agent {
   /// Remy's own agent. Its name, role and instructions come from the copy of
   /// Remy that is running, and it cannot be deleted.
   builtIn?: boolean;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+export type Cadence = "daily" | "weekdays" | "weekly" | "monthly";
+
+/// Repeated work an agent sends itself. It belongs to the agent, writes no
+/// ticket, and needs no workspace. Mirrors `RoutineView` in
+/// `server/src/routines.ts`.
+export interface Routine {
+  id: string;
+  serverId: string;
+  agentId: string;
+  name: string;
+  prompt: string;
+  cadence: Cadence;
+  hour: number;
+  minute: number;
+  weekday?: number;
+  day?: number;
+  enabled: boolean;
+  /// The machine that owns the clock, so two paired Macs do not fire it twice.
+  schedulerDeviceId: string;
+  runs: number;
+  lastRunAt?: number;
+  lastError?: string;
+  nextRunAt: number;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface Project {
@@ -277,12 +417,20 @@ export interface Ticket {
   threads: TicketThread[];
 }
 
+export interface TicketMention {
+  id: string;
+  handle: string;
+}
+
 export interface TicketActivity {
   id: string;
   at: number;
+  /// `you`, `remy`, or an agent's handle.
   actor: string;
   kind: string;
   body?: string;
+  editedAt?: number;
+  mentions?: TicketMention[];
   detail?: Record<string, unknown>;
 }
 
