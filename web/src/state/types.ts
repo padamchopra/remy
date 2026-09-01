@@ -426,6 +426,10 @@ export interface ChatDetail {
   state: ChatState;
   action?: string;
   entries: ConvEntry[];
+  history?: {
+    hasEarlier: boolean;
+    before?: string;
+  };
   todos: ConvTodo[];
   approval?: ChatApproval;
   question?: ChatQuestionRequest;
