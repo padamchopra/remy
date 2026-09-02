@@ -632,6 +632,10 @@ export function budgetFailures(result, budgets = PERFORMANCE_BUDGETS) {
   }
   if (result.scenario === "reconnect") {
     over(result.firstLivePaintP95Ms, budgets.livePaintP95Ms, "reconnect live paint");
+    if (result.duplicatedEntries > 0) failures.push(`reconnect duplicated ${result.duplicatedEntries} transcript entries`);
+  }
+  if (result.scenario === "interruption" && result.interruptRequests !== 1) {
+    failures.push(`interruption sent ${result.interruptRequests ?? 0} requests instead of 1`);
   }
   if (result.scenario === "sidebar" && result.threadCount === 250) {
     if (result.frameRate + 0.5 < budgets.minimumFrameRate) {

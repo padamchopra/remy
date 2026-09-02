@@ -39,13 +39,24 @@ const TERMINAL_READY = `!!document.querySelector('section[aria-label="Terminal"]
 const targets = performanceTargets();
 const browser = await chromium.launch({
   executablePath: chromiumPath(),
-  args: ["--allow-file-access-from-files"],
+  args: ["--allow-file-access-from-files", "--enable-precise-memory-info", "--js-flags=--expose-gc"],
 });
 const results = [];
 
 try {
   for (const target of targets) {
     console.log(`\n${target.name} — ${target.url}`);
+    if (ONLY_SCENARIO === "runtime-proof") {
+      for (const entryCount of [10, 500]) {
+        results.push(await repeated(() => runThreadOpen(target, entryCount)));
+      }
+      results.push(await repeated(() => runSidebar(target, 250)));
+      results.push((await runRenderIsolation(target))[0]);
+      results.push(...await repeatedGroup(() => runThreadLifecycle(target)));
+      results.push(await repeated(() => runUnavailableDevice(target)));
+      results.push(await repeated(() => runInterruption(target)));
+      continue;
+    }
     if (ONLY_SCENARIO === "sidebar") {
       for (const threadCount of [25, 250]) {
         results.push(await repeated(() => runSidebar(target, threadCount)));
@@ -176,7 +187,9 @@ const measuredResults = results.flatMap((result) => result.related ? [result, re
 const failures = measuredResults.flatMap((result) =>
   budgetFailures(result).map((failure) => `${result.target} / ${result.scenario}: ${failure}`));
 
-if (failures.length > 0) {
+if (ONLY_SCENARIO === "runtime-proof") {
+  printRuntimeComparison(measuredResults, failures);
+} else if (failures.length > 0) {
   console.error("\nREGRESSION");
   for (const failure of failures) console.error(`- ${failure}`);
   process.exitCode = 1;
@@ -197,6 +210,12 @@ function integerList(raw, fallback) {
 }
 
 function performanceTargets() {
+  if (process.env.MC_RUNTIME_CURRENT_URL && process.env.MC_RUNTIME_SHARED_URL) {
+    return [
+      { name: "current", url: process.env.MC_RUNTIME_CURRENT_URL },
+      { name: "shared", url: process.env.MC_RUNTIME_SHARED_URL },
+    ];
+  }
   if (process.env.MC_URL) {
     return [{ name: process.env.MC_PERF_LABEL ?? "configured", url: process.env.MC_URL }];
   }
@@ -280,6 +299,8 @@ function combineRuns(samples) {
     "composerShiftPx",
     "sendActionShiftPx",
     "scrollFollowDistancePx",
+    "jsHeapBytes",
+    "interruptRequests",
   ];
   const combined = { ...representative, runs: samples.length };
   for (const field of numeric) {
@@ -644,6 +665,7 @@ async function runThreadLifecycle(target) {
   const reconnectMarker = "First frame after reconnect";
   await page.evaluate(() => window.__remyPerf.reconnect());
   const reconnectLatency = await emitChatFrame(page, fixture.primaryThreadId, reconnectMarker);
+  const duplicatedEntries = await page.getByText(reconnectMarker, { exact: true }).count() - 1;
   const reconnect = await snapshotResult(page, {
     target: target.name,
     scenario: "reconnect",
@@ -651,6 +673,7 @@ async function runThreadLifecycle(target) {
     firstLivePaintP95Ms: normalizeLatency(reconnectLatency, lifecycleFrameCapacity),
     rawLivePaintP95Ms: reconnectLatency,
     frameCapacity: lifecycleFrameCapacity,
+    duplicatedEntries,
   });
 
   await page.evaluate((chatId) => {
@@ -703,6 +726,51 @@ async function runUnavailableDevice(target) {
       unavailableDevice: true,
       ...observed,
       delayFromLocalMs: Math.max(0, observed.firstUsefulPaintMs - localUseful),
+    });
+    assertPageErrors(opened.errors, result);
+    return result;
+  } finally {
+    await opened.context.close();
+  }
+}
+
+async function runInterruption(target) {
+  const fixture = createFixture({ threadCount: 25, entryCount: 100 });
+  const opened = await openHarnessPage(target, fixture, `#/threads/${fixture.primaryThreadId}`);
+  try {
+    await waitForText(opened.page, fixture.lastEntryText);
+    await opened.page.evaluate((chatId) => window.__remyPerf.emit({
+      type: "chat",
+      chatId,
+      state: "working",
+      updatedAt: Date.now(),
+      workingSince: Date.now(),
+    }), fixture.primaryThreadId);
+    const stop = opened.page.getByRole("button", { name: "Stop" });
+    await stop.waitFor({ state: "visible", timeout: TIMEOUT_MS });
+    await opened.page.evaluate(() => window.__remyPerf.resetMeasurements());
+    await stop.click();
+    await opened.page.waitForFunction(
+      (id) => window.__remyPerf.requests.some((request) =>
+        request.method === "POST" && request.path === `/chats/${id}/interrupt`),
+      fixture.primaryThreadId,
+      { timeout: TIMEOUT_MS, polling: "raf" },
+    );
+    await opened.page.evaluate((chatId) => window.__remyPerf.emit({
+      type: "chat",
+      chatId,
+      state: "idle",
+      updatedAt: Date.now(),
+      workingSince: null,
+    }), fixture.primaryThreadId);
+    await nextPaint(opened.page);
+    const interruptRequests = await opened.page.evaluate((id) => window.__remyPerf.requests.filter((request) =>
+      request.method === "POST" && request.path === `/chats/${id}/interrupt`).length, fixture.primaryThreadId);
+    const result = await snapshotResult(opened.page, {
+      target: target.name,
+      scenario: "interruption",
+      interruptRequests,
+      allowedWrites: [`POST /chats/${fixture.primaryThreadId}/interrupt`],
     });
     assertPageErrors(opened.errors, result);
     return result;
@@ -1185,6 +1253,7 @@ async function emitChatFrame(page, chatId, text) {
 async function snapshotResult(page, base) {
   await page.waitForTimeout(25);
   const metrics = await page.evaluate(() => {
+    globalThis.gc?.();
     const navigation = performance.getEntriesByType("navigation")[0];
     const requests = window.__remyPerf.requests.slice();
     const resources = performance.getEntriesByType("resource");
@@ -1198,6 +1267,7 @@ async function snapshotResult(page, base) {
       domSize: document.getElementsByTagName("*").length,
       longTaskCount: longTasks.length,
       longTaskDurationMs: longTasks.reduce((total, task) => total + task.duration, 0),
+      jsHeapBytes: performance.memory?.usedJSHeapSize,
       resourceBytes: resources.reduce(
         (total, resource) => total + (resource.transferSize || resource.encodedBodySize || 0),
         0,
@@ -1218,6 +1288,7 @@ async function snapshotResult(page, base) {
     domSize: metrics.domSize,
     longTaskCount: metrics.longTaskCount,
     longTaskDurationMs: metrics.longTaskDurationMs,
+    jsHeapBytes: metrics.jsHeapBytes,
     requestCount: metrics.requests.length,
     transferredBytes: requestBytes + metrics.resourceBytes,
     webSocketPayloadBytes: metrics.livePayloadBytes.reduce((total, bytes) => total + bytes, 0),
@@ -1365,12 +1436,14 @@ function printResults(allResults) {
       result.reopenFromMemory === undefined ? "" : `reopened ${result.reopenFromMemory ? "from memory" : "over the network"}`,
       result.keptOnHide === undefined ? "" : `hidden pane ${result.keptOnHide ? "kept" : "discarded"}`,
       Number.isFinite(result.domSize) ? `${result.domSize} DOM nodes` : "",
+      Number.isFinite(result.jsHeapBytes) ? `${formatBytes(result.jsHeapBytes)} JS heap` : "",
       Number.isFinite(result.requestCount) ? `${result.requestCount} requests` : "",
       Number.isFinite(result.transferredBytes) ? `${formatBytes(result.transferredBytes)} transferred` : "",
       Number.isFinite(result.webSocketPayloadBytes) ? `${formatBytes(result.webSocketPayloadBytes)} WebSocket` : "",
       Number.isFinite(result.longTaskCount) ? `${result.longTaskCount} long tasks` : "",
       Number.isFinite(result.affectedRowRenders) ? `${result.affectedRowRenders} affected row renders` : "",
       Number.isFinite(result.unrelatedRowRenders) ? `${result.unrelatedRowRenders} unrelated row renders` : "",
+      Number.isFinite(result.interruptRequests) ? `${result.interruptRequests} interrupt requests` : "",
       result.openedWarm === undefined ? "" : `snapshot ${result.openedWarm ? "written" : "absent"}`,
       result.usefulPreserved === undefined ? "" : `known content ${result.usefulPreserved ? "kept" : "lost"}`,
       result.loadingReplacementShown === undefined ? "" : `loading replacement ${result.loadingReplacementShown ? "shown" : "avoided"}`,
@@ -1408,6 +1481,66 @@ function printResults(allResults) {
     + ` · surface reopen ≤${PERFORMANCE_BUDGETS.surfaceReopenMs}ms`
     + ` · surface layout shift ≤${PERFORMANCE_BUDGETS.maxSurfaceLayoutShift}`,
   );
+}
+
+function printRuntimeComparison(allResults, failures) {
+  const current = new Map();
+  const shared = new Map();
+  for (const result of allResults) {
+    const key = `${result.scenario}:${result.entryCount ?? ""}:${result.threadCount ?? ""}`;
+    (result.target === "shared" ? shared : current).set(key, result);
+  }
+  const rows = [
+    ["cold-open:10:25", "short useful paint", "firstUsefulPaintMs", "ms"],
+    ["cold-open:500:25", "long useful paint", "firstUsefulPaintMs", "ms"],
+    ["thread-scroll:500:", "long scroll", "frameRate", "fps"],
+    ["sidebar::250", "sidebar paint", "firstUsefulPaintMs", "ms"],
+    ["live-update:100:", "live response p95", "firstLivePaintP95Ms", "ms"],
+    ["reconnect:100:", "reconnect paint", "firstLivePaintP95Ms", "ms"],
+    ["warm-open:100:25", "warm reopen", "firstUsefulPaintMs", "ms"],
+    ["unavailable-device:100:25", "unavailable-device paint", "firstUsefulPaintMs", "ms"],
+  ];
+  console.log("\nRuntime comparison");
+  for (const [key, label, field, unit] of rows) {
+    const before = current.get(key)?.[field];
+    const after = shared.get(key)?.[field];
+    if (!Number.isFinite(before) || !Number.isFinite(after)) continue;
+    const change = before === 0 ? 0 : ((after - before) / before) * 100;
+    console.log(`  ${label}: current ${before.toFixed(1)}${unit} · shared ${after.toFixed(1)}${unit} · ${change >= 0 ? "+" : ""}${change.toFixed(1)}%`);
+  }
+  const currentHeap = percentile([...current.values()].map((result) => result.jsHeapBytes).filter(Number.isFinite), 50);
+  const sharedHeap = percentile([...shared.values()].map((result) => result.jsHeapBytes).filter(Number.isFinite), 50);
+  if (currentHeap && sharedHeap) {
+    console.log(`  median JS heap: current ${formatBytes(currentHeap)} · shared ${formatBytes(sharedHeap)}`);
+  }
+  const currentCold = current.get("cold-open:500:25");
+  const sharedCold = shared.get("cold-open:500:25");
+  if (currentCold && sharedCold) {
+    console.log(`  long-open requests: current ${currentCold.requestCount} / ${formatBytes(currentCold.transferredBytes)} · shared ${sharedCold.requestCount} / ${formatBytes(sharedCold.transferredBytes)}`);
+  }
+  const currentRender = current.get("render-isolation-thread::25");
+  const sharedRender = shared.get("render-isolation-thread::25");
+  if (currentRender && sharedRender) {
+    console.log(`  live row renders: current ${currentRender.affectedRowRenders} affected / ${currentRender.unrelatedRowRenders} unrelated · shared ${sharedRender.affectedRowRenders} affected / ${sharedRender.unrelatedRowRenders} unrelated`);
+  }
+  const currentReconnect = current.get("reconnect:100:");
+  const sharedReconnect = shared.get("reconnect:100:");
+  if (currentReconnect && sharedReconnect) {
+    console.log(`  reconnect duplicates: current ${currentReconnect.duplicatedEntries} · shared ${sharedReconnect.duplicatedEntries}`);
+  }
+  const currentInterrupt = current.get("interruption::");
+  const sharedInterrupt = shared.get("interruption::");
+  if (currentInterrupt && sharedInterrupt) {
+    console.log(`  interruption requests: current ${currentInterrupt.interruptRequests} · shared ${sharedInterrupt.interruptRequests}`);
+  }
+  console.log(`  shared runtime source: ${process.env.MC_RUNTIME_SOURCE_LINES ?? "unknown"} lines`);
+  console.log(`  current entry bundle: ${formatBytes(Number(process.env.MC_RUNTIME_CURRENT_BUNDLE_BYTES ?? 0))}`);
+  console.log(`  shared entry bundle: ${formatBytes(Number(process.env.MC_RUNTIME_SHARED_BUNDLE_BYTES ?? 0))}`);
+  if (failures.length > 0) {
+    console.log("  budget or correctness misses:");
+    for (const failure of failures) console.log(`    - ${failure}`);
+  }
+  console.log("  Decision: do not migrate this surface unless the shared path materially improves the parent budgets and replaces its compatibility projection.");
 }
 
 function formatMs(value) {

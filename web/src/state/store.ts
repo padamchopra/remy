@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { ThreadRuntime } from "~/client-runtime/thread-runtime";
 import { codeFor, type DeviceIconId } from "~/lib/devices";
 import { agentConversation, availableAgentServers } from "~/lib/inbox";
 import type { TintId } from "~/lib/tints";
@@ -51,6 +52,7 @@ import type {
 /// while it is down, because then it is the only source of truth.
 
 const useFixture = import.meta.env.VITE_MC_FIXTURE === "1";
+const useSharedThreadRuntime = import.meta.env.VITE_THREAD_RUNTIME === "shared";
 
 interface RawChat {
   id: string;
@@ -111,7 +113,7 @@ type ChatOptionPatch = {
   permissionMode?: string;
 };
 
-interface State {
+export interface State {
   servers: Server[];
   chats: Chat[];
   archived: ArchivedThread[];
@@ -359,6 +361,7 @@ export const useStore = create<State>((set, get) => ({
 
   start() {
     if (useFixture) return () => {};
+    if (useSharedThreadRuntime) return sharedThreadRuntime().start();
 
     // Servers first, then anything keyed to them. A machine that asked to pair
     // while this window was closed is standing there waiting for an answer, so
@@ -540,6 +543,7 @@ export const useStore = create<State>((set, get) => ({
 
   async refresh() {
     if (useFixture) return;
+    if (useSharedThreadRuntime) return sharedThreadRuntime().refresh();
     if (pendingRefresh) return pendingRefresh;
     const pending = (async () => {
       const run = ++refreshRun;
@@ -1093,6 +1097,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async openChat(id) {
+    if (useSharedThreadRuntime) return sharedThreadRuntime().openChat(id);
     // Both lists: an inbox conversation opens the same way a thread does.
     const chat = get().chats.find((entry) => entry.id === id)
       ?? get().dms.find((entry) => entry.id === id);
@@ -1132,6 +1137,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async loadEarlierEntries(id) {
+    if (useSharedThreadRuntime) return sharedThreadRuntime().loadEarlierEntries(id);
     const detail = get().details[id];
     const before = detail?.history?.before;
     if (!detail || !detail.history?.hasEarlier || !before || get().historyLoading[id]) return;
@@ -1163,6 +1169,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   closeChat(id) {
+    if (useSharedThreadRuntime) return sharedThreadRuntime().closeChat(id);
     detailSubscriptions.get(id)?.();
     detailSubscriptions.delete(id);
     set((current) => {
@@ -1769,6 +1776,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async interrupt(id) {
+    if (useSharedThreadRuntime) return sharedThreadRuntime().interrupt(id);
     const chat = get().chats.find((entry) => entry.id === id) ?? get().details[id];
     if (!chat) throw new Error("This thread is no longer available.");
     await transport.request(chat.serverId, `/chats/${encodeURIComponent(id)}/interrupt`, {
@@ -1778,6 +1786,13 @@ export const useStore = create<State>((set, get) => ({
     await get().refresh();
   },
 }));
+
+let runtime: ThreadRuntime | undefined;
+
+function sharedThreadRuntime(): ThreadRuntime {
+  runtime ??= new ThreadRuntime(transport, useStore, recentDetails());
+  return runtime;
+}
 
 function chatOptionValue(field: keyof ChatOptionPatch, value: unknown): string | null {
   return field === "permissionMode" ? String(value) : typeof value === "string" ? value : null;
