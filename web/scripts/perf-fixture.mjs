@@ -7,6 +7,8 @@ export const PERFORMANCE_BUDGETS = Object.freeze({
   minimumFrameRate: 60,
   idleCpuPercent: 1,
   unavailableDelayMs: 50,
+  independentCatalogueMs: 500,
+  optimisticMessageMs: 100,
   maxRenderedTurns: 40,
   maxMountedSidebarThreads: 40,
   maxHistoryAnchorShiftPx: 2,
@@ -129,6 +131,8 @@ export function createFixture({
   unavailableDevice = false,
   serverId = "local",
   readDelayMs = 4,
+  archiveDelayMs,
+  messageDelayMs,
   terminalOutput = "",
 } = {}) {
   const listedChats = chats(threadCount);
@@ -173,12 +177,14 @@ export function createFixture({
     primaryDmId: listedDms[0]?.id,
     primaryAgentHandle: listedAgents[0]?.handle,
     readDelayMs,
+    archiveDelayMs,
+    messageDelayMs,
     terminalOutput,
     servers: [{ id: serverId, name: "Performance fixture", url: "fixture://local", builtin: serverId === "local" }],
     responses: {
       "/peers": { name: "Performance fixture", peers: unavailableDevice ? [peer] : [] },
       "/cursor-cloud/status": {},
-      "/chats": { chats: listedChats, dms: listedDms },
+      "/chats": { chats: listedChats, dms: listedDms, projection: true, sequence: 0 },
       "/archives": { archives: [] },
       "/workspaces": { workspaces: [workspace] },
       "/board": {
@@ -489,6 +495,26 @@ export function installPerformanceBridge(fixture) {
           error: "Unavailable device",
         });
       }
+      if (path === "/archives?summary=1" && fixture.archiveDelayMs) {
+        return measured(method, path, fixtureResponse(path), { delay: fixture.archiveDelayMs });
+      }
+      if (/^\/chats\/[^/]+\/message$/.test(path)) {
+        const answer = await measured(method, path, {}, { delay: fixture.messageDelayMs });
+        if (answer.ok && typeof init.body?.messageId === "string") {
+          queueMicrotask(() => window.__remyPerf.emit({
+            type: "chat",
+            chatId: decodeURIComponent(path.split("/")[2]),
+            state: "working",
+            updatedAt: Date.now(),
+            entries: [{
+              id: init.body.messageId,
+              kind: "user",
+              text: init.body.text,
+            }],
+          }));
+        }
+        return answer;
+      }
       const terminalMatch = path.match(/^\/terminals\/([^/]+)\/(open|write|resize|close)$/);
       if (terminalMatch) {
         const terminalId = decodeURIComponent(terminalMatch[1]);
@@ -681,6 +707,15 @@ export function budgetFailures(result, budgets = PERFORMANCE_BUDGETS) {
     if (result.delayFromLocalMs > budgets.unavailableDelayMs) {
       failures.push(`unavailable-device delay: ${result.delayFromLocalMs.toFixed(1)} ms > ${budgets.unavailableDelayMs} ms`);
     }
+  }
+  if (result.scenario === "independent-catalogue") {
+    over(result.firstUsefulPaintMs, budgets.independentCatalogueMs, "active catalogue paint");
+    if (result.archiveFinishedBeforePaint) failures.push("active catalogue waited for archives");
+    if (result.preciseEventReloadedCatalogue) failures.push("precise sidebar event reloaded the catalogue");
+  }
+  if (result.scenario === "optimistic-message") {
+    over(result.firstUsefulPaintMs, budgets.optimisticMessageMs, "optimistic message paint");
+    if (result.requestFinishedBeforePaint) failures.push("message paint waited for the remote command");
   }
   // Against a device that takes a moment to answer, a warm reopen has to be the
   // faster one. What the cache removes is request wait, so a machine too slow to

@@ -236,6 +236,7 @@ export interface ChatDetail extends ChatSummary {
 // The feed a client renders. Older turns stay in Claude's own transcript; this
 // is the window Remy keeps.
 const MAX_ENTRIES = 500;
+const INITIAL_CHAT_WINDOW_BYTES = 96 * 1024;
 // A chat with no live turn drops its Claude process after this, and resumes by
 // session id on the next message. Long-lived chats would otherwise pin one
 // `claude` process each for as long as the host is up.
@@ -502,7 +503,7 @@ export class Chat {
   }
 
   detailWindow(turns: number, before?: string): ChatDetail {
-    const page = chatWindow(this.record.entries, turns, before);
+    const page = chatWindow(this.record.entries, turns, before, INITIAL_CHAT_WINDOW_BYTES);
     return { ...this.detail(), ...page };
   }
 
@@ -513,9 +514,12 @@ export class Chat {
     attachments: ChatImageAttachment[] = [],
     codeReferences: ChatCodeReference[] = [],
     agentContext?: string,
+    messageId?: string,
   ): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed && codeReferences.length === 0) return;
+    const entryId = messageId ?? `u-${randomUUID()}`;
+    if (this.record.entries.some((entry) => entry.id === entryId)) return;
     const safeText = await redactForCwd(this.record.cwd, trimmed || "Review these comments.");
     const safeReferences = await Promise.all(codeReferences.map(async (reference) => ({
       ...reference,
@@ -549,7 +553,7 @@ This is the agent's Inbox conversation. When the person signals that something s
       .join("\n\n");
     const agentPrompt: ChatPrompt = { text: agentText, attachments };
     this.append({
-      id: `u-${randomUUID()}`,
+      id: entryId,
       kind: "user",
       text: clip(safeText, MAX_TEXT),
       ...(attachments.length > 0 ? { attachments } : {}),
@@ -747,6 +751,7 @@ This is the agent's Inbox conversation. When the person signals that something s
     // stateFields carries the title, so an open thread renames itself without
     // refetching; `chats` is what makes a client re-read the worktrees.
     this.push();
+    broadcast({ type: "chat-list", operation: "upsert", chat: this.summary() });
     broadcast({ type: "chats" });
   }
 
@@ -1998,6 +2003,7 @@ export function restoreArchivedChat(input: {
   chats.set(id, chat);
   chat.persist();
   for (const entry of record.entries) saveEntry(id, entry);
+  broadcast({ type: "chat-list", operation: "upsert", chat: chat.summary() });
   broadcast({ type: "chats" });
   return chat.summary();
 }
@@ -2186,6 +2192,7 @@ export function createChat(input: {
   const chat = new Chat(record);
   chats.set(record.id, chat);
   chat.persist();
+  broadcast({ type: "chat-list", operation: "upsert", chat: chat.summary() });
   broadcast({ type: "chats" });
   return chat.summary();
 }
@@ -2312,6 +2319,7 @@ export function updateChat(
   chat.record.updatedAt = nowMs();
   chat.persist();
   chat.push();
+  broadcast({ type: "chat-list", operation: "upsert", chat: chat.summary() });
   broadcast({ type: "chats" });
   return chat.summary();
 }
@@ -2322,8 +2330,9 @@ export async function sendChatMessage(
   attachments: ChatImageAttachment[] = [],
   codeReferences: ChatCodeReference[] = [],
   agentContext?: string,
+  messageId?: string,
 ): Promise<void> {
-  await mustGet(id).send(text, attachments, codeReferences, agentContext);
+  await mustGet(id).send(text, attachments, codeReferences, agentContext, messageId);
 }
 
 export async function runChatEnvironmentCommand(
@@ -2364,6 +2373,7 @@ export function deleteChat(id: string): void {
   chat.markDeleted();
   chats.delete(id);
   removeChat(id);
+  broadcast({ type: "chat-list", operation: "remove", chatIds: [id] });
   broadcast({ type: "chats" });
   syncSleepAssertion();
 }

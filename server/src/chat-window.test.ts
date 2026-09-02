@@ -46,3 +46,15 @@ test("bounds a transcript tail that contains no user turn", () => {
 test("rejects an expired history cursor", () => {
   assert.throws(() => chatWindow(transcript, 2, "gone"), /cursor/);
 });
+
+test("drops older complete turns when the initial transfer exceeds its byte budget", () => {
+  const entries = [
+    { ...entry("u1", "user"), text: "x".repeat(80) },
+    { ...entry("a1", "assistant"), text: "x".repeat(80) },
+    entry("u2", "user"),
+    entry("a2", "assistant"),
+  ];
+  const page = chatWindow(entries, 2, undefined, 100);
+  assert.deepEqual(page.entries.map((item) => item.id), ["u2", "a2"]);
+  assert.deepEqual(page.history, { hasEarlier: true, before: "u2" });
+});

@@ -17,7 +17,7 @@ import {
   pullRequestGuideContext,
   readSavedPullRequestGuide,
 } from "./pull-request-guides.js";
-import { archiveChat, deleteArchivedChat, getArchivedChat, listArchivedChats } from "./archives.js";
+import { archiveChat, deleteArchivedChat, getArchivedChat, listArchivedChats, listArchivedChatSummaries } from "./archives.js";
 import { deviceId, onLocalAppend, onRemoteMerge, type LogEvent } from "./board-log.js";
 import {
   adoptWorkspace,
@@ -101,7 +101,7 @@ import {
   updateCursorCloudChat,
 } from "./cursor-cloud.js";
 import { handleHookEvent } from "./events.js";
-import { attachNotifyStream, broadcast, deliverFromPeer, pushSession, pushSessionList } from "./notify.js";
+import { attachNotifyStream, broadcast, deliverFromPeer, notificationSequence, pushSession, pushSessionList } from "./notify.js";
 import { startPeerStreamRelay } from "./peer-stream.js";
 import {
   browserSnapshotText,
@@ -1611,7 +1611,13 @@ const server = createServer(async (req, res) => {
       const unavailable = chatsUnavailable();
       // The inbox rides along rather than taking a route of its own: a client
       // that shows both would otherwise ask twice on every refresh.
-      return json(res, 200, { chats: listChats(), dms: listDms(), ...(unavailable ? { unavailable } : {}) });
+      return json(res, 200, {
+        chats: listChats(),
+        dms: listDms(),
+        sequence: notificationSequence(),
+        projection: true,
+        ...(unavailable ? { unavailable } : {}),
+      });
     }
     if (req.method === "POST" && url.pathname === "/chats") {
       const body = await readJson(req);
@@ -1866,7 +1872,10 @@ const server = createServer(async (req, res) => {
         try {
           const attachments = validateChatImages(id, body.attachments);
           const codeReferences = validateChatCodeReferences(body.codeReferences);
-          await sendChatMessage(id, String(body.text ?? ""), attachments, codeReferences);
+          const messageId = typeof body.messageId === "string" && /^u-[0-9a-f-]{36}$/i.test(body.messageId)
+            ? body.messageId
+            : undefined;
+          await sendChatMessage(id, String(body.text ?? ""), attachments, codeReferences, undefined, messageId);
           return json(res, 200, { ok: true });
         } catch (error) {
           return json(res, 409, { error: (error as Error).message || "could not send the message" });
@@ -2120,7 +2129,13 @@ const server = createServer(async (req, res) => {
     }
 
     if (url.pathname === "/archives" && req.method === "GET") {
-      return json(res, 200, { archives: listArchivedChats() });
+      return json(res, 200, {
+        archives: url.searchParams.get("summary") === "1" ? listArchivedChatSummaries() : listArchivedChats(),
+      });
+    }
+    if (parts[0] === "archives" && parts[1] && parts.length === 2 && req.method === "GET") {
+      const archive = getArchivedChat(decodeURIComponent(parts[1]));
+      return archive ? json(res, 200, { archive }) : json(res, 404, { error: "archived thread not found" });
     }
     if (parts[0] === "archives" && parts[1] && parts[2] === "restore" && req.method === "POST") {
       const id = decodeURIComponent(parts[1]);

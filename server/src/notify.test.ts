@@ -61,11 +61,13 @@ test("scoped clients receive only owned surfaces and acquire detail explicitly",
   );
 
   notify.broadcast({ type: "board" });
+  notify.broadcast({ type: "chat-list", operation: "upsert", chat: { id: "new" } });
   notify.broadcast({ type: "chat", chatId: "one", entries: [{ id: "a", text: "first" }] });
   notify.broadcast({ type: "chat", chatId: "two", entries: [{ id: "b", text: "hidden" }] });
   await settleFrames();
 
   assert.equal(scoped.sent.some((frame) => frame.type === "board"), true);
+  assert.equal(scoped.sent.some((frame) => frame.type === "chat-list"), true);
   assert.equal(scoped.sent.some((frame) => frame.type === "chat" && frame.chatId === "one"), true);
   assert.equal(scoped.sent.some((frame) => frame.type === "chat" && frame.chatId === "two"), false);
 

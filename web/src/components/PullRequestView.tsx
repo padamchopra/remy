@@ -519,7 +519,7 @@ export function PullRequestView({
               Summary
             </TabsTrigger>
             <TabsTrigger value="code" className="h-full flex-none rounded-none px-2 text-xs after:bottom-0">
-              Code <span className="text-[11px] tabular-nums text-muted-foreground">{changedFiles}</span>
+              Code <Badge variant="secondary" className="h-4 min-w-4 px-1 text-[10px] leading-none tabular-nums">{changedFiles}</Badge>
             </TabsTrigger>
             <TabsTrigger value="guide" className="h-full flex-none rounded-none px-2 text-xs after:bottom-0">
               Guide

@@ -12,7 +12,12 @@ export interface ChatWindow {
 
 /// Keeps complete user turns together: a tool-heavy turn is one reading unit,
 /// even when it contains far more rows than the turns around it.
-export function chatWindow(entries: readonly ConvEntry[], turnLimit: number, before?: string): ChatWindow {
+export function chatWindow(
+  entries: readonly ConvEntry[],
+  turnLimit: number,
+  before?: string,
+  byteLimit = Number.POSITIVE_INFINITY,
+): ChatWindow {
   const end = before === undefined
     ? entries.length
     : entries.findIndex((entry) => entry.id === before);
@@ -30,7 +35,13 @@ export function chatWindow(entries: readonly ConvEntry[], turnLimit: number, bef
   }
   if (turns === 0) start = Math.max(start, end - turnLimit * 4);
 
-  const page = entries.slice(start, end);
+  let page = entries.slice(start, end);
+  while (page.length > 1 && Buffer.byteLength(JSON.stringify(page)) > byteLimit) {
+    const nextTurn = page.findIndex((entry, index) => index > 0 && entry.kind === "user");
+    if (nextTurn < 0) break;
+    start += nextTurn;
+    page = page.slice(nextTurn);
+  }
   return {
     entries: page,
     history: {

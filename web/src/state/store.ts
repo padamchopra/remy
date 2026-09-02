@@ -80,6 +80,7 @@ interface RawArchive {
   archivedAt: number;
   cwd?: string | null;
   agent?: string;
+  summary?: boolean;
   conversation?: {
     title?: string;
     agentId?: string;
@@ -215,6 +216,7 @@ export interface State {
   pinThread(id: string, pinned: boolean): Promise<void>;
   renameThread(id: string, title: string): Promise<void>;
   archiveThread(id: string): Promise<void>;
+  loadArchivedThread(id: string, serverId: string): Promise<void>;
   restoreThread(id: string, serverId: string): Promise<Chat>;
   deleteArchivedThread(id: string, serverId: string): Promise<void>;
   deleteThread(id: string): Promise<void>;
@@ -271,7 +273,7 @@ const POLL_DISCONNECTED_MS = 4_000;
 const PEER_DETAIL_POLL_VISIBLE_MS = 1_000;
 const PEER_DETAIL_POLL_HIDDEN_MS = 5_000;
 const DETAIL_CACHE_LIMIT = 12;
-const CHAT_PAGE_TURNS = 12;
+const CHAT_PAGE_TURNS = 10;
 /// The closest together two warm-cache writes may be. Far enough apart that a
 /// streaming turn does not pay for one frame by frame, close enough that a
 /// window is never more than a moment behind what it last knew.
@@ -281,9 +283,12 @@ const pendingDetails = new Map<string, Promise<ChatDetail>>();
 const chatOptionVersions = new Map<string, number>();
 const pendingChatOptionValues = new Map<string, unknown>();
 const pushPeerServers = new Set<string>();
+const sidebarProjectionServers = new Set<string>();
+const sidebarSequences = new Map<string, number>();
 const detailSubscriptions = new Map<string, () => void>();
 let refreshRun = 0;
 let pendingRefresh: Promise<void> | undefined;
+let refreshAgain = false;
 
 /// What the last window left behind, read once so the first render already has
 /// devices, threads and the transcripts that were open. Everything here is
@@ -414,7 +419,12 @@ export const useStore = create<State>((set, get) => ({
         return;
       }
       if (frame.type === "chats") {
+        if (sidebarProjectionServers.has(serverId)) return;
         void get().refresh();
+        return;
+      }
+      if (frame.type === "chat-list") {
+        set((current) => applyChatListFrame(current, frame, serverId));
         return;
       }
       // A board frame says a ticket, agent or project changed — on this machine
@@ -544,7 +554,10 @@ export const useStore = create<State>((set, get) => ({
   async refresh() {
     if (useFixture) return;
     if (useSharedThreadRuntime) return sharedThreadRuntime().refresh();
-    if (pendingRefresh) return pendingRefresh;
+    if (pendingRefresh) {
+      refreshAgain = true;
+      return pendingRefresh;
+    }
     const pending = (async () => {
       const run = ++refreshRun;
       set({ catalogLoading: true });
@@ -586,38 +599,31 @@ export const useStore = create<State>((set, get) => ({
         workspaces: keepKnownServers(current.workspaces, known),
       }));
 
-      // Every machine is asked in parallel and each one paints as it answers,
-      // rather than the round landing all at once at the end. The threads on this
-      // machine come back in a millisecond; waiting for a device that is asleep
-      // to give up first is what kept them off the screen for seconds.
+      // Every resource lands independently. A large or unavailable archive
+      // must never hold a healthy active-thread catalogue off the screen.
       const failures = new Map<string, string>();
       await Promise.all(
-        servers.map(async (server) => {
-          try {
-            const [chats, archives, workspaces] = await Promise.all([
-              transport.request<{ chats?: RawChat[]; dms?: RawChat[] }>(server.id, "/chats").catch((error: unknown) => {
+        servers.flatMap((server) => {
+          const chats = transport
+            .request<{ chats?: RawChat[]; dms?: RawChat[]; sequence?: number; projection?: boolean }>(server.id, "/chats")
+            .catch((error: unknown) => {
                 // An older server has no /chats; that is not an error worth showing.
                 const message = error instanceof Error ? error.message : String(error);
                 if (!/\b404\b/.test(message)) throw error;
-                return { chats: [] } as { chats?: RawChat[]; dms?: RawChat[] };
-              }),
-              transport
-                .request<{ archives?: RawArchive[] }>(server.id, "/archives")
-                .then((listed) => listed.archives ?? [])
-                .catch(() => []),
-              transport
-                .request<{ workspaces?: RawWorkspace[] }>(server.id, "/workspaces")
-                .then((listed) => listed.workspaces ?? [])
-                .catch(() => undefined),
-            ]);
-            set((current) => {
-              const nextWorkspaces = workspaces === undefined
-                ? current.workspaces
-                : [
-                    ...current.workspaces.filter((workspace) => workspace.serverId !== server.id),
-                    ...workspaces.map((raw) => toWorkspace(raw, server.id)),
-                  ];
-              return {
+                return { chats: [] } as {
+                  chats?: RawChat[];
+                  dms?: RawChat[];
+                  sequence?: number;
+                  projection?: boolean;
+                };
+            })
+            .then((listed) => {
+              if (listed.projection) sidebarProjectionServers.add(server.id);
+              const snapshotSequence = typeof listed.sequence === "number" ? listed.sequence : undefined;
+              if (snapshotSequence !== undefined
+                && snapshotSequence < (sidebarSequences.get(server.id) ?? -1)) return;
+              if (snapshotSequence !== undefined) sidebarSequences.set(server.id, snapshotSequence);
+              set((current) => ({
                 // One machine answering is enough to stop saying "Connecting…":
                 // there is something to show, and there is somewhere to type.
                 loading: false,
@@ -625,36 +631,42 @@ export const useStore = create<State>((set, get) => ({
                 chats: replaceServerChats(
                   current.chats,
                   server.id,
-                  (chats.chats ?? []).map((raw) => toChat(raw, server.id)),
+                  (listed.chats ?? []).map((raw) => toChat(raw, server.id)),
                 ).sort(byNewest),
-                archived: [
-                  ...current.archived.filter((chat) => chat.serverId !== server.id),
-                  ...archives.map((raw) => toArchivedThread(raw, server.id)),
-                ].sort((a, b) => b.archivedAt - a.archivedAt),
                 // The inbox comes back in the same answer, so it lands with the
                 // threads rather than costing a second round trip.
                 dms: replaceServerChats(
                   current.dms,
                   server.id,
-                  (chats.dms ?? []).map((raw) => toChat(raw, server.id)),
+                  (listed.dms ?? []).map((raw) => toChat(raw, server.id)),
                 ),
-                // Keep the last catalogue when a paired machine is asleep. Its
-                // folders still exist there, and the device chip already says the
-                // machine is offline. A successful empty answer still clears it.
-                workspaces: applyProjectIdentity(nextWorkspaces, current.projects),
-              };
+              }));
+            })
+            .catch((error) => {
+              failures.set(server.id, `${server.name}: ${error instanceof Error ? error.message : String(error)}`);
+              set((current) => ({ servers: setServerOnline(current.servers, server.id, false) }));
             });
-          } catch (error) {
-            failures.set(server.id, `${server.name}: ${error instanceof Error ? error.message : String(error)}`);
-            // A machine that cannot be reached keeps everything last known
-            // about it — its threads, its inbox and its folders all still exist
-            // there, and the device chip already says it is offline. Erasing
-            // them would make an asleep laptop look like an empty one. Only
-            // unpairing removes a machine's rows, above.
-            set((current) => ({
-              servers: setServerOnline(current.servers, server.id, false),
-            }));
-          }
+
+          const archives = transport.request<{ archives?: RawArchive[] }>(server.id, "/archives?summary=1")
+            .then((listed) => set((current) => ({
+              archived: [
+                ...current.archived.filter((chat) => chat.serverId !== server.id),
+                ...(listed.archives ?? []).map((raw) => toArchivedThread(raw, server.id)),
+              ].sort((a, b) => b.archivedAt - a.archivedAt),
+            })))
+            .catch(() => {});
+
+          const workspaces = transport.request<{ workspaces?: RawWorkspace[] }>(server.id, "/workspaces")
+            .then((listed) => set((current) => {
+              const nextWorkspaces = [
+                ...current.workspaces.filter((workspace) => workspace.serverId !== server.id),
+                ...(listed.workspaces ?? []).map((raw) => toWorkspace(raw, server.id)),
+              ];
+              return { workspaces: applyProjectIdentity(nextWorkspaces, current.projects) };
+            }))
+            .catch(() => {});
+
+          return [chats, archives, workspaces];
         }),
       );
 
@@ -670,6 +682,10 @@ export const useStore = create<State>((set, get) => ({
       await pending;
     } finally {
       if (pendingRefresh === pending) pendingRefresh = undefined;
+      if (refreshAgain) {
+        refreshAgain = false;
+        void get().refresh();
+      }
     }
   },
 
@@ -1204,10 +1220,55 @@ export const useStore = create<State>((set, get) => ({
     const detail = get().details[id];
     const trimmed = text.trim();
     if (!detail || (!trimmed && codeReferences.length === 0)) return;
-    await transport.request(detail.serverId, `/chats/${encodeURIComponent(detail.id)}/message`, {
-      method: "POST",
-      body: { text: trimmed, attachments, codeReferences },
-    });
+    const messageId = `u-${crypto.randomUUID()}`;
+    const shownText = trimmed || "Review these comments.";
+    const optimisticAt = Date.now();
+    const optimistic: ConvEntry = {
+      id: messageId,
+      kind: "user",
+      at: optimisticAt,
+      text: shownText,
+      ...(attachments.length > 0 ? { attachments } : {}),
+      ...(codeReferences.length > 0 ? { codeReferences } : {}),
+    };
+    const previousRow = get().chats.find((chat) => chat.id === id && chat.serverId === detail.serverId)
+      ?? get().dms.find((chat) => chat.id === id && chat.serverId === detail.serverId);
+    set((current) => ({
+      details: {
+        ...current.details,
+        [id]: { ...current.details[id]!, entries: [...current.details[id]!.entries, optimistic] },
+      },
+      chats: current.chats.map((chat) => chat.id === id && chat.serverId === detail.serverId
+        ? { ...chat, preview: shownText, state: "working", updatedAt: optimisticAt }
+        : chat),
+      dms: current.dms.map((chat) => chat.id === id && chat.serverId === detail.serverId
+        ? { ...chat, preview: shownText, state: "working", updatedAt: optimisticAt }
+        : chat),
+    }));
+    try {
+      await transport.request(detail.serverId, `/chats/${encodeURIComponent(detail.id)}/message`, {
+        method: "POST",
+        body: { messageId, text: trimmed, attachments, codeReferences },
+      });
+    } catch (error) {
+      set((current) => ({
+        details: current.details[id]?.entries.some((entry) => entry.id === messageId)
+          ? {
+              ...current.details,
+              [id]: {
+                ...current.details[id]!,
+                entries: current.details[id]!.entries.filter((entry) => entry.id !== messageId),
+              },
+            }
+          : current.details,
+        ...(previousRow?.dm
+          ? { dms: current.dms.map((chat) => chat.id === id && chat.serverId === detail.serverId ? previousRow : chat) }
+          : previousRow
+            ? { chats: current.chats.map((chat) => chat.id === id && chat.serverId === detail.serverId ? previousRow : chat) }
+            : {}),
+      }));
+      throw error;
+    }
     // The server echoes the message back as a `chat` frame. With the socket
     // down there is no frame coming, so read the feed once instead.
     if (!get().connected) await get().openChat(detail.id);
@@ -1301,6 +1362,20 @@ export const useStore = create<State>((set, get) => ({
     );
     await get().refresh();
     return toChat(body.chat, serverId);
+  },
+
+  async loadArchivedThread(id, serverId) {
+    const current = get().archived.find((thread) => thread.id === id && thread.serverId === serverId);
+    if (!current || current.detailLoaded) return;
+    const body = await transport.request<{ archive?: RawArchive }>(
+      serverId,
+      `/archives/${encodeURIComponent(id)}`,
+    );
+    if (!body.archive) return;
+    const archive = toArchivedThread(body.archive, serverId);
+    set((state) => ({
+      archived: state.archived.map((entry) => entry.id === id && entry.serverId === serverId ? archive : entry),
+    }));
   },
 
   async deleteArchivedThread(id, serverId) {
@@ -1895,6 +1970,7 @@ function keepWarmCache(): { stop: () => void } {
 /// fields are always sent whole, so `null` means cleared rather than unchanged.
 interface ChatFrame {
   type?: string;
+  sequence?: number;
   peerStreams?: string[];
   reset?: boolean;
   topics?: string[];
@@ -1913,6 +1989,9 @@ interface ChatFrame {
   context?: ContextUsage | null;
   updatedAt?: number;
   workingSince?: number | null;
+  operation?: "upsert" | "remove";
+  chat?: RawChat;
+  chatIds?: string[];
 }
 
 interface RawChatDetail extends RawChat {
@@ -1992,6 +2071,41 @@ function patchRow(chat: Chat, frame: ChatFrame): Chat {
     ...(frame.unread === undefined ? {} : { unread: frame.unread }),
   };
   return sameChat(chat, next) ? chat : next;
+}
+
+function applyChatListFrame(current: State, frame: ChatFrame, serverId: string): Partial<State> {
+  if (typeof frame.sequence === "number") {
+    const previous = sidebarSequences.get(serverId) ?? -1;
+    if (frame.sequence <= previous) return current;
+    sidebarSequences.set(serverId, frame.sequence);
+  }
+  sidebarProjectionServers.add(serverId);
+  if (frame.operation === "remove" && frame.chatIds?.length) {
+    const removed = new Set(frame.chatIds);
+    return {
+      chats: current.chats.filter((chat) => chat.serverId !== serverId || !removed.has(chat.id)),
+      dms: current.dms.filter((chat) => chat.serverId !== serverId || !removed.has(chat.id)),
+    };
+  }
+  if (frame.operation !== "upsert" || !frame.chat) return current;
+  const chat = toChat(frame.chat, serverId);
+  const upsert = (items: Chat[]) => {
+    const existing = items.findIndex((entry) => entry.serverId === serverId && entry.id === chat.id);
+    if (existing < 0) return [...items, chat];
+    if (sameChat(items[existing]!, chat)) return items;
+    const next = items.slice();
+    next[existing] = chat;
+    return next;
+  };
+  return chat.dm
+    ? {
+        chats: current.chats.filter((entry) => entry.serverId !== serverId || entry.id !== chat.id),
+        dms: upsert(current.dms),
+      }
+    : {
+        chats: upsert(current.chats).sort(byNewest),
+        dms: current.dms.filter((entry) => entry.serverId !== serverId || entry.id !== chat.id),
+      };
 }
 
 function applyChatFrame(current: State, frame: ChatFrame, serverId: string): Partial<State> {
@@ -2154,6 +2268,7 @@ function toArchivedThread(raw: RawArchive, serverId: string): ArchivedThread {
     entries,
     todos: raw.conversation?.todos ?? [],
     context: raw.conversation?.context,
+    detailLoaded: raw.summary !== true,
   };
 }
 
