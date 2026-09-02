@@ -72,7 +72,8 @@ test("passes results on the parent budgets and rejects regressions", () => {
       unrelatedRowRenders: 0,
       orderChanged: false,
     },
-    { scenario: "reconnect", firstLivePaintP95Ms: PERFORMANCE_BUDGETS.livePaintP95Ms },
+    { scenario: "reconnect", firstLivePaintP95Ms: PERFORMANCE_BUDGETS.livePaintP95Ms, duplicatedEntries: 0 },
+    { scenario: "interruption", interruptRequests: 1, allowedWrites: ["POST /chats/thread-1/interrupt"], mutatingRequests: ["POST /chats/thread-1/interrupt"] },
     {
       scenario: "sidebar",
       threadCount: 250,
