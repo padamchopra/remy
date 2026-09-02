@@ -8,6 +8,7 @@ export const PERFORMANCE_BUDGETS = Object.freeze({
   idleCpuPercent: 1,
   unavailableDelayMs: 50,
   maxRenderedTurns: 40,
+  maxMountedSidebarThreads: 40,
   maxHistoryAnchorShiftPx: 2,
   maxComposerShiftPx: 1,
   /// A surface still on the network, from the click that opened it.
@@ -565,6 +566,24 @@ export function budgetFailures(result, budgets = PERFORMANCE_BUDGETS) {
     if (result.frameRate + 0.5 < budgets.minimumFrameRate) {
       under(result.frameRate, budgets.minimumFrameRate, "250-thread sidebar");
     }
+    if (result.target !== "packaged") {
+      if (result.initialThreadRows > budgets.maxMountedSidebarThreads) {
+        failures.push(`mounted sidebar threads: ${result.initialThreadRows} > ${budgets.maxMountedSidebarThreads}`);
+      }
+      if (result.initialHiddenThreads < 1) failures.push("large settled group has no reveal control");
+      if (result.revealedThreadRows <= result.initialThreadRows) failures.push("revealing more did not add thread rows");
+      if (result.remainingHiddenThreads >= result.initialHiddenThreads) failures.push("revealing more did not reduce hidden threads");
+    }
+  }
+  if (result.scenario === "sidebar-behavior") {
+    if (result.catalogueStableRowRenders > 0) {
+      failures.push(`catalogue refresh rendered ${result.catalogueStableRowRenders} unchanged rows`);
+    }
+    if (!result.sidebarInTasks) failures.push("threads are not reachable from Tasks");
+    if (!result.activeRowsVisible) failures.push("active work was hidden by the settled limit");
+    if (!result.hiddenSearchFound) failures.push("a hidden settled thread was missing from search");
+    if (!result.selectedGroupVisible) failures.push("the selected parent and child were hidden");
+    if (!result.keyboardRevealWorked) failures.push("keyboard reveal did not add settled rows");
   }
   if (result.scenario === "thread-scroll" && result.entryCount === 500) {
     if (result.frameRate + 0.5 < budgets.minimumFrameRate) {

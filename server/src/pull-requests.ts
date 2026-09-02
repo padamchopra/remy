@@ -91,6 +91,8 @@ export interface PullRequestDiff {
   headRefName: string;
   state: string;
   isDraft: boolean;
+  mergeable: string;
+  mergeStateStatus: string;
   reviewDecision: string;
   additions: number;
   deletions: number;
@@ -418,6 +420,73 @@ export async function markPullRequestReady(repository: string, number: number): 
   cache = null;
 }
 
+interface PullRequestMergeState {
+  state: string;
+  isDraft: boolean;
+  mergeable: string;
+  mergeStateStatus: string;
+  headRefOid: string;
+}
+
+export function parsePullRequestMergeState(raw: string): PullRequestMergeState {
+  const value = asRecord(JSON.parse(raw || "{}"));
+  return {
+    state: stringValue(value.state).toUpperCase(),
+    isDraft: value.isDraft === true,
+    mergeable: stringValue(value.mergeable).toUpperCase(),
+    mergeStateStatus: stringValue(value.mergeStateStatus).toUpperCase(),
+    headRefOid: stringValue(value.headRefOid),
+  };
+}
+
+export function squashMergePullRequestArgs(input: {
+  repository: string;
+  number: number;
+  headRefOid: string;
+  title: string;
+  message: string;
+}): string[] {
+  return [
+    "pr", "merge", String(input.number),
+    "--repo", input.repository,
+    "--squash",
+    "--subject", input.title,
+    "--body", input.message,
+    "--match-head-commit", input.headRefOid,
+  ];
+}
+
+export function pullRequestMergeBlocker(current: PullRequestMergeState, expectedHeadRefOid: string): string {
+  if (current.state !== "OPEN") return "Only an open pull request can be merged.";
+  if (current.isDraft) return "Mark this pull request ready before merging.";
+  if (current.headRefOid !== expectedHeadRefOid) return "This pull request changed. Refresh it before merging.";
+  if (current.mergeable !== "MERGEABLE" || current.mergeStateStatus !== "CLEAN") {
+    return "This pull request isn't ready to merge. Refresh it and try again.";
+  }
+  return "";
+}
+
+export async function squashMergePullRequest(input: {
+  repository: string;
+  number: number;
+  headRefOid: string;
+  title: string;
+  message: string;
+}): Promise<void> {
+  const fields = "state,isDraft,mergeable,mergeStateStatus,headRefOid";
+  const { stdout } = await exec(
+    "gh",
+    ["pr", "view", String(input.number), "--repo", input.repository, "--json", fields],
+    { timeout: 30_000 },
+  );
+  const current = parsePullRequestMergeState(stdout);
+  const blocker = pullRequestMergeBlocker(current, input.headRefOid);
+  if (blocker) throw new Error(blocker);
+  await exec("gh", squashMergePullRequestArgs(input), { timeout: 60_000 });
+  cache = null;
+  mergedCache.clear();
+}
+
 const PULL_REQUEST_FILES_QUERY = `query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){id files(first:100,after:$after){nodes{path viewerViewedState}pageInfo{hasNextPage endCursor}}}}}`;
 const MARK_FILE_VIEWED_MUTATION = `mutation($pullRequestId:ID!,$path:String!){markFileAsViewed(input:{pullRequestId:$pullRequestId,path:$path}){pullRequest{id}}}`;
 const UNMARK_FILE_VIEWED_MUTATION = `mutation($pullRequestId:ID!,$path:String!){unmarkFileAsViewed(input:{pullRequestId:$pullRequestId,path:$path}){pullRequest{id}}}`;
@@ -509,7 +578,7 @@ export async function pullRequestTimeline(repository: string, number: number): P
 export async function pullRequestDiff(repository: string, number: number, cwd?: string): Promise<PullRequestDiff> {
   const fields = [
     "number", "title", "url", "body", "baseRefName", "headRefName", "baseRefOid", "headRefOid", "state", "isDraft",
-    "reviewDecision", "additions", "deletions", "changedFiles", "statusCheckRollup",
+    "mergeable", "mergeStateStatus", "reviewDecision", "additions", "deletions", "changedFiles", "statusCheckRollup",
   ].join(",");
   const options = { ...(cwd ? { cwd } : {}), timeout: 30_000 };
   const [view, fileViews] = await Promise.all([
@@ -550,6 +619,8 @@ export function parsePullRequestView(
     headRefName: stringValue(metadata.headRefName),
     state: stringValue(metadata.state).toUpperCase() || "OPEN",
     isDraft: Boolean(metadata.isDraft),
+    mergeable: stringValue(metadata.mergeable).toUpperCase() || "UNKNOWN",
+    mergeStateStatus: stringValue(metadata.mergeStateStatus).toUpperCase() || "UNKNOWN",
     reviewDecision: stringValue(metadata.reviewDecision).toUpperCase(),
     additions: numberValue(metadata.additions),
     deletions: numberValue(metadata.deletions),

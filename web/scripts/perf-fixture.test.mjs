@@ -73,7 +73,24 @@ test("passes results on the parent budgets and rejects regressions", () => {
       orderChanged: false,
     },
     { scenario: "reconnect", firstLivePaintP95Ms: PERFORMANCE_BUDGETS.livePaintP95Ms },
-    { scenario: "sidebar", threadCount: 250, frameRate: PERFORMANCE_BUDGETS.minimumFrameRate },
+    {
+      scenario: "sidebar",
+      threadCount: 250,
+      frameRate: PERFORMANCE_BUDGETS.minimumFrameRate,
+      initialThreadRows: PERFORMANCE_BUDGETS.maxMountedSidebarThreads,
+      initialHiddenThreads: 210,
+      revealedThreadRows: PERFORMANCE_BUDGETS.maxMountedSidebarThreads + 30,
+      remainingHiddenThreads: 180,
+    },
+    {
+      scenario: "sidebar-behavior",
+      catalogueStableRowRenders: 0,
+      sidebarInTasks: true,
+      activeRowsVisible: true,
+      hiddenSearchFound: true,
+      selectedGroupVisible: true,
+      keyboardRevealWorked: true,
+    },
     { scenario: "thread-scroll", entryCount: 500, frameRate: PERFORMANCE_BUDGETS.minimumFrameRate },
     { scenario: "idle", idleCpuPercent: PERFORMANCE_BUDGETS.idleCpuPercent },
     {
@@ -133,6 +150,30 @@ test("passes results on the parent budgets and rejects regressions", () => {
   assert.match(
     budgetFailures({ scenario: "idle", idleCpuPercent: PERFORMANCE_BUDGETS.idleCpuPercent + 0.1 })[0],
     /idle CPU/,
+  );
+  assert.match(
+    budgetFailures({
+      scenario: "sidebar",
+      threadCount: 250,
+      frameRate: 60,
+      initialThreadRows: PERFORMANCE_BUDGETS.maxMountedSidebarThreads + 1,
+      initialHiddenThreads: 209,
+      revealedThreadRows: 71,
+      remainingHiddenThreads: 179,
+    })[0],
+    /mounted sidebar threads/,
+  );
+  assert.match(
+    budgetFailures({
+      scenario: "sidebar-behavior",
+      catalogueStableRowRenders: 1,
+      sidebarInTasks: true,
+      activeRowsVisible: true,
+      hiddenSearchFound: true,
+      selectedGroupVisible: true,
+      keyboardRevealWorked: true,
+    })[0],
+    /unchanged rows/,
   );
   assert.match(
     budgetFailures({ scenario: "pane-devices", mutatingRequests: ["PATCH /server/identity"] })[0],

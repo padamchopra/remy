@@ -1,9 +1,22 @@
 import type { Chat, Workspace } from "../state/types";
 
+const childrenByCatalogue = new WeakMap<Chat[], Map<string, Chat[]>>();
+
 export function threadGroup(chat: Chat, chats: Chat[]): Chat[] {
-  return [chat, ...(!chat.parentChatId
-    ? chats.filter((entry) => entry.serverId === chat.serverId && entry.parentChatId === chat.id)
-    : [])];
+  if (chat.parentChatId) return [chat];
+  let children = childrenByCatalogue.get(chats);
+  if (!children) {
+    children = new Map();
+    for (const entry of chats) {
+      if (!entry.parentChatId) continue;
+      const key = `${entry.serverId}\u0000${entry.parentChatId}`;
+      const group = children.get(key);
+      if (group) group.push(entry);
+      else children.set(key, [entry]);
+    }
+    childrenByCatalogue.set(chats, children);
+  }
+  return [chat, ...(children.get(`${chat.serverId}\u0000${chat.id}`) ?? [])];
 }
 
 export function threadIsRunning(chat: Pick<Chat, "state">): boolean {

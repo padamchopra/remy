@@ -46,6 +46,13 @@ const results = [];
 try {
   for (const target of targets) {
     console.log(`\n${target.name} — ${target.url}`);
+    if (ONLY_SCENARIO === "sidebar") {
+      for (const threadCount of [25, 250]) {
+        results.push(await repeated(() => runSidebar(target, threadCount)));
+      }
+      if (target.name !== "packaged") results.push(await runSidebarBehavior(target));
+      continue;
+    }
     if (ONLY_SCENARIO === "surfaces") {
       results.push(...await runDeferredSurfaces(target));
       continue;
@@ -65,6 +72,7 @@ try {
     for (const threadCount of [25, 250]) {
       results.push(await repeated(() => runSidebar(target, threadCount)));
     }
+    if (target.name !== "packaged") results.push(await runSidebarBehavior(target));
     results.push(...await runRenderIsolation(target));
     results.push(...await repeatedGroup(() => runThreadLifecycle(target)));
     results.push(await runWarmOffline(target));
@@ -400,7 +408,12 @@ async function runSidebar(target, threadCount) {
   const fixture = createFixture({ threadCount, entryCount: 10 });
   const opened = await openHarnessPage(target, fixture, "#/threads");
   try {
-    const observed = await observeUseful(opened.page, `Performance thread ${threadCount}`);
+    const observed = await observeUseful(opened.page, fixture.primaryTitle);
+    const initialThreadRows = await opened.page.locator("[data-thread-id]").count();
+    const reveal = opened.page.locator("[data-sidebar-show-more]").first();
+    const initialHiddenThreads = await reveal.count()
+      ? Number(await reveal.getAttribute("data-hidden-count"))
+      : 0;
     const frames = threadCount === 250
       ? await measureScroll(opened.page, '[data-sidebar="sidebar"]')
       : {};
@@ -408,8 +421,100 @@ async function runSidebar(target, threadCount) {
       target: target.name,
       scenario: "sidebar",
       threadCount,
+      initialThreadRows,
+      initialHiddenThreads,
       ...observed,
       ...frames,
+    });
+    if (threadCount === 250 && initialHiddenThreads > 0) {
+      await reveal.click();
+      await opened.page.waitForFunction(
+        (count) => document.querySelectorAll("[data-thread-id]").length > count,
+        initialThreadRows,
+      );
+      result.revealedThreadRows = await opened.page.locator("[data-thread-id]").count();
+      result.remainingHiddenThreads = Number(await opened.page.locator("[data-sidebar-show-more]").first().getAttribute("data-hidden-count"));
+    }
+    assertPageErrors(opened.errors, result);
+    return result;
+  } finally {
+    await opened.context.close();
+  }
+}
+
+async function runSidebarBehavior(target) {
+  const fixture = createFixture({ threadCount: 250, entryCount: 10 });
+  const chats = fixture.responses["/chats"].chats;
+  const child = chats.find((chat) => chat.id === "thread-200");
+  const working = chats.find((chat) => chat.id === "thread-249");
+  const needsInput = chats.find((chat) => chat.id === "thread-250");
+  child.parentChatId = "thread-199";
+  working.state = "working";
+  needsInput.state = "needs_input";
+  const childDetail = {
+    ...fixture.responses[`/chats/${fixture.primaryThreadId}`],
+    ...child,
+  };
+  fixture.responses[`/chats/${child.id}`] = childDetail;
+  fixture.responses["/archives"] = {
+    archives: Array.from({ length: 75 }, (_, index) => ({
+      id: `archive-${index + 1}`,
+      chatId: `archived-thread-${index + 1}`,
+      session: `Archived performance thread ${index + 1}`,
+      cwd: "/tmp/remy-performance",
+      archivedAt: 1_600_000_000_000 - index,
+      conversation: { title: `Archived performance thread ${index + 1}`, entries: [], todos: [] },
+    })),
+  };
+
+  const opened = await openHarnessPage(target, fixture, "#/tasks");
+  try {
+    try {
+      await waitForText(opened.page, fixture.primaryTitle);
+    } catch (error) {
+      const body = await opened.page.locator("body").innerText();
+      throw new Error(`${error.message}\n${opened.errors.join("\n")}\n${body.slice(0, 2_000)}`);
+    }
+    const sidebarInTasks = await opened.page.locator(`[data-thread-id="${fixture.primaryThreadId}"]`).count() === 1;
+    const activeRowsVisible = await opened.page.locator('[data-thread-id="thread-249"], [data-thread-id="thread-250"]').count() === 2;
+    await opened.page.evaluate(() => {
+      window.__remyPerf.resetMeasurements();
+      window.__remyPerf.emit({ type: "chats" });
+    });
+    await opened.page.waitForFunction(() => window.__remyPerf.requests.some((request) => request.path === "/chats"));
+    await nextPaint(opened.page);
+    const catalogueStableRowRenders = await opened.page.evaluate(() =>
+      window.__remyPerf.renders.filter((render) => render.surface === "thread-row").length);
+
+    await opened.page.locator("header button:has(svg.lucide-search)").click();
+    const search = opened.page.getByPlaceholder("Search threads and commands");
+    await search.fill(child.title);
+    const searchResult = opened.page.locator("[cmdk-item]").filter({ hasText: child.title });
+    const hiddenSearchFound = await searchResult.count() === 1;
+    await searchResult.click();
+    await opened.page.waitForFunction((id) => window.location.hash.includes(id), child.id);
+    const selectedGroupVisible = await opened.page.locator('[data-thread-id="thread-199"], [data-thread-id="thread-200"]').count() === 2;
+
+    const archiveReveal = opened.page.locator("[data-sidebar-show-more]").last();
+    const rowsBeforeReveal = await opened.page.locator("[data-thread-id]").count();
+    await archiveReveal.focus();
+    await archiveReveal.press("Enter");
+    await opened.page.waitForFunction(
+      (count) => document.querySelectorAll("[data-thread-id]").length > count,
+      rowsBeforeReveal,
+    );
+    const keyboardRevealWorked = await opened.page.locator("[data-thread-id]").count() > rowsBeforeReveal;
+
+    const result = await snapshotResult(opened.page, {
+      target: target.name,
+      scenario: "sidebar-behavior",
+      threadCount: fixture.threadCount,
+      sidebarInTasks,
+      activeRowsVisible,
+      catalogueStableRowRenders,
+      hiddenSearchFound,
+      selectedGroupVisible,
+      keyboardRevealWorked,
     });
     assertPageErrors(opened.errors, result);
     return result;
@@ -1189,6 +1294,10 @@ function printResults(allResults) {
         ? `${result.rawFrameRate.toFixed(1)}/${result.frameCapacity.toFixed(1)} raw/capacity fps`
         : "",
       Number.isFinite(result.renderedTurns) ? `${result.renderedTurns} mounted turns` : "",
+      Number.isFinite(result.initialThreadRows) ? `${result.initialThreadRows} mounted thread rows` : "",
+      Number.isFinite(result.initialHiddenThreads) ? `${result.initialHiddenThreads} settled threads hidden` : "",
+      Number.isFinite(result.revealedThreadRows) ? `${result.revealedThreadRows} rows after reveal` : "",
+      Number.isFinite(result.catalogueStableRowRenders) ? `${result.catalogueStableRowRenders} catalogue rerenders` : "",
       Number.isFinite(result.largestAnchorShiftPx) ? `${result.largestAnchorShiftPx.toFixed(1)}px history shift` : "",
       Number.isFinite(result.stableRowRenders) ? `${result.stableRowRenders} stable rerenders` : "",
       Number.isFinite(result.composerShiftPx) ? `${result.composerShiftPx.toFixed(1)}px composer shift` : "",
@@ -1212,6 +1321,9 @@ function printResults(allResults) {
       result.usefulPreserved === undefined ? "" : `known content ${result.usefulPreserved ? "kept" : "lost"}`,
       result.readsAttempted === undefined ? "" : `fresh reads ${result.readsAttempted ? "attempted" : "skipped"}`,
       Number.isFinite(result.duplicatedEntries) ? `${result.duplicatedEntries} duplicated entries` : "",
+      result.hiddenSearchFound === undefined ? "" : `hidden search ${result.hiddenSearchFound ? "found" : "missing"}`,
+      result.selectedGroupVisible === undefined ? "" : `selected hierarchy ${result.selectedGroupVisible ? "visible" : "hidden"}`,
+      result.keyboardRevealWorked === undefined ? "" : `keyboard reveal ${result.keyboardRevealWorked ? "worked" : "failed"}`,
     ].filter(Boolean).join(" · ");
     console.log(`\n${result.target.padEnd(9)} ${result.scenario}${dataset ? ` (${dataset})` : ""}`);
     console.log(`  ${measures}`);
