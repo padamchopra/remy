@@ -216,7 +216,7 @@ export function PullRequestView({
       && frame.repository === currentRepository
       && frame.number === currentNumber
     ) setRefreshVersion((current) => current + 1);
-  }), [number, pullRequest?.number, pullRequest?.repository, repository, serverId]);
+  }, ["pull-requests", "sidebar"]), [number, pullRequest?.number, pullRequest?.repository, repository, serverId]);
 
   useEffect(() => {
     if (!guide || !pullRequest) return;

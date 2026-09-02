@@ -280,7 +280,7 @@ export function PullRequests({
   useEffect(() => transport.subscribe((source, payload) => {
     if (!serversRef.current.some((server) => server.id === source) || !payload || typeof payload !== "object") return;
     if ((payload as { type?: unknown }).type === "pull-requests") void load({ refresh: true });
-  }), [load]);
+  }, ["pull-requests", "sidebar"]), [load]);
 
   const counts = useMemo(() => ({
     all: pullRequests.length,
