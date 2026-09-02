@@ -13,6 +13,7 @@ export const PERFORMANCE_BUDGETS = Object.freeze({
   maxMountedSidebarThreads: 40,
   maxHistoryAnchorShiftPx: 2,
   maxComposerShiftPx: 1,
+  maxSendActionShiftPx: 1,
   /// A surface still on the network, from the click that opened it.
   surfaceFirstOpenMs: 900,
   /// The same surface opened again in the same window. Its code is already in
@@ -293,6 +294,7 @@ export function installPerformanceBridge(fixture) {
   let liveTopics = new Set();
   const nextFailures = new Map();
   let connected = true;
+  let catalogueAvailable = true;
 
   const terminalSession = (terminalId) => {
     let session = terminalSessions.get(terminalId);
@@ -419,6 +421,12 @@ export function installPerformanceBridge(fixture) {
     reachable() {
       offline = false;
     },
+    hideCatalogue() {
+      catalogueAvailable = false;
+    },
+    showCatalogue() {
+      catalogueAvailable = true;
+    },
     emit(payload, serverId = fixture.serverId) {
       if (!connected) return false;
       const type = payload?.type;
@@ -469,7 +477,7 @@ export function installPerformanceBridge(fixture) {
     servers: async () => {
       // The device list is held by this process, so it answers even when the
       // machine behind it does not.
-      const answer = await measured("GET", "electron://servers", fixture.servers);
+      const answer = await measured("GET", "electron://servers", catalogueAvailable ? fixture.servers : []);
       return answer.data;
     },
     async request(serverId, path, init = {}) {
@@ -621,6 +629,10 @@ export function budgetFailures(result, budgets = PERFORMANCE_BUDGETS) {
     if (result.composerShiftPx > budgets.maxComposerShiftPx) {
       failures.push(`streaming composer shift: ${result.composerShiftPx.toFixed(1)} px > ${budgets.maxComposerShiftPx} px`);
     }
+    if (result.sendActionShiftPx > budgets.maxSendActionShiftPx) {
+      failures.push(`streaming send action shift: ${result.sendActionShiftPx.toFixed(1)} px > ${budgets.maxSendActionShiftPx} px`);
+    }
+    if (result.modelSelectionStable === false) failures.push("streaming changed the selected model");
     if (result.scrollFollowDistancePx > 80) {
       failures.push(`streaming scroll follow: ${result.scrollFollowDistancePx.toFixed(1)} px from newest`);
     }
@@ -646,6 +658,10 @@ export function budgetFailures(result, budgets = PERFORMANCE_BUDGETS) {
   }
   if (result.scenario === "reconnect") {
     over(result.firstLivePaintP95Ms, budgets.livePaintP95Ms, "reconnect live paint");
+    if (result.duplicatedEntries > 0) failures.push(`reconnect duplicated ${result.duplicatedEntries} transcript entries`);
+  }
+  if (result.scenario === "interruption" && result.interruptRequests !== 1) {
+    failures.push(`interruption sent ${result.interruptRequests ?? 0} requests instead of 1`);
   }
   if (result.scenario === "sidebar" && result.threadCount === 250) {
     if (result.frameRate + 0.5 < budgets.minimumFrameRate) {
@@ -736,6 +752,10 @@ export function budgetFailures(result, budgets = PERFORMANCE_BUDGETS) {
   }
   if (result.scenario === "shared-read-failure" && result.usefulPreserved !== true) {
     failures.push("failed refresh removed useful board state");
+  }
+  if (result.scenario === "catalogue-gap") {
+    if (result.usefulPreserved !== true) failures.push("missing device catalogue removed useful thread state");
+    if (result.loadingReplacementShown === true) failures.push("missing device catalogue replaced the thread with loading UI");
   }
   if (result.scenario?.startsWith("pane-")) {
     const sharedPaths = new Set([

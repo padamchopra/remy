@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { ThreadRuntime } from "~/client-runtime/thread-runtime";
 import { codeFor, type DeviceIconId } from "~/lib/devices";
 import { agentConversation, availableAgentServers } from "~/lib/inbox";
 import type { TintId } from "~/lib/tints";
@@ -51,6 +52,7 @@ import type {
 /// while it is down, because then it is the only source of truth.
 
 const useFixture = import.meta.env.VITE_MC_FIXTURE === "1";
+const useSharedThreadRuntime = import.meta.env.VITE_THREAD_RUNTIME === "shared";
 
 interface RawChat {
   id: string;
@@ -106,7 +108,13 @@ interface RawWorkspace {
   virtual?: boolean;
 }
 
-interface State {
+type ChatOptionPatch = {
+  model?: string | null;
+  effort?: string | null;
+  permissionMode?: string;
+};
+
+export interface State {
   servers: Server[];
   chats: Chat[];
   archived: ArchivedThread[];
@@ -204,7 +212,7 @@ interface State {
   answerApproval(id: string, requestId: string, decision: "allow" | "allowAlways" | "deny"): Promise<void>;
   answerQuestion(id: string, requestId: string, answers: Record<string, unknown>): Promise<void>;
   interrupt(id: string): Promise<void>;
-  setChatOptions(id: string, patch: { model?: string | null; effort?: string | null; permissionMode?: string }): Promise<void>;
+  setChatOptions(id: string, patch: ChatOptionPatch): Promise<void>;
   pinThread(id: string, pinned: boolean): Promise<void>;
   renameThread(id: string, title: string): Promise<void>;
   archiveThread(id: string): Promise<void>;
@@ -272,6 +280,8 @@ const CHAT_PAGE_TURNS = 10;
 const WARM_WRITE_MS = 500;
 const detailCache = new Map<string, ChatDetail>();
 const pendingDetails = new Map<string, Promise<ChatDetail>>();
+const chatOptionVersions = new Map<string, number>();
+const pendingChatOptionValues = new Map<string, unknown>();
 const pushPeerServers = new Set<string>();
 const sidebarProjectionServers = new Set<string>();
 const sidebarSequences = new Map<string, number>();
@@ -356,6 +366,7 @@ export const useStore = create<State>((set, get) => ({
 
   start() {
     if (useFixture) return () => {};
+    if (useSharedThreadRuntime) return sharedThreadRuntime().start();
 
     // Servers first, then anything keyed to them. A machine that asked to pair
     // while this window was closed is standing there waiting for an answer, so
@@ -542,6 +553,7 @@ export const useStore = create<State>((set, get) => ({
 
   async refresh() {
     if (useFixture) return;
+    if (useSharedThreadRuntime) return sharedThreadRuntime().refresh();
     if (pendingRefresh) {
       refreshAgain = true;
       return pendingRefresh;
@@ -555,20 +567,23 @@ export const useStore = create<State>((set, get) => ({
       try {
         servers = await transport.servers();
       } catch (error) {
-        if (run === refreshRun) set({ catalogLoading: false });
+        if (run === refreshRun) set((current) => ({
+          catalogLoading: false,
+          loading: false,
+          connected: false,
+          servers: current.servers.map((server) => ({ ...server, online: false })),
+          error: "Reconnect this machine to refresh its content.",
+        }));
         throw error;
       }
       if (servers.length === 0) {
-        set({
-          servers: [],
-          chats: [],
-          archived: [],
-          dms: [],
-          workspaces: [],
+        set((current) => ({
+          servers: current.servers.map((server) => ({ ...server, online: false })),
           loading: false,
           catalogLoading: run === refreshRun ? false : get().catalogLoading,
-          error: undefined,
-        });
+          connected: false,
+          error: current.servers.length > 0 ? "Reconnect a device to refresh its content." : undefined,
+        }));
         return;
       }
 
@@ -681,6 +696,13 @@ export const useStore = create<State>((set, get) => ({
 
   async removeServer(id) {
     await transport.removeServer(id);
+    set((current) => ({
+      servers: current.servers.filter((server) => server.id !== id),
+      chats: current.chats.filter((chat) => chat.serverId !== id),
+      archived: current.archived.filter((chat) => chat.serverId !== id),
+      dms: current.dms.filter((chat) => chat.serverId !== id),
+      workspaces: current.workspaces.filter((workspace) => workspace.serverId !== id),
+    }));
     await get().refresh();
   },
 
@@ -1091,6 +1113,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async openChat(id) {
+    if (useSharedThreadRuntime) return sharedThreadRuntime().openChat(id);
     // Both lists: an inbox conversation opens the same way a thread does.
     const chat = get().chats.find((entry) => entry.id === id)
       ?? get().dms.find((entry) => entry.id === id);
@@ -1130,6 +1153,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async loadEarlierEntries(id) {
+    if (useSharedThreadRuntime) return sharedThreadRuntime().loadEarlierEntries(id);
     const detail = get().details[id];
     const before = detail?.history?.before;
     if (!detail || !detail.history?.hasEarlier || !before || get().historyLoading[id]) return;
@@ -1161,6 +1185,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   closeChat(id) {
+    if (useSharedThreadRuntime) return sharedThreadRuntime().closeChat(id);
     detailSubscriptions.get(id)?.();
     detailSubscriptions.delete(id);
     set((current) => {
@@ -1281,24 +1306,52 @@ export const useStore = create<State>((set, get) => ({
   async pinThread(id, pinned) {
     const chat = get().chats.find((entry) => entry.id === id);
     if (!chat) return;
-    await transport.request(chat.serverId, `/chats/${encodeURIComponent(id)}`, {
-      method: "PATCH",
-      body: { pinned },
-    });
-    await get().refresh();
+    const previous = chat.pinned;
+    set((current) => ({
+      chats: current.chats.map((entry) => entry.id === id ? { ...entry, pinned } : entry),
+    }));
+    try {
+      await transport.request(chat.serverId, `/chats/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: { pinned },
+      });
+      await get().refresh();
+    } catch (error) {
+      set((current) => ({
+        chats: current.chats.map((entry) => entry.id === id && entry.pinned === pinned
+          ? { ...entry, pinned: previous }
+          : entry),
+      }));
+      throw error;
+    }
   },
 
   async renameThread(id, title) {
     const chat = get().chats.find((entry) => entry.id === id);
     if (!chat) throw new Error("This thread is no longer available.");
-    const response = await transport.request<{ chat: RawChat }>(chat.serverId, `/chats/${encodeURIComponent(id)}`, {
-      method: "PATCH", body: { title },
-    });
+    const previous = chat.title;
     set((current) => ({
-      chats: current.chats.map((entry) => entry.id === id ? { ...entry, title: response.chat.title } : entry),
-      details: current.details[id] ? { ...current.details, [id]: { ...current.details[id], title: response.chat.title } } : current.details,
+      chats: current.chats.map((entry) => entry.id === id ? { ...entry, title } : entry),
+      details: current.details[id] ? { ...current.details, [id]: { ...current.details[id], title } } : current.details,
     }));
-    detailCache.delete(detailKey(id, chat.serverId));
+    try {
+      const response = await transport.request<{ chat: RawChat }>(chat.serverId, `/chats/${encodeURIComponent(id)}`, {
+        method: "PATCH", body: { title },
+      });
+      set((current) => ({
+        chats: current.chats.map((entry) => entry.id === id ? { ...entry, title: response.chat.title } : entry),
+        details: current.details[id] ? { ...current.details, [id]: { ...current.details[id], title: response.chat.title } } : current.details,
+      }));
+      detailCache.delete(detailKey(id, chat.serverId));
+    } catch (error) {
+      set((current) => ({
+        chats: current.chats.map((entry) => entry.id === id && entry.title === title ? { ...entry, title: previous } : entry),
+        details: current.details[id]?.title === title
+          ? { ...current.details, [id]: { ...current.details[id], title: previous } }
+          : current.details,
+      }));
+      throw error;
+    }
   },
 
   async restoreThread(id, serverId) {
@@ -1750,35 +1803,55 @@ export const useStore = create<State>((set, get) => ({
   async setChatOptions(id, patch) {
     const detail = get().details[id];
     if (!detail) return;
+    const fields = (Object.keys(patch) as (keyof typeof patch)[]).filter((field) => patch[field] !== undefined);
+    const versions = new Map(fields.map((field) => {
+      const key = `${id}:${field}`;
+      if (!pendingChatOptionValues.has(key)) pendingChatOptionValues.set(key, detail[field]);
+      const version = (chatOptionVersions.get(key) ?? 0) + 1;
+      chatOptionVersions.set(key, version);
+      return [field, version] as const;
+    }));
+    const previous = Object.fromEntries(fields.map((field) => [field, detail[field]]));
+    set((current) => optimisticChatOptions(current, id, patch));
     // The server answers with the chat as it now stands, and retires the Claude
     // process so the next message starts under the new settings.
-    const body = await transport.request<{ chat?: RawChatDetail }>(
-      detail.serverId,
-      `/chats/${encodeURIComponent(detail.id)}`,
-      { method: "PATCH", body: patch },
-    );
-    const chat = body.chat;
-    if (!chat) return;
-    set((current) => ({
-      details: {
-        ...current.details,
-        [id]: current.details[id]
-          ? {
-              ...current.details[id],
-              provider: chat.provider,
-              model: chat.model,
-              effort: chat.effort,
-              permissionMode: chat.permissionMode,
-            }
-          : current.details[id],
-      },
-      chats: current.chats.map((entry) =>
-        entry.id === detail.id ? { ...entry, provider: chat.provider, model: chat.model, effort: chat.effort } : entry,
-      ),
-    }));
+    try {
+      const body = await transport.request<{ chat?: RawChatDetail }>(
+        detail.serverId,
+        `/chats/${encodeURIComponent(detail.id)}`,
+        { method: "PATCH", body: patch },
+      );
+      const chat = body.chat;
+      if (!chat) throw new Error("Try changing this thread's settings again.");
+      const accepted = Object.fromEntries(fields.flatMap((field) =>
+        chatOptionVersions.get(`${id}:${field}`) === versions.get(field)
+          ? [[field, chatOptionValue(field, chat[field])]]
+          : [])) as ChatOptionPatch;
+      set((current) => optimisticChatOptions(current, id, accepted));
+    } catch (error) {
+      const rollback = Object.fromEntries(fields.flatMap((field) =>
+        chatOptionVersions.get(`${id}:${field}`) === versions.get(field)
+          ? [[field, chatOptionValue(field, previous[field])]]
+          : [])) as ChatOptionPatch;
+      set((current) => optimisticChatOptions(current, id, rollback));
+      throw error;
+    } finally {
+      for (const field of fields) {
+        const key = `${id}:${field}`;
+        if (chatOptionVersions.get(key) === versions.get(field)) {
+          chatOptionVersions.delete(key);
+          pendingChatOptionValues.delete(key);
+        }
+      }
+      if (![...chatOptionVersions.keys()].some((key) => key.startsWith(`${id}:`))) {
+        const settled = get().details[id];
+        if (settled) cacheDetail(settled);
+      }
+    }
   },
 
   async interrupt(id) {
+    if (useSharedThreadRuntime) return sharedThreadRuntime().interrupt(id);
     const chat = get().chats.find((entry) => entry.id === id) ?? get().details[id];
     if (!chat) throw new Error("This thread is no longer available.");
     await transport.request(chat.serverId, `/chats/${encodeURIComponent(id)}/interrupt`, {
@@ -1788,6 +1861,61 @@ export const useStore = create<State>((set, get) => ({
     await get().refresh();
   },
 }));
+
+let runtime: ThreadRuntime | undefined;
+
+function sharedThreadRuntime(): ThreadRuntime {
+  runtime ??= new ThreadRuntime(transport, useStore, recentDetails());
+  return runtime;
+}
+
+function chatOptionValue(field: keyof ChatOptionPatch, value: unknown): string | null {
+  return field === "permissionMode" ? String(value) : typeof value === "string" ? value : null;
+}
+
+function optimisticChatOptions(current: State, id: string, patch: ChatOptionPatch): Partial<State> {
+  const apply = <T extends Pick<ChatDetail, "model" | "effort"> & { permissionMode?: string }>(chat: T): T => ({
+    ...chat,
+    ...(patch.model !== undefined ? { model: patch.model ?? undefined } : {}),
+    ...(patch.effort !== undefined ? { effort: patch.effort ?? undefined } : {}),
+    ...(patch.permissionMode !== undefined ? { permissionMode: patch.permissionMode } : {}),
+  });
+  const applyRow = (chat: Chat): Chat => ({
+    ...chat,
+    ...(patch.model !== undefined ? { model: patch.model ?? undefined } : {}),
+    ...(patch.effort !== undefined ? { effort: patch.effort ?? undefined } : {}),
+  });
+  return {
+    details: current.details[id]
+      ? { ...current.details, [id]: apply(current.details[id]) }
+      : current.details,
+    chats: current.chats.map((chat) => chat.id === id ? applyRow(chat) : chat),
+    dms: current.dms.map((chat) => chat.id === id ? applyRow(chat) : chat),
+  };
+}
+
+function settledChatRowsForWarm(current: State): State {
+  if (pendingChatOptionValues.size === 0) return current;
+  const settle = (chat: Chat): Chat => {
+    const modelKey = `${chat.id}:model`;
+    const effortKey = `${chat.id}:effort`;
+    if (!pendingChatOptionValues.has(modelKey) && !pendingChatOptionValues.has(effortKey)) return chat;
+    return {
+      ...chat,
+      ...(pendingChatOptionValues.has(modelKey)
+        ? { model: pendingChatOptionValues.get(modelKey) as string | undefined }
+        : {}),
+      ...(pendingChatOptionValues.has(effortKey)
+        ? { effort: pendingChatOptionValues.get(effortKey) as string | undefined }
+        : {}),
+    };
+  };
+  return {
+    ...current,
+    chats: current.chats.map(settle),
+    dms: current.dms.map(settle),
+  };
+}
 
 /// Writes the settled part of the store to the warm cache.
 ///
@@ -1807,7 +1935,7 @@ function keepWarmCache(): { stop: () => void } {
     // built either, so this does not spend the interval.
     if (current.servers.length === 0) return;
     ran = Date.now();
-    writeWarmCache(warmSnapshot(current, recentDetails()));
+    writeWarmCache(warmSnapshot(settledChatRowsForWarm(current), recentDetails()));
   };
   const flush = () => {
     if (!timer) return;

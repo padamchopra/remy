@@ -13,6 +13,7 @@ process.env.MC_CONFIG_DIR = stateDir;
 
 const { db } = await import("./db.js");
 const log = await import("./board-log.js");
+const agents = await import("./agents.js");
 const projects = await import("./projects.js");
 const memories = await import("./agent-memories.js");
 const tickets = await import("./tickets.js");
@@ -199,6 +200,48 @@ test("a peer's memory event becomes durable agent context on this machine", () =
 
   assert.equal(peers.acceptEvents({ events }), 1);
   assert.equal(memories.getMemory("memory-shared")?.content, "Prefer direct progress updates.");
+});
+
+test("a peer's agent edits and deletion converge on this machine", () => {
+  const events = [
+    remoteEvent("alpha", 30, {
+      id: "alpha-agent",
+      entity: "agent",
+      entityId: "agent-shared",
+      kind: "create",
+      payload: {
+        name: "Builder",
+        handle: "builder",
+        instructions: "Build the smallest complete change.",
+        avatar: "blobatar:v2:builder?s=round&h=42&t=pastel&e=happy",
+      },
+    }),
+    remoteEvent("alpha", 31, {
+      id: "alpha-agent-edit",
+      entity: "agent",
+      entityId: "agent-shared",
+      kind: "field",
+      payload: {
+        name: "Mobile builder",
+        avatar: "blobatar:v2:builder?s=cloud&h=218&t=ink&e=thinking",
+      },
+    }),
+  ];
+
+  assert.equal(peers.acceptEvents({ events }), 2);
+  assert.equal(agents.getAgent("agent-shared")?.name, "Mobile builder");
+  assert.equal(
+    agents.getAgent("agent-shared")?.avatar,
+    "blobatar:v2:builder?s=cloud&h=218&t=ink&e=thinking",
+  );
+
+  assert.equal(peers.acceptEvents({ events: [remoteEvent("alpha", 32, {
+    id: "alpha-agent-delete",
+    entity: "agent",
+    entityId: "agent-shared",
+    kind: "tombstone",
+  })] }), 1);
+  assert.equal(agents.getAgent("agent-shared"), undefined);
 });
 
 // ── the peer list ───────────────────────────────────────────────────────────

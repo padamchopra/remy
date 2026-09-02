@@ -1,5 +1,4 @@
 import { Suspense, useRef, type ReactNode } from "react";
-import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
 /// True from the first time `open` is true, and true from then on.
@@ -25,7 +24,7 @@ export function SurfaceLoading({ className }: { className?: string }) {
         className,
       )}
     >
-      <Spinner className="size-5 text-muted-foreground" />
+      <p role="status" className="shimmer text-sm text-muted-foreground">Wait while this surface opens.</p>
     </div>
   );
 }
