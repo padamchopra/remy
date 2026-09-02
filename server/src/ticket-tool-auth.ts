@@ -46,7 +46,7 @@ export function isRemyToolRoute(method: string | undefined, pathname: string): b
   if (method === "GET" && /^\/chats\/[^/]+\/browser$/.test(pathname)) return true;
   if (
     method === "POST"
-    && /^\/chats\/[^/]+\/browser\/(open|viewport|snapshot|back|forward|reload|click|type|insert|press|scroll|wait|close)$/.test(pathname)
+    && /^\/chats\/[^/]+\/browser\/(open|viewport|snapshot|back|forward|reload|click|type|insert|press|scroll|wait|zoom|close)$/.test(pathname)
   ) return true;
   if (method === "POST" && pathname === "/tickets") return true;
   if (!/^\/tickets\/[^/]+(?:\/[^/]+)?$/.test(pathname)) return false;

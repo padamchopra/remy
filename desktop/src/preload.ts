@@ -75,6 +75,17 @@ contextBridge.exposeInMainWorld("remy", {
   /// Captures the window to a PNG on the desktop, and answers with its path.
   snapshot: (): Promise<string> => ipcRenderer.invoke("mc:snapshot"),
 
+  presentBrowser: (input: {
+    serverId: string;
+    chatId: string;
+    browserId: string;
+    visible: boolean;
+    focused: boolean;
+    bounds: { x: number; y: number; width: number; height: number };
+  }): Promise<boolean> => ipcRenderer.invoke("mc:browser-present", input),
+
+  openBrowserExternally: (url: string): Promise<void> => ipcRenderer.invoke("mc:browser-open-external", url),
+
   onStatus: (handler: (serverId: string, online: boolean, error?: string) => void) => {
     const listener = (_event: unknown, serverId: string, online: boolean, error?: string) =>
       handler(serverId, online, error);

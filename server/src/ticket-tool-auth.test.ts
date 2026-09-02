@@ -39,6 +39,7 @@ test("a Remy capability reaches orchestration without reaching administration", 
   assert.equal(isRemyToolRoute("POST", "/chats/chat-1/browser/click"), true);
   assert.equal(isRemyToolRoute("POST", "/chats/chat-1/browser/viewport"), true);
   assert.equal(isRemyToolRoute("POST", "/chats/chat-1/browser/reload"), true);
+  assert.equal(isRemyToolRoute("POST", "/chats/chat-1/browser/zoom"), true);
   assert.equal(isRemyToolRoute("POST", "/chats/chat-1/browser/unknown"), false);
   assert.equal(isRemyToolRoute("DELETE", "/chats/chat-1/browser"), false);
   assert.equal(isRemyToolRoute("POST", "/tickets/one/start"), false);

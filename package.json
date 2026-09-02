@@ -8,6 +8,7 @@
     "dev": "MC_DEV_SERVER_URL=http://127.0.0.1:5173 npm --prefix desktop run start",
     "dev:web": "npm --prefix web run dev",
     "qa:web": "node scripts/qa-sidecar.mjs",
+    "qa:native-browser": "npm --prefix server run build && npm --prefix web run build && npm --prefix desktop run build && node desktop/scripts/native-browser-qa.mjs",
     "dev:server": "npm --prefix server run build && npm --prefix server start",
     "dev:ios": "npm --prefix mobile run ios",
     "build": "npm --prefix web run build && npm --prefix desktop run build",

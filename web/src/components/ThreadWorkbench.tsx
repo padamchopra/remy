@@ -553,6 +553,8 @@ function Surface({ tab, visible, focused, bench }: { tab: WorkbenchTab; visible:
           chatId={chat.id}
           serverId={chat.serverId}
           browserId={tab.browserId}
+          visible={visible}
+          focused={focused}
           view={bench.browsers.views[browserKey(chat.id, tab.browserId)]}
           setView={(view: SharedBrowserView) => bench.browsers.setView(chat.id, tab.browserId, view)}
         />

@@ -274,6 +274,15 @@ interface Bridge {
   focus?(): Promise<void>;
   /// Captures the window to a file, and answers with where it went.
   snapshot?(): Promise<string>;
+  presentBrowser?(input: {
+    serverId: string;
+    chatId: string;
+    browserId: string;
+    visible: boolean;
+    focused: boolean;
+    bounds: { x: number; y: number; width: number; height: number };
+  }): Promise<boolean>;
+  openBrowserExternally?(url: string): Promise<void>;
   removeServer(id: string): Promise<ListedServer[]>;
   updateServer?(id: string, patch: { name?: string; icon?: string }): Promise<ListedServer[]>;
 }
@@ -519,10 +528,24 @@ function proxyTransport(): LocalTransport {
   };
 }
 
+const desktopBridge = window.remy ?? window.missionControl;
+
+export const nativeBrowserSurface = {
+  available: Boolean(desktopBridge?.presentBrowser),
+  present: (input: {
+    serverId: string;
+    chatId: string;
+    browserId: string;
+    visible: boolean;
+    focused: boolean;
+    bounds: { x: number; y: number; width: number; height: number };
+  }): Promise<boolean> => desktopBridge?.presentBrowser?.(input) ?? Promise.resolve(false),
+  openExternal: (url: string): Promise<void> => desktopBridge?.openBrowserExternally?.(url)
+    ?? Promise.resolve().then(() => { window.open(url, "_blank", "noopener,noreferrer"); }),
+};
+
 export const transport: Transport = withPeers(
-  window.remy
-    ? electronTransport(window.remy)
-    : window.missionControl
-      ? electronTransport(window.missionControl)
+  desktopBridge
+    ? electronTransport(desktopBridge)
       : proxyTransport(),
 );

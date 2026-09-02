@@ -117,6 +117,7 @@ import {
   type BrowserTarget,
   typeBrowser,
   waitInBrowser,
+  zoomBrowser,
 } from "./browser.js";
 import { closeTerminal, openTerminal, resizeTerminal, writeTerminal } from "./terminal.js";
 import { forgetPushDevice, pushStatus, registerPushDevice } from "./push.js";
@@ -1661,8 +1662,9 @@ const server = createServer(async (req, res) => {
           return json(res, 400, { error: "that browser tab id is not valid" });
         }
         const controller = scopedChatId ? "agent" as const : "you" as const;
+        const includeScreenshot = url.searchParams.get("presentation") !== "native";
         if (req.method === "GET" && parts.length === 3) {
-          return json(res, 200, await browserView(id, true, browserId));
+          return json(res, 200, await browserView(id, includeScreenshot, browserId));
         }
         if (req.method === "POST" && parts.length === 4) {
           const body = await readJson(req);
@@ -1675,7 +1677,7 @@ const server = createServer(async (req, res) => {
             y: typeof body.y === "number" ? body.y : undefined,
           };
           try {
-            if (parts[3] === "open") return json(res, 200, await openBrowser(id, String(body.url ?? ""), controller, browserId));
+            if (parts[3] === "open") return json(res, 200, await openBrowser(id, String(body.url ?? ""), controller, browserId, includeScreenshot));
             if (parts[3] === "viewport") {
               if (body.viewport !== "fullscreen" && body.viewport !== "desktop" && body.viewport !== "mobile") {
                 return json(res, 400, { error: "Choose Fullscreen, Desktop, or Mobile." });
@@ -1688,16 +1690,18 @@ const server = createServer(async (req, res) => {
                 body.viewport === "fullscreen"
                   ? { width: Number(body.width), height: Number(body.height) }
                   : undefined,
+                includeScreenshot,
               ));
             }
             if (parts[3] === "snapshot") return json(res, 200, { text: await browserSnapshotText(id, browserId) });
             if (parts[3] === "back" || parts[3] === "forward" || parts[3] === "reload") {
-              return json(res, 200, await navigateBrowser(id, parts[3], controller, browserId));
+              return json(res, 200, await navigateBrowser(id, parts[3], controller, browserId, includeScreenshot));
             }
-            if (parts[3] === "click") return json(res, 200, await clickBrowser(id, target, controller, browserId));
-            if (parts[3] === "type") return json(res, 200, await typeBrowser(id, target, String(body.value ?? ""), controller, browserId));
-            if (parts[3] === "insert") return json(res, 200, await insertBrowser(id, String(body.value ?? ""), controller, browserId));
-            if (parts[3] === "press") return json(res, 200, await pressBrowser(id, String(body.key ?? ""), controller, browserId));
+            if (parts[3] === "click") return json(res, 200, await clickBrowser(id, target, controller, browserId, includeScreenshot));
+            if (parts[3] === "type") return json(res, 200, await typeBrowser(id, target, String(body.value ?? ""), controller, browserId, includeScreenshot));
+            if (parts[3] === "insert") return json(res, 200, await insertBrowser(id, String(body.value ?? ""), controller, browserId, includeScreenshot));
+            if (parts[3] === "press") return json(res, 200, await pressBrowser(id, String(body.key ?? ""), controller, browserId, includeScreenshot));
+            if (parts[3] === "zoom") return json(res, 200, await zoomBrowser(id, Number(body.factor), controller, browserId, includeScreenshot));
             if (parts[3] === "scroll") {
               return json(res, 200, await scrollBrowser(
                 id,
@@ -1705,6 +1709,7 @@ const server = createServer(async (req, res) => {
                 typeof body.deltaY === "number" ? body.deltaY : 0,
                 controller,
                 browserId,
+                includeScreenshot,
               ));
             }
             if (parts[3] === "wait") {
@@ -1713,6 +1718,7 @@ const server = createServer(async (req, res) => {
                 typeof body.milliseconds === "number" ? body.milliseconds : 500,
                 controller,
                 browserId,
+                includeScreenshot,
               ));
             }
             if (parts[3] === "close") {
