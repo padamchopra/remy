@@ -78,6 +78,7 @@ try {
       results.push(...await repeatedGroup(() => runThreadLifecycle(target)));
       results.push(await runWarmOffline(target));
       results.push(await repeated(() => runWarmLatency(target)));
+      results.push(await runCatalogueGap(target));
       continue;
     }
     for (const threadCount of [25, 250]) {
@@ -88,6 +89,7 @@ try {
     results.push(...await repeatedGroup(() => runThreadLifecycle(target)));
     results.push(await runWarmOffline(target));
     results.push(await repeated(() => runWarmLatency(target)));
+    results.push(await runCatalogueGap(target));
     results.push(await repeated(() => runUnavailableDevice(target)));
     results.push(...await runPaneRoutes(target));
     results.push(...await runDeferredSurfaces(target));
@@ -295,6 +297,7 @@ function combineRuns(samples) {
     "rawLivePaintP95Ms",
     "stableRowRenders",
     "composerShiftPx",
+    "sendActionShiftPx",
     "scrollFollowDistancePx",
     "jsHeapBytes",
     "interruptRequests",
@@ -605,7 +608,16 @@ async function runThreadLifecycle(target) {
       renders: Number(section.getAttribute("data-transcript-render-count")),
     } : undefined;
   });
-  const composerTop = await page.locator('[aria-label="Message"]').evaluate((control) => control.closest("form").getBoundingClientRect().top);
+  const controlsBefore = await page.evaluate(() => {
+    const composer = document.querySelector('[aria-label="Message"]')?.closest("form");
+    const send = composer?.querySelector('[aria-label="Send"]')?.getBoundingClientRect();
+    const model = composer?.querySelector('[data-model-picker]')?.textContent?.replace(/\s+/g, " ").trim();
+    return {
+      composerTop: composer?.getBoundingClientRect().top,
+      send: send ? { x: send.x, y: send.y } : undefined,
+      model,
+    };
+  });
   const livePaintSamples = [];
   for (let index = 0; index < LIVE_SAMPLES; index += 1) {
     const marker = `Live performance frame ${index + 1}`;
@@ -617,16 +629,24 @@ async function runThreadLifecycle(target) {
       stableRow.renders,
     )
     : 0;
-  const streamingLayout = await page.evaluate((beforeComposerTop) => {
+  const streamingLayout = await page.evaluate((before) => {
     const viewport = document.querySelector('[data-slot="scroll-area-viewport"]');
     const composer = document.querySelector('[aria-label="Message"]')?.closest("form");
+    const send = composer?.querySelector('[aria-label="Send"]')?.getBoundingClientRect();
+    const model = composer?.querySelector('[data-model-picker]')?.textContent?.replace(/\s+/g, " ").trim();
     return {
-      composerShiftPx: composer ? Math.abs(composer.getBoundingClientRect().top - beforeComposerTop) : Number.POSITIVE_INFINITY,
+      composerShiftPx: composer && Number.isFinite(before.composerTop)
+        ? Math.abs(composer.getBoundingClientRect().top - before.composerTop)
+        : Number.POSITIVE_INFINITY,
+      sendActionShiftPx: send && before.send
+        ? Math.hypot(send.x - before.send.x, send.y - before.send.y)
+        : Number.POSITIVE_INFINITY,
+      modelSelectionStable: Boolean(model && before.model && model === before.model),
       scrollFollowDistancePx: viewport
         ? viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight
         : Number.POSITIVE_INFINITY,
     };
-  }, composerTop);
+  }, controlsBefore);
   const live = await snapshotResult(page, {
     target: target.name,
     scenario: "live-update",
@@ -948,6 +968,38 @@ async function runSharedReadFailure(target) {
       target: target.name,
       scenario: "shared-read-failure",
       usefulPreserved,
+    });
+    assertPageErrors(opened.errors, result);
+    return result;
+  } finally {
+    await opened.context.close();
+  }
+}
+
+async function runCatalogueGap(target) {
+  const fixture = createFixture({ threadCount: 25, entryCount: 100 });
+  const opened = await openHarnessPage(target, fixture, `#/threads/${fixture.primaryThreadId}`);
+  try {
+    await waitForText(opened.page, fixture.lastEntryText);
+    await opened.page.evaluate(() => {
+      window.__remyPerf.resetMeasurements();
+      window.__remyPerf.hideCatalogue();
+      window.__remyPerf.emit({ type: "chats" });
+    });
+    await opened.page.waitForFunction(() =>
+      window.__remyPerf.requests.some((request) => request.path === "electron://servers"));
+    await nextPaint(opened.page);
+    const state = await opened.page.evaluate((marker) => ({
+      usefulPreserved: document.body?.innerText.includes(marker) === true,
+      loadingReplacementShown: Boolean(
+        document.querySelector('[data-slot="surface-loading"]')
+        || document.querySelector('[data-slot="skeleton"]'),
+      ),
+    }), fixture.lastEntryText);
+    const result = await snapshotResult(opened.page, {
+      target: target.name,
+      scenario: "catalogue-gap",
+      ...state,
     });
     assertPageErrors(opened.errors, result);
     return result;
@@ -1372,6 +1424,8 @@ function printResults(allResults) {
       Number.isFinite(result.largestAnchorShiftPx) ? `${result.largestAnchorShiftPx.toFixed(1)}px history shift` : "",
       Number.isFinite(result.stableRowRenders) ? `${result.stableRowRenders} stable rerenders` : "",
       Number.isFinite(result.composerShiftPx) ? `${result.composerShiftPx.toFixed(1)}px composer shift` : "",
+      Number.isFinite(result.sendActionShiftPx) ? `${result.sendActionShiftPx.toFixed(1)}px send shift` : "",
+      result.modelSelectionStable === undefined ? "" : `model ${result.modelSelectionStable ? "stable" : "changed"}`,
       Number.isFinite(result.scrollFollowDistancePx) ? `${result.scrollFollowDistancePx.toFixed(1)}px from newest` : "",
       Number.isFinite(result.idleCpuPercent) ? `idle ${result.idleCpuPercent.toFixed(2)}% CPU` : "",
       Number.isFinite(result.hiddenCpuPercent) ? `hidden ${result.hiddenCpuPercent.toFixed(2)}% CPU` : "",
@@ -1392,6 +1446,7 @@ function printResults(allResults) {
       Number.isFinite(result.interruptRequests) ? `${result.interruptRequests} interrupt requests` : "",
       result.openedWarm === undefined ? "" : `snapshot ${result.openedWarm ? "written" : "absent"}`,
       result.usefulPreserved === undefined ? "" : `known content ${result.usefulPreserved ? "kept" : "lost"}`,
+      result.loadingReplacementShown === undefined ? "" : `loading replacement ${result.loadingReplacementShown ? "shown" : "avoided"}`,
       result.readsAttempted === undefined ? "" : `fresh reads ${result.readsAttempted ? "attempted" : "skipped"}`,
       Number.isFinite(result.duplicatedEntries) ? `${result.duplicatedEntries} duplicated entries` : "",
       result.hiddenSearchFound === undefined ? "" : `hidden search ${result.hiddenSearchFound ? "found" : "missing"}`,

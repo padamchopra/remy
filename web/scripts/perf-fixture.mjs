@@ -11,6 +11,7 @@ export const PERFORMANCE_BUDGETS = Object.freeze({
   maxMountedSidebarThreads: 40,
   maxHistoryAnchorShiftPx: 2,
   maxComposerShiftPx: 1,
+  maxSendActionShiftPx: 1,
   /// A surface still on the network, from the click that opened it.
   surfaceFirstOpenMs: 900,
   /// The same surface opened again in the same window. Its code is already in
@@ -128,6 +129,7 @@ export function createFixture({
   unavailableDevice = false,
   serverId = "local",
   readDelayMs = 4,
+  terminalOutput = "",
 } = {}) {
   const listedChats = chats(threadCount);
   const listedAgents = agents(agentCount);
@@ -171,6 +173,7 @@ export function createFixture({
     primaryDmId: listedDms[0]?.id,
     primaryAgentHandle: listedAgents[0]?.handle,
     readDelayMs,
+    terminalOutput,
     servers: [{ id: serverId, name: "Performance fixture", url: "fixture://local", builtin: serverId === "local" }],
     responses: {
       "/peers": { name: "Performance fixture", peers: unavailableDevice ? [peer] : [] },
@@ -281,9 +284,27 @@ export function installPerformanceBridge(fixture) {
   const layoutShifts = [];
   const renders = [];
   const livePayloadBytes = [];
+  const terminalSessions = new Map();
   let liveTopics = new Set();
   const nextFailures = new Map();
   let connected = true;
+  let catalogueAvailable = true;
+
+  const terminalSession = (terminalId) => {
+    let session = terminalSessions.get(terminalId);
+    if (!session) {
+      session = {
+        terminalId,
+        active: true,
+        cwd: "/tmp/remy-performance",
+        output: fixture.terminalOutput ?? "",
+        pending: [],
+        revision: 0,
+      };
+      terminalSessions.set(terminalId, session);
+    }
+    return session;
+  };
 
   window.__remyRenderProbe = (surface, id) => {
     renders.push({ surface, id, at: performance.now() });
@@ -374,6 +395,7 @@ export function installPerformanceBridge(fixture) {
     layoutShifts,
     renders,
     livePayloadBytes,
+    terminalSessions,
     fixture,
     resetMeasurements() {
       requests.length = 0;
@@ -393,6 +415,12 @@ export function installPerformanceBridge(fixture) {
     reachable() {
       offline = false;
     },
+    hideCatalogue() {
+      catalogueAvailable = false;
+    },
+    showCatalogue() {
+      catalogueAvailable = true;
+    },
     emit(payload, serverId = fixture.serverId) {
       if (!connected) return false;
       const type = payload?.type;
@@ -409,6 +437,20 @@ export function installPerformanceBridge(fixture) {
       livePayloadBytes.push(encoder.encode(JSON.stringify(payload)).byteLength);
       for (const handler of pushHandlers) handler(serverId, payload);
       return true;
+    },
+    emitTerminal(terminalId, data, active = true) {
+      const session = terminalSession(terminalId);
+      session.pending.push(data);
+      session.revision += 1;
+      session.active = active;
+      return this.emit({
+        type: "terminal",
+        terminalId,
+        active,
+        cwd: session.cwd,
+        revision: session.revision,
+        data,
+      });
     },
     disconnect(serverId = fixture.serverId) {
       connected = false;
@@ -429,7 +471,7 @@ export function installPerformanceBridge(fixture) {
     servers: async () => {
       // The device list is held by this process, so it answers even when the
       // machine behind it does not.
-      const answer = await measured("GET", "electron://servers", fixture.servers);
+      const answer = await measured("GET", "electron://servers", catalogueAvailable ? fixture.servers : []);
       return answer.data;
     },
     async request(serverId, path, init = {}) {
@@ -446,6 +488,31 @@ export function installPerformanceBridge(fixture) {
           ok: false,
           error: "Unavailable device",
         });
+      }
+      const terminalMatch = path.match(/^\/terminals\/([^/]+)\/(open|write|resize|close)$/);
+      if (terminalMatch) {
+        const terminalId = decodeURIComponent(terminalMatch[1]);
+        const action = terminalMatch[2];
+        const session = terminalSession(terminalId);
+        if (action === "open") {
+          session.active = true;
+          session.output = `${session.output}${session.pending.join("")}`.slice(-512 * 1024);
+          session.pending.length = 0;
+          return measured(method, path, {
+            terminalId: session.terminalId,
+            active: session.active,
+            cwd: session.cwd,
+            output: session.output,
+            revision: session.revision,
+          });
+        }
+        if (action === "write" && typeof init.body?.data === "string") {
+          const answer = await measured(method, path, {});
+          queueMicrotask(() => window.__remyPerf.emitTerminal(terminalId, init.body.data));
+          return answer;
+        }
+        if (action === "close") session.active = false;
+        return measured(method, path, {});
       }
       return measured(method, path, fixtureResponse(path));
     },
@@ -536,6 +603,10 @@ export function budgetFailures(result, budgets = PERFORMANCE_BUDGETS) {
     if (result.composerShiftPx > budgets.maxComposerShiftPx) {
       failures.push(`streaming composer shift: ${result.composerShiftPx.toFixed(1)} px > ${budgets.maxComposerShiftPx} px`);
     }
+    if (result.sendActionShiftPx > budgets.maxSendActionShiftPx) {
+      failures.push(`streaming send action shift: ${result.sendActionShiftPx.toFixed(1)} px > ${budgets.maxSendActionShiftPx} px`);
+    }
+    if (result.modelSelectionStable === false) failures.push("streaming changed the selected model");
     if (result.scrollFollowDistancePx > 80) {
       failures.push(`streaming scroll follow: ${result.scrollFollowDistancePx.toFixed(1)} px from newest`);
     }
@@ -646,6 +717,10 @@ export function budgetFailures(result, budgets = PERFORMANCE_BUDGETS) {
   }
   if (result.scenario === "shared-read-failure" && result.usefulPreserved !== true) {
     failures.push("failed refresh removed useful board state");
+  }
+  if (result.scenario === "catalogue-gap") {
+    if (result.usefulPreserved !== true) failures.push("missing device catalogue removed useful thread state");
+    if (result.loadingReplacementShown === true) failures.push("missing device catalogue replaced the thread with loading UI");
   }
   if (result.scenario?.startsWith("pane-")) {
     const sharedPaths = new Set([

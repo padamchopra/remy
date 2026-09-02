@@ -18,6 +18,7 @@
     "shots": "npm --prefix web run shots",
     "perf": "npm --prefix web run perf",
     "perf:runtime": "npm --prefix web run perf:runtime",
+    "perf:terminal": "npm --prefix web run perf:terminal",
     "bundle": "npm --prefix web run bundle",
     "live-check": "npm --prefix web run live-check"
   }

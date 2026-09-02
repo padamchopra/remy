@@ -45,6 +45,7 @@ import { threadActivities } from "@/lib/thread-activity";
 import {
   activateTab,
   closeTab,
+  cycleTab,
   findTab,
   flattenWorkbench,
   focusGroup,
@@ -215,6 +216,18 @@ export function ThreadWorkbench({
     change((current) => closeTab(current, tabId(tab)));
     if (tab.kind === "browser") void browsers.close(tab.threadId, tab.browserId);
   }, [browsers, change]);
+
+  useEffect(() => {
+    const switchTab = (event: KeyboardEvent) => {
+      if (!event.metaKey || !event.shiftKey || event.altKey || event.ctrlKey) return;
+      const direction = event.code === "BracketRight" ? 1 : event.code === "BracketLeft" ? -1 : undefined;
+      if (!direction) return;
+      event.preventDefault();
+      change((current) => cycleTab(current, direction));
+    };
+    window.addEventListener("keydown", switchTab);
+    return () => window.removeEventListener("keydown", switchTab);
+  }, [change]);
 
   const bench: Bench = {
     parent,
@@ -404,7 +417,11 @@ function TabTrigger({
                 child would write its own open state over the tab's active one. */}
             <TooltipTrigger asChild>
               <span className="flex min-w-0 items-center">
-                <TabsTrigger value={id} className={cn(tabTriggerClass, closable && "pr-1")}>
+                <TabsTrigger
+                  value={id}
+                  aria-keyshortcuts="Meta+Shift+[ Meta+Shift+]"
+                  className={cn(tabTriggerClass, closable && "pr-1")}
+                >
                   <Icon className="size-3.5 shrink-0" />
                   <span className="truncate">{label}</span>
                   {dot}
@@ -413,7 +430,9 @@ function TabTrigger({
               </span>
             </TooltipTrigger>
             {/* Whose tab it is, since a collection can hold more than one thread. */}
-            <TooltipContent>{chat && tab.kind !== "thread" ? `${label} · ${chat.title}` : label}</TooltipContent>
+            <TooltipContent>
+              {chat && tab.kind !== "thread" ? `${label} · ${chat.title}` : label} · ⌘⇧[ / ] switches tabs
+            </TooltipContent>
           </Tooltip>
           {closable && <TabClose label={label} active={active} onClose={() => bench.close(tab)} />}
         </div>

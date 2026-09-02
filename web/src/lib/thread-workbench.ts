@@ -157,6 +157,17 @@ export function activateTab(workbench: Workbench, id: string): Workbench {
   return { root, focused: group.id };
 }
 
+/// Moves to the neighboring open surface in visual order. Crossing a split
+/// focuses its pane; landing on a hidden tab brings that tab to the front.
+export function cycleTab(workbench: Workbench, direction: -1 | 1): Workbench {
+  const tabs = tabsOf(workbench);
+  if (tabs.length < 2) return workbench;
+  const current = focusedGroup(workbench).active;
+  const index = Math.max(0, tabs.findIndex((tab) => tabId(tab) === current));
+  const next = tabs[(index + direction + tabs.length) % tabs.length];
+  return next ? activateTab(workbench, tabId(next)) : workbench;
+}
+
 /// Opens a tab where the placement says, or brings it to the front if it is
 /// already open somewhere. A tab is open once per collection. With `reveal`
 /// off the tab is added without being brought forward — an agent opening a

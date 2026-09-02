@@ -65,6 +65,8 @@ test("passes results on the parent budgets and rejects regressions", () => {
       scenario: "live-update",
       firstLivePaintP95Ms: PERFORMANCE_BUDGETS.livePaintP95Ms,
       maxWebSocketPayloadBytes: PERFORMANCE_BUDGETS.maxWebSocketPayloadBytes,
+      sendActionShiftPx: PERFORMANCE_BUDGETS.maxSendActionShiftPx,
+      modelSelectionStable: true,
     },
     {
       scenario: "render-isolation-thread",
@@ -100,6 +102,7 @@ test("passes results on the parent budgets and rejects regressions", () => {
       delayFromLocalMs: PERFORMANCE_BUDGETS.unavailableDelayMs,
     },
     { scenario: "shared-read-failure", usefulPreserved: true },
+    { scenario: "catalogue-gap", usefulPreserved: true, loadingReplacementShown: false },
     {
       scenario: "warm-latency",
       openedWarm: true,
@@ -130,6 +133,19 @@ test("passes results on the parent budgets and rejects regressions", () => {
   assert.match(
     budgetFailures({ scenario: "live-update", firstLivePaintP95Ms: PERFORMANCE_BUDGETS.livePaintP95Ms + 1 })[0],
     /live update p95/,
+  );
+  assert.match(
+    budgetFailures({
+      scenario: "live-update",
+      firstLivePaintP95Ms: 1,
+      sendActionShiftPx: PERFORMANCE_BUDGETS.maxSendActionShiftPx + 1,
+      modelSelectionStable: true,
+    })[0],
+    /send action shift/,
+  );
+  assert.match(
+    budgetFailures({ scenario: "live-update", firstLivePaintP95Ms: 1, modelSelectionStable: false })[0],
+    /selected model/,
   );
   assert.match(
     budgetFailures({
@@ -183,6 +199,10 @@ test("passes results on the parent budgets and rejects regressions", () => {
   assert.match(
     budgetFailures({ scenario: "shared-read-failure", usefulPreserved: false })[0],
     /removed useful board state/,
+  );
+  assert.match(
+    budgetFailures({ scenario: "catalogue-gap", usefulPreserved: false, loadingReplacementShown: true })[0],
+    /removed useful thread state/,
   );
   assert.deepEqual(
     budgetFailures({ scenario: "warm-open", firstUsefulPaintMs: 1 }),

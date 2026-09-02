@@ -666,11 +666,16 @@ export function ChatView({
                   <BranchName branch={branch} />
                 )}
                 <ContextMeter context={open?.context} />
-                {working && (
+                {working ? (
                   <InputGroupButton type="button" onClick={() => void stop()}>
                     <Square />
                     Stop
                   </InputGroupButton>
+                ) : (
+                  <span aria-hidden className="invisible flex h-6 items-center gap-1 px-2 text-sm">
+                    <Square className="size-3.5" />
+                    Stop
+                  </span>
                 )}
                 <InputGroupButton
                   type="submit"
@@ -2197,6 +2202,7 @@ export function ThreadTicket({ chatId, onOpenTicket }: { chatId: string; onOpenT
 function FeedSkeleton() {
   return (
     <div className="flex flex-col gap-4">
+      <p role="status" className="shimmer text-sm text-muted-foreground">Wait while this thread opens.</p>
       <Skeleton className="h-16 w-2/3 self-end rounded-xl" />
       <Skeleton className="h-24 w-full rounded-xl" />
       <Skeleton className="h-10 w-1/2 rounded-xl" />

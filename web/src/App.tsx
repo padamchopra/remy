@@ -634,6 +634,7 @@ export function App() {
               <>
                 <PaneHeader crumbs={[{ label: <Skeleton className="h-4 w-48" /> }]} />
                 <div className="mx-auto flex w-full max-w-[44rem] flex-1 flex-col gap-5 px-6 py-7">
+                  <p role="status" className="shimmer text-sm text-muted-foreground">Wait while this thread opens.</p>
                   <Skeleton className="h-20 w-3/4 self-end rounded-xl" />
                   <Skeleton className="h-36 w-full rounded-xl" />
                   <Skeleton className="h-24 w-5/6 rounded-xl" />
