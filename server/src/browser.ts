@@ -2,6 +2,12 @@ import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from "playwright-core";
+import {
+  nativeBrowserHostAvailable,
+  onNativeBrowserHostAvailability,
+  onNativeBrowserHostEvent,
+  requestNativeBrowserHost,
+} from "./browser-host.js";
 import { broadcast } from "./notify.js";
 
 export type BrowserController = "agent" | "you";
@@ -36,6 +42,10 @@ export interface BrowserView {
   revision: number;
   controller?: BrowserController;
   cursor?: { x: number; y: number; pressed?: boolean };
+  canGoBack?: boolean;
+  canGoForward?: boolean;
+  zoomFactor?: number;
+  download?: { filename: string; state: "started" | "completed" | "failed" };
   screenshot?: string;
   error?: string;
 }
@@ -59,6 +69,8 @@ interface BrowserSession {
 
 const sessions = new Map<string, BrowserSession>();
 const contexts = new Map<string, { browser: Browser; context: BrowserContext }>();
+const nativeSessions = new Set<string>();
+const nativeViews = new Map<string, BrowserView>();
 let sharedBrowser: Browser | undefined;
 let browserLaunch: Promise<Browser> | undefined;
 
@@ -76,6 +88,81 @@ export function browserViewportSize(
 function sessionKey(chatId: string, browserId: string): string {
   return `${chatId}\0${browserId}`;
 }
+
+function splitSessionKey(key: string): { chatId: string; browserId: string } {
+  const separator = key.indexOf("\0");
+  return { chatId: key.slice(0, separator), browserId: key.slice(separator + 1) };
+}
+
+function nativeView(value: unknown, browserId: string): BrowserView {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("The native browser returned an invalid view.");
+  }
+  const view = value as Partial<BrowserView>;
+  return {
+    browserId,
+    active: view.active === true,
+    viewport: view.viewport === "fullscreen" || view.viewport === "mobile" ? view.viewport : "desktop",
+    width: typeof view.width === "number" ? view.width : BROWSER_VIEWPORTS.desktop.width,
+    height: typeof view.height === "number" ? view.height : BROWSER_VIEWPORTS.desktop.height,
+    revision: typeof view.revision === "number" ? view.revision : 0,
+    ...(typeof view.url === "string" ? { url: view.url } : {}),
+    ...(typeof view.title === "string" ? { title: view.title } : {}),
+    ...(view.controller === "agent" || view.controller === "you" ? { controller: view.controller } : {}),
+    ...(view.cursor && typeof view.cursor === "object" ? { cursor: view.cursor } : {}),
+    ...(typeof view.canGoBack === "boolean" ? { canGoBack: view.canGoBack } : {}),
+    ...(typeof view.canGoForward === "boolean" ? { canGoForward: view.canGoForward } : {}),
+    ...(typeof view.zoomFactor === "number" ? { zoomFactor: view.zoomFactor } : {}),
+    ...(view.download && typeof view.download === "object" ? { download: view.download } : {}),
+    ...(typeof view.screenshot === "string" ? { screenshot: view.screenshot } : {}),
+    ...(typeof view.error === "string" ? { error: view.error } : {}),
+  };
+}
+
+async function nativeAction(
+  chatId: string,
+  browserId: string,
+  action: string,
+  input: Record<string, unknown> = {},
+): Promise<BrowserView> {
+  const key = sessionKey(chatId, browserId);
+  const answer = nativeView(await requestNativeBrowserHost(action, { chatId, browserId, ...input }), browserId);
+  if (answer.active || nativeSessions.has(key)) nativeSessions.add(key);
+  nativeViews.set(key, answer);
+  return answer;
+}
+
+function usesNative(chatId: string, browserId: string): boolean {
+  return nativeSessions.has(sessionKey(chatId, browserId)) || nativeBrowserHostAvailable();
+}
+
+onNativeBrowserHostEvent(({ chatId, browserId, view }) => {
+  const key = sessionKey(chatId, browserId);
+  const next = nativeView(view, browserId);
+  nativeSessions.add(key);
+  nativeViews.set(key, next);
+  broadcast({ type: "browser", chatId, ...next });
+});
+
+onNativeBrowserHostAvailability((available) => {
+  if (available) return;
+  for (const key of nativeSessions) {
+    const { chatId, browserId } = splitSessionKey(key);
+    const current = nativeViews.get(key);
+    const next: BrowserView = {
+      browserId,
+      active: false,
+      viewport: current?.viewport ?? "desktop",
+      width: current?.width ?? BROWSER_VIEWPORTS.desktop.width,
+      height: current?.height ?? BROWSER_VIEWPORTS.desktop.height,
+      revision: (current?.revision ?? 0) + 1,
+      ...(current?.url ? { url: current.url } : {}),
+      error: "The native browser disconnected. Reopen Remy on this device to continue.",
+    };
+    nativeViews.set(key, next);
+    broadcast({ type: "browser", chatId, ...next });
+  }
+});
 
 function cachedChromium(): string | undefined {
   const root = join(homedir(), "Library/Caches/ms-playwright");
@@ -322,11 +409,21 @@ async function cursorFor(session: BrowserSession, target: BrowserTarget): Promis
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }
 
-export async function openBrowser(chatId: string, url: string, controller: BrowserController, browserId = "default"): Promise<BrowserView> {
+export async function openBrowser(
+  chatId: string,
+  url: string,
+  controller: BrowserController,
+  browserId = "default",
+  screenshot = true,
+): Promise<BrowserView> {
+  const target = normaliseUrl(url);
+  if (usesNative(chatId, browserId)) {
+    return nativeAction(chatId, browserId, "open", { url: target, controller, screenshot });
+  }
   return queued(chatId, browserId, controller, async (session, epoch) => {
-    await session.page.goto(normaliseUrl(url), { waitUntil: "domcontentloaded", timeout: 20_000 });
+    await session.page.goto(target, { waitUntil: "domcontentloaded", timeout: 20_000 });
     if (controller === "agent") assertAgentStillControls(session, epoch);
-    return browserView(chatId, true, browserId);
+    return browserView(chatId, screenshot, browserId);
   });
 }
 
@@ -336,7 +433,11 @@ export async function setBrowserViewport(
   controller: BrowserController,
   browserId = "default",
   requestedSize?: { width?: number; height?: number },
+  screenshot = true,
 ): Promise<BrowserView> {
+  if (usesNative(chatId, browserId)) {
+    return nativeAction(chatId, browserId, "viewport", { viewport, controller, requestedSize, screenshot });
+  }
   if (!sessions.has(sessionKey(chatId, browserId))) {
     throw new Error("Open a page before changing its viewport.");
   }
@@ -348,11 +449,20 @@ export async function setBrowserViewport(
     await session.page.setViewportSize(size);
     if (controller === "agent") assertAgentStillControls(session, epoch);
     await session.page.waitForTimeout(100);
-    return browserView(chatId, true, browserId);
+    return browserView(chatId, screenshot, browserId);
   });
 }
 
-export async function clickBrowser(chatId: string, target: BrowserTarget, controller: BrowserController, browserId = "default"): Promise<BrowserView> {
+export async function clickBrowser(
+  chatId: string,
+  target: BrowserTarget,
+  controller: BrowserController,
+  browserId = "default",
+  screenshot = true,
+): Promise<BrowserView> {
+  if (usesNative(chatId, browserId)) {
+    return nativeAction(chatId, browserId, "click", { target, controller, screenshot });
+  }
   return queued(chatId, browserId, controller, async (session, epoch) => {
     const cursor = await cursorFor(session, target);
     session.cursor = cursor;
@@ -368,7 +478,7 @@ export async function clickBrowser(chatId: string, target: BrowserTarget, contro
     await session.page.mouse.click(cursor.x, cursor.y);
     session.cursor = cursor;
     await session.page.waitForTimeout(100);
-    return browserView(chatId, true, browserId);
+    return browserView(chatId, screenshot, browserId);
   });
 }
 
@@ -378,7 +488,11 @@ export async function typeBrowser(
   text: string,
   controller: BrowserController,
   browserId = "default",
+  screenshot = true,
 ): Promise<BrowserView> {
+  if (usesNative(chatId, browserId)) {
+    return nativeAction(chatId, browserId, "type", { target, text, controller, screenshot });
+  }
   return queued(chatId, browserId, controller, async (session, epoch) => {
     const locator = locatorFor(session.page, target);
     const cursor = await cursorFor(session, target);
@@ -386,16 +500,25 @@ export async function typeBrowser(
     changed(chatId, browserId, session);
     await locator.fill(text);
     if (controller === "agent") assertAgentStillControls(session, epoch);
-    return browserView(chatId, true, browserId);
+    return browserView(chatId, screenshot, browserId);
   });
 }
 
-export async function pressBrowser(chatId: string, key: string, controller: BrowserController, browserId = "default"): Promise<BrowserView> {
+export async function pressBrowser(
+  chatId: string,
+  key: string,
+  controller: BrowserController,
+  browserId = "default",
+  screenshot = true,
+): Promise<BrowserView> {
+  if (usesNative(chatId, browserId)) {
+    return nativeAction(chatId, browserId, "press", { key, controller, screenshot });
+  }
   return queued(chatId, browserId, controller, async (session, epoch) => {
     await session.page.keyboard.press(key);
     if (controller === "agent") assertAgentStillControls(session, epoch);
     await session.page.waitForTimeout(100);
-    return browserView(chatId, true, browserId);
+    return browserView(chatId, screenshot, browserId);
   });
 }
 
@@ -404,7 +527,11 @@ export async function navigateBrowser(
   navigation: BrowserNavigation,
   controller: BrowserController,
   browserId = "default",
+  screenshot = true,
 ): Promise<BrowserView> {
+  if (usesNative(chatId, browserId)) {
+    return nativeAction(chatId, browserId, "navigate", { navigation, controller, screenshot });
+  }
   if (!sessions.has(sessionKey(chatId, browserId))) {
     throw new Error("Open a page before navigating it.");
   }
@@ -413,16 +540,25 @@ export async function navigateBrowser(
     if (navigation === "forward") await session.page.goForward({ waitUntil: "domcontentloaded", timeout: 20_000 });
     if (navigation === "reload") await session.page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 });
     if (controller === "agent") assertAgentStillControls(session, epoch);
-    return browserView(chatId, true, browserId);
+    return browserView(chatId, screenshot, browserId);
   });
 }
 
-export async function insertBrowser(chatId: string, text: string, controller: BrowserController, browserId = "default"): Promise<BrowserView> {
+export async function insertBrowser(
+  chatId: string,
+  text: string,
+  controller: BrowserController,
+  browserId = "default",
+  screenshot = true,
+): Promise<BrowserView> {
+  if (usesNative(chatId, browserId)) {
+    return nativeAction(chatId, browserId, "insert", { text, controller, screenshot });
+  }
   return queued(chatId, browserId, controller, async (session, epoch) => {
     await session.page.keyboard.insertText(text);
     if (controller === "agent") assertAgentStillControls(session, epoch);
     await session.page.waitForTimeout(50);
-    return browserView(chatId, true, browserId);
+    return browserView(chatId, screenshot, browserId);
   });
 }
 
@@ -432,24 +568,65 @@ export async function scrollBrowser(
   deltaY: number,
   controller: BrowserController,
   browserId = "default",
+  screenshot = true,
 ): Promise<BrowserView> {
+  if (usesNative(chatId, browserId)) {
+    return nativeAction(chatId, browserId, "scroll", { deltaX, deltaY, controller, screenshot });
+  }
   return queued(chatId, browserId, controller, async (session, epoch) => {
     await session.page.mouse.wheel(deltaX, deltaY);
     if (controller === "agent") assertAgentStillControls(session, epoch);
     await session.page.waitForTimeout(100);
-    return browserView(chatId, true, browserId);
+    return browserView(chatId, screenshot, browserId);
   });
 }
 
-export async function waitInBrowser(chatId: string, milliseconds: number, controller: BrowserController, browserId = "default"): Promise<BrowserView> {
+export async function waitInBrowser(
+  chatId: string,
+  milliseconds: number,
+  controller: BrowserController,
+  browserId = "default",
+  screenshot = true,
+): Promise<BrowserView> {
+  if (usesNative(chatId, browserId)) {
+    return nativeAction(chatId, browserId, "wait", { milliseconds, controller, screenshot });
+  }
   return queued(chatId, browserId, controller, async (session, epoch) => {
     await session.page.waitForTimeout(Math.max(0, Math.min(10_000, milliseconds)));
     if (controller === "agent") assertAgentStillControls(session, epoch);
-    return browserView(chatId, true, browserId);
+    return browserView(chatId, screenshot, browserId);
+  });
+}
+
+export async function zoomBrowser(
+  chatId: string,
+  factor: number,
+  controller: BrowserController,
+  browserId = "default",
+  screenshot = true,
+): Promise<BrowserView> {
+  const zoomFactor = Math.min(2, Math.max(0.5, Number(factor) || 1));
+  if (usesNative(chatId, browserId)) {
+    return nativeAction(chatId, browserId, "zoom", { factor: zoomFactor, controller, screenshot });
+  }
+  return queued(chatId, browserId, controller, async (session, epoch) => {
+    await session.page.evaluate((next) => {
+      document.documentElement.style.zoom = String(next);
+    }, zoomFactor);
+    if (controller === "agent") assertAgentStillControls(session, epoch);
+    const view = await browserView(chatId, screenshot, browserId);
+    view.zoomFactor = zoomFactor;
+    return view;
   });
 }
 
 export async function browserSnapshotText(chatId: string, browserId = "default"): Promise<string> {
+  if (usesNative(chatId, browserId)) {
+    const result = await requestNativeBrowserHost<{ text?: unknown }>("snapshot", { chatId, browserId });
+    if (typeof result?.text !== "string") throw new Error("The native browser returned an invalid snapshot.");
+    nativeSessions.add(sessionKey(chatId, browserId));
+    return result.text;
+  }
   const session = await sessionFor(chatId, browserId);
   const [title, body, interactive] = await Promise.all([
     session.page.title(),
@@ -489,6 +666,21 @@ export async function browserSnapshotText(chatId: string, browserId = "default")
 }
 
 export async function browserView(chatId: string, screenshot = false, browserId = "default"): Promise<BrowserView> {
+  const key = sessionKey(chatId, browserId);
+  if (usesNative(chatId, browserId)) {
+    if (!nativeBrowserHostAvailable()) {
+      const cached = nativeViews.get(key);
+      return cached ?? {
+        browserId,
+        active: false,
+        viewport: "desktop",
+        ...browserViewportSize("desktop"),
+        revision: 0,
+        error: "Open Remy on this device to continue browsing.",
+      };
+    }
+    return nativeAction(chatId, browserId, "view", { screenshot });
+  }
   const session = sessions.get(sessionKey(chatId, browserId));
   if (!session) {
     const viewport: BrowserViewport = "desktop";
@@ -520,6 +712,9 @@ export async function browserView(chatId: string, screenshot = false, browserId 
     controller: session.controller,
     cursor: session.cursor,
     error: session.error,
+    canGoBack: await session.page.evaluate(() => history.length > 1).catch(() => false),
+    canGoForward: false,
+    zoomFactor: await session.page.evaluate(() => Number(document.documentElement.style.zoom) || 1).catch(() => 1),
   };
   if (screenshot) {
     const image = await session.page.screenshot({ type: "png", scale: "device" });
@@ -529,6 +724,22 @@ export async function browserView(chatId: string, screenshot = false, browserId 
 }
 
 export async function closeBrowser(chatId: string, browserId?: string): Promise<void> {
+  const native = [...nativeSessions].filter((key) => {
+    const current = splitSessionKey(key);
+    return current.chatId === chatId && (!browserId || current.browserId === browserId);
+  });
+  if (native.length > 0 || nativeBrowserHostAvailable()) {
+    if (nativeBrowserHostAvailable()) {
+      await requestNativeBrowserHost(browserId ? "close" : "closeChat", {
+        chatId,
+        browserId: browserId ?? "default",
+      });
+    }
+    for (const key of native) {
+      nativeSessions.delete(key);
+      nativeViews.delete(key);
+    }
+  }
   if (!browserId) {
     await Promise.all(Array.from(sessions.entries())
       .filter(([key]) => key.startsWith(`${chatId}\0`))

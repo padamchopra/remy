@@ -12,9 +12,9 @@ export const tabTriggerClass = cn(
   "data-[state=active]:bg-foreground/8 data-[state=active]:text-foreground data-[state=active]:shadow-none dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-foreground/8",
 );
 
-/// The strip's list: no container, as wide as its tabs so the add button sits
-/// right after the last one, and scrolling sideways when they outgrow the row.
-export const tabListClass = "h-auto min-w-0 shrink justify-start gap-0.5 overflow-x-auto overflow-y-hidden rounded-none bg-transparent p-0 scrollbar-thin";
+/// The strip's list takes the room left by its controls. Overflow still pans
+/// sideways without drawing a second bar beneath the tabs.
+export const tabListClass = "h-auto min-w-0 w-auto flex-1 justify-start gap-0.5 overflow-x-auto overflow-y-hidden rounded-none bg-transparent p-0 scrollbar-none";
 
 /// A tab's content: mounted behind the front one, shown only when in front.
 export const tabContentClass = "flex min-h-0 flex-1 flex-col overflow-hidden data-[state=inactive]:hidden";

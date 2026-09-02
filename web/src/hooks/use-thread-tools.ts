@@ -15,6 +15,10 @@ export interface SharedBrowserView {
   revision: number;
   controller?: "agent" | "you";
   cursor?: { x: number; y: number; pressed?: boolean };
+  canGoBack?: boolean;
+  canGoForward?: boolean;
+  zoomFactor?: number;
+  download?: { filename: string; state: "started" | "completed" | "failed" };
   screenshot?: string;
   error?: string;
 }

@@ -325,6 +325,7 @@ function GroupView({ group, focused, bench }: { group: TabGroup; focused: boolea
             ))}
           </TabsList>
           {activeChat && <AddMenu group={group} chat={activeChat} bench={bench} />}
+          {activeTab && <SplitMenu group={group} tab={activeTab} bench={bench} />}
         </TabStrip>
 
         {group.tabs.map((tab) => {
@@ -338,6 +339,37 @@ function GroupView({ group, focused, bench }: { group: TabGroup; focused: boolea
         })}
       </Tabs>
     </section>
+  );
+}
+
+function SplitMenu({ group, tab, bench }: { group: TabGroup; tab: WorkbenchTab; bench: Bench }) {
+  if (!bench.wide || group.id === "all" || group.tabs.length < 2) return null;
+  const id = tabId(tab);
+  return (
+    <DropdownMenu>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button type="button" variant="ghost" size="icon-sm" className="shrink-0" aria-label="Split tab">
+              <Columns2 />
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent>Split tab</TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="end">
+        <DropdownMenuGroup>
+          <DropdownMenuItem onSelect={() => bench.change((current) => splitTab(current, id, "horizontal"))}>
+            <Columns2 />
+            Split right
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => bench.change((current) => splitTab(current, id, "vertical"))}>
+            <Rows2 />
+            Split down
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -438,7 +470,7 @@ function AddMenu({ group, chat, bench }: { group: TabGroup; chat: Chat; bench: B
       <Tooltip>
         <TooltipTrigger asChild>
           <DropdownMenuTrigger asChild>
-            <Button type="button" variant="ghost" size="icon-sm" aria-label="Add tab">
+            <Button type="button" variant="ghost" size="icon-sm" className="shrink-0" aria-label="Add tab">
               <Plus />
             </Button>
           </DropdownMenuTrigger>
@@ -553,6 +585,8 @@ function Surface({ tab, visible, focused, bench }: { tab: WorkbenchTab; visible:
           chatId={chat.id}
           serverId={chat.serverId}
           browserId={tab.browserId}
+          visible={visible}
+          focused={focused}
           view={bench.browsers.views[browserKey(chat.id, tab.browserId)]}
           setView={(view: SharedBrowserView) => bench.browsers.setView(chat.id, tab.browserId, view)}
         />

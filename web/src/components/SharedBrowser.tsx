@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent, type WheelEvent } from "react";
-import { ArrowLeft, ArrowRight, ArrowUpRight, Globe2, Maximize2, Monitor, MousePointer2, RefreshCw, Smartphone } from "lucide-react";
+import { ArrowLeft, ArrowRight, ArrowUpRight, ExternalLink, Globe2, Maximize2, Minus, Monitor, MousePointer2, Plus, RefreshCw, Smartphone } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,7 +13,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { apiError } from "@/lib/api-error";
-import { transport } from "@/lib/transport";
+import { nativeBrowserSurface, transport } from "@/lib/transport";
 import { cn } from "@/lib/utils";
 import type { SharedBrowserView } from "@/hooks/use-thread-tools";
 
@@ -26,25 +26,41 @@ export function SharedBrowser({
   chatId,
   serverId,
   browserId,
+  visible,
+  focused,
   view,
   setView,
 }: {
   chatId: string;
   serverId: string;
   browserId: string;
+  visible: boolean;
+  focused: boolean;
   view?: SharedBrowserView;
   setView: (view: SharedBrowserView) => void;
 }) {
   const [address, setAddress] = useState(view?.url ?? "");
   const [busy, setBusy] = useState(false);
+  const [native, setNative] = useState(false);
   const pageRef = useRef<HTMLButtonElement>(null);
   const keyboardRef = useRef<HTMLInputElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  const downloadNotice = useRef<string>(undefined);
   const resizeTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
     if (view?.url) setAddress(view.url);
   }, [view?.url]);
+
+  useEffect(() => {
+    if (!view?.download) return;
+    const notice = `${view.download.filename}:${view.download.state}`;
+    if (downloadNotice.current === notice) return;
+    downloadNotice.current = notice;
+    if (view.download.state === "started") return;
+    if (view.download.state === "completed") toast.success(`Downloaded ${view.download.filename}`);
+    else toast.error("The download failed", { description: view.download.filename });
+  }, [view?.download]);
 
   const action = useCallback(async (name: string, body: Record<string, unknown> = {}) => {
     try {
@@ -118,6 +134,7 @@ export function SharedBrowser({
   const scaleY = view?.cursor ? `${(view.cursor.y / (view.height || 800)) * 100}%` : "0%";
   const viewport = view?.viewport ?? (view && view.width < view.height ? "mobile" : "desktop");
   const canChangeViewport = Boolean(view?.active && view.viewport);
+  const zoomFactor = view?.zoomFactor ?? 1;
 
   const fullscreenSize = () => {
     const bounds = stageRef.current?.getBoundingClientRect();
@@ -145,6 +162,68 @@ export function SharedBrowser({
     };
   }, [action, view?.active, view?.height, view?.width, viewport]);
 
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!nativeBrowserSurface.available || !stage || !view?.active) {
+      setNative(false);
+      return;
+    }
+    let stopped = false;
+    let attached = false;
+    const present = () => {
+      const box = stage.getBoundingClientRect();
+      if (!box.width || !box.height) return;
+      void nativeBrowserSurface.present({
+        serverId,
+        chatId,
+        browserId,
+        visible,
+        focused,
+        bounds: {
+          x: Math.round(box.left),
+          y: Math.round(box.top),
+          width: Math.round(box.width),
+          height: Math.round(box.height),
+        },
+      }).then((supported) => {
+        if (stopped) {
+          if (supported) {
+            void nativeBrowserSurface.present({
+              serverId,
+              chatId,
+              browserId,
+              visible: false,
+              focused: false,
+              bounds: { x: 0, y: 0, width: 1, height: 1 },
+            });
+          }
+          return;
+        }
+        attached = supported;
+        setNative(supported && visible);
+      });
+    };
+    present();
+    const observer = new ResizeObserver(present);
+    observer.observe(stage);
+    window.addEventListener("resize", present);
+    return () => {
+      stopped = true;
+      observer.disconnect();
+      window.removeEventListener("resize", present);
+      if (attached) {
+        void nativeBrowserSurface.present({
+          serverId,
+          chatId,
+          browserId,
+          visible: false,
+          focused: false,
+          bounds: { x: 0, y: 0, width: 1, height: 1 },
+        });
+      }
+    };
+  }, [browserId, chatId, focused, serverId, view?.active, visible]);
+
   const ViewportIcon = viewport === "fullscreen" ? Maximize2 : viewport === "mobile" ? Smartphone : Monitor;
 
   return (
@@ -153,7 +232,7 @@ export function SharedBrowser({
         <div className="flex shrink-0 items-center gap-0.5" role="group" aria-label="Browser navigation">
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button type="button" variant="ghost" size="icon-xs" disabled={!view?.active || busy} aria-label="Back" onClick={() => void navigate("back")}>
+              <Button type="button" variant="ghost" size="icon-xs" disabled={!view?.active || busy || view.canGoBack === false} aria-label="Back" onClick={() => void navigate("back")}>
                 <ArrowLeft />
               </Button>
             </TooltipTrigger>
@@ -161,7 +240,7 @@ export function SharedBrowser({
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button type="button" variant="ghost" size="icon-xs" disabled={!view?.active || busy} aria-label="Forward" onClick={() => void navigate("forward")}>
+              <Button type="button" variant="ghost" size="icon-xs" disabled={!view?.active || busy || view.canGoForward === false} aria-label="Forward" onClick={() => void navigate("forward")}>
                 <ArrowRight />
               </Button>
             </TooltipTrigger>
@@ -192,6 +271,35 @@ export function SharedBrowser({
             </Button>
           </TooltipTrigger>
           <TooltipContent>Open address</TooltipContent>
+        </Tooltip>
+        <div className="flex shrink-0 items-center gap-0.5" role="group" aria-label="Browser zoom">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button type="button" variant="ghost" size="icon-xs" disabled={!view?.active || busy || zoomFactor <= 0.5} aria-label="Zoom out" onClick={() => void action("zoom", { factor: zoomFactor - 0.1 })}>
+                <Minus />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Zoom out</TooltipContent>
+          </Tooltip>
+          <Button type="button" variant="ghost" size="xs" disabled={!view?.active || busy} aria-label="Reset zoom" onClick={() => void action("zoom", { factor: 1 })} className="w-11 px-1 text-[10px] tabular-nums">
+            {Math.round(zoomFactor * 100)}%
+          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button type="button" variant="ghost" size="icon-xs" disabled={!view?.active || busy || zoomFactor >= 2} aria-label="Zoom in" onClick={() => void action("zoom", { factor: zoomFactor + 0.1 })}>
+                <Plus />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Zoom in</TooltipContent>
+          </Tooltip>
+        </div>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button type="button" variant="ghost" size="icon-xs" disabled={!view?.url} aria-label="Open in your browser" onClick={() => view?.url && void nativeBrowserSurface.openExternal(view.url)}>
+              <ExternalLink />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Open in your browser</TooltipContent>
         </Tooltip>
         <DropdownMenu>
           <Tooltip>
@@ -227,7 +335,9 @@ export function SharedBrowser({
           viewport === "fullscreen" ? "p-0" : "p-4",
         )}
       >
-        {view?.active && view.screenshot ? (
+        {view?.active && native ? (
+          <div className="size-full" aria-label="Native browser page" />
+        ) : view?.active && view.screenshot ? (
           <div
             className={cn("relative max-h-full max-w-full", viewport === "fullscreen" && "size-full")}
             style={viewport === "fullscreen" ? undefined : {

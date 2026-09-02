@@ -95,6 +95,13 @@ export class Connection extends EventEmitter {
     }
   }
 
+  send(serverId: string, payload: unknown): boolean {
+    const socket = this.sockets.get(serverId);
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    socket.send(JSON.stringify(payload));
+    return true;
+  }
+
   /// One REST call against a named server. Returns the parsed body, or throws
   /// with the server's own message so the UI can show something specific.
   async request<T>(
@@ -188,6 +195,7 @@ export class Connection extends EventEmitter {
       url.searchParams.set("version", this.client.version);
       url.searchParams.set("arch", this.client.arch);
       if (this.client.updates) url.searchParams.set("updates", "1");
+      url.searchParams.set("browserHost", "1");
     }
     // `notify=0` subscribes to live state without becoming a notification
     // target. The desktop app wants the banners, so it is left absent.

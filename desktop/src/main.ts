@@ -13,6 +13,7 @@ import {
 } from "./connection";
 import { ensureLocalServer, isLoopback, localTargetFromConfig, stopSpawnedServer } from "./local-server";
 import { downloadUpdate, installUpdate } from "./update";
+import { isBrowserHostCommand, NativeBrowserHost, type BrowserPresentation } from "./native-browser";
 
 /// The desktop shell. Deliberately thin — it owns the window, starts the
 /// bundled daemon, and holds the tokens. The UI stays a plain web app that can
@@ -52,6 +53,7 @@ function serverDir(): string {
 
 let connection: Connection | undefined;
 let connectionReady: Promise<Connection> | undefined;
+let nativeBrowsers: NativeBrowserHost | undefined;
 const remoteUpdates = new Set<string>();
 const liveTopicsByWebContents = new Map<number, Set<string>>();
 
@@ -180,6 +182,10 @@ async function wireIpc(): Promise<void> {
   connectionReady.then((ready) => {
     connection = ready;
     ready.on("push", (serverId: string, payload: unknown) => {
+      if (isBrowserHostCommand(payload)) {
+        void nativeBrowsers?.command(payload).then((result) => ready.send(serverId, result));
+        return;
+      }
       const requested = appUpdateRequest(payload);
       const target = connection?.configs().find((server) => server.id === serverId);
       if (requested && target?.builtin) {
@@ -244,6 +250,16 @@ async function wireIpc(): Promise<void> {
     return file;
   });
 
+  ipcMain.handle("mc:browser-present", async (_event, input: BrowserPresentation) =>
+    nativeBrowsers?.present(input) ?? false,
+  );
+
+  ipcMain.handle("mc:browser-open-external", async (_event, url: string) => {
+    const target = new URL(url);
+    if (target.protocol !== "http:" && target.protocol !== "https:") throw new Error("That link cannot open in your browser.");
+    await shell.openExternal(target.toString());
+  });
+
   // Raising the window is the main process's job; the renderer can only focus
   // the page inside it.
   ipcMain.handle("mc:focus", () => {
@@ -301,7 +317,11 @@ async function wireIpc(): Promise<void> {
       // Errors are returned rather than thrown across IPC so the renderer gets
       // the server's message instead of Electron's serialisation of it.
       try {
-        return { ok: true as const, data: await connection.request(serverId, path, init ?? {}) };
+        const target = connection.configs().find((server) => server.id === serverId);
+        const requestPath = target?.builtin && /^\/chats\/[^/]+\/browser(?:\/[^?]+)?(?:\?|$)/.test(path)
+          ? `${path}${path.includes("?") ? "&" : "?"}presentation=native`
+          : path;
+        return { ok: true as const, data: await connection.request(serverId, requestPath, init ?? {}) };
       } catch (error) {
         return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
       }
@@ -360,6 +380,20 @@ function createWindow(): void {
       backgroundThrottling: false,
     },
   });
+  nativeBrowsers = new NativeBrowserHost(
+    window,
+    join(__dirname, "browser-preload.js"),
+    (chatId, browserId, view) => {
+      const local = connection?.configs().find((server) => server.builtin);
+      if (!local) return;
+      connection?.send(local.id, { type: "browser-host-event", chatId, browserId, view });
+    },
+    (serverId) => connection?.configs().some((server) => server.id === serverId && server.builtin) === true,
+  );
+  window.on("closed", () => {
+    nativeBrowsers?.closeAll();
+    nativeBrowsers = undefined;
+  });
 
   // The hidden renderer gets a normal foreground slice through first paint.
   // Once the useful frame is visible it returns to Electron's normal hidden
@@ -413,6 +447,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  nativeBrowsers?.closeAll();
   connection?.stop();
   stopSpawnedServer();
 });

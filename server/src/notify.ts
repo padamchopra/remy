@@ -5,6 +5,7 @@ import { forwardNotification } from "./peers.js";
 import { sendPush } from "./push.js";
 import type { RegistryEntry } from "./registry.js";
 import { attachAppUpdateHost } from "./app-update.js";
+import { attachNativeBrowserHost } from "./browser-host.js";
 
 export interface NotifyEvent {
   session: string;
@@ -148,6 +149,7 @@ export function attachNotifyStream(ws: WebSocket, notifies: boolean, params = ne
   subscribers.set(ws, subscriber);
   if (notifies) notifyTargets.add(ws);
   attachAppUpdateHost(ws, params);
+  attachNativeBrowserHost(ws, params);
   alive.add(ws);
   ws.on("pong", () => alive.add(ws));
   ws.on("message", (data) => {
