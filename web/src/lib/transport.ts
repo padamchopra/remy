@@ -23,7 +23,7 @@ export interface Transport {
   request<T>(serverId: string, path: string, init?: { method?: string; body?: unknown }): Promise<T>;
   upload<T>(serverId: string, path: string, input: { file: File }): Promise<T>;
   /// Live frames. Returns an unsubscribe.
-  subscribe(handler: (serverId: string, payload: unknown) => void): () => void;
+  subscribe(handler: (serverId: string, payload: unknown) => void, topics: readonly string[]): () => void;
   onStatus(handler: (serverId: string, online: boolean, error?: string) => void): () => void;
   addServer(input: { url: string; token: string; name?: string }): Promise<void>;
   removeServer(id: string): Promise<void>;
@@ -134,7 +134,7 @@ function withPeers(base: LocalTransport): Transport {
       return listing;
     },
 
-    subscribe(handler) {
+    subscribe(handler, topics) {
       return base.subscribe((serverId, payload) => {
         const frame = payload && typeof payload === "object" && !Array.isArray(payload)
           ? payload as { type?: unknown; serverId?: unknown; payload?: unknown }
@@ -144,7 +144,7 @@ function withPeers(base: LocalTransport): Transport {
           return;
         }
         handler(serverId, payload);
-      });
+      }, topics);
     },
 
     request<T>(serverId: string, path: string, init?: { method?: string; body?: unknown }) {
@@ -268,6 +268,7 @@ interface Bridge {
     input: { data: Uint8Array; filename: string; mimeType: string },
   ): Promise<{ ok: true; data: unknown } | { ok: false; error: string }>;
   onPush(handler: (serverId: string, payload: unknown) => void): () => void;
+  setLiveTopics?(topics: string[]): Promise<void>;
   onStatus(handler: (serverId: string, online: boolean, error?: string) => void): () => void;
   /// Raises the desktop window. Absent in a browser, and on an older shell.
   focus?(): Promise<void>;
@@ -302,6 +303,10 @@ function toServer(listed: ListedServer, online: boolean): Server {
 }
 
 function electronTransport(bridge: Bridge): LocalTransport {
+  const topicRefs = new Map<string, number>();
+  const syncTopics = () => {
+    void bridge.setLiveTopics?.([...topicRefs.keys()].sort());
+  };
   return {
     kind: "electron",
     async servers() {
@@ -324,7 +329,20 @@ function electronTransport(bridge: Bridge): LocalTransport {
       if (!result.ok) throw new Error(result.error);
       return result.data as T;
     },
-    subscribe: (handler) => bridge.onPush(handler),
+    subscribe(handler, topics) {
+      const off = bridge.onPush(handler);
+      for (const topic of topics) topicRefs.set(topic, (topicRefs.get(topic) ?? 0) + 1);
+      syncTopics();
+      return () => {
+        off();
+        for (const topic of topics) {
+          const next = (topicRefs.get(topic) ?? 0) - 1;
+          if (next > 0) topicRefs.set(topic, next);
+          else topicRefs.delete(topic);
+        }
+        syncTopics();
+      };
+    },
     onStatus: (handler) => bridge.onStatus(handler),
     async removeServer(id) {
       await bridge.removeServer(id);
@@ -347,11 +365,27 @@ function proxyTransport(): LocalTransport {
   const ID = "local";
   let attempt = 0;
   let closed = false;
+  let streamId: string | undefined;
+  let sequence: number | undefined;
+  const topicRefs = new Map<string, number>();
+
+  const liveTopics = () => [...topicRefs.keys()].sort();
+  const syncTopics = () => {
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "subscribe", topics: liveTopics() }));
+    }
+  };
 
   const connect = () => {
     if (closed) return;
     const url = new URL("/api/notify/stream", window.location.origin);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    url.searchParams.set("scoped", "1");
+    for (const topic of liveTopics()) url.searchParams.append("topic", topic);
+    if (sequence !== undefined) {
+      url.searchParams.set("afterSequence", String(sequence));
+      if (streamId) url.searchParams.set("streamId", streamId);
+    }
     // Every handler below checks that this socket is still the current one.
     // Closing is asynchronous, so a socket torn down by an unsubscribe is still
     // delivering events while its replacement is already connecting — and its
@@ -362,12 +396,27 @@ function proxyTransport(): LocalTransport {
     ws.onopen = () => {
       if (socket !== ws) return;
       attempt = 0;
+      syncTopics();
       for (const handler of statusHandlers) handler(ID, true);
     };
     ws.onmessage = (event) => {
       if (socket !== ws) return;
       try {
         const payload: unknown = JSON.parse(String(event.data));
+        if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+          const frame = payload as { type?: unknown; streamId?: unknown; sequence?: unknown; reset?: unknown };
+          if (frame.type === "hello") {
+            const nextStream = typeof frame.streamId === "string" ? frame.streamId : undefined;
+            if (frame.reset === true || (streamId !== undefined && nextStream !== streamId)) {
+              sequence = typeof frame.sequence === "number" ? frame.sequence : undefined;
+            } else if (sequence === undefined && typeof frame.sequence === "number") {
+              sequence = frame.sequence;
+            }
+            streamId = nextStream;
+          } else if (typeof frame.sequence === "number" && (sequence === undefined || frame.sequence > sequence)) {
+            sequence = frame.sequence;
+          }
+        }
         for (const handler of pushHandlers) handler(ID, payload);
       } catch {
         // Not JSON; not worth dropping the socket over.
@@ -432,16 +481,24 @@ function proxyTransport(): LocalTransport {
       }
       return (text ? JSON.parse(text) : null) as T;
     },
-    subscribe(handler) {
+    subscribe(handler, topics) {
       // `closed` has to be cleared here, not just set on teardown. React mounts
       // effects twice in development, so the first unsubscribe would otherwise
       // latch the socket shut for the life of the page and no push would ever
       // arrive again — which is what happened.
       closed = false;
       pushHandlers.add(handler);
+      for (const topic of topics) topicRefs.set(topic, (topicRefs.get(topic) ?? 0) + 1);
       if (!socket) connect();
+      else syncTopics();
       return () => {
         pushHandlers.delete(handler);
+        for (const topic of topics) {
+          const next = (topicRefs.get(topic) ?? 0) - 1;
+          if (next > 0) topicRefs.set(topic, next);
+          else topicRefs.delete(topic);
+        }
+        syncTopics();
         if (pushHandlers.size === 0) {
           closed = true;
           socket?.close();

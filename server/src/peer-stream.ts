@@ -1,5 +1,5 @@
 import WebSocket from "ws";
-import { broadcastPeer, setPeerStreamStatus } from "./notify.js";
+import { broadcastPeer, onTopicDemand, setPeerStreamStatus } from "./notify.js";
 import { getPeer, listPeers, type Peer } from "./peers.js";
 
 interface Relay {
@@ -10,18 +10,28 @@ interface Relay {
   streamId?: string;
   sequence?: number;
   greeted: boolean;
+  topics: string[];
 }
 
 const relays = new Map<string, Relay>();
 const RECONCILE_MS = 5_000;
 let reconcileTimer: ReturnType<typeof setInterval> | undefined;
+let stopTopicDemand: (() => void) | undefined;
+let currentTopics: string[] = [];
 
-function streamUrl(peer: Peer, sequence?: number): string {
+function streamUrl(peer: Peer, relay: Relay): string {
   const url = new URL(`${peer.url}/notify/stream`);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.searchParams.set("notify", "0");
   url.searchParams.set("relay", "1");
-  if (sequence !== undefined) url.searchParams.set("afterSequence", String(sequence));
+  if (!relay.topics.includes("*")) {
+    url.searchParams.set("scoped", "1");
+    for (const topic of relay.topics) url.searchParams.append("topic", topic);
+  }
+  if (relay.sequence !== undefined) {
+    url.searchParams.set("afterSequence", String(relay.sequence));
+    if (relay.streamId) url.searchParams.set("streamId", relay.streamId);
+  }
   return url.toString();
 }
 
@@ -39,7 +49,7 @@ function schedule(peerId: string, relay: Relay): void {
 function connect(peerId: string, relay: Relay): void {
   const peer = getPeer(peerId);
   if (!peer || relays.get(peerId) !== relay || relay.socket) return;
-  const socket = new WebSocket(streamUrl(peer, relay.sequence), {
+  const socket = new WebSocket(streamUrl(peer, relay), {
     headers: { Authorization: `Bearer ${peer.token}` },
   });
   relay.socket = socket;
@@ -71,12 +81,20 @@ function connect(peerId: string, relay: Relay): void {
       relay.streamId = nextStream;
       if (reset) {
         relay.sequence = nextSequence;
-        broadcastPeer(peerId, { type: "chats" });
-        broadcastPeer(peerId, { type: "peer-reset" });
+        const topics = Array.isArray(frame.topics) ? frame.topics : [];
+        if (topics.includes("sidebar") || topics.length === 0) broadcastPeer(peerId, { type: "chats" });
+        broadcastPeer(peerId, { type: "peer-reset", topics });
       } else if (relay.sequence === undefined) {
         relay.sequence = nextSequence;
       }
       broadcastPeer(peerId, frame);
+      return;
+    }
+
+    if (frame.type === "reset") {
+      if (typeof frame.sequence === "number"
+        && (relay.sequence === undefined || frame.sequence > relay.sequence)) relay.sequence = frame.sequence;
+      broadcastPeer(peerId, { type: "peer-reset", topics: frame.topics });
       return;
     }
 
@@ -117,7 +135,7 @@ function reconcile(): void {
     }
     if (existing?.timer) clearTimeout(existing.timer);
     existing?.socket?.close();
-    const relay: Relay = { fingerprint, attempt: 0, greeted: false };
+    const relay: Relay = { fingerprint, attempt: 0, greeted: false, topics: currentTopics };
     relays.set(peer.id, relay);
     connect(peer.id, relay);
   }
@@ -127,6 +145,18 @@ function reconcile(): void {
 /// only process that holds the peer token.
 export function startPeerStreamRelay(): () => void {
   if (reconcileTimer) return stopPeerStreamRelay;
+  stopTopicDemand = onTopicDemand((topics) => {
+    const changedMode = topics.includes("*") !== currentTopics.includes("*");
+    currentTopics = topics;
+    for (const relay of relays.values()) {
+      relay.topics = topics;
+      if (changedMode) {
+        relay.socket?.terminate();
+      } else if (relay.socket?.readyState === WebSocket.OPEN) {
+        relay.socket.send(JSON.stringify({ type: "subscribe", topics }));
+      }
+    }
+  });
   reconcile();
   reconcileTimer = setInterval(reconcile, RECONCILE_MS);
   reconcileTimer.unref?.();
@@ -136,6 +166,9 @@ export function startPeerStreamRelay(): () => void {
 export function stopPeerStreamRelay(): void {
   if (reconcileTimer) clearInterval(reconcileTimer);
   reconcileTimer = undefined;
+  stopTopicDemand?.();
+  stopTopicDemand = undefined;
+  currentTopics = [];
   const current = [...relays];
   relays.clear();
   for (const [peerId, relay] of current) {

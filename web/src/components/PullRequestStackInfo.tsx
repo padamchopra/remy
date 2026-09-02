@@ -43,7 +43,7 @@ export function PullRequestStackInfo({ serverId, repository, number, initialStac
       const frame = payload as { type?: string };
       if (frame.type === "peer-disconnected") setUnavailable(true);
       if (["hello", "peer-reset", "pull-requests"].includes(frame.type ?? "")) void read();
-    });
+    }, ["pull-requests", "sidebar"]);
     const offStatus = transport.onStatus((source, online) => {
       if (source !== serverId) return;
       if (online) void read();

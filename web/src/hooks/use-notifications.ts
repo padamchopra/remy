@@ -60,7 +60,7 @@ export function useNotifications(input: {
       } catch {
         // Some browsers refuse to construct one outside a service worker.
       }
-    });
+    }, ["sidebar"]);
 
     return () => {
       off();

@@ -74,7 +74,7 @@ export function PullRequestReviewProvider({ serverId, repository, number, chatId
       const frame = payload as { type?: string; repository?: string; number?: number };
       if (["hello", "peer-reset", "peers"].includes(frame.type ?? "")
         || frame.type === "pull-request-question" && frame.repository === repository && frame.number === number) void read();
-    });
+    }, ["pull-requests", "sidebar"]);
     const offStatus = transport.onStatus((_source, online) => {
       if (online) void read();
       else if (current) setReadError("A device is offline; saved questions may be out of date.");

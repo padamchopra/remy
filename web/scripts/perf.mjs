@@ -259,6 +259,8 @@ function combineRuns(samples) {
     "delayFromLocalMs",
     "requestCount",
     "transferredBytes",
+    "webSocketPayloadBytes",
+    "maxWebSocketPayloadBytes",
     "longTaskCount",
     "longTaskDurationMs",
     "affectedRowRenders",
@@ -1044,6 +1046,7 @@ async function snapshotResult(page, base) {
         0,
       ),
       requests,
+      livePayloadBytes: window.__remyPerf.livePayloadBytes.slice(),
     };
   });
   const requestBytes = metrics.requests.reduce((total, request) => total + request.bytes, 0);
@@ -1060,6 +1063,8 @@ async function snapshotResult(page, base) {
     longTaskDurationMs: metrics.longTaskDurationMs,
     requestCount: metrics.requests.length,
     transferredBytes: requestBytes + metrics.resourceBytes,
+    webSocketPayloadBytes: metrics.livePayloadBytes.reduce((total, bytes) => total + bytes, 0),
+    maxWebSocketPayloadBytes: Math.max(0, ...metrics.livePayloadBytes),
     requests: groupRequests(metrics.requests),
     mutatingRequests,
   };
@@ -1199,6 +1204,7 @@ function printResults(allResults) {
       Number.isFinite(result.domSize) ? `${result.domSize} DOM nodes` : "",
       Number.isFinite(result.requestCount) ? `${result.requestCount} requests` : "",
       Number.isFinite(result.transferredBytes) ? `${formatBytes(result.transferredBytes)} transferred` : "",
+      Number.isFinite(result.webSocketPayloadBytes) ? `${formatBytes(result.webSocketPayloadBytes)} WebSocket` : "",
       Number.isFinite(result.longTaskCount) ? `${result.longTaskCount} long tasks` : "",
       Number.isFinite(result.affectedRowRenders) ? `${result.affectedRowRenders} affected row renders` : "",
       Number.isFinite(result.unrelatedRowRenders) ? `${result.unrelatedRowRenders} unrelated row renders` : "",

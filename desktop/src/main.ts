@@ -53,6 +53,15 @@ function serverDir(): string {
 let connection: Connection | undefined;
 let connectionReady: Promise<Connection> | undefined;
 const remoteUpdates = new Set<string>();
+const liveTopicsByWebContents = new Map<number, Set<string>>();
+
+function syncLiveTopics(): void {
+  const topics = new Set<string>();
+  for (const owned of liveTopicsByWebContents.values()) {
+    for (const topic of owned) topics.add(topic);
+  }
+  connection?.setTopics([...topics].sort());
+}
 
 function appUpdateRequest(payload: unknown): { requestId: string } | undefined {
   if (!payload || typeof payload !== "object") return undefined;
@@ -200,6 +209,18 @@ async function wireIpc(): Promise<void> {
   });
 
   ipcMain.handle("mc:servers", async () => (await requireConnection()).list());
+  ipcMain.handle("mc:set-live-topics", async (event, topics: string[]) => {
+    await requireConnection();
+    const id = event.sender.id;
+    if (!liveTopicsByWebContents.has(id)) {
+      event.sender.once("destroyed", () => {
+        liveTopicsByWebContents.delete(id);
+        syncLiveTopics();
+      });
+    }
+    liveTopicsByWebContents.set(id, new Set(Array.isArray(topics) ? topics : []));
+    syncLiveTopics();
+  });
 
   // A real capture of the window, written where macOS puts screenshots. The
   // renderer cannot do this: it can only draw what it can already reach, which
