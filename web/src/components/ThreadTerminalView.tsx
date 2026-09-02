@@ -63,7 +63,7 @@ export function ThreadTerminalView({
     const frame = payload as TerminalFrame;
     if (frame.type !== "terminal" || frame.terminalId !== terminalId) return;
     if (typeof frame.active === "boolean") setActive(frame.active);
-  }), [serverId, terminalId]);
+  }, [`terminal:${terminalId}`]), [serverId, terminalId]);
 
   useEffect(() => {
     if (!visible || !hostRef.current) return;
@@ -159,7 +159,7 @@ export function ThreadTerminalView({
       revision = frame.revision;
       if (frame.data) terminal.write(frame.data);
       if (typeof frame.active === "boolean") setActive(frame.active);
-    });
+    }, [`terminal:${terminalId}`]);
 
     const flushInput = () => {
       inputTimer = undefined;

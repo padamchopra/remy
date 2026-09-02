@@ -307,7 +307,7 @@ export function PullRequestView({
       const changed = frame.type === "pull-request-guide" && (!guide || source === guideOwnerServerId)
         && frame.repository === pullRequest.repository && frame.number === pullRequest.number;
       if (reconnect || changed || (frame.type === "peers" && !guide)) setGuideLoaded(false);
-    });
+    }, ["pull-requests", "sidebar"]);
     const offStatus = transport.onStatus((source, online) => {
       if (tab !== "guide" || (source !== guideLookupServerId && source !== guideOwnerServerId)) return;
       if (online) setGuideLoaded(false);

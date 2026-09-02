@@ -188,6 +188,7 @@ const pushing = new Set<string>();
 /// first connect — whose state the boot read already covers — from a reconnect,
 /// which may have missed frames while the socket was gone.
 const streamed = new Set<string>();
+let detailSubscription: (() => void) | undefined;
 
 export const useStore = create<State>((set, get) => ({
   servers: [],
@@ -215,23 +216,36 @@ export const useStore = create<State>((set, get) => ({
       .then(() => get().loadPairRequests())
       .catch(() => {});
 
+    const refreshTopics = (serverId: string, topics: string[] = []) => {
+      if (topics.includes("sidebar")) void get().refreshServer(serverId);
+      if (topics.includes("board")) void get().loadBoard(serverId);
+      if (topics.includes("settings")) {
+        void get().loadSettings(serverId);
+        void get().loadProviders(serverId);
+      }
+      const open = get().detail;
+      if (open?.serverId === serverId && topics.includes(`thread:${open.id}`)) {
+        void get().openChat(open.id).catch(() => {});
+      }
+    };
     const offPush = transport.subscribe((serverId, payload) => {
       const frame = payload as ChatFrame;
-      // A stream that has just opened is either this Mac's first or one that
-      // was down. Nothing sent while the socket was gone is resent, so every
-      // Mac behind it is read again rather than left to a poll — including the
-      // peers this one was already relaying, which missed the same frames.
       if (frame.type === "hello") {
         const relayed = frame.peerStreams ?? [];
         for (const id of [serverId, ...relayed]) pushing.add(id);
-        for (const id of [serverId, ...relayed]) void get().resync(id);
+        if (frame.reset) refreshTopics(serverId, frame.topics ?? []);
+        else if (!streamed.has(serverId)) void get().resync(serverId);
+        return;
+      }
+      if (frame.type === "reset") {
+        refreshTopics(serverId, frame.topics ?? []);
         return;
       }
       // The relay to one peer restarted, so its own history is gone whether or
       // not this phone had seen it before.
       if (frame.type === "peer-reset") {
         pushing.add(serverId);
-        void get().resync(serverId, { reconnect: true });
+        refreshTopics(serverId, frame.topics ?? []);
         return;
       }
       if (frame.type === "peer-disconnected") {
@@ -259,7 +273,7 @@ export const useStore = create<State>((set, get) => ({
       if (frame.type === "chat" && frame.chatId) {
         set((current) => applyChatFrame(current, frame, serverId));
       }
-    });
+    }, ["sidebar", "board", "settings"]);
 
     const offStatus = transport.onStatus((serverId, pushUp) => {
       if (!pushUp) pushing.delete(serverId);
@@ -287,6 +301,8 @@ export const useStore = create<State>((set, get) => ({
       if (timer) clearTimeout(timer);
       pushing.clear();
       streamed.clear();
+      detailSubscription?.();
+      detailSubscription = undefined;
       offPush();
       offStatus();
     };
@@ -698,6 +714,10 @@ export const useStore = create<State>((set, get) => ({
     const chat = get().chats.find((entry) => entry.id === id)
       ?? get().dms.find((entry) => entry.id === id);
     if (!chat) return;
+    if (get().openId !== id) {
+      detailSubscription?.();
+      detailSubscription = transport.subscribe(() => {}, [`thread:${id}`]);
+    }
     const same = get().detail?.id === id;
     set({ openId: id, detailLoading: !same, ...(same ? {} : { detail: undefined }) });
     try {
@@ -712,6 +732,8 @@ export const useStore = create<State>((set, get) => ({
   },
 
   closeChat() {
+    detailSubscription?.();
+    detailSubscription = undefined;
     set({ openId: undefined, detail: undefined, detailLoading: false });
   },
 
@@ -1005,6 +1027,8 @@ interface ChatFrame {
   type?: string;
   /// On a `hello`, the peers this Mac already relays live frames for.
   peerStreams?: string[];
+  reset?: boolean;
+  topics?: string[];
   chatId?: string;
   unread?: boolean;
   entries?: ConvEntry[];

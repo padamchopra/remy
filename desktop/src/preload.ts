@@ -66,6 +66,7 @@ contextBridge.exposeInMainWorld("remy", {
     ipcRenderer.on("mc:push", listener);
     return () => ipcRenderer.off("mc:push", listener);
   },
+  setLiveTopics: (topics: string[]): Promise<void> => ipcRenderer.invoke("mc:set-live-topics", topics),
 
   /// Brings the window forward. A notification click can focus the page on its
   /// own, but only the main process can raise the window itself.

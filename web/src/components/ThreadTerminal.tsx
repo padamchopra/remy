@@ -190,7 +190,7 @@ function TerminalPresence({
     const frame = payload as TerminalFrame;
     if (frame.type !== "terminal" || frame.terminalId !== terminalId) return;
     if (typeof frame.active === "boolean") report.current?.(frame.active);
-  }), [serverId, terminalId]);
+  }, [`terminal:${terminalId}`]), [serverId, terminalId]);
 
   return null;
 }

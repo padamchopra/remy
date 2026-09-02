@@ -116,7 +116,7 @@ export function useThreadTools(
       }));
       clearTimeout(refreshTimer.current);
       refreshTimer.current = setTimeout(() => void refresh(browserId), 80);
-    });
+    }, [`thread:${chatId}`]);
     return () => {
       clearTimeout(refreshTimer.current);
       unsubscribe();
@@ -234,4 +234,3 @@ export function useThreadTools(
     active: Object.values(views).some((view) => view?.active),
   };
 }
-

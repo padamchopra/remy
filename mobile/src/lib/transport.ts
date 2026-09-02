@@ -12,7 +12,7 @@ export interface Transport {
   servers(): Promise<Server[]>;
   request<T>(serverId: string, path: string, init?: { method?: string; body?: unknown }): Promise<T>;
   updateServer(id: string, patch: { name?: string; icon?: DeviceIconId; tint?: TintId }): Promise<void>;
-  subscribe(handler: (serverId: string, payload: unknown) => void): () => void;
+  subscribe(handler: (serverId: string, payload: unknown) => void, topics: readonly string[]): () => void;
   onStatus(handler: (serverId: string, online: boolean, error?: string) => void): () => void;
 }
 
@@ -45,6 +45,8 @@ const sockets = new Map<string, WebSocket>();
 const attempts = new Map<string, number>();
 const pushHandlers = new Set<(serverId: string, payload: unknown) => void>();
 const statusHandlers = new Set<(serverId: string, online: boolean, error?: string) => void>();
+const topicRefs = new Map<string, number>();
+const cursors = new Map<string, { streamId?: string; sequence?: number }>();
 let closed = true;
 
 type RNWebSocket = {
@@ -55,10 +57,21 @@ type RNWebSocket = {
   ): WebSocket;
 };
 
+function liveTopics(): string[] {
+  return [...topicRefs.keys()].sort();
+}
+
 function notifyUrl(base: string): string {
   const url = new URL("/notify/stream", `${originOf(base)}/`);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.searchParams.set("notify", "0");
+  url.searchParams.set("scoped", "1");
+  for (const topic of liveTopics()) url.searchParams.append("topic", topic);
+  const cursor = cursors.get(originOf(base));
+  if (cursor?.sequence !== undefined) {
+    url.searchParams.set("afterSequence", String(cursor.sequence));
+    if (cursor.streamId) url.searchParams.set("streamId", cursor.streamId);
+  }
   return url.toString();
 }
 
@@ -127,6 +140,7 @@ function connectOne(pairing: Pairing): void {
   ws.onopen = () => {
     if (sockets.get(origin) !== ws) return;
     attempts.set(origin, 0);
+    ws.send(JSON.stringify({ type: "subscribe", topics: liveTopics() }));
     for (const handler of statusHandlers) handler(serverId, true);
   };
   ws.onmessage = (event) => {
@@ -134,8 +148,26 @@ function connectOne(pairing: Pairing): void {
     try {
       const payload: unknown = JSON.parse(String(event.data));
       const frame = payload && typeof payload === "object" && !Array.isArray(payload)
-        ? payload as { type?: unknown; serverId?: unknown; payload?: unknown }
+        ? payload as { type?: unknown; serverId?: unknown; payload?: unknown; streamId?: unknown; sequence?: unknown; reset?: unknown }
         : undefined;
+      if (frame?.type === "hello") {
+        const previous = cursors.get(origin);
+        const nextStream = typeof frame.streamId === "string" ? frame.streamId : undefined;
+        const restarted = previous?.streamId !== undefined && previous.streamId !== nextStream;
+        if (frame.reset === true || restarted || previous?.sequence === undefined) {
+          cursors.set(origin, {
+            streamId: nextStream,
+            sequence: typeof frame.sequence === "number" ? frame.sequence : undefined,
+          });
+        } else {
+          cursors.set(origin, { ...previous, streamId: nextStream });
+        }
+      } else if (typeof frame?.sequence === "number") {
+        const previous = cursors.get(origin);
+        if (previous?.sequence === undefined || frame.sequence > previous.sequence) {
+          cursors.set(origin, { ...previous, sequence: frame.sequence });
+        }
+      }
       // A paired Mac relays its own peers' frames wrapped in `peer-frame`.
       // Unwrapped here, so a frame about a thread on the studio arrives under
       // the studio's id rather than under the Mac that forwarded it.
@@ -170,6 +202,13 @@ function syncSockets(): void {
   }
   if (closed) return;
   for (const pairing of pairings) connectOne(pairing);
+}
+
+function syncTopics(): void {
+  const control = JSON.stringify({ type: "subscribe", topics: liveTopics() });
+  for (const socket of sockets.values()) {
+    if (socket.readyState === WebSocket.OPEN) socket.send(control);
+  }
 }
 
 export const transport: Transport = {
@@ -299,12 +338,20 @@ export const transport: Transport = {
     await fetchPath(route.pairing, `/peers/${encodeURIComponent(route.peerId)}`, { method: "PATCH", body });
   },
 
-  subscribe(handler) {
+  subscribe(handler, topics) {
     closed = false;
     pushHandlers.add(handler);
+    for (const topic of topics) topicRefs.set(topic, (topicRefs.get(topic) ?? 0) + 1);
     syncSockets();
+    syncTopics();
     return () => {
       pushHandlers.delete(handler);
+      for (const topic of topics) {
+        const next = (topicRefs.get(topic) ?? 0) - 1;
+        if (next > 0) topicRefs.set(topic, next);
+        else topicRefs.delete(topic);
+      }
+      syncTopics();
       if (pushHandlers.size === 0) {
         closed = true;
         syncSockets();

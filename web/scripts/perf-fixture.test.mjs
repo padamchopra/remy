@@ -61,7 +61,11 @@ test("passes results on the parent budgets and rejects regressions", () => {
       firstUsefulPaintMs: PERFORMANCE_BUDGETS.cachedThreadMs,
       selectedDetailReturnMs: 30,
     },
-    { scenario: "live-update", firstLivePaintP95Ms: PERFORMANCE_BUDGETS.livePaintP95Ms },
+    {
+      scenario: "live-update",
+      firstLivePaintP95Ms: PERFORMANCE_BUDGETS.livePaintP95Ms,
+      maxWebSocketPayloadBytes: PERFORMANCE_BUDGETS.maxWebSocketPayloadBytes,
+    },
     {
       scenario: "render-isolation-thread",
       affectedRowRenders: 1,
@@ -108,6 +112,14 @@ test("passes results on the parent budgets and rejects regressions", () => {
   assert.match(
     budgetFailures({ scenario: "live-update", firstLivePaintP95Ms: PERFORMANCE_BUDGETS.livePaintP95Ms + 1 })[0],
     /live update p95/,
+  );
+  assert.match(
+    budgetFailures({
+      scenario: "live-update",
+      firstLivePaintP95Ms: 1,
+      maxWebSocketPayloadBytes: PERFORMANCE_BUDGETS.maxWebSocketPayloadBytes + 1,
+    })[0],
+    /WebSocket payload/,
   );
   assert.match(
     budgetFailures({

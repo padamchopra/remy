@@ -271,6 +271,7 @@ const WARM_WRITE_MS = 500;
 const detailCache = new Map<string, ChatDetail>();
 const pendingDetails = new Map<string, Promise<ChatDetail>>();
 const pushPeerServers = new Set<string>();
+const detailSubscriptions = new Map<string, () => void>();
 let refreshRun = 0;
 let pendingRefresh: Promise<void> | undefined;
 
@@ -359,11 +360,35 @@ export const useStore = create<State>((set, get) => ({
       .then(() => get().loadPairRequests())
       .catch(() => {});
 
+    const refreshTopics = (serverId: string, topics: string[] = []) => {
+      if (topics.includes("sidebar")) void get().refresh();
+      if (topics.includes("board")) void get().loadBoard({ fresh: true });
+      if (topics.includes("settings")) void get().loadSettings();
+      const current = get();
+      for (const topic of topics) {
+        if (!topic.startsWith("thread:")) continue;
+        const id = topic.slice("thread:".length);
+        const detail = current.details[id];
+        if (!detail || detail.serverId !== serverId || !current.openIds.includes(id)) continue;
+        void readChatDetail(id, serverId).then((next) => {
+          if (!get().openIds.includes(next.id)) return;
+          set((state) => ({
+            details: { ...state.details, [next.id]: mergeDetailRefresh(state.details[next.id], next) },
+            detailLoading: { ...state.detailLoading, [next.id]: false },
+          }));
+        }).catch(() => {});
+      }
+    };
     const offPush = transport.subscribe((serverId, payload) => {
       const frame = payload as ChatFrame;
       if (frame.type === "hello") {
         pushPeerServers.add(serverId);
         for (const peerId of frame.peerStreams ?? []) pushPeerServers.add(peerId);
+        if (frame.reset) refreshTopics(serverId, frame.topics);
+        return;
+      }
+      if (frame.type === "reset") {
+        refreshTopics(serverId, frame.topics);
         return;
       }
       if (frame.type === "peer-disconnected") {
@@ -372,18 +397,9 @@ export const useStore = create<State>((set, get) => ({
       }
       if (frame.type === "peer-reset") {
         pushPeerServers.add(serverId);
-        const current = get();
-        for (const id of current.openIds) {
-          const detail = current.details[id];
-          if (detail?.serverId !== serverId) continue;
-          void readChatDetail(detail.id, serverId).then((next) => {
-            if (!get().openIds.includes(next.id)) return;
-            set((state) => ({
-              details: { ...state.details, [next.id]: mergeDetailRefresh(state.details[next.id], next) },
-              detailLoading: { ...state.detailLoading, [next.id]: false },
-            }));
-          }).catch(() => {});
-        }
+        refreshTopics(serverId, (frame.topics?.length ?? 0) > 0
+          ? frame.topics ?? []
+          : get().openIds.map((id) => `thread:${id}`));
         return;
       }
       if (frame.type === "chats") {
@@ -411,7 +427,7 @@ export const useStore = create<State>((set, get) => ({
       // A turn streams as `chat` frames: the entries that changed, plus the
       // whole scalar state. Patch what is on screen rather than refetching.
       if (frame.type === "chat" && frame.chatId) set((current) => applyChatFrame(current, frame, serverId));
-    });
+    }, ["sidebar", "board", "settings"]);
 
     // What is on screen becomes what the next launch opens with.
     const warmWrites = keepWarmCache();
@@ -507,6 +523,8 @@ export const useStore = create<State>((set, get) => ({
       if (detailTimer) clearTimeout(detailTimer);
       document.removeEventListener("visibilitychange", wakePeerPoll);
       warmWrites.stop();
+      for (const off of detailSubscriptions.values()) off();
+      detailSubscriptions.clear();
       offPush();
       offStatus();
     };
@@ -1066,6 +1084,9 @@ export const useStore = create<State>((set, get) => ({
     const cached = detailCache.get(detailKey(id, chat.serverId));
     if (cached) cacheDetail(cached);
     const same = get().details[id]?.id === id;
+    if (!get().openIds.includes(id) && !detailSubscriptions.has(id)) {
+      detailSubscriptions.set(id, transport.subscribe(() => {}, [`thread:${id}`]));
+    }
     set((current) => ({
       openIds: current.openIds.includes(id) ? current.openIds : [...current.openIds, id],
       detailLoading: { ...current.detailLoading, [id]: !same && !cached },
@@ -1126,6 +1147,8 @@ export const useStore = create<State>((set, get) => ({
   },
 
   closeChat(id) {
+    detailSubscriptions.get(id)?.();
+    detailSubscriptions.delete(id);
     set((current) => {
       const details = { ...current.details };
       const loading = { ...current.detailLoading };
@@ -1747,6 +1770,8 @@ function keepWarmCache(): { stop: () => void } {
 interface ChatFrame {
   type?: string;
   peerStreams?: string[];
+  reset?: boolean;
+  topics?: string[];
   chatId?: string;
   unread?: boolean;
   entries?: ConvEntry[];

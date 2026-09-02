@@ -3,6 +3,7 @@ export const PERFORMANCE_BUDGETS = Object.freeze({
   coldUsefulMs: 500,
   cachedThreadMs: 100,
   livePaintP95Ms: 50,
+  maxWebSocketPayloadBytes: 64 * 1024,
   minimumFrameRate: 60,
   idleCpuPercent: 1,
   unavailableDelayMs: 50,
@@ -278,6 +279,8 @@ export function installPerformanceBridge(fixture) {
   const longTasks = [];
   const layoutShifts = [];
   const renders = [];
+  const livePayloadBytes = [];
+  let liveTopics = new Set();
   const nextFailures = new Map();
   let connected = true;
 
@@ -369,12 +372,14 @@ export function installPerformanceBridge(fixture) {
     longTasks,
     layoutShifts,
     renders,
+    livePayloadBytes,
     fixture,
     resetMeasurements() {
       requests.length = 0;
       longTasks.length = 0;
       layoutShifts.length = 0;
       renders.length = 0;
+      livePayloadBytes.length = 0;
     },
     failNext(path, error = "Fixture read failed") {
       nextFailures.set(path, error);
@@ -389,6 +394,18 @@ export function installPerformanceBridge(fixture) {
     },
     emit(payload, serverId = fixture.serverId) {
       if (!connected) return false;
+      const type = payload?.type;
+      const topic = type === "chat" || type === "browser"
+        ? `thread:${payload.chatId}`
+        : type === "terminal"
+          ? `terminal:${payload.terminalId}`
+          : type === "board"
+            ? "board"
+            : type === "quick-replies" || type === "environments"
+              ? "settings"
+              : "sidebar";
+      if (!liveTopics.has(topic) && !(type === "board" && liveTopics.has("sidebar"))) return false;
+      livePayloadBytes.push(encoder.encode(JSON.stringify(payload)).byteLength);
       for (const handler of pushHandlers) handler(serverId, payload);
       return true;
     },
@@ -438,6 +455,9 @@ export function installPerformanceBridge(fixture) {
       pushHandlers.add(handler);
       queueMicrotask(() => handler(fixture.serverId, { type: "hello" }));
       return () => pushHandlers.delete(handler);
+    },
+    async setLiveTopics(topics) {
+      liveTopics = new Set(topics);
     },
     onStatus(handler) {
       statusHandlers.add(handler);
@@ -508,6 +528,9 @@ export function budgetFailures(result, budgets = PERFORMANCE_BUDGETS) {
   }
   if (result.scenario === "live-update") {
     over(result.firstLivePaintP95Ms, budgets.livePaintP95Ms, "live update p95");
+    if (result.maxWebSocketPayloadBytes > budgets.maxWebSocketPayloadBytes) {
+      failures.push(`live WebSocket payload: ${result.maxWebSocketPayloadBytes} bytes > ${budgets.maxWebSocketPayloadBytes} bytes`);
+    }
     if (result.stableRowRenders > 0) failures.push(`stable transcript row rendered ${result.stableRowRenders} extra times`);
     if (result.composerShiftPx > budgets.maxComposerShiftPx) {
       failures.push(`streaming composer shift: ${result.composerShiftPx.toFixed(1)} px > ${budgets.maxComposerShiftPx} px`);

@@ -11,116 +11,290 @@ export interface NotifyEvent {
   title: string;
   message: string;
   highPriority: boolean;
-  /// Where tapping the push should land. Defaults to the session deep link;
-  /// chats set their own, since they have no tmux session behind them.
+  /// Where tapping the push should land. Threads set their own deep link.
   click?: string;
-  /// The machine the thread is running on, when that is not this one. A banner
-  /// on your laptop about a thread on the studio has to say which machine.
+  /// The machine the thread runs on when it is not this one.
   device?: string;
 }
 
+interface Subscriber {
+  socket: WebSocket;
+  topics: Set<string>;
+  relay: boolean;
+  scoped: boolean;
+}
+
+interface HistoryEntry {
+  sequence: number;
+  text: string;
+  topics: string[];
+}
+
+interface PendingChatFrame {
+  frame: Record<string, unknown>;
+  entries: Map<string, unknown>;
+  removed: Set<string>;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 const THROTTLE_MS = 5 * 60_000;
+const CHAT_FRAME_MS = 16;
+const HISTORY_LIMIT = 1_000;
+const MAX_TOPICS = 128;
+const MAX_TOPIC_LENGTH = 256;
 const lastSent = new Map<string, number>();
 
-// Every client holds a WebSocket to /notify/stream while it's in the
-// foreground: it's the channel that pushes live session state, so clients
-// don't have to poll. Two roles ride on the same socket:
-//
-//   subscribers   — everyone, receives state pushes and settings sync.
-//   notifyTargets — clients that render notifications themselves (the desktop
-//                   app). If any is connected, notifications go there as
-//                   native banners instead of Apple Push, so the phone only
-//                   buzzes when no desktop client is around.
-//
-// The phone connects with `?notify=0`: it wants the live data but its
-// banners arrive via APNs, so it must not count as a delivery target.
-const subscribers = new Set<WebSocket>();
+// New clients declare the surfaces they can currently paint. Clients from
+// before scoped streams remain wildcard subscribers so upgrades never make an
+// older window silently stale.
+const subscribers = new Map<WebSocket, Subscriber>();
 const notifyTargets = new Set<WebSocket>();
-const relaySubscribers = new Set<WebSocket>();
 const livePeerStreams = new Set<string>();
 const alive = new WeakSet<WebSocket>();
 const streamId = randomUUID();
-const history: { sequence: number; text: string }[] = [];
-const HISTORY_LIMIT = 1_000;
+const history: HistoryEntry[] = [];
+const pendingChats = new Map<string, PendingChatFrame>();
+const topicDemandListeners = new Set<(topics: string[]) => void>();
 let sequence = 0;
 
+function validTopic(value: unknown): value is string {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= MAX_TOPIC_LENGTH
+    && (value === "sidebar"
+      || value === "board"
+      || value === "settings"
+      || value === "pull-requests"
+      || value.startsWith("thread:") && value.length > "thread:".length
+      || value.startsWith("terminal:") && value.length > "terminal:".length
+      || value.startsWith("workspace:") && value.length > "workspace:".length);
+}
+
+function topicsFrom(values: unknown): Set<string> {
+  if (!Array.isArray(values) || values.length > MAX_TOPICS) return new Set();
+  return new Set(values.filter(validTopic));
+}
+
+function topicsFromParams(params: URLSearchParams): Set<string> {
+  return new Set(params.getAll("topic").filter(validTopic).slice(0, MAX_TOPICS));
+}
+
+function topicsFor(payload: unknown): string[] {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return ["sidebar"];
+  const frame = payload as Record<string, unknown>;
+  const type = typeof frame.type === "string" ? frame.type : "";
+  if ((type === "reset" || type === "peer-reset") && Array.isArray(frame.topics)) {
+    const topics = frame.topics.filter(validTopic);
+    return topics.length > 0 ? topics : ["sidebar"];
+  }
+  if ((type === "chat" || type === "browser") && typeof frame.chatId === "string") {
+    return [`thread:${frame.chatId}`];
+  }
+  if (type === "terminal" && typeof frame.terminalId === "string") {
+    return [`terminal:${frame.terminalId}`];
+  }
+  if (type === "workspace-worktrees" && typeof frame.workspaceId === "string") {
+    return [`workspace:${frame.workspaceId}`];
+  }
+  if (type === "pull-request-guide" || type === "pull-request-question" || type === "pull-requests") {
+    return ["pull-requests"];
+  }
+  if (type === "board") return ["board", "sidebar", "settings"];
+  if (type === "quick-replies" || type === "environments") return ["settings"];
+  return ["sidebar"];
+}
+
+function accepts(subscriber: Subscriber, topics: string[]): boolean {
+  if (!subscriber.scoped) return true;
+  return topics.some((topic) => subscriber.topics.has(topic));
+}
+
+function send(subscriber: Subscriber, text: string): void {
+  if (subscriber.socket.readyState === subscriber.socket.OPEN) subscriber.socket.send(text);
+}
+
+function demandedTopics(): string[] {
+  const topics = new Set<string>();
+  for (const subscriber of subscribers.values()) {
+    if (subscriber.relay) continue;
+    if (!subscriber.scoped) return ["*"];
+    for (const topic of subscriber.topics) topics.add(topic);
+  }
+  return [...topics].sort();
+}
+
+function reportTopicDemand(): void {
+  const topics = demandedTopics();
+  for (const listener of topicDemandListeners) listener(topics);
+}
+
+/// Calls back whenever local windows change what a peer relay should request.
+export function onTopicDemand(listener: (topics: string[]) => void): () => void {
+  topicDemandListeners.add(listener);
+  listener(demandedTopics());
+  return () => topicDemandListeners.delete(listener);
+}
+
+/// Attaches one authenticated client and its current surface ownership.
 export function attachNotifyStream(ws: WebSocket, notifies: boolean, params = new URLSearchParams()): void {
-  subscribers.add(ws);
-  if (notifies) notifyTargets.add(ws);
   const relay = params.get("relay") === "1";
-  if (relay) relaySubscribers.add(ws);
+  const scoped = params.get("scoped") === "1";
+  const subscriber: Subscriber = {
+    socket: ws,
+    topics: scoped ? topicsFromParams(params) : new Set(),
+    relay,
+    scoped,
+  };
+  subscribers.set(ws, subscriber);
+  if (notifies) notifyTargets.add(ws);
   attachAppUpdateHost(ws, params);
   alive.add(ws);
   ws.on("pong", () => alive.add(ws));
+  ws.on("message", (data) => {
+    let message: unknown;
+    try {
+      message = JSON.parse(String(data));
+    } catch {
+      return;
+    }
+    if (!message || typeof message !== "object" || Array.isArray(message)) return;
+    const control = message as Record<string, unknown>;
+    if (control.type !== "subscribe" || !subscriber.scoped) return;
+    const next = topicsFrom(control.topics);
+    const added = [...next].filter((topic) => !subscriber.topics.has(topic));
+    subscriber.topics = next;
+    if (added.length > 0) send(subscriber, JSON.stringify({ type: "reset", topics: added, sequence }));
+    reportTopicDemand();
+  });
   const drop = () => {
     subscribers.delete(ws);
     notifyTargets.delete(ws);
-    relaySubscribers.delete(ws);
+    reportTopicDemand();
   };
   ws.on("close", drop);
   ws.on("error", drop);
-  // Announce that this server pushes state. A client talking to an older
-  // server never hears this and keeps polling fast, so it degrades instead of
-  // going quietly stale.
+
   if (ws.readyState === ws.OPEN) {
     const askedAfter = params.get("afterSequence");
+    const askedStream = params.get("streamId");
     const after = Number(askedAfter);
-    const resumable = relay && askedAfter !== null && Number.isSafeInteger(after) && after >= 0;
-    const reset = resumable && history.length > 0 && after < history[0].sequence - 1;
-    ws.send(JSON.stringify({
+    const resumable = askedAfter !== null && Number.isSafeInteger(after) && after >= 0;
+    const oldest = history[0]?.sequence ?? sequence + 1;
+    const reset = askedAfter !== null && (
+      !resumable
+      || askedStream !== streamId
+      || after > sequence
+      || after < oldest - 1
+    );
+    send(subscriber, JSON.stringify({
       type: "hello",
       push: true,
       streamId,
       sequence,
       peerStreams: [...livePeerStreams],
-      ...(reset ? { reset: true } : {}),
+      ...(reset ? { reset: true, topics: [...subscriber.topics] } : {}),
     }));
     if (resumable && !reset) {
       for (const entry of history) {
-        if (entry.sequence > after) ws.send(entry.text);
+        if (entry.sequence > after && accepts(subscriber, entry.topics)) send(subscriber, entry.text);
       }
     }
   }
+  reportTopicDemand();
 }
 
-// Push an arbitrary message to every connected client. Used for live state and
-// settings sync (e.g. quick replies) so a change shows up on every open device
-// without a poll. Unlike notifications this never falls back to APNs — a client
-// that isn't connected just picks it up on its next refresh.
-export function broadcast(payload: unknown): void {
+function broadcastFrame(payload: unknown): void {
   sequence += 1;
   const frame = payload && typeof payload === "object" && !Array.isArray(payload)
     ? { ...(payload as Record<string, unknown>), sequence }
     : { type: "message", payload, sequence };
+  const topics = topicsFor(frame);
   const text = JSON.stringify(frame);
-  history.push({ sequence, text });
+  history.push({ sequence, text, topics });
   if (history.length > HISTORY_LIMIT) history.splice(0, history.length - HISTORY_LIMIT);
-  for (const ws of subscribers) {
-    if (ws.readyState === ws.OPEN) ws.send(text);
+  for (const subscriber of subscribers.values()) {
+    if (accepts(subscriber, topics)) send(subscriber, text);
   }
+}
+
+function queueChat(frame: Record<string, unknown>): void {
+  const chatId = String(frame.chatId);
+  const existing = pendingChats.get(chatId);
+  if (existing) {
+    existing.frame = { ...existing.frame, ...frame };
+    for (const id of Array.isArray(frame.removed) ? frame.removed : []) {
+      if (typeof id !== "string") continue;
+      existing.removed.add(id);
+      existing.entries.delete(id);
+    }
+    for (const entry of Array.isArray(frame.entries) ? frame.entries : []) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+      const id = (entry as Record<string, unknown>).id;
+      if (typeof id !== "string") continue;
+      existing.entries.set(id, entry);
+      existing.removed.delete(id);
+    }
+    return;
+  }
+  const entries = new Map<string, unknown>();
+  for (const entry of Array.isArray(frame.entries) ? frame.entries : []) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const id = (entry as Record<string, unknown>).id;
+    if (typeof id === "string") entries.set(id, entry);
+  }
+  const removed = new Set((Array.isArray(frame.removed) ? frame.removed : []).filter(
+    (id): id is string => typeof id === "string",
+  ));
+  const pending: PendingChatFrame = {
+    frame,
+    entries,
+    removed,
+    timer: setTimeout(() => {
+      pendingChats.delete(chatId);
+      const next = { ...pending.frame };
+      if (pending.entries.size > 0) next.entries = [...pending.entries.values()];
+      else delete next.entries;
+      if (pending.removed.size > 0) next.removed = [...pending.removed];
+      else delete next.removed;
+      broadcastFrame(next);
+    }, CHAT_FRAME_MS),
+  };
+  pending.timer.unref?.();
+  pendingChats.set(chatId, pending);
+}
+
+// Chat frames merge for one animation frame per thread. Each thread has its own
+// timer, so a burst in one cannot hold another back.
+/// Queues a local live frame for only the clients that own its surface.
+export function broadcast(payload: unknown): void {
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    const frame = payload as Record<string, unknown>;
+    if (frame.type === "chat" && typeof frame.chatId === "string") {
+      queueChat(frame);
+      return;
+    }
+  }
+  broadcastFrame(payload);
 }
 
 /// Delivers a peer's frame to local clients without sending it back out through
 /// another peer relay.
 export function broadcastPeer(serverId: string, payload: unknown): void {
-  if (subscribers.size === 0) return;
+  const topics = topicsFor(payload);
   const text = JSON.stringify({ type: "peer-frame", serverId, payload });
-  for (const ws of subscribers) {
-    if (!relaySubscribers.has(ws) && ws.readyState === ws.OPEN) ws.send(text);
+  for (const subscriber of subscribers.values()) {
+    if (!subscriber.relay && accepts(subscriber, topics)) send(subscriber, text);
   }
 }
 
-/// Keeps late-arriving local clients aware of peer streams that were already
-/// connected before their own socket opened.
+/// Keeps new local clients aware of peer streams already connected here.
 export function setPeerStreamStatus(serverId: string, connected: boolean): void {
   if (connected) livePeerStreams.add(serverId);
   else livePeerStreams.delete(serverId);
   broadcastPeer(serverId, { type: connected ? "hello" : "peer-disconnected", push: connected });
 }
 
-// A session's hook-driven state changed. Clients patch the session in place —
-// no refetch — so a fleet card's live label tracks the agent in real time.
-// Mirrors the registry exactly: an absent field means "cleared".
+/// Pushes hook-driven sidebar state without asking clients to refetch it.
 export function pushSession(session: string, entry: RegistryEntry | undefined): void {
   broadcast({
     type: "session",
@@ -134,23 +308,19 @@ export function pushSession(session: string, entry: RegistryEntry | undefined): 
   });
 }
 
-// The set of sessions changed (created, killed, renamed, or a new agent
-// session started in one). Clients refetch the list, which carries the fields
-// only /sessions can produce — pane preview and diff stat.
+/// Invalidates sidebar metadata when the set of sessions changes.
 export function pushSessionList(): void {
   broadcast({ type: "sessions" });
 }
 
-// A half-dead socket (slept laptop, dropped VPN) would swallow notifications:
-// still "connected" so APNs is skipped, but nothing arrives. Ping regularly
-// and drop clients that stop ponging, so delivery falls back to the phone.
 setInterval(() => {
-  for (const ws of subscribers) {
+  for (const subscriber of subscribers.values()) {
+    const ws = subscriber.socket;
     if (!alive.has(ws)) {
       subscribers.delete(ws);
       notifyTargets.delete(ws);
-      relaySubscribers.delete(ws);
       ws.terminate();
+      reportTopicDemand();
       continue;
     }
     alive.delete(ws);
@@ -158,32 +328,23 @@ setInterval(() => {
   }
 }, 30_000).unref();
 
+/// Routes a local notification to this machine and its opted-in peers.
 export async function sendNotification(evt: NotifyEvent): Promise<void> {
-  // A title alone is too broad: a new question should still surface, but the
-  // exact same event must never reappear because a hook/client retried it.
   const throttleKey = `${evt.session}:${evt.highPriority}:${evt.message}:${evt.title}`;
   const now = Date.now();
   if (now - (lastSent.get(throttleKey) ?? 0) < THROTTLE_MS) return;
   lastSent.set(throttleKey, now);
-
-  // Two independent destinations, and one notification can have both: this
-  // machine, if it still wants to be told about its own work, and whichever
-  // paired machines asked to be told about it.
   await Promise.all([
     config.notifySelf ? deliverHere(evt) : Promise.resolve(),
     forwardNotification({ ...evt }),
   ]);
 }
 
-/// A notification a peer addressed to this machine. Always shown: being a
-/// target is the whole reason it was sent here, and `notifySelf` governs what
-/// this machine does about its own work rather than what it was handed.
+/// Displays a notification a peer explicitly addressed to this machine.
 export async function deliverFromPeer(evt: NotifyEvent): Promise<void> {
   await deliverHere(evt);
 }
 
-/// Shows a notification on this machine: a banner in a window that is open
-/// here, or the phone push when no window is.
 async function deliverHere(evt: NotifyEvent): Promise<void> {
   if (notifyTargets.size > 0) {
     const payload = JSON.stringify({ type: "notification", ...evt });

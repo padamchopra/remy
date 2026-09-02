@@ -81,14 +81,14 @@ export function useWorkspaceWorktrees(workspace: Workspace) {
         }
       }
       if (frame.type === "hello" || frame.type === "peer-reset") refresh(serverId);
-    });
+    }, refs.current.copies.map((copy) => `workspace:${copy.id}`));
     const offStatus = transport.onStatus((serverId, online) => { if (online) refresh(serverId); });
     const onFocus = () => refresh();
     window.addEventListener("focus", onFocus);
     // Git changes made outside Remy emit no live frame; only this open pane scans them.
     const timer = window.setInterval(() => { if (!document.hidden && !running.current) refresh(); }, 15_000);
     return () => { off(); offStatus(); window.removeEventListener("focus", onFocus); window.clearInterval(timer); };
-  }, [load]);
+  }, [load, topology]);
 
   const seen = new Set<string>();
   const groups = copies.map((copy) => {

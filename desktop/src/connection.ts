@@ -52,6 +52,8 @@ export class Connection extends EventEmitter {
   private attempts = new Map<string, number>();
   private timers = new Map<string, NodeJS.Timeout>();
   private closing = false;
+  private topics = new Set<string>();
+  private cursors = new Map<string, { streamId?: string; sequence?: number }>();
 
   constructor(private servers: ServerConfig[], private client?: DesktopClient) {
     super();
@@ -81,7 +83,16 @@ export class Connection extends EventEmitter {
     this.stop();
     this.closing = false;
     this.servers = servers;
+    this.cursors.clear();
     this.start();
+  }
+
+  setTopics(topics: string[]): void {
+    this.topics = new Set(topics);
+    const control = JSON.stringify({ type: "subscribe", topics: [...this.topics].sort() });
+    for (const socket of this.sockets.values()) {
+      if (socket.readyState === WebSocket.OPEN) socket.send(control);
+    }
   }
 
   /// One REST call against a named server. Returns the parsed body, or throws
@@ -165,6 +176,13 @@ export class Connection extends EventEmitter {
     if (this.closing) return;
     const url = new URL("/notify/stream", server.url);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    url.searchParams.set("scoped", "1");
+    for (const topic of [...this.topics].sort()) url.searchParams.append("topic", topic);
+    const cursor = this.cursors.get(server.id);
+    if (cursor?.sequence !== undefined) {
+      url.searchParams.set("afterSequence", String(cursor.sequence));
+      if (cursor.streamId) url.searchParams.set("streamId", cursor.streamId);
+    }
     if (server.builtin && this.client) {
       url.searchParams.set("client", "desktop");
       url.searchParams.set("version", this.client.version);
@@ -181,12 +199,30 @@ export class Connection extends EventEmitter {
 
     socket.on("open", () => {
       this.attempts.set(server.id, 0);
+      socket.send(JSON.stringify({ type: "subscribe", topics: [...this.topics].sort() }));
       this.emit("status", server.id, true);
     });
 
     socket.on("message", (data) => {
       try {
-        this.emit("push", server.id, JSON.parse(String(data)));
+        const payload = JSON.parse(String(data)) as Record<string, unknown>;
+        const previous = this.cursors.get(server.id);
+        if (payload.type === "hello") {
+          const nextStream = typeof payload.streamId === "string" ? payload.streamId : undefined;
+          const restarted = previous?.streamId !== undefined && previous.streamId !== nextStream;
+          if (payload.reset === true || restarted || previous?.sequence === undefined) {
+            this.cursors.set(server.id, {
+              streamId: nextStream,
+              sequence: typeof payload.sequence === "number" ? payload.sequence : undefined,
+            });
+          } else {
+            this.cursors.set(server.id, { ...previous, streamId: nextStream });
+          }
+        } else if (typeof payload.sequence === "number"
+          && (previous?.sequence === undefined || payload.sequence > previous.sequence)) {
+          this.cursors.set(server.id, { ...previous, sequence: payload.sequence });
+        }
+        this.emit("push", server.id, payload);
       } catch {
         // A frame that isn't JSON is not worth tearing the socket down for.
       }
