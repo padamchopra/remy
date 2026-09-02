@@ -3,8 +3,6 @@ import { toast } from "sonner";
 import { apiError } from "@/lib/api-error";
 import { transport } from "@/lib/transport";
 
-const WIDE_THREAD_TOOLS = "(min-width: 1024px)";
-
 /// One shared browser: what the agent and the person are both looking at.
 export interface SharedBrowserView {
   browserId?: string;
@@ -21,16 +19,13 @@ export interface SharedBrowserView {
   error?: string;
 }
 
-export interface ThreadToolTab {
-  id: string;
-  type: "browser" | "analytics" | "performance" | "pull-request" | "activity";
-  repository?: string;
-  pullRequestNumber?: number;
-}
-
 function browserPath(chatId: string, browserId: string, action?: string): string {
   const base = `/chats/${encodeURIComponent(chatId)}/browser${action ? `/${action}` : ""}`;
   return `${base}?instance=${encodeURIComponent(browserId)}`;
+}
+
+export function browserKey(chatId: string, browserId: string): string {
+  return `${chatId}:${browserId}`;
 }
 
 export function githubPullRequestTarget(href: string): { repository: string; number: number } | undefined {
@@ -46,128 +41,78 @@ export function githubPullRequestTarget(href: string): { repository: string; num
   }
 }
 
-/// Which tools a thread has open, and their shared state. It stays in the
-/// thread so the header's dot and the tab bar work before any tool is loaded.
-export function useThreadTools(
-  chatId: string,
+/// The shared browsers of one thread collection: their views, the frames that
+/// keep them current, and the calls that drive them. Which of them is open as a
+/// tab is the workbench's business; this only knows which browsers exist, and
+/// tells the workbench when the agent opens one it has not seen.
+export function useSharedBrowsers(
   serverId: string,
-  shown: boolean,
-  setShown: (shown: boolean) => void,
-  enabled = true,
+  chatIds: string[],
+  browsers: { chatId: string; browserId: string }[],
+  enabled: boolean,
+  onBrowserOpened: (chatId: string, browserId: string) => void,
 ) {
-  const [tabs, setTabs] = useState<ThreadToolTab[]>([]);
-  const [activeTab, setActiveTab] = useState("");
   const [views, setViews] = useState<Record<string, SharedBrowserView | undefined>>({});
   const [supportsInstances, setSupportsInstances] = useState(false);
   const refreshTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const nextBrowser = useRef(2);
-  const nextInsight = useRef(2);
+  const chatSet = useRef(new Set(chatIds));
+  chatSet.current = new Set(chatIds);
+  const opened = useRef(onBrowserOpened);
+  opened.current = onBrowserOpened;
+  const browserList = browsers.map((browser) => browserKey(browser.chatId, browser.browserId)).join("\u0000");
+  const threadTopics = chatIds.map((chatId) => `thread:${chatId}`).sort().join("\u0000");
 
-  useEffect(() => {
-    const media = window.matchMedia(WIDE_THREAD_TOOLS);
-    const closeOnNarrow = () => {
-      if (!media.matches) setShown(false);
-    };
-    media.addEventListener("change", closeOnNarrow);
-    return () => media.removeEventListener("change", closeOnNarrow);
-  }, [setShown]);
-
-  const refresh = useCallback(async (browserId = "default") => {
+  const refresh = useCallback(async (chatId: string, browserId: string) => {
     if (!enabled) return;
+    const key = browserKey(chatId, browserId);
     try {
-      const next = await transport.request<SharedBrowserView>(
-        serverId,
-        browserPath(chatId, browserId),
-      );
+      const next = await transport.request<SharedBrowserView>(serverId, browserPath(chatId, browserId));
       if (typeof next.browserId === "string") setSupportsInstances(true);
-      setViews((current) => ({ ...current, [browserId]: next }));
+      setViews((current) => ({ ...current, [key]: next }));
     } catch {
-      setViews((current) => ({ ...current, [browserId]: undefined }));
+      setViews((current) => ({ ...current, [key]: undefined }));
     }
-  }, [chatId, serverId, enabled]);
+  }, [serverId, enabled]);
 
   useEffect(() => {
     if (!enabled) return;
-    for (const tab of tabs) {
-      if (tab.type === "browser") void refresh(tab.id);
+    for (const key of browserList.split("\u0000").filter(Boolean)) {
+      const [chatId, browserId] = key.split(":") as [string, string];
+      void refresh(chatId, browserId);
     }
-  }, [enabled, refresh, tabs]);
+  }, [enabled, refresh, browserList]);
 
   useEffect(() => {
     if (!enabled) return;
     const unsubscribe = transport.subscribe((_source, payload) => {
       const frame = payload as Partial<SharedBrowserView> & { type?: string; chatId?: string; browserId?: string };
-      if (frame.type !== "browser" || frame.chatId !== chatId) return;
+      if (frame.type !== "browser" || !frame.chatId || !chatSet.current.has(frame.chatId)) return;
+      const chatId = frame.chatId;
       if (typeof frame.browserId === "string") setSupportsInstances(true);
       const browserId = frame.browserId || "default";
-      setTabs((current) => current.some((tab) => tab.id === browserId) || frame.active === false
-        ? current
-        : [...current, { id: browserId, type: "browser" }]);
+      const key = browserKey(chatId, browserId);
+      if (frame.active !== false) opened.current(chatId, browserId);
       setViews((current) => ({
         ...current,
-        [browserId]: {
+        [key]: {
           active: frame.active !== false,
-          width: current[browserId]?.width ?? 1280,
-          height: current[browserId]?.height ?? 800,
-          revision: frame.revision ?? current[browserId]?.revision ?? 0,
-          ...current[browserId],
+          width: current[key]?.width ?? 1280,
+          height: current[key]?.height ?? 800,
+          revision: frame.revision ?? current[key]?.revision ?? 0,
+          ...current[key],
           ...frame,
         },
       }));
       clearTimeout(refreshTimer.current);
-      refreshTimer.current = setTimeout(() => void refresh(browserId), 80);
-    }, [`thread:${chatId}`]);
+      refreshTimer.current = setTimeout(() => void refresh(chatId, browserId), 80);
+    }, threadTopics.split("\u0000").filter(Boolean));
     return () => {
       clearTimeout(refreshTimer.current);
       unsubscribe();
     };
-  }, [chatId, enabled, refresh]);
+  }, [enabled, refresh, threadTopics]);
 
-  const addBrowser = () => {
-    if (!supportsInstances && tabs.length > 0) return;
-    const id = tabs.length === 0
-      ? "default"
-      : `browser-${Date.now().toString(36)}-${nextBrowser.current++}`;
-    setTabs((current) => [...current, { id, type: "browser" }]);
-    setActiveTab(id);
-    setShown(true);
-  };
-
-  const addInsight = (type: "analytics" | "performance") => {
-    const id = tabs.some((tab) => tab.type === type)
-      ? `${type}-${Date.now().toString(36)}-${nextInsight.current++}`
-      : type;
-    setTabs((current) => [...current, { id, type }]);
-    setActiveTab(id);
-    setShown(true);
-  };
-
-  const showPullRequest = useCallback((target?: { repository: string; number: number }) => {
-    setTabs((current) => {
-      const tab: ThreadToolTab = {
-        id: "pull-request",
-        type: "pull-request",
-        ...(target ? { repository: target.repository, pullRequestNumber: target.number } : {}),
-      };
-      return current.some((candidate) => candidate.type === "pull-request")
-        ? current.map((candidate) => candidate.type === "pull-request" ? tab : candidate)
-        : [...current, tab];
-    });
-    setActiveTab("pull-request");
-    setShown(true);
-  }, [setShown]);
-
-  const openBrowserLink = useCallback(async (url: string) => {
-    const existing = tabs.find((tab) => tab.type === "browser" && tab.id === activeTab)
-      ?? tabs.find((tab) => tab.type === "browser");
-    const browserId = existing?.id ?? "default";
-    if (!existing) {
-      setTabs((current) => current.some((tab) => tab.id === browserId)
-        ? current
-        : [...current, { id: browserId, type: "browser" }]);
-    }
-    setActiveTab(browserId);
-    setShown(true);
+  const open = useCallback(async (chatId: string, browserId: string, url: string) => {
     try {
       const next = await transport.request<SharedBrowserView>(
         serverId,
@@ -175,62 +120,31 @@ export function useThreadTools(
         { method: "POST", body: { url } },
       );
       if (typeof next.browserId === "string") setSupportsInstances(true);
-      setViews((current) => ({ ...current, [browserId]: next }));
+      setViews((current) => ({ ...current, [browserKey(chatId, browserId)]: next }));
     } catch (caught) {
       toast.error("The browser action failed", { description: apiError(caught) });
     }
-  }, [activeTab, chatId, serverId, setShown, tabs]);
+  }, [serverId]);
 
-  const openLink = useCallback((href: string) => {
-    const pullRequest = githubPullRequestTarget(href);
-    if (pullRequest) {
-      showPullRequest(pullRequest);
-      return;
-    }
-    void openBrowserLink(href);
-  }, [openBrowserLink, showPullRequest]);
-
-  const closeTab = async (tab: ThreadToolTab) => {
-    const browserId = tab.id;
-    setTabs((current) => {
-      const next = current.filter((tab) => tab.id !== browserId);
-      if (activeTab === browserId) setActiveTab(next.at(-1)?.id ?? "");
-      return next;
-    });
+  const close = useCallback(async (chatId: string, browserId: string) => {
     setViews((current) => {
       const next = { ...current };
-      delete next[browserId];
+      delete next[browserKey(chatId, browserId)];
       return next;
     });
-    if (tab.type !== "browser") return;
     try {
       await transport.request(serverId, browserPath(chatId, browserId, "close"), { method: "POST", body: {} });
     } catch (caught) {
-      toast.error("Couldn't close that tool", { description: apiError(caught) });
+      toast.error("Couldn't close that browser", { description: apiError(caught) });
     }
-  };
+  }, [serverId]);
 
   return {
-    tabs,
-    activeTab,
-    setActiveTab,
     views,
-    setView: (browserId: string, view: SharedBrowserView) =>
-      setViews((current) => ({ ...current, [browserId]: view })),
-    addBrowser,
-    addAnalytics: () => addInsight("analytics"),
-    addPerformance: () => addInsight("performance"),
-    addPullRequest: () => showPullRequest(),
-    addActivity: () => {
-      setTabs((current) => current.some((tab) => tab.type === "activity") ? current : [...current, { id: "activity", type: "activity" }]);
-      setActiveTab("activity");
-      setShown(true);
-    },
-    openLink,
-    canAddBrowser: supportsInstances || !tabs.some((tab) => tab.type === "browser"),
-    closeTab,
-    shown,
-    setShown,
-    active: Object.values(views).some((view) => view?.active),
+    setView: (chatId: string, browserId: string, view: SharedBrowserView) =>
+      setViews((current) => ({ ...current, [browserKey(chatId, browserId)]: view })),
+    supportsInstances,
+    open,
+    close,
   };
 }

@@ -13,7 +13,10 @@ export type Route =
   // open is part of where the window is. Addressed by handle, which is what
   // somebody types and what a mention already says.
   | { name: "inbox"; agent?: string }
-  | { name: "threads"; threadId?: string; layout?: string; focus?: string }
+  // `focus` names the thread in front when the one the URL opens on has more
+  // than one in its collection. How that collection is laid out is the
+  // workbench's, kept on this device rather than in the address.
+  | { name: "threads"; threadId?: string; focus?: string }
   | { name: "workspaces"; workspaceId?: string }
   | { name: "board"; scope?: string }
   | { name: "ticket"; key: string }
@@ -74,13 +77,11 @@ export function parseLocation(hash: string): AppLocation {
   // Threads are the front door, so anything unrecognised lands there rather
   // than on a blank screen.
   const params = new URLSearchParams(query);
-  const layout = params.get("layout") || undefined;
   const focus = params.get("focus") || undefined;
   return {
     route: {
       name: "threads",
       threadId: head === "threads" ? rest : undefined,
-      ...(layout ? { layout } : {}),
       ...(focus ? { focus } : {}),
     },
   };
@@ -90,12 +91,7 @@ export function formatLocation({ route }: AppLocation): string {
   const path =
     route.name === "threads"
       ? `/threads${route.threadId ? `/${encodeURIComponent(route.threadId)}` : ""}${
-          route.layout || route.focus
-            ? `?${new URLSearchParams({
-                ...(route.layout ? { layout: route.layout } : {}),
-                ...(route.focus ? { focus: route.focus } : {}),
-              }).toString()}`
-            : ""
+          route.focus ? `?${new URLSearchParams({ focus: route.focus }).toString()}` : ""
         }`
       : route.name === "workspaces"
         ? `/workspaces${route.workspaceId ? `/${encodeURIComponent(route.workspaceId)}` : ""}`

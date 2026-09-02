@@ -1,7 +1,6 @@
 import type { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, ReactNode, RefObject } from "react";
 import {
   forwardRef,
-  lazy,
   memo,
   useCallback,
   useEffect,
@@ -121,18 +120,9 @@ import { WorkingMarker } from "@/components/WorkingMarker";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Markdown } from "@/components/Markdown";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
-import { Deferred } from "@/components/Deferred";
-import { ThreadToolsButton, ThreadToolsLayout } from "@/components/ThreadToolsLayout";
-import {
-  TerminalButton,
-  ThreadTerminal,
-  ThreadTerminalLayout,
-  terminalSessionId,
-} from "@/components/ThreadTerminal";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useThreadTools } from "@/hooks/use-thread-tools";
 import { apiError } from "@/lib/api-error";
 import { CLOUD_MODES, cloudModeOf, PERMISSIONS, permissionOf } from "@/lib/chat-options";
 import { deviceIcon } from "@/lib/devices";
@@ -142,17 +132,9 @@ import { PROVIDERS } from "@/lib/providers";
 import { cn } from "@/lib/utils";
 import { referenceLabel } from "@/lib/pull-request-review";
 import { workingToolGroupId } from "@/lib/working-tool";
-import { activityRunning, threadActivities } from "@/lib/thread-activity";
 import { rowAt, virtualLayout, virtualRange, type VirtualLayout, type VirtualRange } from "@/lib/virtual-list";
 import { useStore } from "@/state/store";
 import type { Agent, ArchivedThread, Chat, ChatApproval, ChatCodeReference, ChatQuestionRequest, ConvArtifact, ConvDiffLine, ConvEntry } from "@/state/types";
-
-// The tools beside a thread are closed on almost every open, so their code
-// waits for the pane rather than the thread. Once opened they stay mounted, and
-// what is running inside them survives the pane being hidden again.
-const ThreadToolsSidebar = lazy(() => import("@/components/ThreadTools").then((module) => ({
-  default: module.ThreadToolsSidebar,
-})));
 
 interface ThreadCheckpoint {
   id: string;
@@ -176,7 +158,11 @@ function useStableOptionalCallback<Arguments extends unknown[]>(
 export function ChatView({
   chat,
   archived,
+  embedded = false,
   headerEnd,
+  onOpenLink,
+  codeReferences: liftedReferences,
+  onCodeReferencesChange,
   onOpenTicket,
   onOpenThread,
   onOpenWorkspace,
@@ -184,13 +170,23 @@ export function ChatView({
   onRestored,
   crumbs,
   persona,
-  toolsShown,
-  onToolsShownChange,
   focused = true,
 }: {
   chat: Chat;
   archived?: ArchivedThread;
+  /// Inside a workbench tab, where the tab strip is the header and the tools
+  /// are tabs of their own. On its own — an inbox conversation, an archived
+  /// thread — it draws its header.
+  embedded?: boolean;
+  /// Controls at the end of that header.
   headerEnd?: ReactNode;
+  /// Where a link in the feed opens. The workbench puts it in a browser or a
+  /// pull request tab; without this, a link is just a link.
+  onOpenLink?: (href: string) => void;
+  /// Code the composer will send along, when a pull request tab beside this
+  /// one holds it. Kept by the workbench so the two tabs share it.
+  codeReferences?: ChatCodeReference[];
+  onCodeReferencesChange?: (references: ChatCodeReference[]) => void;
   onOpenTicket?: (key: string) => void;
   /// Where a card in the feed goes when a Remy tool made a thread or registered
   /// a workspace. Without these the card is still drawn; it just does not open.
@@ -206,9 +202,7 @@ export function ChatView({
   /// mark; which model is behind it is on the composer, where it is a setting.
   /// It also has no work of its own, so it carries no ticket.
   persona?: Agent;
-  toolsShown?: boolean;
-  onToolsShownChange?: (shown: boolean) => void;
-  /// Only the focused pane exposes work surfaces and takes composer focus.
+  /// Only the tab in front takes composer focus.
   focused?: boolean;
 }) {
   const detail = useStore((s) => s.details[chat.id]);
@@ -234,25 +228,21 @@ export function ChatView({
     uploading: false,
   });
   const [busy, setBusy] = useState(false);
-  const [codeReferences, setCodeReferences] = useState<ChatCodeReference[]>([]);
-  const [localToolsShown, setLocalToolsShown] = useState(false);
-  const [terminalShown, setTerminalShown] = useState(false);
-  const [terminalActive, setTerminalActive] = useState(false);
+  const [localReferences, setLocalReferences] = useState<ChatCodeReference[]>([]);
+  const codeReferences = liftedReferences ?? localReferences;
+  const setCodeReferences = (next: ChatCodeReference[] | ((current: ChatCodeReference[]) => ChatCodeReference[])) => {
+    const value = typeof next === "function" ? next(codeReferences) : next;
+    if (onCodeReferencesChange) onCodeReferencesChange(value);
+    else setLocalReferences(value);
+  };
   const transcriptRef = useRef<VirtualTranscriptHandle>(null);
   const [activeCheckpoint, setActiveCheckpoint] = useState<string | undefined>(undefined);
   const composerRef = useRef<InlineImageComposerHandle>(null);
-  const threadTools = useThreadTools(
-    chat.id,
-    chat.serverId,
-    toolsShown ?? localToolsShown,
-    onToolsShownChange ?? setLocalToolsShown,
-    !archived && focused,
-  );
   const stableOpenTicket = useStableOptionalCallback(onOpenTicket);
   const stableOpenThread = useStableOptionalCallback(onOpenThread);
   const stableOpenWorkspace = useStableOptionalCallback(onOpenWorkspace);
   const stableOpenRoutine = useStableOptionalCallback(onOpenRoutine);
-  const stableOpenLink = useStableOptionalCallback(threadTools.openLink);
+  const stableOpenLink = useStableOptionalCallback(onOpenLink);
 
   useEffect(() => {
     if (archived) return;
@@ -268,7 +258,7 @@ export function ChatView({
 
   useEffect(() => {
     setDraft({ text: initialDraft, attachments: [], uploading: false });
-    setCodeReferences([]);
+    setLocalReferences([]);
   }, [chat.id, initialDraft]);
 
   useEffect(() => {
@@ -286,8 +276,6 @@ export function ChatView({
   const workspace = workspaces[workspaceForPath(chat.cwd, workspaces)];
   const server = servers.find((entry) => entry.id === chat.serverId);
   const cloud = server?.cloud === true;
-  const terminalId = terminalSessionId("thread", chat.id);
-  const terminalAvailable = focused && !conversational && !archived && !cloud && Boolean(server);
   const DeviceIcon = deviceIcon(server?.icon);
   // The checkout this thread runs in, which is what names its branch. A thread
   // started in a subdirectory still belongs to the deepest checkout above it,
@@ -387,8 +375,6 @@ export function ChatView({
 
   const permission = cloud ? cloudModeOf(open?.permissionMode) : permissionOf(open?.permissionMode);
   const provider = useProvider(open?.provider ?? chat.provider ?? "claude");
-  const activityConnected = server?.online === true;
-  const activities = useMemo(() => threadActivities(entries, open?.provider ?? chat.provider ?? "claude", working, activityConnected), [entries, open?.provider, chat.provider, working, activityConnected]);
   const asks = provider?.approvals !== false;
 
   const setOption = async (
@@ -412,7 +398,7 @@ export function ChatView({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <PaneHeader
+      {!embedded && <PaneHeader
         crumbs={crumbs ?? [{
           label: (
             <Tooltip>
@@ -433,69 +419,9 @@ export function ChatView({
       >
         {onOpenTicket && !persona && !archived && <ThreadTicket chatId={chat.id} onOpenTicket={onOpenTicket} />}
         {headerEnd}
-        {terminalAvailable && (
-          <TerminalButton
-            active={terminalActive}
-            shown={terminalShown}
-            onClick={() => setTerminalShown((shown) => !shown)}
-          />
-        )}
-        {focused && !conversational && !archived && (
-          <ThreadToolsButton
-            active={threadTools.active || activities.some(activityRunning)}
-            shown={threadTools.shown}
-            onClick={() => threadTools.setShown(!threadTools.shown)}
-          />
-        )}
-      </PaneHeader>
+      </PaneHeader>}
 
-      <ThreadToolsLayout
-        open={focused && !conversational && !archived && threadTools.shown}
-        threadId={chat.id}
-        sidebar={(
-          <Deferred open={focused && !conversational && !archived && threadTools.shown}>
-            <ThreadToolsSidebar
-              chatId={chat.id}
-              serverId={chat.serverId}
-              tabs={threadTools.tabs}
-              activeTab={threadTools.activeTab}
-              views={threadTools.views}
-              setActiveTab={threadTools.setActiveTab}
-              setView={threadTools.setView}
-              addBrowser={threadTools.addBrowser}
-              addAnalytics={threadTools.addAnalytics}
-              addPerformance={threadTools.addPerformance}
-              addPullRequest={threadTools.addPullRequest}
-              addActivity={threadTools.addActivity}
-              activities={activities}
-              activityConnected={activityConnected}
-              codeReferences={codeReferences}
-              onAddReference={(reference) => setCodeReferences((current) => [...current, reference])}
-              onRemoveReference={(id) => setCodeReferences((current) => current.filter((reference) => reference.id !== id))}
-              canAddBrowser={threadTools.canAddBrowser}
-              closeTab={threadTools.closeTab}
-              visible={focused && !conversational && !archived && threadTools.shown}
-            />
-          </Deferred>
-        )}
-      >
-        <ThreadTerminalLayout
-          open={terminalAvailable && terminalShown}
-          layoutId={chat.id}
-          terminal={(
-            <ThreadTerminal
-              serverId={chat.serverId}
-              terminalId={terminalId}
-              cwd={chat.cwd}
-              label={workspace?.name ?? "Terminal"}
-              visible={terminalAvailable && terminalShown}
-              onHide={() => setTerminalShown(false)}
-              onSessionClosed={() => setTerminalShown(false)}
-              onActiveChange={setTerminalActive}
-            />
-          )}
-        >
-          <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <ScrollFeed
             key={chat.id}
             chatId={chat.id}
@@ -576,7 +502,7 @@ export function ChatView({
           {approval && (
             <ApprovalCard
               approval={approval}
-              onOpenLink={!conversational && !archived ? threadTools.openLink : undefined}
+              onOpenLink={!conversational && !archived ? stableOpenLink : undefined}
               onDecide={async (decision) => {
                 try {
                   await answerApproval(chat.id, approval.requestId, decision);
@@ -767,8 +693,6 @@ export function ChatView({
             </form>
           </div>
           </div>
-        </ThreadTerminalLayout>
-      </ThreadToolsLayout>
     </div>
   );
 }
@@ -2187,7 +2111,9 @@ function QuestionCard({
 /// not offers to make a ticket from it — adopting the worktree and branch it is
 /// already in rather than opening new ones — or to file it under a ticket that
 /// already exists. Neither starts or resumes anything: linking is bookkeeping.
-function ThreadTicket({ chatId, onOpenTicket }: { chatId: string; onOpenTicket: (key: string) => void }) {
+/// The ticket this thread works, as a chip that opens it. In the workbench it
+/// sits in the tab strip beside the thread's tab.
+export function ThreadTicket({ chatId, onOpenTicket }: { chatId: string; onOpenTicket: (key: string) => void }) {
   const tickets = useStore((s) => s.tickets);
   const loadBoard = useStore((s) => s.loadBoard);
   const ticketFromThread = useStore((s) => s.ticketFromThread);
