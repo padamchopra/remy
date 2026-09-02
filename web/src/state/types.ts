@@ -101,6 +101,7 @@ export interface ArchivedThread {
   entries: ConvEntry[];
   todos: ConvTodo[];
   context?: ContextUsage;
+  detailLoaded?: boolean;
 }
 
 export interface GitWorktree {

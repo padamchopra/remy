@@ -93,7 +93,13 @@ export function AppSidebar({
     return {
       id: id!,
       parentChatId: parentChatId || undefined,
-      bucket: pinned ? "pinned" : workspace ? `workspace:${workspace.id}` : `home:${serverId}`,
+      bucket: pinned
+        ? "pinned"
+        : workspace
+          ? workspace.origin
+            ? `repository:${workspace.origin}`
+            : `workspace:${workspace.serverId}:${workspace.id}`
+          : `home:${serverId}`,
       state: state as ChatState,
       serverId: serverId!,
       cwd: cwd!,
@@ -220,8 +226,10 @@ export function AppSidebar({
                 const { visible, hidden } = visibleSidebarThreads(group.threads, selected, limit);
                 const label = group.key === "pinned"
                   ? "Pinned"
-                  : group.key.startsWith("workspace:")
-                    ? workspaces.find((workspace) => workspace.id === group.key.slice("workspace:".length))?.name ?? "Workspace"
+                  : group.key.startsWith("repository:")
+                    ? workspaces.find((workspace) => workspace.origin === group.key.slice("repository:".length))?.name ?? "Workspace"
+                    : group.key.startsWith("workspace:")
+                      ? workspaces.find((workspace) => `${workspace.serverId}:${workspace.id}` === group.key.slice("workspace:".length))?.name ?? "Workspace"
                     : servers.find((server) => server.id === group.key.slice("home:".length))?.name ?? "This machine";
                 const revealCount = Math.min(hidden, SETTLED_THREAD_BATCH);
                 return (

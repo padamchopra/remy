@@ -58,6 +58,10 @@ const pendingChats = new Map<string, PendingChatFrame>();
 const topicDemandListeners = new Set<(topics: string[]) => void>();
 let sequence = 0;
 
+export function notificationSequence(): number {
+  return sequence;
+}
+
 function validTopic(value: unknown): value is string {
   return typeof value === "string"
     && value.length > 0

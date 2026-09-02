@@ -66,6 +66,16 @@ const COMPONENTS: Components = {
     <th className="border border-border bg-muted/40 px-2 py-1 text-left font-medium">{children}</th>
   ),
   td: ({ children }) => <td className="border border-border px-2 py-1 align-top">{children}</td>,
+  img: ({ alt, src, width, height }) => (
+    <img
+      alt={alt ?? ""}
+      src={src}
+      width={width}
+      height={height}
+      loading="lazy"
+      className="h-auto max-w-full rounded-md"
+    />
+  ),
   input: ({ checked, type }) => type === "checkbox"
     ? checked
       ? <SquareCheckBig className="mr-2 inline-block size-3.5 align-[-0.125em] text-muted-foreground" />
@@ -94,10 +104,55 @@ interface MarkdownNode {
   type: string;
   value?: string;
   url?: string;
+  alt?: string;
   children?: MarkdownNode[];
   data?: {
     hName?: string;
     hProperties?: Record<string, unknown>;
+  };
+}
+
+const IMAGE_TAG = /^<img\s+([^>]*?)\s*\/?\s*>$/i;
+const HTML_ATTRIBUTE = /([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+
+function imageNode(value: string): MarkdownNode | undefined {
+  const match = value.trim().match(IMAGE_TAG);
+  if (!match) return undefined;
+  const attributes = new Map<string, string>();
+  for (const attribute of match[1].matchAll(HTML_ATTRIBUTE)) {
+    attributes.set(attribute[1].toLowerCase(), htmlText(attribute[2] ?? attribute[3] ?? ""));
+  }
+  const url = attributes.get("src");
+  if (!url || !/^https?:\/\//i.test(url)) return undefined;
+  const size = (name: "width" | "height") => {
+    const value = attributes.get(name);
+    return value && /^\d{1,4}$/.test(value) ? Number(value) : undefined;
+  };
+  return {
+    type: "image",
+    url,
+    alt: attributes.get("alt") ?? "",
+    data: {
+      hProperties: {
+        ...(size("width") ? { width: size("width") } : {}),
+        ...(size("height") ? { height: size("height") } : {}),
+      },
+    },
+  };
+}
+
+function remarkImages() {
+  return (tree: MarkdownNode) => {
+    const visit = (node: MarkdownNode) => {
+      if (!node.children) return;
+      node.children = node.children.map((child) => {
+        const image = child.type === "html" && child.value ? imageNode(child.value) : undefined;
+        if (image) return image;
+        visit(child);
+        return child;
+      });
+    };
+    visit(tree);
   };
 }
 
@@ -270,7 +325,7 @@ export const Markdown = memo(function Markdown({
   );
   return (
     <div className={cn("flex flex-col gap-3 text-sm leading-relaxed", className)}>
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkDetails]} components={components}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkDetails, remarkImages]} components={components}>
         {text}
       </ReactMarkdown>
     </div>

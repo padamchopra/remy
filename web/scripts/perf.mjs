@@ -78,6 +78,8 @@ try {
     results.push(await runWarmOffline(target));
     results.push(await repeated(() => runWarmLatency(target)));
     results.push(await repeated(() => runUnavailableDevice(target)));
+    results.push(await repeated(() => runIndependentCatalogue(target)));
+    results.push(await repeated(() => runOptimisticMessage(target)));
     results.push(...await runPaneRoutes(target));
     results.push(...await runDeferredSurfaces(target));
     results.push(await runSharedReadFailure(target));
@@ -683,6 +685,79 @@ async function runUnavailableDevice(target) {
       unavailableDevice: true,
       ...observed,
       delayFromLocalMs: Math.max(0, observed.firstUsefulPaintMs - localUseful),
+    });
+    assertPageErrors(opened.errors, result);
+    return result;
+  } finally {
+    await opened.context.close();
+  }
+}
+
+async function runIndependentCatalogue(target) {
+  const fixture = createFixture({ threadCount: 25, entryCount: 10, archiveDelayMs: 1_200 });
+  const opened = await openHarnessPage(target, fixture, "#/threads");
+  try {
+    const observed = await observeUseful(opened.page, fixture.primaryTitle);
+    const archiveFinishedBeforePaint = await opened.page.evaluate((paintedAt) =>
+      window.__remyPerf.requests.some((request) =>
+        request.path === "/archives?summary=1" && request.end <= paintedAt), observed.usefulDetectedMs);
+    await opened.page.evaluate(() => window.__remyPerf.resetMeasurements());
+    const projectedTitle = "Projected remote thread";
+    await opened.page.evaluate(({ title, cwd }) => window.__remyPerf.emit({
+      type: "chat-list",
+      sequence: 1,
+      operation: "upsert",
+      chat: {
+        id: "projected-remote-thread",
+        title,
+        cwd,
+        state: "idle",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+    }), { title: projectedTitle, cwd: "/tmp/remy-performance" });
+    await waitForText(opened.page, projectedTitle);
+    const preciseEventReloadedCatalogue = await opened.page.evaluate(() =>
+      window.__remyPerf.requests.some((request) => request.path === "/chats"));
+    const result = await snapshotResult(opened.page, {
+      target: target.name,
+      scenario: "independent-catalogue",
+      ...observed,
+      archiveFinishedBeforePaint,
+      preciseEventReloadedCatalogue,
+    });
+    assertPageErrors(opened.errors, result);
+    return result;
+  } finally {
+    await opened.context.close();
+  }
+}
+
+async function runOptimisticMessage(target) {
+  const fixture = createFixture({ threadCount: 25, entryCount: 10, messageDelayMs: 1_000 });
+  const opened = await openHarnessPage(target, fixture, `#/threads/${fixture.primaryThreadId}`);
+  try {
+    await waitForText(opened.page, fixture.lastEntryText);
+    await opened.page.evaluate(() => window.__remyPerf.resetMeasurements());
+    const marker = "Optimistic remote message";
+    const startedAt = await opened.page.evaluate(() => performance.now());
+    await opened.page.locator('[aria-label="Message"]').fill(marker);
+    await opened.page.locator('[aria-label="Message"]').press("Enter");
+    const detectedAt = await waitForText(opened.page, marker);
+    const paintedAt = await nextPaint(opened.page);
+    const observed = {
+      usefulDetectedMs: detectedAt - startedAt,
+      firstUsefulPaintMs: paintedAt - startedAt,
+      neverPainted: false,
+    };
+    const requestFinishedBeforePaint = await opened.page.evaluate((paintedAt) =>
+      window.__remyPerf.requests.some((request) =>
+        request.path.endsWith("/message") && request.end <= paintedAt), paintedAt);
+    const result = await snapshotResult(opened.page, {
+      target: target.name,
+      scenario: "optimistic-message",
+      ...observed,
+      requestFinishedBeforePaint,
     });
     assertPageErrors(opened.errors, result);
     return result;

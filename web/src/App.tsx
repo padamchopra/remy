@@ -267,6 +267,7 @@ export function App() {
   const error = useStore((s) => s.error);
   const start = useStore((s) => s.start);
   const loadSettings = useStore((s) => s.loadSettings);
+  const loadArchivedThread = useStore((s) => s.loadArchivedThread);
   const tickets = useStore((s) => s.tickets);
   const projects = useStore((s) => s.projects);
   const agents = useStore((s) => s.agents);
@@ -375,6 +376,10 @@ export function App() {
   });
 
   const activeArchive = archived.find((thread) => thread.id === routedThreadId) ?? null;
+  useEffect(() => {
+    if (!activeArchive || activeArchive.detailLoaded) return;
+    void loadArchivedThread(activeArchive.id, activeArchive.serverId);
+  }, [activeArchive, loadArchivedThread]);
   const archivedChat = activeArchive ? {
     id: activeArchive.id,
     serverId: activeArchive.serverId,
