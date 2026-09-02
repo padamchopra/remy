@@ -1,9 +1,16 @@
-import { useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View, type GestureResponderEvent } from "react-native";
 import { Pencil, Play, Plus, Repeat } from "lucide-react-native";
 import { color, radius, space, type } from "../theme";
 import { apiError } from "../lib/api-error";
-import { AGENT_AVATAR_EXPRESSIONS, AGENT_AVATAR_SHAPES, agentAvatarConfig, encodeAgentAvatar } from "../lib/agent-avatar";
+import {
+  AGENT_AVATAR_EXPRESSIONS,
+  AGENT_AVATAR_SHAPES,
+  AGENT_AVATAR_TONES,
+  agentAvatarConfig,
+  encodeAgentAvatar,
+  type AgentAvatarConfig,
+} from "../lib/agent-avatar";
 import { cadenceSummary, whenNext } from "../lib/routines";
 import { useProviders, useServerSettings, useStore, useSupportsEffort } from "../state/store";
 import type { Agent, Routine } from "../state/types";
@@ -339,21 +346,38 @@ function RoutineRow({ routine, onEdit }: { routine: Routine; onEdit: () => void 
   );
 }
 
-/// An agent's face is generated, not uploaded: pick its silhouette and how it
-/// is feeling and the seed does the rest.
+/// An agent's face is generated, not uploaded: its seed stays fixed while its
+/// visible traits are adjusted, so every device can draw the same result.
 function FaceField({ agent, onChange }: { agent: Agent; onChange: (avatar: string) => void }) {
-  const config = agentAvatarConfig(agent);
+  const [config, setConfig] = useState(() => agentAvatarConfig(agent));
+
+  useEffect(() => {
+    setConfig(agentAvatarConfig(agent));
+  }, [agent.avatar, agent.id, agent.tint]);
+
+  const save = (patch: Partial<AgentAvatarConfig>) => {
+    const next = { ...config, ...patch };
+    setConfig(next);
+    onChange(encodeAgentAvatar(next));
+  };
+
+  const preview = { ...agent, avatar: encodeAgentAvatar(config), builtIn: false };
+
   return (
     <Field label="Face" description="Generated from the agent, so the same one is the same face everywhere.">
+      <View style={styles.facePreview}>
+        <AgentMark agent={preview} size={88} />
+      </View>
+      <Text style={styles.faceLabel}>Shape</Text>
       <View style={styles.faces}>
         {AGENT_AVATAR_SHAPES.map((shape) => {
-          const next = encodeAgentAvatar({ ...config, shape: shape.value });
           const on = config.shape === shape.value;
           return (
             <Pressable
               key={shape.value}
-              onPress={() => onChange(next)}
+              onPress={() => save({ shape: shape.value })}
               accessibilityLabel={shape.label}
+              accessibilityRole="button"
               accessibilityState={{ selected: on }}
               style={[styles.face, on && styles.faceOn]}
             >
@@ -362,13 +386,41 @@ function FaceField({ agent, onChange }: { agent: Agent; onChange: (avatar: strin
           );
         })}
       </View>
+      <View style={styles.faceLabelRow}>
+        <Text style={styles.faceLabel}>Colour</Text>
+        <Text style={type.mono}>{config.hue}°</Text>
+      </View>
+      <HuePicker
+        value={config.hue}
+        onPreview={(hue) => setConfig((current) => ({ ...current, hue }))}
+        onCommit={(hue) => save({ hue })}
+      />
+      <View style={styles.handoff}>
+        {AGENT_AVATAR_TONES.map((tone) => {
+          const on = config.tone === tone.value;
+          return (
+            <Pressable
+              key={tone.value}
+              onPress={() => save({ tone: tone.value })}
+              accessibilityLabel={`${tone.label} tone`}
+              accessibilityRole="button"
+              accessibilityState={{ selected: on }}
+              style={[styles.chip, on && styles.chipOn]}
+            >
+              <Text style={[styles.chipLabel, on && { color: color.primaryForeground }]}>{tone.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <Text style={styles.faceLabel}>Expression</Text>
       <View style={styles.handoff}>
         {AGENT_AVATAR_EXPRESSIONS.map((expression) => {
           const on = config.expression === expression.value;
           return (
             <Pressable
               key={expression.value}
-              onPress={() => onChange(encodeAgentAvatar({ ...config, expression: expression.value }))}
+              onPress={() => save({ expression: expression.value })}
+              accessibilityLabel={expression.label}
               accessibilityRole="button"
               accessibilityState={{ selected: on }}
               style={[styles.chip, on && styles.chipOn]}
@@ -379,6 +431,54 @@ function FaceField({ agent, onChange }: { agent: Agent; onChange: (avatar: strin
         })}
       </View>
     </Field>
+  );
+}
+
+function HuePicker({
+  value,
+  onPreview,
+  onCommit,
+}: {
+  value: number;
+  onPreview: (value: number) => void;
+  onCommit: (value: number) => void;
+}) {
+  const width = useRef(1);
+  const hueAt = (event: GestureResponderEvent) =>
+    Math.min(359, Math.max(0, Math.round(event.nativeEvent.locationX / width.current * 359)));
+
+  const adjust = (delta: number) => onCommit(Math.min(359, Math.max(0, value + delta)));
+
+  return (
+    <View
+      accessible
+      accessibilityLabel="Hue"
+      accessibilityRole="adjustable"
+      accessibilityValue={{ min: 0, max: 359, now: value, text: `${value} degrees` }}
+      accessibilityActions={[{ name: "increment" }, { name: "decrement" }]}
+      onAccessibilityAction={(event) => {
+        if (event.nativeEvent.actionName === "increment") adjust(5);
+        if (event.nativeEvent.actionName === "decrement") adjust(-5);
+      }}
+      onLayout={(event) => { width.current = event.nativeEvent.layout.width; }}
+      onStartShouldSetResponder={() => true}
+      onMoveShouldSetResponder={() => true}
+      onResponderGrant={(event) => onPreview(hueAt(event))}
+      onResponderMove={(event) => onPreview(hueAt(event))}
+      onResponderRelease={(event) => onCommit(hueAt(event))}
+      onResponderTerminationRequest={() => false}
+      style={styles.hue}
+    >
+      <View style={styles.hueTrack}>
+        {Array.from({ length: 24 }, (_, index) => (
+          <View
+            key={index}
+            style={{ flex: 1, backgroundColor: `hsl(${Math.round(index / 24 * 359)}, 75%, 55%)` }}
+          />
+        ))}
+      </View>
+      <View pointerEvents="none" style={[styles.hueThumb, { left: `${value / 359 * 100}%` }]} />
+    </View>
   );
 }
 
@@ -409,6 +509,21 @@ const styles = StyleSheet.create({
   chipOn: { backgroundColor: color.primary, borderColor: color.primary },
   chipLabel: { fontSize: 13, color: color.foreground },
   faces: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  facePreview: { alignItems: "center", paddingVertical: space.sm },
+  faceLabel: { color: color.mutedForeground, fontSize: 12, fontWeight: "500" },
+  faceLabelRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  hue: { width: "100%", height: 44, justifyContent: "center" },
+  hueTrack: { height: 12, borderRadius: radius.full, overflow: "hidden", flexDirection: "row" },
+  hueThumb: {
+    position: "absolute",
+    width: 18,
+    height: 18,
+    marginLeft: -9,
+    borderRadius: radius.full,
+    borderWidth: 3,
+    borderColor: color.foreground,
+    backgroundColor: color.background,
+  },
   face: {
     padding: 4,
     borderWidth: 1,
