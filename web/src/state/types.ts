@@ -252,6 +252,8 @@ export interface PullRequestDiff {
   headRefName: string;
   state: string;
   isDraft: boolean;
+  mergeable: string;
+  mergeStateStatus: string;
   reviewDecision: string;
   additions: number;
   deletions: number;

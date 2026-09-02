@@ -277,6 +277,11 @@ export function PullRequests({
     return () => window.clearInterval(timer);
   }, [load, serverKey]);
 
+  useEffect(() => transport.subscribe((source, payload) => {
+    if (!serversRef.current.some((server) => server.id === source) || !payload || typeof payload !== "object") return;
+    if ((payload as { type?: unknown }).type === "pull-requests") void load({ refresh: true });
+  }), [load]);
+
   const counts = useMemo(() => ({
     all: pullRequests.length,
     ready: pullRequests.filter((pullRequest) => !pullRequest.isDraft).length,

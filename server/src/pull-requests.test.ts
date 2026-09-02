@@ -9,7 +9,7 @@ import type { Workspace } from "./workspaces.js";
 // test-only config isolated from the user's real Remy installation.
 process.env.HOME = mkdtempSync(join(tmpdir(), "remy-pr-test-"));
 
-const { markPullRequestFileViewedArgs, markPullRequestReadyArgs, parseAuthoredPullRequests, parsePullRequestFileViewPage, parsePullRequestPatch, parsePullRequestTimeline, parsePullRequestView, parseUnreadReviewComments } = await import("./pull-requests.js");
+const { markPullRequestFileViewedArgs, markPullRequestReadyArgs, parseAuthoredPullRequests, parsePullRequestFileViewPage, parsePullRequestMergeState, parsePullRequestPatch, parsePullRequestTimeline, parsePullRequestView, parseUnreadReviewComments, pullRequestMergeBlocker, squashMergePullRequestArgs } = await import("./pull-requests.js");
 
 const workspace: Workspace = {
   id: "workspace-1",
@@ -29,6 +29,53 @@ const workspace: Workspace = {
 
 test("marking a pull request ready scopes GitHub CLI to its repository", () => {
   assert.deepEqual(markPullRequestReadyArgs("acme/control", 42), ["pr", "ready", "42", "--repo", "acme/control"]);
+});
+
+test("squash merging pins the reviewed head and preserves the edited commit text", () => {
+  assert.deepEqual(squashMergePullRequestArgs({
+    repository: "acme/control",
+    number: 42,
+    headRefOid: "a".repeat(40),
+    title: "Land the flight deck",
+    message: "Keep the reviewer context in the squash commit.",
+  }), [
+    "pr", "merge", "42",
+    "--repo", "acme/control",
+    "--squash",
+    "--subject", "Land the flight deck",
+    "--body", "Keep the reviewer context in the squash commit.",
+    "--match-head-commit", "a".repeat(40),
+  ]);
+});
+
+test("merge readiness keeps GitHub's current head and gate state", () => {
+  const ready = parsePullRequestMergeState(JSON.stringify({
+    state: "OPEN",
+    isDraft: false,
+    mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
+    headRefOid: "b".repeat(40),
+  }));
+  assert.deepEqual(ready, {
+    state: "OPEN",
+    isDraft: false,
+    mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
+    headRefOid: "b".repeat(40),
+  });
+  assert.equal(pullRequestMergeBlocker(ready, "b".repeat(40)), "");
+  assert.equal(
+    pullRequestMergeBlocker({ ...ready, isDraft: true }, "b".repeat(40)),
+    "Mark this pull request ready before merging.",
+  );
+  assert.equal(
+    pullRequestMergeBlocker(ready, "c".repeat(40)),
+    "This pull request changed. Refresh it before merging.",
+  );
+  assert.equal(
+    pullRequestMergeBlocker({ ...ready, mergeStateStatus: "BLOCKED" }, "b".repeat(40)),
+    "This pull request isn't ready to merge. Refresh it and try again.",
+  );
 });
 
 test("file review state keeps GitHub's viewer progress and pagination", () => {
@@ -247,6 +294,8 @@ test("pull request view combines review state, checks, and files", () => {
     baseRefOid: "b".repeat(40),
     state: "OPEN",
     isDraft: false,
+    mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
     reviewDecision: "CHANGES_REQUESTED",
     additions: 12,
     deletions: 3,
@@ -267,6 +316,8 @@ test("pull request view combines review state, checks, and files", () => {
   assert.equal(result.url, "https://github.com/acme/control/pull/42");
   assert.equal(result.body, "## Summary\nAdds the flight deck.");
   assert.equal(result.reviewDecision, "CHANGES_REQUESTED");
+  assert.equal(result.mergeable, "MERGEABLE");
+  assert.equal(result.mergeStateStatus, "CLEAN");
   assert.deepEqual(result.checks.map((check) => check.state), ["pass", "fail"]);
   assert.equal(result.files[0].path, "src/new.ts");
   assert.equal(result.headRefOid, "a".repeat(40));

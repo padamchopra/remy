@@ -27,6 +27,7 @@ import {
 import { Markdown } from "@/components/Markdown";
 import { ModelPickerButton } from "@/components/ModelPicker";
 import { PullRequestMonitoringButton } from "@/components/PullRequestMonitoring";
+import { PullRequestMergeDialog } from "@/components/PullRequestMergeDialog";
 import {
   Attachment,
   AttachmentAction,
@@ -144,6 +145,7 @@ export function PullRequestView({
   const [guideLoading, setGuideLoading] = useState(false);
   const [guideError, setGuideError] = useState("");
   const [generatingGuide, setGeneratingGuide] = useState(false);
+  const [refreshVersion, setRefreshVersion] = useState(0);
 
   useEffect(() => {
     let current = true;
@@ -202,7 +204,19 @@ export function PullRequestView({
         if (current) setLoading(false);
       });
     return () => { current = false; loadVersion.current += 1; };
-  }, [chatId, number, repository, serverId]);
+  }, [chatId, number, refreshVersion, repository, serverId]);
+
+  useEffect(() => transport.subscribe((source, payload) => {
+    if (source !== serverId || !payload || typeof payload !== "object") return;
+    const frame = payload as { type?: unknown; repository?: unknown; number?: unknown };
+    const currentRepository = pullRequest?.repository ?? repository;
+    const currentNumber = pullRequest?.number ?? number;
+    if (
+      frame.type === "pull-requests"
+      && frame.repository === currentRepository
+      && frame.number === currentNumber
+    ) setRefreshVersion((current) => current + 1);
+  }), [number, pullRequest?.number, pullRequest?.repository, repository, serverId]);
 
   useEffect(() => {
     if (!guide || !pullRequest) return;
@@ -472,6 +486,16 @@ export function PullRequestView({
               <Button size="sm" disabled={markingReady} onClick={() => void markReady()}>
                 Mark ready
               </Button>
+            )}
+            {pullRequest.state === "OPEN" && (
+              <PullRequestMergeDialog
+                serverId={serverId}
+                pullRequest={pullRequest}
+                onMerged={() => {
+                  setPullRequest((current) => current ? { ...current, state: "MERGED" } : current);
+                  onPullRequestChanged?.();
+                }}
+              />
             )}
             <Tooltip>
               <TooltipTrigger asChild>

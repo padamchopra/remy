@@ -176,7 +176,7 @@ import {
   worktreeInfo,
 } from "./git.js";
 import { buildInbox } from "./inbox.js";
-import { listAuthoredPullRequests, markPullRequestFileViewed, markPullRequestRead, markPullRequestReady, pullRequestDiff, pullRequestDiffForCwd, pullRequestFileReviewState, pullRequestTimeline } from "./pull-requests.js";
+import { listAuthoredPullRequests, markPullRequestFileViewed, markPullRequestRead, markPullRequestReady, pullRequestDiff, pullRequestDiffForCwd, pullRequestFileReviewState, pullRequestTimeline, squashMergePullRequest } from "./pull-requests.js";
 import { pullRequestFileContent, validPullRequestFileRequest } from "./pull-request-file.js";
 import { askPullRequestQuestion, discoverPullRequestQuestions, readPullRequestQuestions } from "./pull-request-questions.js";
 import { validateChatCodeReferences } from "./chat-references.js";
@@ -962,9 +962,33 @@ const server = createServer(async (req, res) => {
       }
       try {
         await markPullRequestReady(repository, number);
+        broadcast({ type: "pull-requests", repository, number });
         return json(res, 200, { ready: true });
       } catch (error) {
         return json(res, 502, { error: (error as Error).message || "could not mark that pull request ready" });
+      }
+    }
+    if (req.method === "POST" && url.pathname === "/pull-requests/merge") {
+      const body = await readJson(req);
+      const repository = String(body.repository ?? "").trim();
+      const number = Number(body.number);
+      const headRefOid = String(body.headRefOid ?? "").trim();
+      const title = String(body.title ?? "").trim();
+      const message = typeof body.message === "string" ? body.message.trim() : "";
+      if (!/^[^/\s]+\/[^/\s]+$/.test(repository) || !Number.isSafeInteger(number) || number <= 0) {
+        return json(res, 400, { error: "repository and pull request number are required" });
+      }
+      if (!/^[a-f0-9]{40}$/i.test(headRefOid)) {
+        return json(res, 400, { error: "refresh the pull request before merging" });
+      }
+      if (!title || title.length > 256) return json(res, 400, { error: "Enter a commit title under 257 characters." });
+      if (message.length > 65_536) return json(res, 400, { error: "Keep the commit message under 65,537 characters." });
+      try {
+        await squashMergePullRequest({ repository, number, headRefOid, title, message });
+        broadcast({ type: "pull-requests", repository, number });
+        return json(res, 200, { merged: true });
+      } catch (error) {
+        return json(res, 409, { error: (error as Error).message || "could not merge that pull request" });
       }
     }
     if (req.method === "POST" && url.pathname === "/pull-requests/file-viewed") {
