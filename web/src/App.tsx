@@ -245,7 +245,14 @@ export function App() {
 
   const servers = useStore((s) => s.servers);
   const threadStructure = useStore(useShallow((s) =>
-    s.chats.map((chat) => `${chat.id}\u0000${chat.parentChatId ?? ""}`)));
+    s.chats.map((chat) => [
+      chat.id,
+      chat.parentChatId ?? "",
+      chat.serverId,
+      chat.cwd,
+      chat.pinned ? "1" : "",
+      chat.state,
+    ].join("\u0000"))));
   const chatIds = useStore(useShallow((s) => s.chats.map((chat) => chat.id)));
   // The workbench is keyed by the collection, so moving between a parent and
   // its subthreads keeps every tab mounted.

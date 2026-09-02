@@ -546,11 +546,11 @@ export const useStore = create<State>((set, get) => ({
       // its workspaces with it rather than leaving them behind.
       const known = new Set(servers.map((server) => server.id));
       set((current) => ({
-        servers,
-        chats: current.chats.filter((chat) => known.has(chat.serverId)),
-        archived: current.archived.filter((chat) => known.has(chat.serverId)),
-        dms: current.dms.filter((chat) => known.has(chat.serverId)),
-        workspaces: current.workspaces.filter((workspace) => known.has(workspace.serverId)),
+        servers: mergeDiscoveredServers(current.servers, servers),
+        chats: keepKnownServers(current.chats, known),
+        archived: keepKnownServers(current.archived, known),
+        dms: keepKnownServers(current.dms, known),
+        workspaces: keepKnownServers(current.workspaces, known),
       }));
 
       // Every machine is asked in parallel and each one paints as it answers,
@@ -588,8 +588,7 @@ export const useStore = create<State>((set, get) => ({
                 // One machine answering is enough to stop saying "Connecting…":
                 // there is something to show, and there is somewhere to type.
                 loading: false,
-                servers: current.servers.map((entry) =>
-                  entry.id === server.id ? { ...entry, online: entry.cloud ? entry.online : true } : entry),
+                servers: setServerOnline(current.servers, server.id, true),
                 chats: replaceServerChats(
                   current.chats,
                   server.id,
@@ -620,8 +619,7 @@ export const useStore = create<State>((set, get) => ({
             // them would make an asleep laptop look like an empty one. Only
             // unpairing removes a machine's rows, above.
             set((current) => ({
-              servers: current.servers.map((entry) =>
-                entry.id === server.id ? { ...entry, online: false } : entry),
+              servers: setServerOnline(current.servers, server.id, false),
             }));
           }
         }),
@@ -1926,6 +1924,39 @@ function toChat(raw: RawChat, serverId: string): Chat {
     ...(raw.pinned ? { pinned: true } : {}),
     ...(raw.parentChatId ? { parentChatId: raw.parentChatId } : {}),
   };
+}
+
+function keepKnownServers<T extends { serverId: string }>(current: T[], known: Set<string>): T[] {
+  return current.every((entry) => known.has(entry.serverId))
+    ? current
+    : current.filter((entry) => known.has(entry.serverId));
+}
+
+function mergeDiscoveredServers(current: Server[], incoming: Server[]): Server[] {
+  const previous = new Map(current.map((server) => [server.id, server]));
+  const next = incoming.map((server) => {
+    const existing = previous.get(server.id);
+    const merged = existing && !server.cloud ? { ...server, online: existing.online } : server;
+    return existing && sameServer(existing, merged) ? existing : merged;
+  });
+  return next.length === current.length && next.every((server, index) => server === current[index])
+    ? current
+    : next;
+}
+
+function setServerOnline(servers: Server[], id: string, online: boolean): Server[] {
+  const index = servers.findIndex((server) => server.id === id);
+  const server = servers[index];
+  if (!server || (server.cloud && online) || server.online === online) return servers;
+  const next = servers.slice();
+  next[index] = { ...server, online };
+  return next;
+}
+
+function sameServer(left: Server, right: Server): boolean {
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)] as (keyof Server)[]);
+  for (const key of keys) if (left[key] !== right[key]) return false;
+  return true;
 }
 
 function replaceServerChats(current: Chat[], serverId: string, incoming: Chat[]): Chat[] {

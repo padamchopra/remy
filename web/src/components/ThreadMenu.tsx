@@ -17,6 +17,8 @@ import { useStore } from "@/state/store";
 import { useShallow } from "zustand/react/shallow";
 import type { ArchivedThread, Chat } from "@/state/types";
 
+const NO_ARCHIVES: ArchivedThread[] = [];
+
 interface MenuAction {
   label: string;
   icon: LucideIcon;
@@ -26,18 +28,22 @@ interface MenuAction {
   destructive?: boolean;
 }
 
-export function ThreadMenu({ chat, archive, children, onOpenThread, onOpenBeside, onOpenWorkspace }: {
+export function ThreadMenu({ chat, archive, children, itemClassName, onOpenThread, onOpenBeside, onOpenWorkspace }: {
   chat: Chat;
   archive?: ArchivedThread;
   children: ReactNode | ((open: boolean) => ReactNode);
+  itemClassName?: string;
   onOpenThread: (id: string) => void;
   onOpenBeside?: (id: string) => void;
   onOpenWorkspace?: (id: string) => void;
 }) {
   const group = useStore(useShallow((state) => threadGroup(chat, state.chats)));
-  const archives = useStore((state) => state.archived);
-  const workspaces = useStore((state) => state.workspaces);
-  const servers = useStore((state) => state.servers);
+  const archives = useStore((state) => archive ? state.archived : NO_ARCHIVES);
+  const workspaceId = useStore((state) => threadWorkspace(chat, state.workspaces)?.id);
+  const [online, cloud] = useStore(useShallow((state) => {
+    const server = state.servers.find((entry) => entry.id === chat.serverId);
+    return [server?.online === true, server?.cloud === true] as const;
+  }));
   const [contextOpen, setContextOpen] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [dialog, setDialog] = useState<"rename" | "archive" | "delete" | "spawn">();
@@ -47,10 +53,6 @@ export function ThreadMenu({ chat, archive, children, onOpenThread, onOpenBeside
   const [prUrl, setPrUrl] = useState<string>();
   const inputId = useId();
   const actionRef = useRef<HTMLButtonElement>(null);
-  const workspace = threadWorkspace(chat, workspaces);
-  const server = servers.find((entry) => entry.id === chat.serverId);
-  const online = server?.online === true;
-  const cloud = server?.cloud === true;
   const running = group.some(threadIsRunning);
   const childCount = archive
     ? archives.filter((entry) => entry.serverId === archive.serverId && archive.chatId && entry.parentChatId === archive.chatId).length
@@ -122,7 +124,7 @@ export function ThreadMenu({ chat, archive, children, onOpenThread, onOpenBeside
     [
       ...(!chat.parentChatId && !cloud ? [{ label: "Start subthread…", icon: GitFork, disabled: unavailable, run: () => setDialog("spawn") }] : []),
       ...(chat.parentChatId && onOpenBeside ? [{ label: "Open beside parent", icon: Columns2, run: () => onOpenBeside(chat.id) }] : []),
-      ...(workspace && onOpenWorkspace ? [{ label: "Open workspace", icon: Folder, run: () => onOpenWorkspace(workspace.id) }] : []),
+      ...(workspaceId && onOpenWorkspace ? [{ label: "Open workspace", icon: Folder, run: () => onOpenWorkspace(workspaceId) }] : []),
       ...(prUrl ? [{ label: "Open pull request", icon: GitPullRequest, href: prUrl }] : []),
     ],
     [
@@ -155,7 +157,7 @@ export function ThreadMenu({ chat, archive, children, onOpenThread, onOpenBeside
   return (
     <ContextMenu onOpenChange={setContextOpen}>
       <ContextMenuTrigger asChild>
-        <SidebarMenuItem data-thread-id={chat.id} onKeyDown={(event) => {
+        <SidebarMenuItem className={itemClassName} data-thread-id={chat.id} onKeyDown={(event) => {
           if (!menuOpen && (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
             event.preventDefault();
             setDropdownOpen(true);
