@@ -47,7 +47,7 @@ export function TabClose({ label, active, onClose }: { label: string; active: bo
       size="icon-xs"
       aria-label={`Close ${label}`}
       className={cn(
-        "-ml-6 size-5 rounded-sm text-muted-foreground hover:text-foreground",
+        "relative z-10 -ml-6 size-5 rounded-sm text-muted-foreground hover:text-foreground",
         "[@media(hover:hover)]:opacity-0 group-hover/tab:opacity-100 focus-visible:opacity-100",
         active && "[@media(hover:hover)]:opacity-100",
       )}
