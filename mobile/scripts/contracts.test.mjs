@@ -130,3 +130,11 @@ test("a routine's schedule reads as a sentence", options, async () => {
   assert.match(cadenceSummary({ cadence: "weekly", hour: 9, minute: 0, weekday: 3 }), /^Every Wednesday at /);
   assert.match(cadenceSummary({ cadence: "monthly", hour: 9, minute: 0, day: 4 }), /^Day 4 of the month at /);
 });
+
+test("a routine's last attempt keeps its day and time", options, async () => {
+  const { whenLast } = await load("lib/routines.ts");
+  const now = new Date(2026, 8, 3, 18, 0).getTime();
+  assert.match(whenLast(new Date(2026, 8, 3, 9, 5).getTime(), now), /^Today at /);
+  assert.match(whenLast(new Date(2026, 8, 2, 9, 5).getTime(), now), /^Yesterday at /);
+  assert.match(whenLast(new Date(2026, 7, 28, 9, 5).getTime(), now), /^(28 Aug|Aug 28) at /);
+});

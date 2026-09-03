@@ -120,3 +120,40 @@ test("a deleted routine stays deleted when a peer replays it", async () => {
   assert.equal(routines.reproject(routine.id), undefined);
   assert.equal(routines.getRoutine(routine.id), undefined);
 });
+
+test("peer edits and run results converge without counting one trigger twice", async () => {
+  const agent = agents.createAgent({ name: "Paired runner" });
+  const routine = routines.createRoutine({
+    agentId: agent.id,
+    name: "Original name",
+    prompt: "Check once.",
+  });
+  const log = await import("./board-log.js");
+  const high = Math.max(...Object.values(log.versionVector()));
+  const edit = {
+    id: "peer-routine-edit",
+    deviceId: "paired-device",
+    lamport: high + 1,
+    at: Date.now() + 1,
+    entity: "recurrence",
+    entityId: routine.id,
+    kind: "field",
+    payload: { name: "Shared name", enabled: false },
+  } as const;
+  const ran = {
+    ...edit,
+    id: "peer-routine-run",
+    lamport: high + 2,
+    at: edit.at + 1,
+    kind: "ran",
+    payload: { actor: "remy" },
+  } as const;
+
+  assert.equal(log.mergeRemote([edit, ran]), 2);
+  assert.equal(log.mergeRemote([edit, ran]), 0);
+  const converged = routines.reproject(routine.id);
+  assert.equal(converged?.name, "Shared name");
+  assert.equal(converged?.enabled, false);
+  assert.equal(converged?.lastRunAt, ran.at);
+  assert.equal(converged?.runs, 1);
+});
