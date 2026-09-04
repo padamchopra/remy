@@ -24,12 +24,22 @@ test("Claude's SDK names the installed generations and context windows", () => {
 });
 
 test("Claude generation decimals stay decimals", () => {
-  const [haiku] = claudeModels([{
-    value: "haiku",
-    resolvedModel: "claude-haiku-4-5-20251001",
-    displayName: "Haiku",
-    description: "Haiku 4.5 · Fastest for quick answers",
-  }]);
+  const [fable, haiku] = claudeModels([
+    {
+      value: "claude-fable-5-1[1m]",
+      resolvedModel: "claude-fable-5-1",
+      displayName: "Fable",
+      description: "Fable 5.1 · Most capable for ambitious work",
+    },
+    {
+      value: "haiku",
+      resolvedModel: "claude-haiku-4-5-20251001",
+      displayName: "Haiku",
+      description: "Haiku 4.5 · Fastest for quick answers",
+    },
+  ]);
+  assert.equal(fable?.label, "Fable 5.1");
+  assert.equal(fable?.context, "1M");
   assert.equal(haiku?.label, "Haiku 4.5");
 });
 
