@@ -47,6 +47,7 @@ const pushHandlers = new Set<(serverId: string, payload: unknown) => void>();
 const statusHandlers = new Set<(serverId: string, online: boolean, error?: string) => void>();
 const topicRefs = new Map<string, number>();
 const cursors = new Map<string, { streamId?: string; sequence?: number }>();
+const peerCatalogues = new Map<string, WirePeer[]>();
 let closed = true;
 
 type RNWebSocket = {
@@ -223,6 +224,10 @@ export const transport: Transport = {
       ...(entry.name ? { name: entry.name } : {}),
       ...(entry.deviceId ? { deviceId: entry.deviceId } : {}),
     }));
+    const retained = new Set(pairings.map((entry) => originOf(entry.url)));
+    for (const origin of peerCatalogues.keys()) {
+      if (!retained.has(origin)) peerCatalogues.delete(origin);
+    }
     routes.clear();
     syncSockets();
   },
@@ -246,6 +251,7 @@ export const transport: Transport = {
   async servers() {
     if (pairings.length === 0) {
       routes.clear();
+      peerCatalogues.clear();
       return [];
     }
 
@@ -271,8 +277,11 @@ export const transport: Transport = {
             fetchPath<typeof listed>(pairing, "/peers"),
             fetchPath<CursorCloudStatus>(pairing, "/cursor-cloud/status").catch(() => ({})),
           ]);
+          peerCatalogues.set(origin, listed.peers ?? []);
         } catch {
-          listed = {};
+          listed = {
+            peers: (peerCatalogues.get(origin) ?? []).map((peer) => ({ ...peer, online: false })),
+          };
         }
         if (!seenIds.has(id) && !seenUrls.has(origin)) {
           next.set(id, { pairing });
