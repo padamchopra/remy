@@ -9,6 +9,11 @@ type EnvironmentConfig = {
   name: string;
   vars: { ENVIRONMENT: string };
   d1_databases: Array<{ binding: string; database_id: string; database_name: string }>;
+  durable_objects?: { bindings: Array<{ name: string; class_name: string }> };
+  queues?: { producers: Array<{ binding: string; queue: string }>; consumers: Array<{ queue: string }> };
+  r2_buckets?: Array<{ binding: string; bucket_name: string }>;
+  secrets_store_secrets?: Array<{ binding: string; store_id: string; secret_name: string }>;
+  triggers?: { crons: string[] };
 };
 
 const hubRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -41,6 +46,26 @@ test("staging and production have isolated deployable topology", () => {
     assert.equal(environment.d1_databases[0]?.binding, "DB");
     assert.match(environment.d1_databases[0]?.database_id ?? "", /^[0-9a-f-]{36}$/);
   }
+});
+
+test("production binds every service and schedules its uptime check", () => {
+  const production = config.env.production;
+  assert.deepEqual(production.durable_objects?.bindings, [{ name: "COORDINATOR", class_name: "HubCoordinator" }]);
+  assert.deepEqual(production.r2_buckets, [
+    { binding: "OBJECTS", bucket_name: "remy-hub-production-artifacts" },
+  ]);
+  assert.deepEqual(production.queues?.producers, [
+    { binding: "JOBS", queue: "remy-hub-production-jobs" },
+  ]);
+  assert.equal(production.queues?.consumers[0]?.queue, "remy-hub-production-jobs");
+  assert.deepEqual(production.secrets_store_secrets, [
+    {
+      binding: "AUTH_SECRET",
+      store_id: "9f04524ffaa040fdaa53acbaaa06d064",
+      secret_name: "BETTER_AUTH_SECRET",
+    },
+  ]);
+  assert.deepEqual(production.triggers?.crons, ["*/5 * * * *"]);
 });
 
 for (const environment of ["staging", "production"] as const) {

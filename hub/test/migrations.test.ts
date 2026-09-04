@@ -29,10 +29,9 @@ test("the checked-in migration contains the pinned Better Auth schema", () => {
   const database = migratedDatabase();
   const generated = getSchema(
     authOptionsFor({
-      BETTER_AUTH_SECRET: "schema-generation-secret-is-never-deployed",
       BETTER_AUTH_URL: "http://schema.invalid",
       DB: {} as D1Database,
-    }),
+    }, "schema-generation-secret-is-never-deployed"),
   );
 
   for (const [table, definition] of Object.entries(generated)) {
