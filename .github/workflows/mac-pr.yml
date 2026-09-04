@@ -1,0 +1,40 @@
+name: Mac PR
+
+on:
+  pull_request:
+    paths:
+      - "desktop/**"
+      - "server/**"
+      - "web/**"
+      - "package.json"
+      - ".github/workflows/mac.yml"
+      - ".github/workflows/mac-pr.yml"
+      - ".github/actions/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            web/package-lock.json
+            desktop/package-lock.json
+
+      - name: Install
+        run: npm run install:mac
+
+      - name: Build unsigned app
+        run: npm run pack:mac
