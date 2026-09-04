@@ -1,0 +1,45 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "remy-hub",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-09-04",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
+  },
+  "env": {
+    "staging": {
+      "name": "remy-hub-staging",
+      "vars": {
+        "ENVIRONMENT": "staging"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "remy-hub-staging",
+          "database_id": "de54efa7-d03e-48e0-bad1-67eedb57f84a",
+          "migrations_dir": "migrations"
+        }
+      ]
+    },
+    "production": {
+      "name": "remy-hub-production",
+      "vars": {
+        "ENVIRONMENT": "production"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "remy-hub-production",
+          "database_id": "e4ce6806-cc4b-4538-b99d-85e2171ffc44",
+          "migrations_dir": "migrations"
+        }
+      ]
+    }
+  }
+}
