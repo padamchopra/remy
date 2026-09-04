@@ -13,6 +13,7 @@
     "dev:server": "npm --prefix server run build && npm --prefix server start",
     "dev:ios": "npm --prefix mobile run ios",
     "build": "npm --prefix web run build && npm --prefix desktop run build",
+    "build:hub": "npm ci --prefix contract --no-audit --no-fund && npm ci --prefix hub --no-audit --no-fund && npm test --prefix contract && npm run typecheck --prefix contract && npm test --prefix hub && npm run typecheck --prefix hub",
     "pack:mac": "npm --prefix web run build && npm --prefix desktop run pack:mac",
     "typecheck": "npm --prefix contract run typecheck && npm --prefix hub run typecheck && npm --prefix web run typecheck && npm --prefix desktop run typecheck && npm --prefix mobile run typecheck",
     "test": "npm --prefix server test && npm --prefix mobile test",

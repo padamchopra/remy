@@ -1,0 +1,36 @@
+name: Hub
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/hub.yml"
+      - "contract/**"
+      - "hub/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/hub.yml"
+      - "contract/**"
+      - "hub/**"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.18.0
+          cache: npm
+          cache-dependency-path: |
+            contract/package-lock.json
+            hub/package-lock.json
+      - run: npm ci --prefix contract --no-audit --no-fund
+      - run: npm ci --prefix hub --no-audit --no-fund
+      - run: npm test --prefix contract
+      - run: npm run typecheck --prefix contract
+      - run: npm test --prefix hub
+      - run: npm run typecheck --prefix hub

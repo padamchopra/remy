@@ -3,6 +3,8 @@ dist/
 *.log
 .DS_Store
 .env
+.dev.vars
+.dev.vars.*
 *.xcodeproj/
 DerivedData/
 .build/

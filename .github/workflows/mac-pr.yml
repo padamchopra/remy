@@ -2,14 +2,6 @@ name: Mac PR
 
 on:
   pull_request:
-    paths:
-      - "desktop/**"
-      - "server/**"
-      - "web/**"
-      - "package.json"
-      - ".github/workflows/mac.yml"
-      - ".github/workflows/mac-pr.yml"
-      - ".github/actions/**"
 
 permissions:
   contents: read
@@ -19,8 +11,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: Build Mac app
+  changes:
+    name: Decide whether the Mac app changed
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.paths.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: paths
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- \
+            'desktop/**' 'server/**' 'web/**' package.json \
+            .github/workflows/mac.yml .github/workflows/mac-pr.yml '.github/actions/**' \
+            ':(exclude,glob)**/*.md'; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "Nothing in the Mac app changed."
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "The Mac app changed."
+          fi
+
+  package:
+    name: Package Mac app
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,3 +58,29 @@ jobs:
 
       - name: Build unsigned app
         run: npm run pack:mac
+
+  required:
+    name: Build Mac app
+    needs: [changes, package]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the relevant result
+        env:
+          BUILD_NEEDED: ${{ needs.changes.outputs.build }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          PACKAGE_RESULT: ${{ needs.package.result }}
+        run: |
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "The Mac build decision failed."
+            exit 1
+          fi
+          if [ "$BUILD_NEEDED" = "true" ] && [ "$PACKAGE_RESULT" != "success" ]; then
+            echo "The Mac app did not build successfully."
+            exit 1
+          fi
+          if [ "$BUILD_NEEDED" = "true" ]; then
+            echo "The Mac app built successfully."
+          else
+            echo "The Mac app did not change."
+          fi

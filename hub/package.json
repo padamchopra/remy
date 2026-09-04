@@ -5,12 +5,22 @@
   "description": "The optional Remy for Teams hub.",
   "type": "module",
   "scripts": {
+    "bootstrap": "tsx scripts/bootstrap.ts",
+    "deploy": "tsx scripts/deploy.ts",
+    "test": "tsx --test src/*.test.ts test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@remy/contract": "file:../contract"
+    "@better-auth/sso": "1.7.2",
+    "@remy/contract": "file:../contract",
+    "better-auth": "1.7.2"
   },
   "devDependencies": {
-    "typescript": "^5.9.2"
+    "@cloudflare/workers-types": "5.20260904.1",
+    "@types/node": "22.18.1",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "wrangler": "4.129.0",
+    "yaml": "^2.8.1"
   }
 }

@@ -9,3 +9,5 @@ export {
 } from "./computer-runtime.js";
 
 export const supportedContractVersion = CONTRACT_VERSION;
+
+export { default as worker, handleRequest, type Env } from "./worker.js";
