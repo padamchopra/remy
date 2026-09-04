@@ -201,8 +201,15 @@ export class ThreadRuntime {
 
   async openChat(id: string): Promise<void> {
     const state = this.store.getState();
-    const chat = this.rows.get(id) ?? this.dms.get(id);
+    const chat = this.rows.get(id)
+      ?? this.dms.get(id)
+      ?? state.chats.find((entry) => entry.id === id)
+      ?? state.dms.find((entry) => entry.id === id);
     if (!chat) return;
+    if (!this.rows.has(id) && !chat.dm) {
+      this.rows.set(id, chat);
+      this.rowOrder.unshift(id);
+    }
     const cached = this.details.get(detailKey(id, chat.serverId));
     const same = state.details[id]?.serverId === chat.serverId;
     this.detailOwners.set(id, (this.detailOwners.get(id) ?? 0) + 1);

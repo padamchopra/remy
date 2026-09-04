@@ -1876,7 +1876,7 @@ const server = createServer(async (req, res) => {
             ? body.messageId
             : undefined;
           await sendChatMessage(id, String(body.text ?? ""), attachments, codeReferences, undefined, messageId);
-          return json(res, 200, { ok: true });
+          return json(res, 200, { ok: true, chat: getChat(id) });
         } catch (error) {
           return json(res, 409, { error: (error as Error).message || "could not send the message" });
         }
