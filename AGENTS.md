@@ -72,8 +72,7 @@ mistake in this repo, so check the table before naming anything.
 | `project` | **workspace** | A project is the repository, keyed on its origin remote so two machines land on the same one. A workspace is one machine's folder holding it. Nobody adds a project — they add a folder, so that is the only word the UI uses. |
 | `chat` | **thread** | A conversation with an agent. The API, the database and the code all still say chat. |
 | a `chat` with `dm` | **the conversation with an agent** | One per agent, in Inbox. Code still says chat; nothing a person reads says DM. |
-| `server`, `peer`, `device` | **computer** | A Mac running Remy or a hosted computer that can run threads. A phone is a client, not a computer. |
-| `runner`, `ticket-runner` | **agent** | The internal loop that starts assigned ticket work is not a separate person or product concept. |
+| `server`, `peer`, `device`, `runner` | **computer** | A Mac running Remy or a hosted computer that can run threads. A phone is a client, not a computer. |
 | `keyPrefix` | **ticket slug** | The letters in front of a ticket key. |
 | `recurrence` | **routine** | The legacy projection name remains internal; a routine belongs to an agent and sends it work on a cadence. |
 | `assigneeAgentId` of `you` / `workspace` | **You** / **Workspace agent** | The two assignees that are not agent rows. |
