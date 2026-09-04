@@ -19,7 +19,6 @@ In Cloudflare Workers & Pages, import the `padamchopra/remy` GitHub repository a
 | Kind | Name | Value |
 |---|---|---|
 | Secret | `BETTER_AUTH_SECRET` | A distinct random secret of at least 32 characters |
-| Variable | `HUB_URL` | `https://remy-prod.jb-padamchopra.workers.dev` |
 
 Use `npm run build:hub` as the build command. Use `npm run deploy --prefix hub -- production` as the deploy command. Leave non-production branch deployments disabled.
 
@@ -27,7 +26,7 @@ The deploy script reads the checked-out Git commit as the immutable release. Clo
 
 Do not put `BETTER_AUTH_SECRET` in `.env`, `.dev.vars`, tracked files, command arguments, logs, or pull requests.
 
-The first deployment creates the named Workers.dev service. If you need its URL before configuring `HUB_URL`, run a one-time Wrangler deploy for that environment with temporary `RELEASE` and `BETTER_AUTH_URL` variables, then copy the URL Wrangler prints. Subsequent production deployments run through the linked Cloudflare build whenever `main` changes.
+The production URL belongs to the checked-in Worker configuration, so a stale dashboard variable cannot make a successful deployment fail its smoke check. Production deployments run through the linked Cloudflare build whenever `main` changes.
 
 ## Develop locally
 

@@ -13,7 +13,7 @@ const workflow = parse(readFileSync(join(hubRoot, "../.github/workflows/mac-pr.y
 };
 const releaseWorkflow = parse(readFileSync(join(hubRoot, "../.github/workflows/mac.yml"), "utf8")) as {
   on: { push: { paths: string[] } };
-  jobs: Record<string, { steps?: Array<{ name?: string; uses?: string; env?: Record<string, string> }> }>;
+  jobs: Record<string, { steps?: Array<{ name?: string; uses?: string; run?: string; env?: Record<string, string> }> }>;
 };
 const testflightWorkflow = parse(readFileSync(join(hubRoot, "../.github/workflows/testflight.yml"), "utf8")) as {
   on: { push: { paths: string[] } };
@@ -46,8 +46,14 @@ test("main release workflows do not preflight unrelated changes", () => {
 test("the Mac release imports its certificate before packaging", () => {
   const steps = releaseWorkflow.jobs.dmg?.steps ?? [];
   const certificate = steps.find((step) => step.name === "Import signing certificate");
+  const identity = steps.find((step) => step.name === "Verify signing identity");
   const packageStep = steps.find((step) => step.name === "Build, sign, and notarize");
   assert.equal(certificate?.uses, "apple-actions/import-codesign-certs@v7");
+  assert.equal(
+    identity?.run,
+    "security find-identity -v -p codesigning signing_temp.keychain | grep -q 'Developer ID Application:'",
+  );
+  assert.equal(packageStep?.env?.CSC_KEYCHAIN, "signing_temp.keychain");
   assert.equal(packageStep?.env?.CSC_LINK, undefined);
   assert.equal(packageStep?.env?.CSC_KEY_PASSWORD, undefined);
 });
