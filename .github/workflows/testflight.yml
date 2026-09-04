@@ -5,6 +5,11 @@ on:
   # for a merge whose submission never ran or did not finish.
   push:
     branches: [main]
+    paths:
+      - "mobile/**"
+      - ".github/workflows/testflight.yml"
+      - ".github/actions/**"
+      - "!**/*.md"
   schedule:
     - cron: "20 0 * * *"
   workflow_dispatch:

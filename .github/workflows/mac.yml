@@ -5,6 +5,14 @@ on:
   # safety net for a merge whose build never ran or did not finish.
   push:
     branches: [main]
+    paths:
+      - "desktop/**"
+      - "server/**"
+      - "web/**"
+      - "package.json"
+      - ".github/workflows/mac.yml"
+      - ".github/actions/**"
+      - "!**/*.md"
   schedule:
     - cron: "5 0 * * *"
   workflow_dispatch:
@@ -66,13 +74,14 @@ jobs:
       - name: Require signing secrets
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           missing=
-          for name in CSC_LINK APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_TEAM_ID; do
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_TEAM_ID; do
             eval "value=\${$name}"
             if [ -z "$value" ]; then
               missing="$missing $name"
@@ -93,6 +102,12 @@ jobs:
           chmod 600 "$key_path"
           echo "APPLE_API_KEY=$key_path" >> "$GITHUB_ENV"
 
+      - name: Import signing certificate
+        uses: apple-actions/import-codesign-certs@v7
+        with:
+          p12-file-base64: ${{ secrets.CSC_LINK }}
+          p12-password: ${{ secrets.CSC_KEY_PASSWORD }}
+
       - name: Version
         id: version
         run: |
@@ -107,8 +122,6 @@ jobs:
       - name: Build, sign, and notarize
         run: npm run pack:mac
         env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
