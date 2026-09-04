@@ -947,7 +947,13 @@ export const useStore = create<State>((set, get) => ({
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
-      set((current) => ({ chats: [chat, ...current.chats].sort(byNewest) }));
+      set((current) => ({
+        chats: [chat, ...current.chats].sort(byNewest),
+        details: {
+          ...current.details,
+          [chat.id]: { ...chat, permissionMode: input.permissionMode, entries: [], todos: [] },
+        },
+      }));
       return { id: chat.id, serverId };
     }
 
@@ -966,14 +972,19 @@ export const useStore = create<State>((set, get) => ({
         ...(input.permissionMode ? { permissionMode: input.permissionMode } : {}),
       },
     });
-    const id = created.chat?.id;
-    if (!id) throw new Error("Couldn't start that thread.");
-    await transport.request(server.id, `/chats/${encodeURIComponent(id)}/message`, {
-      method: "POST",
-      body: { text },
-    });
-    await get().refresh();
-    return { id, serverId: server.id };
+    if (!created.chat?.id) throw new Error("Couldn't start that thread.");
+    const chat = toChat(created.chat, server.id);
+    const detail: ChatDetail = {
+      ...chat,
+      permissionMode: input.permissionMode,
+      entries: [],
+      todos: [],
+    };
+    set((current) => ({
+      chats: [chat, ...current.chats.filter((entry) => entry.id !== chat.id)].sort(byNewest),
+      details: { ...current.details, [chat.id]: detail },
+    }));
+    return { id: chat.id, serverId: server.id };
   },
 
   async createSubthread(input) {
@@ -1255,10 +1266,18 @@ export const useStore = create<State>((set, get) => ({
         : chat),
     }));
     try {
-      await transport.request(detail.serverId, `/chats/${encodeURIComponent(detail.id)}/message`, {
+      const accepted = await transport.request<{ chat?: RawChatDetail }>(detail.serverId, `/chats/${encodeURIComponent(detail.id)}/message`, {
         method: "POST",
         body: { messageId, text: trimmed, attachments, codeReferences },
       });
+      if (accepted.chat) {
+        const fresh = toDetail(accepted.chat, detail.serverId);
+        set((current) => ({
+          details: current.details[detail.id]
+            ? { ...current.details, [detail.id]: mergeDetailRefresh(current.details[detail.id], fresh) }
+            : current.details,
+        }));
+      }
     } catch (error) {
       set((current) => ({
         details: current.details[id]?.entries.some((entry) => entry.id === messageId)

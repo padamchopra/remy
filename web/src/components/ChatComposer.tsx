@@ -293,13 +293,14 @@ export function ChatComposer({
         effort: choice.effort ?? "",
         permissionMode,
       });
+      onCreated(created.id);
+      await useStore.getState().sendMessage(created.id, text);
       await transport.request(
         server.id,
         `/terminals/${encodeURIComponent(terminalId)}/close`,
         { method: "POST" },
       ).catch(() => undefined);
       writeComposerDraft("new-thread", "");
-      onCreated(created.id);
     } catch (caught) {
       toast.error("Couldn't start that thread", { description: apiError(caught) });
     } finally {

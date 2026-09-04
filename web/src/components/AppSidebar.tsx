@@ -89,22 +89,15 @@ export function AppSidebar({
 }) {
   const topology = useMemo(() => threadStructure.map((value) => {
     const [id, parentChatId, serverId, cwd, pinned, state] = value.split("\u0000");
-    const workspace = workspaces[workspaceForPath(cwd!, workspaces)];
     return {
       id: id!,
       parentChatId: parentChatId || undefined,
-      bucket: pinned
-        ? "pinned"
-        : workspace
-          ? workspace.origin
-            ? `repository:${workspace.origin}`
-            : `workspace:${workspace.serverId}:${workspace.id}`
-          : `home:${serverId}`,
+      bucket: pinned ? "pinned" : "threads",
       state: state as ChatState,
       serverId: serverId!,
       cwd: cwd!,
     };
-  }), [threadStructure, workspaces]);
+  }), [threadStructure]);
   const groups = useMemo(() => groupSidebarThreads(topology), [topology]);
   const [settledLimits, setSettledLimits] = useState<Record<string, number>>({});
   const selectChat = useStableCallback(onSelectChat);
@@ -224,17 +217,12 @@ export function AppSidebar({
                   ? Number.POSITIVE_INFINITY
                   : settledLimits[group.key] ?? SETTLED_THREAD_BATCH;
                 const { visible, hidden } = visibleSidebarThreads(group.threads, selected, limit);
-                const label = group.key === "pinned"
-                  ? "Pinned"
-                  : group.key.startsWith("repository:")
-                    ? workspaces.find((workspace) => workspace.origin === group.key.slice("repository:".length))?.name ?? "Workspace"
-                    : group.key.startsWith("workspace:")
-                      ? workspaces.find((workspace) => `${workspace.serverId}:${workspace.id}` === group.key.slice("workspace:".length))?.name ?? "Workspace"
-                    : servers.find((server) => server.id === group.key.slice("home:".length))?.name ?? "This machine";
                 const revealCount = Math.min(hidden, SETTLED_THREAD_BATCH);
                 return (
                   <SidebarGroup key={group.key} className="shrink-0 py-1">
-                    <SidebarGroupLabel className="h-7 px-2.5 text-[11px] text-muted-foreground">{label}</SidebarGroupLabel>
+                    {group.key === "pinned" && (
+                      <SidebarGroupLabel className="h-7 px-2.5 text-[11px] text-muted-foreground">Pinned</SidebarGroupLabel>
+                    )}
                     <SidebarGroupContent>
                       <SidebarMenu className="gap-0">
                         {visible.map((thread) => (
@@ -508,7 +496,8 @@ const childThreadContainmentClass = "[content-visibility:auto] [contain-intrinsi
 const threadRowTimeClass = "transition-opacity [@media(hover:hover)]:group-hover/menu-item:opacity-0 group-focus-within/menu-item:opacity-0";
 
 /// One thread in the list: what it is and when it last moved, then what was
-/// last said and what it runs with. Where it runs is the label above it.
+/// last said and what it runs with. Its workspace mark keeps that association
+/// visible without splitting the thread list into workspace sections.
 function ThreadRow({
   contextDisabled,
   chat,
@@ -582,6 +571,7 @@ function ThreadRow({
         )}
         <span className="min-w-0 flex-1 truncate">{chat.preview ? plainText(chat.preview) : ""}</span>
         <ThreadModel provider={chat.provider} model={chat.model} label={false} className="shrink-0" />
+        {workspace && <WorkspaceMark workspace={workspace} server={server} size="sm" />}
         {server && (
           <Tooltip>
             <TooltipTrigger asChild>
