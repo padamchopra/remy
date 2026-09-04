@@ -1,14 +1,16 @@
-# D1: Host computers on Fly Sprites
+# D1: Support multiple hosted computer providers
 
 ## Decision
 
-Hosted Remy computers run on Fly Sprites. They are persistent Linux computers with free idle and sub-second restore.
+Hosted Remy computers are provisioned through a computer runtime interface. Fly Sprites is the preferred managed default and Modal is supported as an alternative. Local Macs bypass hosted provisioning and connect through the same computer contract.
 
 ## Consequences
 
-The H1 spike must prove the Remy daemon, Claude Code, and Codex inside one Sprite, including a real edit and measured checkpoint restore. Modal remains a protocol-compatible fallback.
+The hub depends only on the versioned computer protocol. Provider adapters own provision, start, stop, checkpoint, and destroy operations, and advertise persistence capabilities so routing can make an explicit choice.
+
+The H1 Fly proof remains pending until billing can be enabled. Modal gets its own adapter and proof; neither proof blocks local computers.
 
 ## Rejected alternatives
 
-- Modal, because its 24-hour lifetime and seven-day snapshot cap would require rebuilding persistence.
 - A bespoke virtual-machine platform, because persistence and restore are not product differentiators Remy should build.
+- One provider embedded throughout hub code, because it would couple computer orchestration to vendor lifecycle APIs.

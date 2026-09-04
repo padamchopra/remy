@@ -1,8 +1,8 @@
-# D10: Put Claude Code and Codex behind one provider interface
+# D10: Put model providers behind one interface
 
 ## Decision
 
-Claude Code and Codex ship from day one behind a formal provider adapter extracted from the daemon. Cursor remains behind the same interface.
+Claude Code and Codex ship from day one behind a formal model-provider adapter extracted from the daemon. Cursor remains behind the same interface. This interface is separate from the computer runtime interface used for Fly Sprites, Modal, and future infrastructure vendors.
 
 ## Consequences
 
