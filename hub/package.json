@@ -5,6 +5,7 @@
   "description": "The optional Remy for Teams hub.",
   "type": "module",
   "scripts": {
+    "bootstrap": "tsx scripts/bootstrap.ts",
     "deploy": "tsx scripts/deploy.ts",
     "test": "tsx --test src/*.test.ts test/*.test.ts",
     "typecheck": "tsc --noEmit"
