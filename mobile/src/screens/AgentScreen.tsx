@@ -11,7 +11,7 @@ import {
   encodeAgentAvatar,
   type AgentAvatarConfig,
 } from "../lib/agent-avatar";
-import { cadenceSummary, whenNext } from "../lib/routines";
+import { cadenceSummary, whenLast, whenNext } from "../lib/routines";
 import { useProviders, useServerSettings, useStore, useSupportsEffort } from "../state/store";
 import type { Agent, Routine } from "../state/types";
 import { AgentMark } from "../components/AgentMark";
@@ -310,7 +310,10 @@ function RoutineRow({ routine, onEdit }: { routine: Routine; onEdit: () => void 
             {routine.enabled
               ? `${cadenceSummary(routine)} · due ${whenNext(routine.nextRunAt)}`
               : `${cadenceSummary(routine)} · paused`}
-            {routine.lastError ? " · last run failed" : ""}
+          </Text>
+          <Text style={[type.caption, routine.lastError ? styles.routineError : undefined]} numberOfLines={3}>
+            {routine.lastRunAt ? `Last run: ${whenLast(routine.lastRunAt)}` : "It has not run yet."}
+            {routine.lastError ? ` · ${routine.lastError}` : ""}
           </Text>
         </View>
       </View>
@@ -545,6 +548,7 @@ const styles = StyleSheet.create({
   },
   routineHead: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
   routineText: { flex: 1, minWidth: 0, gap: 2 },
+  routineError: { color: color.destructive },
   routineActions: { flexDirection: "row", alignItems: "center", gap: 4, flexWrap: "wrap" },
   routineAction: {
     flexDirection: "row",

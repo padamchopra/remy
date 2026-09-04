@@ -36,6 +36,27 @@ export function whenNext(at: number): string {
   });
 }
 
+/// The last attempt keeps its time because it is evidence that a routine did
+/// (or did not) run, rather than another description of its cadence.
+export function whenLast(at: number, now = Date.now()): string {
+  const run = new Date(at);
+  const today = new Date(now);
+  const runDay = new Date(run.getFullYear(), run.getMonth(), run.getDate()).getTime();
+  const todayDay = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  yesterday.setDate(yesterday.getDate() - 1);
+  const day = runDay === todayDay
+    ? "Today"
+    : runDay === yesterday.getTime()
+      ? "Yesterday"
+      : run.toLocaleDateString(undefined, {
+        day: "numeric",
+        month: "short",
+        ...(run.getFullYear() === today.getFullYear() ? {} : { year: "numeric" }),
+      });
+  return `${day} at ${run.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+}
+
 /// Just the hour, for a control that owns only the hour. Pairing it with a
 /// minute control while it still says ":00" reads as two different times.
 export function clockHour(hour: number): string {
