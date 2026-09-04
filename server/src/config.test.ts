@@ -34,6 +34,7 @@ test("takes a worktree root only when it is somewhere git can write", () => {
 
 test("starts on the defaults a fresh install should have", () => {
   const settings = publicSettings();
+  assert.equal(settings.hubMode, false);
   assert.equal(settings.defaultCheckout, "main");
   assert.equal(settings.worktreeBase, "remote");
   assert.equal(settings.worktreeRoot, "");
@@ -49,6 +50,11 @@ test("starts on the defaults a fresh install should have", () => {
   assert.equal(settings.tailscaleServeEnabled, false);
   assert.deepEqual(settings.favoriteModels, []);
   assert.deepEqual(settings.enabledProviders, ["claude", "codex", "cursor"]);
+});
+
+test("keeps hub mode behind an explicit setting", () => {
+  assert.equal(patchSettings({ hubMode: true }).hubMode, true);
+  assert.equal(patchSettings({ hubMode: "true" }).hubMode, false);
 });
 
 test("remembers whether Tailnet reachability was explicitly chosen", () => {

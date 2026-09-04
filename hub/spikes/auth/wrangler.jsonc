@@ -1,0 +1,18 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "remy-auth-spike",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-09-04",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "AUTH_DB",
+      "database_name": "remy-auth-spike",
+      "database_id": "local"
+    }
+  ],
+  "vars": {
+    "BETTER_AUTH_SECRET": "this-is-only-for-the-local-wrk-2-spike",
+    "BETTER_AUTH_URL": "http://127.0.0.1:8787"
+  }
+}

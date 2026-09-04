@@ -1,6 +1,11 @@
 # Remy — agent guide
 
-Remy is a remote for [Claude Code](https://claude.com/claude-code) on your own machines. A daemon runs on the Mac that holds the repos; the Electron window, the browser, and the iOS app are views onto it. Nothing is copied to a cloud.
+This repository ships two products on one release train:
+
+- **Remy** is the complete, free remote for [Claude Code](https://claude.com/claude-code) on your own machines. A daemon runs on the Mac that holds the repos; the Electron window, the browser, and the iOS app are views onto it. Nothing is copied to a cloud.
+- **Remy for Teams** is the optional hub under `hub/`. It connects people and computers without replacing or weakening local Remy.
+
+Local mode remains the default. Work for the hub must not make the local app, its daemon, or its DMG depend on a hosted service.
 
 `README.md` is the product story. This file is how to work in the code.
 
@@ -67,12 +72,12 @@ mistake in this repo, so check the table before naming anything.
 | `project` | **workspace** | A project is the repository, keyed on its origin remote so two machines land on the same one. A workspace is one machine's folder holding it. Nobody adds a project — they add a folder, so that is the only word the UI uses. |
 | `chat` | **thread** | A conversation with an agent. The API, the database and the code all still say chat. |
 | a `chat` with `dm` | **the conversation with an agent** | One per agent, in Inbox. Code still says chat; nothing a person reads says DM. |
-| `server`, `peer` | **device** | Another machine you paired with. |
+| `server`, `peer`, `device`, `runner` | **computer** | A Mac running Remy or a hosted computer that can run threads. A phone is a client, not a computer. |
 | `keyPrefix` | **ticket slug** | The letters in front of a ticket key. |
 | `recurrence` | **routine** | The legacy projection name remains internal; a routine belongs to an agent and sends it work on a cadence. |
 | `assigneeAgentId` of `you` / `workspace` | **You** / **Workspace agent** | The two assignees that are not agent rows. |
 
-Nothing a person reads says project, job, workflow, cron, daemon, projection,
+Nothing a person reads says project, job, workflow, cron, daemon, projection, runner,
 fold, board log, lamport, event or DM. **Tasks** is the board section and a
 **ticket** is its unit of work. Machine is
 fine — the app says "this machine" — and so is worktree, which is a git word

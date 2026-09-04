@@ -21,6 +21,7 @@ export { configDir } from "./paths.js";
 export interface Config {
   port: number;
   token: string;
+  hubMode: boolean;
   // The context window the sessions on this host run with, for the context
   // meter. Transcripts record the model but not its window size, and the 1M
   // variants share a model id with the 200k ones — so a session running with a
@@ -287,6 +288,7 @@ function load(): Config {
   const config: Config = {
     port: Number(parsed.port) || 8420,
     token: typeof parsed.token === "string" && parsed.token.length >= 32 ? parsed.token : randomBytes(32).toString("hex"),
+    hubMode: parsed.hubMode === true,
     contextLimit: Number(parsed.contextLimit) > 0 ? Number(parsed.contextLimit) : 200_000,
     preventSleep: preventSleepMode(parsed.preventSleep, parsed.preventSleepWhileBusy),
     defaultCheckout: oneOf(CHECKOUT_MODES, parsed.defaultCheckout, "main"),
@@ -328,6 +330,7 @@ function load(): Config {
 export const config = load();
 
 export interface PublicSettings {
+  hubMode: boolean;
   preventSleep: PreventSleepMode;
   defaultCheckout: CheckoutMode;
   worktreeBase: WorktreeBase;
@@ -357,6 +360,7 @@ export interface PublicSettings {
 
 export function publicSettings(): PublicSettings {
   return {
+    hubMode: config.hubMode,
     preventSleep: config.preventSleep,
     defaultCheckout: config.defaultCheckout,
     worktreeBase: config.worktreeBase,
@@ -393,6 +397,10 @@ export function patchSettings(patch: Record<string, unknown>): PublicSettings {
     config[key] = value;
     touched = true;
   };
+
+  if (patch.hubMode !== undefined) {
+    set("hubMode", patch.hubMode === true);
+  }
 
   if (patch.preventSleep !== undefined || patch.preventSleepWhileBusy !== undefined) {
     set("preventSleep", preventSleepMode(patch.preventSleep, patch.preventSleepWhileBusy));

@@ -216,6 +216,11 @@ export function App() {
   const selected = route.name === "threads" ? (route.focus ?? route.threadId ?? null) : null;
   const routedThreadId = route.name === "threads" ? route.threadId : undefined;
   const workspaceSettingsId = route.name === "workspaces" ? (route.workspaceId ?? null) : null;
+  const hubMode = useStore((state) => state.settings?.hubMode === true);
+
+  useEffect(() => {
+    document.documentElement.dataset.remyMode = hubMode ? "hub" : "local";
+  }, [hubMode]);
 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [addWorkspaceOpen, setAddWorkspaceOpen] = useState(false);

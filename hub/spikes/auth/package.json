@@ -1,0 +1,21 @@
+{
+  "name": "@remy/spike-auth",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "dev": "wrangler dev --local",
+    "smoke": "node smoke.mjs"
+  },
+  "dependencies": {
+    "@better-auth/sso": "1.7.2",
+    "better-auth": "1.7.2"
+  },
+  "devDependencies": {
+    "@types/node": "22.18.1",
+    "@cloudflare/workers-types": "5.20260904.1",
+    "typescript": "^5.9.2",
+    "wrangler": "4.129.0"
+  }
+}

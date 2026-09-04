@@ -451,6 +451,7 @@ export interface ChatDetail {
 /// in that server's `remy.db`, so every client attached to it sees the same
 /// values. Mirrors `PublicSettings` in `server/src/config.ts`.
 export interface ServerSettings {
+  hubMode: boolean;
   preventSleep: "off" | "whileBusy" | "always";
   defaultCheckout: "main" | "worktree";
   worktreeBase: "remote" | "local";

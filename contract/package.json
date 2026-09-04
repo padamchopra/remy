@@ -1,0 +1,18 @@
+{
+  "name": "@remy/contract",
+  "version": "0.1.0",
+  "description": "Versioned wire contract shared by Remy computers and the Remy for Teams hub.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}
