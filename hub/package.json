@@ -5,12 +5,16 @@
   "description": "The optional Remy for Teams hub.",
   "type": "module",
   "scripts": {
+    "test": "tsx --test src/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@remy/contract": "file:../contract"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "5.20260904.1",
+    "@types/node": "22.18.1",
+    "tsx": "^4.20.5",
     "typescript": "^5.9.2"
   }
 }
