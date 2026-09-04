@@ -40,7 +40,7 @@ export const computerRuntimeProviders = {
   },
   modal: {
     id: "modal",
-    capabilities: { checkpoints: true, persistentFilesystem: false },
+    capabilities: { checkpoints: true, persistentFilesystem: true },
     provision: async () => pending("Modal"),
     start: async () => pending("Modal"),
     stop: async () => pending("Modal"),
