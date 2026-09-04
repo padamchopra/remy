@@ -1,0 +1,16 @@
+{
+  "name": "@remy/hub",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The optional Remy for Teams hub.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remy/contract": "file:../contract"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

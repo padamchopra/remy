@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Run Claude Code on your machines from anywhere.",
   "scripts": {
-    "install:all": "npm --prefix server install && npm --prefix web install && npm --prefix desktop install && npm --prefix mobile install",
+    "install:all": "npm --prefix contract install && npm --prefix hub install && npm --prefix server install && npm --prefix web install && npm --prefix desktop install && npm --prefix mobile install",
     "install:mac": "npm --prefix server ci --no-audit --no-fund && npm --prefix web ci --no-audit --no-fund && npm --prefix desktop ci --no-audit --no-fund",
     "dev": "MC_DEV_SERVER_URL=http://127.0.0.1:5173 npm --prefix desktop run start",
     "dev:web": "npm --prefix web run dev",
@@ -14,7 +14,7 @@
     "dev:ios": "npm --prefix mobile run ios",
     "build": "npm --prefix web run build && npm --prefix desktop run build",
     "pack:mac": "npm --prefix web run build && npm --prefix desktop run pack:mac",
-    "typecheck": "npm --prefix web run typecheck && npm --prefix desktop run typecheck && npm --prefix mobile run typecheck",
+    "typecheck": "npm --prefix contract run typecheck && npm --prefix hub run typecheck && npm --prefix web run typecheck && npm --prefix desktop run typecheck && npm --prefix mobile run typecheck",
     "test": "npm --prefix server test && npm --prefix mobile test",
     "shots": "npm --prefix web run shots",
     "perf": "npm --prefix web run perf",
