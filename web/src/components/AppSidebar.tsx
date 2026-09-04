@@ -571,7 +571,7 @@ function ThreadRow({
         )}
         <span className="min-w-0 flex-1 truncate">{chat.preview ? plainText(chat.preview) : ""}</span>
         <ThreadModel provider={chat.provider} model={chat.model} label={false} className="shrink-0" />
-        {workspace && <WorkspaceMark workspace={workspace} server={server} size="sm" />}
+        {workspace && <WorkspaceMark home={false} workspace={workspace} server={server} size="sm" />}
         {server && (
           <Tooltip>
             <TooltipTrigger asChild>
