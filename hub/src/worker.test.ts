@@ -6,6 +6,8 @@ import { CONTRACT_VERSION, parseHubHealth } from "@remy/contract";
 import { createHandler, handleRequest, type Env } from "./worker.js";
 
 const env = {
+  BETTER_AUTH_SECRET: "test-secret-with-at-least-thirty-two-characters",
+  BETTER_AUTH_URL: "https://hub.example",
   DB: {} as D1Database,
   ENVIRONMENT: "staging",
   RELEASE: "0123456789abcdef",

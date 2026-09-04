@@ -1,6 +1,8 @@
 import { CONTRACT_VERSION, type HubEnvironment, type HubHealth } from "@remy/contract";
 
 export interface Env {
+  BETTER_AUTH_SECRET: string;
+  BETTER_AUTH_URL: string;
   DB: D1Database;
   ENVIRONMENT: HubEnvironment;
   RELEASE: string;

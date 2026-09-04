@@ -9,5 +9,5 @@
     "target": "ES2022",
     "types": ["@cloudflare/workers-types", "node"]
   },
-  "include": ["src/**/*.ts"]
+  "include": ["scripts/**/*.ts", "src/**/*.ts", "test/**/*.ts"]
 }
