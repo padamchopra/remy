@@ -14,12 +14,12 @@ npm run bootstrap
 
 The command is safe to repeat. It prints the non-secret database IDs to copy into `wrangler.jsonc`; it never writes credentials or changes tracked files. Commit the IDs before enabling deployment.
 
-In Cloudflare Workers & Pages, import the `padamchopra/remy` GitHub repository as the `remy-hub-production` Worker. Select `main` as its production branch and set these build values:
+In Cloudflare Workers & Pages, import the `padamchopra/remy` GitHub repository as the `remy-prod` Worker. Select `main` as its production branch and set these build values:
 
 | Kind | Name | Value |
 |---|---|---|
 | Secret | `BETTER_AUTH_SECRET` | A distinct random secret of at least 32 characters |
-| Variable | `HUB_URL` | The matching `https://…workers.dev` URL |
+| Variable | `HUB_URL` | `https://remy-prod.jb-padamchopra.workers.dev` |
 
 Use `npm run build:hub` as the build command. Use `npm run deploy --prefix hub -- production` as the deploy command. Leave non-production branch deployments disabled.
 

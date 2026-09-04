@@ -21,9 +21,9 @@ const workflow = parse(readFileSync(join(hubRoot, "../.github/workflows/hub.yml"
   >;
 };
 
-test("hub workflow validates pull requests and main pushes", () => {
+test("hub workflow validates pull requests without repeating checks on main", () => {
   assert.ok(workflow.on.pull_request);
-  assert.ok(workflow.on.push);
+  assert.equal(workflow.on.push, undefined);
   assert.deepEqual(Object.keys(workflow.jobs), ["validate"]);
   const validateCommands = workflow.jobs.validate?.steps.flatMap((step) => (step.run ? [step.run] : []));
   assert.deepEqual(validateCommands, [

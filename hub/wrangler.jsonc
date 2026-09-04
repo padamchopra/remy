@@ -28,7 +28,7 @@
       ]
     },
     "production": {
-      "name": "remy-hub-production",
+      "name": "remy-prod",
       "vars": {
         "ENVIRONMENT": "production"
       },

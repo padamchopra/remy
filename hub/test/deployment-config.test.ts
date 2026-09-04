@@ -34,6 +34,7 @@ test("staging and production have isolated deployable topology", () => {
   assert.equal(config.observability.logs.invocation_logs, true);
   assert.equal(staging.vars.ENVIRONMENT, "staging");
   assert.equal(production.vars.ENVIRONMENT, "production");
+  assert.equal(production.name, "remy-prod");
   assert.notEqual(staging.name, production.name);
   assert.notEqual(staging.d1_databases[0]?.database_id, production.d1_databases[0]?.database_id);
   for (const environment of [staging, production]) {

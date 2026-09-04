@@ -6,12 +6,6 @@ on:
       - ".github/workflows/hub.yml"
       - "contract/**"
       - "hub/**"
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/hub.yml"
-      - "contract/**"
-      - "hub/**"
 
 permissions:
   contents: read
