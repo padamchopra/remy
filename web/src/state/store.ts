@@ -286,6 +286,7 @@ const pushPeerServers = new Set<string>();
 const sidebarProjectionServers = new Set<string>();
 const sidebarSequences = new Map<string, number>();
 const detailSubscriptions = new Map<string, () => void>();
+const detailOwners = new Map<string, number>();
 let refreshRun = 0;
 let pendingRefresh: Promise<void> | undefined;
 let refreshAgain = false;
@@ -546,6 +547,7 @@ export const useStore = create<State>((set, get) => ({
       warmWrites.stop();
       for (const off of detailSubscriptions.values()) off();
       detailSubscriptions.clear();
+      detailOwners.clear();
       offPush();
       offStatus();
     };
@@ -1121,7 +1123,8 @@ export const useStore = create<State>((set, get) => ({
     const cached = detailCache.get(detailKey(id, chat.serverId));
     if (cached) cacheDetail(cached);
     const same = get().details[id]?.id === id;
-    if (!get().openIds.includes(id) && !detailSubscriptions.has(id)) {
+    detailOwners.set(id, (detailOwners.get(id) ?? 0) + 1);
+    if (!detailSubscriptions.has(id)) {
       detailSubscriptions.set(id, transport.subscribe(() => {}, [`thread:${id}`]));
     }
     set((current) => ({
@@ -1186,6 +1189,12 @@ export const useStore = create<State>((set, get) => ({
 
   closeChat(id) {
     if (useSharedThreadRuntime) return sharedThreadRuntime().closeChat(id);
+    const owners = Math.max(0, (detailOwners.get(id) ?? 0) - 1);
+    if (owners > 0) {
+      detailOwners.set(id, owners);
+      return;
+    }
+    detailOwners.delete(id);
     detailSubscriptions.get(id)?.();
     detailSubscriptions.delete(id);
     set((current) => {
@@ -1271,7 +1280,15 @@ export const useStore = create<State>((set, get) => ({
     }
     // The server echoes the message back as a `chat` frame. With the socket
     // down there is no frame coming, so read the feed once instead.
-    if (!get().connected) await get().openChat(detail.id);
+    if (!get().connected) {
+      const fresh = await readChatDetail(detail.id, detail.serverId);
+      if (get().openIds.includes(detail.id)) {
+        set((current) => ({
+          details: { ...current.details, [detail.id]: mergeDetailRefresh(current.details[detail.id], fresh) },
+          detailLoading: { ...current.detailLoading, [detail.id]: false },
+        }));
+      }
+    }
   },
 
   async answerApproval(id, requestId, decision) {

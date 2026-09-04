@@ -130,6 +130,7 @@ export class ThreadRuntime {
   private readonly details = new Map<string, ChatDetail>();
   private readonly pendingDetails = new Map<string, Promise<ChatDetail>>();
   private readonly detailSubscriptions = new Map<string, () => void>();
+  private readonly detailOwners = new Map<string, number>();
   private readonly pushPeerServers = new Set<string>();
   private pendingRefresh?: Promise<void>;
   private refreshRun = 0;
@@ -181,6 +182,7 @@ export class ThreadRuntime {
       stopWarmCache();
       for (const off of this.detailSubscriptions.values()) off();
       this.detailSubscriptions.clear();
+      this.detailOwners.clear();
       offPush();
       offStatus();
     };
@@ -203,7 +205,8 @@ export class ThreadRuntime {
     if (!chat) return;
     const cached = this.details.get(detailKey(id, chat.serverId));
     const same = state.details[id]?.serverId === chat.serverId;
-    if (!state.openIds.includes(id) && !this.detailSubscriptions.has(id)) {
+    this.detailOwners.set(id, (this.detailOwners.get(id) ?? 0) + 1);
+    if (!this.detailSubscriptions.has(id)) {
       this.detailSubscriptions.set(id, this.transport.subscribe(() => {}, [`thread:${id}`]));
     }
     this.store.setState((current) => ({
@@ -252,6 +255,12 @@ export class ThreadRuntime {
   }
 
   closeChat(id: string): void {
+    const owners = Math.max(0, (this.detailOwners.get(id) ?? 0) - 1);
+    if (owners > 0) {
+      this.detailOwners.set(id, owners);
+      return;
+    }
+    this.detailOwners.delete(id);
     this.detailSubscriptions.get(id)?.();
     this.detailSubscriptions.delete(id);
     this.store.setState((current) => {
