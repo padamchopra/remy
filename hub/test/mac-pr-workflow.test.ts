@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 
 const hubRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const macPack = readFileSync(join(hubRoot, "../desktop/scripts/pack-mac.mjs"), "utf8");
 const workflow = parse(readFileSync(join(hubRoot, "../.github/workflows/mac-pr.yml"), "utf8")) as {
   on: { pull_request: null | { paths?: string[] } };
   jobs: Record<string, { if?: string; name?: string; needs?: string | string[] }>;
@@ -56,4 +57,8 @@ test("the Mac release imports its certificate before packaging", () => {
   assert.equal(packageStep?.env?.CSC_KEYCHAIN, "signing_temp.keychain");
   assert.equal(packageStep?.env?.CSC_LINK, undefined);
   assert.equal(packageStep?.env?.CSC_KEY_PASSWORD, undefined);
+});
+
+test("the Mac packager recognises an imported signing keychain", () => {
+  assert.match(macPack, /process\.env\.CSC_LINK \|\| process\.env\.CSC_KEYCHAIN/);
 });
