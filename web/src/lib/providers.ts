@@ -46,7 +46,7 @@ export const PROVIDERS: Provider[] = [
     models: [
       { value: "", label: "Default", resolvedLabel: "Opus 5 (1M)" },
       { value: "opus", label: "Opus 5", context: "1M" },
-      { value: "claude-fable-5[1m]", label: "Fable 5", context: "1M" },
+      { value: "claude-fable-5-1[1m]", label: "Fable 5.1", context: "1M" },
       { value: "sonnet", label: "Sonnet 5", context: "200K" },
       { value: "haiku", label: "Haiku 4.5", context: "200K" },
       { value: "claude-opus-4-8", label: "Opus 4.8", context: "1M" },
