@@ -67,6 +67,7 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: |
+            contract/package-lock.json
             server/package-lock.json
             web/package-lock.json
             desktop/package-lock.json
