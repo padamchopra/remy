@@ -19,6 +19,14 @@ type DeployOptions = {
 const hubRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const wrangler = join(hubRoot, "node_modules/.bin/wrangler");
 const execute = promisify(execFile);
+const hubUrls: Record<HubEnvironment, string> = {
+  production: "https://remy-prod.jb-padamchopra.workers.dev",
+  staging: "https://remy-hub-staging.jb-padamchopra.workers.dev",
+};
+
+export function deploymentHubUrl(environment: HubEnvironment): string {
+  return hubUrls[environment];
+}
 
 const runCommand: RunCommand = (file, args, input) =>
   new Promise((resolve, reject) => {
@@ -61,10 +69,10 @@ if (invokedPath && fileURLToPath(import.meta.url) === invokedPath) {
     throw new Error("Pass staging or production as the deployment environment");
   }
   const release = process.env.RELEASE ?? (await execute("git", ["rev-parse", "HEAD"], { cwd: hubRoot })).stdout.trim();
-  const hubUrl = process.env.HUB_URL;
+  const hubUrl = deploymentHubUrl(environment);
   const authSecret = process.env.BETTER_AUTH_SECRET;
-  if (!release || !hubUrl || !authSecret) {
-    throw new Error("HUB_URL and BETTER_AUTH_SECRET are required");
+  if (!release || !authSecret) {
+    throw new Error("BETTER_AUTH_SECRET is required");
   }
   await deployHub({ authSecret, environment, hubUrl, release });
 }

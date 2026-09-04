@@ -45,8 +45,8 @@ if (invokedPath && fileURLToPath(import.meta.url) === invokedPath) {
     `${JSON.stringify(
       {
         cloudflareBuild: {
-          production: { secrets: ["BETTER_AUTH_SECRET"], variables: ["HUB_URL"] },
-          staging: { secrets: ["BETTER_AUTH_SECRET"], variables: ["HUB_URL"] },
+          production: { secrets: ["BETTER_AUTH_SECRET"], variables: [] },
+          staging: { secrets: ["BETTER_AUTH_SECRET"], variables: [] },
         },
         wrangler: {
           production: { database_id: databases["remy-hub-production"], database_name: "remy-hub-production" },

@@ -3,7 +3,11 @@ import test from "node:test";
 
 import { CONTRACT_VERSION } from "@remy/contract";
 
-import { deployHub } from "../scripts/deploy.js";
+import { deployHub, deploymentHubUrl } from "../scripts/deploy.js";
+
+test("production smoke checks the URL owned by its Worker configuration", () => {
+  assert.equal(deploymentHubUrl("production"), "https://remy-prod.jb-padamchopra.workers.dev");
+});
 
 test("migration failure prevents secret update, deployment, and smoke check", async () => {
   const commands: string[][] = [];
