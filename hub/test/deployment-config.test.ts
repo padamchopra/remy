@@ -12,10 +12,20 @@ type EnvironmentConfig = {
 };
 
 const hubRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const rootPackage = JSON.parse(readFileSync(join(hubRoot, "../package.json"), "utf8")) as {
+  scripts: Record<string, string>;
+};
 const config = JSON.parse(readFileSync(join(hubRoot, "wrangler.jsonc"), "utf8")) as {
   observability: { enabled: boolean; logs: { enabled: boolean; invocation_logs: boolean } };
   env: { staging: EnvironmentConfig; production: EnvironmentConfig };
 };
+
+test("Workers Builds has a short repository-level build command", () => {
+  assert.equal(
+    rootPackage.scripts["build:hub"],
+    "npm ci --prefix contract --no-audit --no-fund && npm ci --prefix hub --no-audit --no-fund && npm test --prefix contract && npm run typecheck --prefix contract && npm test --prefix hub && npm run typecheck --prefix hub",
+  );
+});
 
 test("staging and production have isolated deployable topology", () => {
   const { staging, production } = config.env;
