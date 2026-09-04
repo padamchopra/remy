@@ -381,7 +381,10 @@ function FaceField({ agent, onChange }: { agent: Agent; onChange: (avatar: strin
               accessibilityState={{ selected: on }}
               style={[styles.face, on && styles.faceOn]}
             >
-              <AgentMark agent={{ ...agent, avatar: next, builtIn: false }} size={32} />
+              <AgentMark
+                agent={{ ...agent, avatar: encodeAgentAvatar({ ...config, shape: shape.value }), builtIn: false }}
+                size={32}
+              />
             </Pressable>
           );
         })}
