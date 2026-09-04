@@ -44,9 +44,9 @@ if (invokedPath && fileURLToPath(import.meta.url) === invokedPath) {
   process.stdout.write(
     `${JSON.stringify(
       {
-        githubEnvironments: {
-          production: { secrets: ["BETTER_AUTH_SECRET", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"], variables: ["HUB_URL"] },
-          staging: { secrets: ["BETTER_AUTH_SECRET", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"], variables: ["HUB_URL"] },
+        cloudflareBuild: {
+          production: { secrets: ["BETTER_AUTH_SECRET"], variables: ["HUB_URL"] },
+          staging: { secrets: ["BETTER_AUTH_SECRET"], variables: ["HUB_URL"] },
         },
         wrangler: {
           production: { database_id: databases["remy-hub-production"], database_name: "remy-hub-production" },

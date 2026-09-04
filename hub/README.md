@@ -14,18 +14,20 @@ npm run bootstrap
 
 The command is safe to repeat. It prints the non-secret database IDs to copy into `wrangler.jsonc`; it never writes credentials or changes tracked files. Commit the IDs before enabling deployment.
 
-Create `staging` and `production` environments in the GitHub repository. Set these values independently in each environment:
+In Cloudflare Workers & Pages, import the `padamchopra/remy` GitHub repository as the `remy-hub-staging` Worker. Select `main` as its production branch and set these build values:
 
 | Kind | Name | Value |
 |---|---|---|
-| Secret | `CLOUDFLARE_ACCOUNT_ID` | The account that owns the matching D1 database and Worker |
-| Secret | `CLOUDFLARE_API_TOKEN` | A token with Workers Scripts and D1 write access |
 | Secret | `BETTER_AUTH_SECRET` | A distinct random secret of at least 32 characters |
 | Variable | `HUB_URL` | The matching `https://…workers.dev` URL |
 
-Use a different `BETTER_AUTH_SECRET` in each environment. Do not put any of these values in `.env`, `.dev.vars`, tracked files, command arguments, logs, or pull requests.
+Use `npm ci --prefix contract --no-audit --no-fund && npm ci --prefix hub --no-audit --no-fund && npm test --prefix contract && npm run typecheck --prefix contract && npm test --prefix hub && npm run typecheck --prefix hub` as the build command. Use `npm run deploy --prefix hub -- staging` as the deploy command. Leave non-production branch deployments disabled.
 
-The first deployment creates the named Workers.dev service. If you need its URL before configuring `HUB_URL`, run a one-time Wrangler deploy for that environment with temporary `RELEASE` and `BETTER_AUTH_URL` variables, then copy the URL Wrangler prints. Subsequent deployment runs come only from GitHub Actions.
+The deploy script reads the checked-out Git commit as the immutable release. Cloudflare supplies deployment credentials to Workers Builds, so no Cloudflare API token belongs in GitHub.
+
+Use a different `BETTER_AUTH_SECRET` for production. Do not put either secret in `.env`, `.dev.vars`, tracked files, command arguments, logs, or pull requests.
+
+The first deployment creates the named Workers.dev service. If you need its URL before configuring `HUB_URL`, run a one-time Wrangler deploy for that environment with temporary `RELEASE` and `BETTER_AUTH_URL` variables, then copy the URL Wrangler prints. Subsequent staging deployments run through the linked Cloudflare build whenever `main` changes.
 
 ## Develop locally
 
@@ -41,11 +43,11 @@ Local secrets belong in `hub/.dev.vars` and are ignored by git. The migration te
 
 ## Release
 
-Pull requests that touch `contract/`, `hub/`, or the hub workflow run contract tests, hub tests, typechecks, migration replay, and both environment dry-runs.
+Pull requests that touch `contract/`, `hub/`, or the hub workflow run contract tests, hub tests, typechecks, migration replay, and both environment dry-runs in GitHub Actions. GitHub Actions never receives deployment credentials.
 
-A merge to `main` deploys staging with no manual step. The deployment applies remote D1 migrations first, writes the environment's Better Auth secret over stdin, publishes the immutable Git commit as `RELEASE`, and accepts the release only when `/health` reports staging, that commit, and the supported contract version. A migration failure stops before secret update or deployment.
+A merge to `main` starts the linked Cloudflare build and deploys staging with no GitHub deployment action. The deployment applies remote D1 migrations first, writes the environment's Better Auth secret over stdin, publishes the immutable Git commit as `RELEASE`, and accepts the release only when `/health` reports staging, that commit, and the supported contract version. A migration failure stops before secret update or deployment.
 
-Run the `Hub` workflow from `main` to promote production. The production GitHub environment is the approval boundary; the job uses the same migration-first script and typed health check as staging.
+Production uses a separate `remy-hub-production` Worker and the same `npm run deploy --prefix hub -- production` command when you promote a tested revision. Connecting production to GitHub is intentionally deferred until its promotion policy is chosen.
 
 To roll back code, revert the merge and let staging deploy the revert, then promote the same revision to production. D1 migrations are forward-only: ship a corrective migration instead of editing or removing one that ran.
 

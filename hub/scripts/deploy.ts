@@ -1,6 +1,7 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 import { CONTRACT_VERSION, parseHubHealth, type HubEnvironment } from "@remy/contract";
 
@@ -17,6 +18,7 @@ type DeployOptions = {
 
 const hubRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const wrangler = join(hubRoot, "node_modules/.bin/wrangler");
+const execute = promisify(execFile);
 
 const runCommand: RunCommand = (file, args, input) =>
   new Promise((resolve, reject) => {
@@ -58,11 +60,11 @@ if (invokedPath && fileURLToPath(import.meta.url) === invokedPath) {
   if (environment !== "staging" && environment !== "production") {
     throw new Error("Pass staging or production as the deployment environment");
   }
-  const release = process.env.RELEASE;
+  const release = process.env.RELEASE ?? (await execute("git", ["rev-parse", "HEAD"], { cwd: hubRoot })).stdout.trim();
   const hubUrl = process.env.HUB_URL;
   const authSecret = process.env.BETTER_AUTH_SECRET;
   if (!release || !hubUrl || !authSecret) {
-    throw new Error("RELEASE, HUB_URL, and BETTER_AUTH_SECRET are required");
+    throw new Error("HUB_URL and BETTER_AUTH_SECRET are required");
   }
   await deployHub({ authSecret, environment, hubUrl, release });
 }
