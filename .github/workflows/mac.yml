@@ -57,6 +57,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            web/package-lock.json
+            desktop/package-lock.json
 
       - name: Require signing secrets
         env:
@@ -97,7 +102,7 @@ jobs:
           echo "Stamped $version from run ${GITHUB_RUN_NUMBER}"
 
       - name: Install
-        run: npm run install:all
+        run: npm run install:mac
 
       - name: Build, sign, and notarize
         run: npm run pack:mac

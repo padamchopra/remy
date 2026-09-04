@@ -72,7 +72,7 @@ jobs:
           token: ${{ secrets.EXPO_TOKEN }}
 
       - name: Install
-        run: npm ci
+        run: npm ci --no-audit --no-fund
 
       - name: Typecheck
         run: npm run typecheck
