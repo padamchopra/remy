@@ -8,6 +8,7 @@ import { applyProjectIdentity } from "~/lib/projects";
 import { invalidateSharedResource, readSharedResource, seedSharedResource } from "~/lib/shared-read";
 import { byRank } from "~/lib/tickets";
 import { transport } from "~/lib/transport";
+import { clearOptimisticUser, mergeEntryUpdates, registerOptimisticUser, uniqueEntries } from "~/lib/thread-entry-merge";
 import { readWarmCache, warmSnapshot, writeWarmCache } from "~/lib/warm-cache";
 import { fixtureChats, fixtureServers, fixtureWorkspaces } from "./fixture";
 import type {
@@ -1251,6 +1252,7 @@ export const useStore = create<State>((set, get) => ({
       ...(attachments.length > 0 ? { attachments } : {}),
       ...(codeReferences.length > 0 ? { codeReferences } : {}),
     };
+    registerOptimisticUser(detail.id, detail.serverId, optimistic);
     const previousRow = get().chats.find((chat) => chat.id === id && chat.serverId === detail.serverId)
       ?? get().dms.find((chat) => chat.id === id && chat.serverId === detail.serverId);
     set((current) => ({
@@ -1279,6 +1281,7 @@ export const useStore = create<State>((set, get) => ({
         }));
       }
     } catch (error) {
+      clearOptimisticUser(messageId);
       set((current) => ({
         details: current.details[id]?.entries.some((entry) => entry.id === messageId)
           ? {
@@ -1299,14 +1302,18 @@ export const useStore = create<State>((set, get) => ({
     }
     // The server echoes the message back as a `chat` frame. With the socket
     // down there is no frame coming, so read the feed once instead.
-    if (!get().connected) {
-      const fresh = await readChatDetail(detail.id, detail.serverId);
-      if (get().openIds.includes(detail.id)) {
-        set((current) => ({
-          details: { ...current.details, [detail.id]: mergeDetailRefresh(current.details[detail.id], fresh) },
-          detailLoading: { ...current.detailLoading, [detail.id]: false },
-        }));
+    try {
+      if (!get().connected) {
+        const fresh = await readChatDetail(detail.id, detail.serverId);
+        if (get().openIds.includes(detail.id)) {
+          set((current) => ({
+            details: { ...current.details, [detail.id]: mergeDetailRefresh(current.details[detail.id], fresh) },
+            detailLoading: { ...current.detailLoading, [detail.id]: false },
+          }));
+        }
       }
+    } finally {
+      clearOptimisticUser(messageId);
     }
   },
 
@@ -2088,7 +2095,7 @@ function mergeDetailRefresh(current: ChatDetail | undefined, fresh: ChatDetail):
   }
   const next = {
     ...fresh,
-    entries: [...current.entries.slice(0, overlap), ...fresh.entries],
+    entries: uniqueEntries([...current.entries.slice(0, overlap), ...fresh.entries]),
     history: overlap > 0 ? current.history : fresh.history,
   };
   cacheDetail(next);
@@ -2179,14 +2186,7 @@ function mergeDetail(detail: ChatDetail, frame: ChatFrame): ChatDetail {
     entries = entries.filter((entry) => !gone.has(entry.id));
   }
   if (frame.entries?.length) {
-    const next = entries.slice();
-    for (const entry of frame.entries) {
-      // A streaming entry keeps its place in the feed while its text grows.
-      const at = next.findIndex((existing) => existing.id === entry.id);
-      if (at >= 0) next[at] = entry;
-      else next.push(entry);
-    }
-    entries = next;
+    entries = mergeEntryUpdates(entries, frame.entries, detail.id, detail.serverId);
   }
   const next = {
     ...detail,
