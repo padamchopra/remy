@@ -38,6 +38,16 @@ npx wrangler dev --env staging --var RELEASE:local --var BETTER_AUTH_URL:http://
 
 Local secrets belong in `hub/.dev.vars` and are ignored by git. The migration tests start with a fresh database and prove that applying the migration again is a no-op.
 
+## Accounts
+
+The Hub mounts Better Auth at `/api/auth` with magic-link, Google, GitHub, SAML, and OpenID Connect sign-in. OAuth client secrets and the mail-delivery credential belong in Cloudflare Secrets Store; never put them in Wrangler variables or tracked files.
+
+Web sign-in ends by exchanging Better Auth's short-lived callback session at `POST /api/sessions/web`. The response sets an HTTP-only `remy_session` cookie and removes the callback session. Phone, computer, and CLI clients use device authorization at `POST /api/device/authorization`, let the signed-in person approve its visible code at `POST /api/device/approve`, and poll `POST /api/device/token`. Native access tokens last 15 minutes and refresh tokens rotate on every use.
+
+Only SHA-256 token hashes are stored in `auth_sessions` and `device_authorizations`. `POST /api/sessions/revoke-all` revokes every browser and native client for the person; each client receives `401 Sign in again.` on its next request or refresh.
+
+An organization's verified domain may enforce its SSO provider. Enforcement blocks magic links before Better Auth sends mail. Follow the [Okta](docs/sso/okta.md) or [Microsoft Entra ID](docs/sso/entra.md) setup guide and test the provider before enabling enforcement.
+
 ## Release
 
 Pull requests that touch `contract/`, `hub/`, or the hub workflow run contract tests, hub tests, typechecks, migration replay, and both environment dry-runs in GitHub Actions. GitHub Actions never receives deployment credentials.

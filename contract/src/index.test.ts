@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CONTRACT_VERSION, computerHeartbeatSchema, parseHubHealth, uptimeCheckFrameSchema } from "./index.js";
+import { CONTRACT_VERSION, accountProfileSchema, computerHeartbeatSchema, deviceAuthorizationSchema, parseHubHealth, tokenPairSchema, uptimeCheckFrameSchema } from "./index.js";
 
 test("accepts a compatible hub health response", () => {
   const health = parseHubHealth({
@@ -51,4 +51,10 @@ test("rejects incompatible hub health responses", () => {
     () => parseHubHealth({ contractVersion: CONTRACT_VERSION, environment: "production", release: "" }),
     /incompatible/,
   );
+});
+
+test("validates account, token, and device authorization contracts", () => {
+  assert.equal(tokenPairSchema.parse({ tokenType: "Bearer", accessToken: "a".repeat(43), refreshToken: "b".repeat(43), expiresIn: 900 }).expiresIn, 900);
+  assert.equal(deviceAuthorizationSchema.parse({ deviceCode: "c".repeat(43), userCode: "ABCD-2345", expiresIn: 600, interval: 5 }).interval, 5);
+  assert.equal(accountProfileSchema.parse({ id: "user-1", name: "Ada", email: "ada@example.com", emailVerified: true, verifiedEmails: ["ada@example.com"] }).name, "Ada");
 });

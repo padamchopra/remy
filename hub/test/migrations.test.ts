@@ -11,13 +11,15 @@ import { getSchema } from "better-auth/db";
 
 import { authOptionsFor } from "../src/auth.js";
 
-const migration = readFileSync(new URL("../migrations/0001_identity.sql", import.meta.url), "utf8");
+const identityMigration = readFileSync(new URL("../migrations/0001_identity.sql", import.meta.url), "utf8");
+const accountsMigration = readFileSync(new URL("../migrations/0002_accounts.sql", import.meta.url), "utf8");
 const hubRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
 function migratedDatabase(): DatabaseSync {
   const database = new DatabaseSync(":memory:");
   database.exec("PRAGMA foreign_keys = ON");
-  database.exec(migration);
+  database.exec(identityMigration);
+  database.exec(accountsMigration);
   return database;
 }
 
@@ -86,6 +88,20 @@ test("membership rows are tenant-bound and unique", () => {
   );
 });
 
+test("durable client credentials have hash columns and no raw-token columns", () => {
+  const database = migratedDatabase();
+  const sessionColumns = columns(database, "auth_sessions");
+  const deviceColumns = columns(database, "device_authorizations");
+
+  assert.ok(sessionColumns.includes("access_token_hash"));
+  assert.ok(sessionColumns.includes("refresh_token_hash"));
+  assert.ok(deviceColumns.includes("device_code_hash"));
+  assert.ok(deviceColumns.includes("user_code_hash"));
+  assert.equal(sessionColumns.includes("access_token"), false);
+  assert.equal(sessionColumns.includes("refresh_token"), false);
+  assert.equal(deviceColumns.includes("device_code"), false);
+});
+
 test("Wrangler records the migration and makes a second apply a no-op", (context) => {
   const fixture = mkdtempSync(join(tmpdir(), "remy-hub-migrations-"));
   context.after(() => rmSync(fixture, { force: true, recursive: true }));
@@ -93,6 +109,7 @@ test("Wrangler records the migration and makes a second apply a no-op", (context
   const state = join(fixture, "state");
   mkdirSync(migrations);
   copyFileSync(new URL("../migrations/0001_identity.sql", import.meta.url), join(migrations, "0001_identity.sql"));
+  copyFileSync(new URL("../migrations/0002_accounts.sql", import.meta.url), join(migrations, "0002_accounts.sql"));
   const config = join(fixture, "wrangler.jsonc");
   writeFileSync(
     config,
@@ -118,6 +135,8 @@ test("Wrangler records the migration and makes a second apply a no-op", (context
       { cwd: hubRoot, encoding: "utf8" },
     );
 
-  assert.match(apply(), /0001_identity\.sql/);
+  const firstApply = apply();
+  assert.match(firstApply, /0001_identity\.sql/);
+  assert.match(firstApply, /0002_accounts\.sql/);
   assert.match(apply(), /No migrations to apply/);
 });
