@@ -15,7 +15,7 @@ Media is not required for changes with no in-app behavior to show, such as CI, r
 
 Lead with required media, then use `## Summary`, `## Changes`, `## Review notes`, and `## Testing`, in that order. These are writing conventions, not an automated check.
 
-- **Media:** Put image tables at the very top of the body, before any heading, introduction, badge, or status note. Every image belongs in a Markdown table with descriptive column headers, such as `Code review` and `Guided review`, or `Before` and `After` for a comparison. Use readable alt text and keep the table narrow enough to judge the images. Put labeled video links below all image tables and above `## Summary`. With videos only, lead with the videos. Never collapse required media or add empty media placeholders.
+- **Media:** Put media tables at the very top of the body, before any heading, introduction, badge, or status note. Every image and video thumbnail belongs in a Markdown table with descriptive column headers, such as `Code review` and `Guided review`, or `Before` and `After` for a comparison. Use readable alt text and keep the table narrow enough to judge the media. Use the linked thumbnail Markdown that `agent-cli upload` returns for a video, so its preview can share a table with images and opens the original recording when clicked. Never collapse required media or add empty media placeholders.
 - **Summary:** A short paragraph explaining the problem and the outcome, not an inventory of the implementation.
 - **Changes:** A few themed bullets describing what changes for the user or reviewer. Group related work rather than listing each file, commit, follow-up, or test.
 - **Review notes:** Only what could reverse an approval — a decision a reviewer might disagree with, a limitation, a missing verification, a breaking change, a migration, a rollout requirement. Why the code works is not a review note. Omit the section when there is nothing material to call out.
@@ -154,11 +154,17 @@ Upload video evidence in its original recorded format:
 agent-cli upload /tmp/remy-pr-artifacts/branch/change.mp4
 ```
 
-Inspect the video, then add its returned URL as a labeled Markdown link below the image tables and above Summary. Never convert a video to GIF.
+For a video, `agent-cli upload` also uploads a poster image and prints linked-image Markdown:
+
+```markdown
+[![Play change.mp4](https://agent-cli.padamchopra.me/media/{poster-token}?w=640)](https://agent-cli.padamchopra.me/media/{video-token})
+```
+
+Inspect the video and poster, then put that returned Markdown in the appropriate media-table cell. The thumbnail opens the original recording; never replace it with a text-only link or convert the video to GIF.
 
 Do not wrap an external `agent-cli` URL in a `<video>` tag because GitHub strips the tag from PR Markdown.
 
-Read the PR description back and confirm the section order, topmost image tables, video placement, and collapsed supporting detail. Confirm that every media URL is present and resolves successfully, and that required review notes remain visible.
+Read the PR description back and confirm the section order, topmost media tables, linked video thumbnails, and collapsed supporting detail. Confirm that every media URL is present and resolves successfully, and that required review notes remain visible.
 
 When media is not required or explicitly waived, omit the media block; `## Testing` carries the reviewer-visible verification.
 

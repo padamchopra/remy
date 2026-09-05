@@ -238,7 +238,7 @@ export function closeTab(workbench: Workbench, id: string): Workbench {
   if (tabsOf(workbench).length === 1) return workbench;
   const index = group.tabs.findIndex((tab) => tabId(tab) === id);
   const remaining = group.tabs.filter((tab) => tabId(tab) !== id);
-  const nextActive = group.active === id
+  const nextActive = group.active === id && remaining.length > 0
     ? tabId(remaining[Math.max(0, index - 1)] ?? remaining[0]!)
     : group.active;
   const root = pruneEmpty(mapGroups(workbench.root, (candidate) => candidate.id === group.id
