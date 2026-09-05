@@ -132,7 +132,7 @@ function codexEfforts(value: unknown): ProviderEffort[] {
 function codexLabel(value: string, displayName: unknown): string {
   const raw = typeof displayName === "string" && displayName.trim() ? displayName : value;
   return raw
-    .replace(/GPT-(\d+(?:\.\d+)?)-(Sol|Terra|Luna)/i, "GPT-$1 $2")
+    .replace(/GPT-(\d+(?:\.\d+)?)-(Astra|Sol|Terra|Luna)/i, "GPT-$1 $2")
     .replace(/GPT-(\d+(?:\.\d+)?)-Mini/i, "GPT-$1 Mini")
     .replace(/GPT-(\d+(?:\.\d+)?)-Codex-Spark/i, "GPT-$1 Codex Spark");
 }
