@@ -9,6 +9,10 @@ test("production smoke checks the URL owned by its Worker configuration", () => 
   assert.equal(deploymentHubUrl("production"), "https://tryremy.dev");
 });
 
+test("staging smoke checks its custom domain", () => {
+  assert.equal(deploymentHubUrl("staging"), "https://staging.tryremy.dev");
+});
+
 test("migration failure prevents deployment and smoke check", async () => {
   const commands: string[][] = [];
   let fetched = false;

@@ -41,6 +41,8 @@ test("staging and production have isolated deployable topology", () => {
   assert.equal(config.observability.logs.invocation_logs, true);
   assert.equal(staging.vars.ENVIRONMENT, "staging");
   assert.equal(production.vars.ENVIRONMENT, "production");
+  assert.equal(staging.workers_dev, false);
+  assert.deepEqual(staging.routes, [{ pattern: "staging.tryremy.dev", custom_domain: true }]);
   assert.equal(production.name, "remy-prod");
   assert.equal(production.workers_dev, false);
   assert.deepEqual(production.routes, [{ pattern: "tryremy.dev", custom_domain: true }]);

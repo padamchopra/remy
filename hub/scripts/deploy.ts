@@ -20,7 +20,7 @@ const wrangler = join(hubRoot, "node_modules/.bin/wrangler");
 const execute = promisify(execFile);
 const hubUrls: Record<HubEnvironment, string> = {
   production: "https://tryremy.dev",
-  staging: "https://remy-hub-staging.jb-padamchopra.workers.dev",
+  staging: "https://staging.tryremy.dev",
 };
 
 export function deploymentHubUrl(environment: HubEnvironment): string {
