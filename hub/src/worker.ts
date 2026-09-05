@@ -11,15 +11,24 @@ import {
   type UptimeCheckFrame,
 } from "@remy/contract";
 
+import { D1AccountStore, type AccountStore } from "./account-store.js";
+import { AccountService, bearerToken, webSessionCookie } from "./accounts.js";
+import { authFor } from "./auth.js";
+
 export interface Env {
   AUTH_SECRET: SecretsStoreSecret;
   BETTER_AUTH_URL: string;
   COORDINATOR: DurableObjectNamespace;
   DB: D1Database;
+  EMAILS?: Queue<{ kind: "auth.magic-link" | "auth.verify-email" | "auth.change-email"; recipient: string; url: string }>;
   ENVIRONMENT: HubEnvironment;
   JOBS: Queue<UptimeCheckFrame>;
   OBJECTS: R2Bucket;
   RELEASE: string;
+  GITHUB_CLIENT_ID?: string;
+  GITHUB_CLIENT_SECRET?: SecretsStoreSecret;
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: SecretsStoreSecret;
 }
 
 type LogEvent = RequestOutcome | HubErrorEvent;
@@ -28,6 +37,12 @@ type HandlerDependencies = {
   now: () => number;
   requestId: () => string;
   route: (request: Request, env: Env) => Promise<Response>;
+};
+
+type AccountRouteDependencies = {
+  accountStore?: (env: Env) => AccountStore;
+  accountService?: (store: AccountStore) => AccountService;
+  betterAuth?: typeof authFor;
 };
 
 async function statusOf(check: () => Promise<unknown>): Promise<"ready" | "unavailable"> {
@@ -61,14 +76,119 @@ export async function healthFor(env: Env): Promise<HubHealth> {
   });
 }
 
-async function routeRequest(request: Request, env: Env): Promise<Response> {
+function jsonError(error: string, status: number): Response {
+  return Response.json({ error }, { status });
+}
+
+async function body<T>(request: { json(): Promise<unknown> }): Promise<T | undefined> {
+  try { return await request.json() as T; } catch { return undefined; }
+}
+
+function domainOf(email: string): string | undefined {
+  const normalized = email.trim().toLowerCase();
+  const separator = normalized.lastIndexOf("@");
+  return separator > 0 && separator < normalized.length - 1 ? normalized.slice(separator + 1) : undefined;
+}
+
+async function identityFor(request: Request, service: AccountService) {
+  return service.authenticate(bearerToken(request) ?? "");
+}
+
+export function createRouteHandler(dependencies: AccountRouteDependencies = {}) {
+  return async (request: Request, env: Env): Promise<Response> => {
   const url = new URL(request.url);
   if (request.method === "GET" && url.pathname === "/health") {
     const health = await healthFor(env);
     return Response.json(health, { status: health.status === "ok" ? 200 : 503 });
   }
+  const store = (dependencies.accountStore ?? ((current) => new D1AccountStore(current.DB)))(env);
+  const service = (dependencies.accountService ?? ((current) => new AccountService(current)))(store);
+
+  if (url.pathname === "/api/auth/sign-in/magic-link" && request.method === "POST") {
+    const cloned = request.clone();
+    const input = await body<{ email?: string }>(cloned);
+    const domain = typeof input?.email === "string" ? domainOf(input.email) : undefined;
+    const policy = domain ? await store.ssoPolicyForDomain(domain) : undefined;
+    if (policy?.enforced && policy.verified) {
+      return Response.json({ error: "Use your organization’s single sign-on.", providerId: policy.providerId }, { status: 403 });
+    }
+  }
+  if (url.pathname.startsWith("/api/auth/")) {
+    return (await (dependencies.betterAuth ?? authFor)(env)).handler(request);
+  }
+  if (url.pathname === "/api/sessions/web" && request.method === "POST") {
+    const auth = await (dependencies.betterAuth ?? authFor)(env);
+    const current = await auth.api.getSession({ headers: request.headers });
+    if (!current) return jsonError("Sign in again.", 401);
+    const pair = await service.createSession(current.user.id, "web", request.headers.get("user-agent") ?? "Web browser");
+    await auth.api.signOut({ headers: request.headers });
+    return Response.json({ expiresIn: pair.expiresIn }, { headers: { "set-cookie": webSessionCookie(pair.accessToken, url.protocol === "https:") } });
+  }
+  if (url.pathname === "/api/sessions/refresh" && request.method === "POST") {
+    const input = await body<{ refreshToken?: string }>(request);
+    const pair = typeof input?.refreshToken === "string" ? await service.refresh(input.refreshToken) : undefined;
+    return pair ? Response.json(pair) : jsonError("Sign in again.", 401);
+  }
+  if (url.pathname === "/api/device/authorization" && request.method === "POST") {
+    const input = await body<{ clientKind?: "phone" | "computer" | "cli"; clientName?: string }>(request);
+    if (!input?.clientKind || !["phone", "computer", "cli"].includes(input.clientKind)) return jsonError("Choose a supported client.", 400);
+    const clientName = typeof input.clientName === "string" ? input.clientName : input.clientKind;
+    return Response.json(await service.startDeviceAuthorization(input.clientKind, clientName));
+  }
+  if (url.pathname === "/api/device/token" && request.method === "POST") {
+    const input = await body<{ deviceCode?: string }>(request);
+    if (typeof input?.deviceCode !== "string") return jsonError("Enter a device code.", 400);
+    const result = await service.pollDevice(input.deviceCode);
+    const status = result.status === "approved" ? 200 : result.status === "pending" ? 202 : result.status === "slow_down" ? 429 : 400;
+    return Response.json(result, { status });
+  }
+
+  const protectedRoute = url.pathname === "/api/device/approve"
+    || url.pathname === "/api/sessions"
+    || url.pathname === "/api/sessions/revoke-all"
+    || url.pathname === "/api/profile"
+    || /^\/api\/sessions\/[^/]+$/.test(url.pathname);
+  if (!protectedRoute) return Response.json(hubErrorSchema.parse({ error: "Not found" }), { status: 404 });
+
+  const identity = await identityFor(request, service);
+  if (!identity) return jsonError("Sign in again.", 401);
+  if (url.pathname === "/api/device/approve" && request.method === "POST") {
+    const input = await body<{ userCode?: string }>(request);
+    if (typeof input?.userCode !== "string") return jsonError("Enter the code shown on your device.", 400);
+    const status = await service.approveDevice(identity.userId, input.userCode);
+    return status === "approved" ? Response.json({ status }) : jsonError(status === "expired" ? "This code has expired." : "This code is not valid.", 400);
+  }
+  if (url.pathname === "/api/sessions" && request.method === "GET") {
+    const sessions = (await store.sessionsFor(identity.userId)).map(({ accessTokenHash: _, refreshTokenHash: __, ...session }) => session);
+    return Response.json({ sessions });
+  }
+  if (url.pathname === "/api/sessions/revoke-all" && request.method === "POST") {
+    await service.revokeEverywhere(identity.userId);
+    return new Response(null, { status: 204, headers: { "set-cookie": webSessionCookie("", url.protocol === "https:").replace(/Max-Age=\d+/, "Max-Age=0") } });
+  }
+  const sessionMatch = /^\/api\/sessions\/([^/]+)$/.exec(url.pathname);
+  if (sessionMatch && request.method === "DELETE") {
+    return await service.revokeSession(identity.userId, sessionMatch[1]) ? new Response(null, { status: 204 }) : jsonError("Session not found.", 404);
+  }
+  if (url.pathname === "/api/profile" && request.method === "GET") {
+    const profile = await store.profile(identity.userId);
+    return profile ? Response.json(profile) : jsonError("Profile not found.", 404);
+  }
+  if (url.pathname === "/api/profile" && request.method === "PATCH") {
+    const input = await body<{ name?: string; image?: string | null }>(request);
+    if (!input || (input.name !== undefined && (typeof input.name !== "string" || !input.name.trim() || input.name.length > 120))) return jsonError("Enter your name.", 400);
+    if (input.image !== undefined && input.image !== null) {
+      if (typeof input.image !== "string" || input.image.length > 2048 || !URL.canParse(input.image)) return jsonError("Choose a valid image URL.", 400);
+      const protocol = new URL(input.image).protocol;
+      if (protocol !== "https:" && protocol !== "http:") return jsonError("Choose a valid image URL.", 400);
+    }
+    return Response.json(await store.updateProfile(identity.userId, { ...(input.name !== undefined ? { name: input.name.trim() } : {}), ...(input.image !== undefined ? { image: input.image } : {}) }));
+  }
   return Response.json(hubErrorSchema.parse({ error: "Not found" }), { status: 404 });
+  };
 }
+
+const routeRequest = createRouteHandler();
 
 function requestIdFor(request: Request, generate: () => string): string {
   const supplied = request.headers.get("x-request-id")?.trim();

@@ -6,7 +6,7 @@ import { CONTRACT_VERSION } from "@remy/contract";
 import { deployHub, deploymentHubUrl } from "../scripts/deploy.js";
 
 test("production smoke checks the URL owned by its Worker configuration", () => {
-  assert.equal(deploymentHubUrl("production"), "https://remy-prod.jb-padamchopra.workers.dev");
+  assert.equal(deploymentHubUrl("production"), "https://tryremy.dev");
 });
 
 test("migration failure prevents deployment and smoke check", async () => {

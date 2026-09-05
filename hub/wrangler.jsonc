@@ -35,6 +35,13 @@
     },
     "production": {
       "name": "remy-prod",
+      "workers_dev": false,
+      "routes": [
+        {
+          "pattern": "tryremy.dev",
+          "custom_domain": true
+        }
+      ],
       "vars": {
         "ENVIRONMENT": "production"
       },

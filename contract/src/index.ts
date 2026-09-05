@@ -87,6 +87,52 @@ export const computerHeartbeatSchema = z.object({
 });
 export type ComputerHeartbeat = z.infer<typeof computerHeartbeatSchema>;
 
+export const accountClientKindSchema = z.enum(["web", "phone", "computer", "cli"]);
+export type AccountClientKind = z.infer<typeof accountClientKindSchema>;
+
+export const tokenPairSchema = z.object({
+  tokenType: z.literal("Bearer"),
+  accessToken: z.string().min(32),
+  refreshToken: z.string().min(32).optional(),
+  expiresIn: z.number().int().positive(),
+});
+export type TokenPair = z.infer<typeof tokenPairSchema>;
+
+export const deviceAuthorizationSchema = z.object({
+  deviceCode: z.string().min(32),
+  userCode: z.string().regex(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/),
+  expiresIn: z.number().int().positive(),
+  interval: z.number().int().positive(),
+});
+export type DeviceAuthorization = z.infer<typeof deviceAuthorizationSchema>;
+
+export const accountProfileSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  email: z.string().email(),
+  emailVerified: z.boolean(),
+  image: z.string().url().optional(),
+  verifiedEmails: z.array(z.string().email()),
+});
+export type AccountProfile = z.infer<typeof accountProfileSchema>;
+
+export const accountSessionSchema = z.object({
+  id: z.string().min(1),
+  userId: z.string().min(1),
+  clientKind: accountClientKindSchema,
+  clientName: z.string().min(1),
+  accessExpiresAt: z.number().int(),
+  refreshExpiresAt: z.number().int().optional(),
+  createdAt: z.number().int(),
+  lastSeenAt: z.number().int(),
+  revokedAt: z.number().int().optional(),
+});
+export type AccountSession = z.infer<typeof accountSessionSchema>;
+
 export const hubRoutes = {
   health: { method: "GET", path: "/health", response: hubHealthSchema },
+  profile: { method: "GET", path: "/api/profile", response: accountProfileSchema },
+  sessions: { method: "GET", path: "/api/sessions", response: z.object({ sessions: z.array(accountSessionSchema) }) },
+  startDeviceAuthorization: { method: "POST", path: "/api/device/authorization", response: deviceAuthorizationSchema },
+  refreshSession: { method: "POST", path: "/api/sessions/refresh", response: tokenPairSchema },
 } as const;
