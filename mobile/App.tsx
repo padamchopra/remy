@@ -6,7 +6,7 @@ import * as Linking from "expo-linking";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { color } from "./src/theme";
-import { apiError } from "./src/lib/api-error";
+import { pairingError } from "./src/lib/api-error";
 import { hostLabel, parsePairingLink, threadIdFromLink } from "./src/lib/pairing";
 import { hydrateAppearance } from "./src/lib/devices";
 import { loadPairings, originOf, removePairing, savePairings, upsertPairing, type Pairing } from "./src/lib/session";
@@ -162,7 +162,7 @@ export default function App() {
     setToast({
       id: Date.now(),
       title: "Couldn't pair with that Mac",
-      detail: apiError(error),
+      detail: pairingError(error),
     });
   }, []);
 
