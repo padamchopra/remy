@@ -51,7 +51,7 @@ import { TabClose, TabCloseSpace, TabStrip, tabContentClass, tabListClass, tabTr
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { CLOUD_MODES, cloudModeOf, PERMISSIONS, permissionOf, type PermissionValue } from "@/lib/chat-options";
 import { apiError } from "@/lib/api-error";
-import { readComposerDraft, writeComposerDraft } from "@/lib/composer-draft";
+import { readComposerDraft, readNewThreadTarget, writeComposerDraft, writeNewThreadTarget } from "@/lib/composer-draft";
 import { deviceIcon } from "@/lib/devices";
 import { availableAgentServers } from "@/lib/inbox";
 import { devicesForWorkspace, workspaceGroups } from "@/lib/projects";
@@ -97,8 +97,16 @@ export function ChatComposer({
   const createChat = useStore((s) => s.createChat);
   const checkoutBranch = useStore((s) => s.checkoutBranch);
   const settings = useStore((s) => s.settings);
-  const [target, setTarget] = useState(workspaces[0]?.id ?? HOME);
-  const [serverId, setServerId] = useState(() => preferredServer(servers)?.id ?? "");
+  const [rememberedTarget] = useState(readNewThreadTarget);
+  const rememberedWorkspace = rememberedTarget?.workspaceId
+    ? workspaces.find((entry) => entry.id === rememberedTarget.workspaceId)
+    : undefined;
+  const [target, setTarget] = useState(() => rememberedWorkspace?.id
+    ?? (rememberedTarget?.workspaceId === null ? HOME : workspaces[0]?.id ?? HOME));
+  const [serverId, setServerId] = useState(() => rememberedWorkspace?.serverId
+    ?? servers.find((entry) => entry.id === rememberedTarget?.serverId)?.id
+    ?? preferredServer(servers)?.id
+    ?? "");
   const [devicePicked, setDevicePicked] = useState(false);
   const [choice, setChoice] = useState<ModelChoice>({ provider: "claude", model: "", effort: "" });
   const [modelPicked, setModelPicked] = useState(false);
@@ -226,11 +234,15 @@ export function ChatComposer({
       setTarget(HOME);
       setServerId(id);
       setDevicePicked(true);
+      writeNewThreadTarget({ workspaceId: null, serverId: id });
       return;
     }
     setTarget(value);
     const next = workspaces.find((entry) => entry.id === value);
-    if (next) setServerId(next.serverId);
+    if (next) {
+      setServerId(next.serverId);
+      writeNewThreadTarget({ workspaceId: next.id, serverId: next.serverId });
+    }
   };
 
   const pickCheckout = (value: string) => {
@@ -261,20 +273,31 @@ export function ChatComposer({
   const pickDevice = (id: string) => {
     setServerId(id);
     setDevicePicked(true);
-    if (!workspace || workspace.serverId === id) return;
+    if (!workspace) {
+      writeNewThreadTarget({ workspaceId: null, serverId: id });
+      return;
+    }
+    if (workspace.serverId === id) {
+      writeNewThreadTarget({ workspaceId: workspace.id, serverId: id });
+      return;
+    }
     const sibling = workspaces.find(
       (entry) =>
         entry.serverId === id
         && Boolean(workspace.origin)
         && entry.origin === workspace.origin,
     );
-    if (sibling) setTarget(sibling.id);
+    if (sibling) {
+      setTarget(sibling.id);
+      writeNewThreadTarget({ workspaceId: sibling.id, serverId: id });
+    }
   };
 
   const submit = async () => {
     if (!canSend || !server) return;
     setBusy(true);
     try {
+      writeNewThreadTarget({ workspaceId: home ? null : workspace?.id ?? null, serverId: server.id });
       let cwd = home || !workspace ? "~" : mainPath(workspace);
       if (git && workspace && branchName && checkout === "worktree") {
         const next = await checkoutBranch({

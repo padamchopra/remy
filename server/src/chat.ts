@@ -89,6 +89,7 @@ import { codeReferencePrompt } from "./chat-references.js";
 import { ThreadActivityTracker } from "./thread-activity.js";
 import { claudeTicketMcpServer, ticketPromptContext } from "./ticket-tools.js";
 import { remyToolToken } from "./ticket-tool-auth.js";
+import { remyProviderInstructions } from "./ticket-tool-contract.js";
 import { forgetChat, linkTicketFromWorkPrompt, syncTicketFromThread } from "./tickets.js";
 import { readChatImage } from "./chat-attachments.js";
 import { uploadRoot } from "./uploads.js";
@@ -762,6 +763,7 @@ This is the agent's Inbox conversation. When the person signals that something s
     const queue = new PromptQueue();
     const agent = this.record.agentId ? getAgent(this.record.agentId) : undefined;
     const agentInstructions = agent?.instructions.trim();
+    const developerInstructions = remyProviderInstructions(agentInstructions);
     this.activePermissionMode = this.record.permissionMode;
     const options: Options = {
       cwd: this.record.cwd,
@@ -769,9 +771,7 @@ This is the agent's Inbox conversation. When the person signals that something s
       // The persona layers onto the Claude Code preset rather than replacing it,
       // and `settingSources` below still brings the user's own CLAUDE.md and
       // skills — an agent has a character, not a different rulebook.
-      systemPrompt: agentInstructions
-        ? { type: "preset" as const, preset: "claude_code" as const, append: agentInstructions }
-        : { type: "preset" as const, preset: "claude_code" as const },
+      systemPrompt: { type: "preset" as const, preset: "claude_code" as const, append: developerInstructions },
       // The user's own Claude Code configuration — settings, permissions,
       // CLAUDE.md, skills — so a chat behaves like their terminal sessions.
       settingSources: ["user", "project", "local"],
@@ -1188,7 +1188,7 @@ This is the agent's Inbox conversation. When the person signals that something s
           permissionMode: this.record.permissionMode,
           ...(this.record.cursorSessionId ? { sessionId: this.record.cursorSessionId } : {}),
           additionalDirectories: [uploadRoot],
-          ...(agent?.instructions.trim() ? { developerInstructions: agent.instructions.trim() } : {}),
+          developerInstructions: remyProviderInstructions(agent?.instructions),
           mcpServer: remyMcpProcess({
             apiUrl: `http://127.0.0.1:${config.port}`,
             token: remyToolToken(this.record.id),
@@ -1349,7 +1349,7 @@ This is the agent's Inbox conversation. When the person signals that something s
           permissionMode: this.record.permissionMode,
           ...(this.record.codexThreadId ? { threadId: this.record.codexThreadId } : {}),
           additionalDirectories: [uploadRoot],
-          ...(agent?.instructions.trim() ? { developerInstructions: agent.instructions.trim() } : {}),
+          developerInstructions: remyProviderInstructions(agent?.instructions),
           mcpServer: remyMcpProcess({
             apiUrl: `http://127.0.0.1:${config.port}`,
             token: remyToolToken(this.record.id),
