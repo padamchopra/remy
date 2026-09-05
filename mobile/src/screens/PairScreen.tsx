@@ -3,7 +3,7 @@ import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput,
 import { Camera, Link2 } from "lucide-react-native";
 import * as Clipboard from "expo-clipboard";
 import { color, space, type } from "../theme";
-import { apiError } from "../lib/api-error";
+import { pairingError } from "../lib/api-error";
 import { hostLabel, parsePairingLink } from "../lib/pairing";
 import { originOf, type Pairing } from "../lib/session";
 import { transport } from "../lib/transport";
@@ -35,7 +35,7 @@ export function PairScreen({
       const probed = await transport.probe(pairing);
       await onPaired({ ...pairing, name: probed.name, ...(probed.deviceId ? { deviceId: probed.deviceId } : {}) });
     } catch (caught) {
-      setError(apiError(caught));
+      setError(pairingError(caught));
     } finally {
       setBusy(false);
     }

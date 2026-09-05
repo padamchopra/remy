@@ -15,6 +15,16 @@ const load = (path) => import(pathToFileURL(join(src, path)).href);
 const stripping = process.features.typescript !== false;
 const options = stripping ? {} : { skip: "This Node cannot strip TypeScript types." };
 
+test("pairing failures tell the phone how to recover", options, async () => {
+  const { pairingError } = await load("lib/api-error.ts");
+  assert.equal(pairingError(new Error("Network request failed")), "Open Tailscale on this iPhone and try again.");
+  assert.equal(
+    pairingError(Object.assign(new Error("unauthorized"), { status: 401 })),
+    "Scan a new pairing QR and try again.",
+  );
+  assert.equal(pairingError(new Error("That Mac isn't running Remy.")), "That Mac isn't running Remy.");
+});
+
 test("a model that belongs to another provider becomes that provider's default", options, async () => {
   const { PROVIDERS, pairChoice } = await load("lib/providers.ts");
   assert.deepEqual(

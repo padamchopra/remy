@@ -9,6 +9,15 @@ export function apiError(error: unknown): string {
   return raw;
 }
 
+export function pairingError(error: unknown): string {
+  if (statusOf(error) === 401) return "Scan a new pairing QR and try again.";
+  const message = apiError(error);
+  if (/network request failed|failed to fetch|load failed/i.test(message)) {
+    return "Open Tailscale on this iPhone and try again.";
+  }
+  return message;
+}
+
 /// A failure that still knows the code it came back with. A 404 from a Mac on
 /// an older build means "this one cannot do that", which reads differently from
 /// "that failed" — and the sentence alone cannot be asked which it was.

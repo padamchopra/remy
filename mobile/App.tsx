@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, StatusBar, StyleSheet, View } from "react-native";
 import { DarkTheme, NavigationContainer, createNavigationContainerRef } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
@@ -6,6 +6,7 @@ import * as Linking from "expo-linking";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { color } from "./src/theme";
+import { pairingError } from "./src/lib/api-error";
 import { hostLabel, parsePairingLink, threadIdFromLink } from "./src/lib/pairing";
 import { hydrateAppearance } from "./src/lib/devices";
 import { loadPairings, originOf, removePairing, savePairings, upsertPairing, type Pairing } from "./src/lib/session";
@@ -15,6 +16,7 @@ import { useStore } from "./src/state/store";
 import type { RootStackParamList } from "./src/navigation";
 import { PairRequestModal } from "./src/components/PairRequest";
 import { PairedShell } from "./src/components/PairedShell";
+import { Toast, type ToastMessage } from "./src/components/Toast";
 import { AgentScreen } from "./src/screens/AgentScreen";
 import { PairScreen } from "./src/screens/PairScreen";
 import { RoutineScreen } from "./src/screens/RoutineScreen";
@@ -37,9 +39,11 @@ const NAV_THEME = {
 
 function PairedApp({
   onCommit,
+  onPairError,
   onUnpair,
 }: {
   onCommit: (pairing: Pairing) => Promise<void>;
+  onPairError: (error: unknown) => void;
   onUnpair: (url: string) => void;
 }) {
   const start = useStore((s) => s.start);
@@ -130,8 +134,9 @@ function PairedApp({
                       ...(probed.deviceId ? { deviceId: probed.deviceId } : {}),
                     });
                     navigation.navigate("Home");
-                  } catch {
+                  } catch (error) {
                     navigation.goBack();
+                    onPairError(error);
                   }
                 })();
               }}
@@ -148,8 +153,18 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [pairings, setPairings] = useState<Pairing[]>([]);
   const [scan, setScan] = useState(false);
+  const [toast, setToast] = useState<ToastMessage>();
   const pairingsRef = useRef<Pairing[]>([]);
   pairingsRef.current = pairings;
+
+  const dismissToast = useCallback(() => setToast(undefined), []);
+  const showPairError = useCallback((error: unknown) => {
+    setToast({
+      id: Date.now(),
+      title: "Couldn't pair with that Mac",
+      detail: pairingError(error),
+    });
+  }, []);
 
   useEffect(() => {
     void Promise.all([loadPairings(), hydrateAppearance()]).then(([loaded]) => {
@@ -193,8 +208,10 @@ export default function App() {
           name: probed.name,
           ...(probed.deviceId ? { deviceId: probed.deviceId } : {}),
         });
-      } catch {
-        if (pairingsRef.current.length === 0) await commit(pairing);
+      } catch (error) {
+        setScan(false);
+        showPairError(error);
+        return;
       }
       setScan(false);
       return;
@@ -211,7 +228,7 @@ export default function App() {
       if (url) void applyLink(url);
     });
     return () => sub.remove();
-  }, []);
+  }, [showPairError]);
 
   if (!ready) {
     return (
@@ -228,7 +245,7 @@ export default function App() {
         <SafeAreaView style={styles.root} edges={pairings.length > 0 ? ["left", "right"] : ["top", "left", "right"]}>
           {pairings.length > 0 ? (
             <NavigationContainer ref={navRef} theme={NAV_THEME}>
-              <PairedApp onCommit={commit} onUnpair={forget} />
+              <PairedApp onCommit={commit} onPairError={showPairError} onUnpair={forget} />
             </NavigationContainer>
           ) : scan ? (
             <ScanScreen
@@ -238,6 +255,7 @@ export default function App() {
           ) : (
             <PairScreen onPaired={(pairing) => void commit(pairing)} onScan={() => setScan(true)} />
           )}
+          <Toast message={toast} onDismiss={dismissToast} />
         </SafeAreaView>
       </SafeAreaProvider>
     </GestureHandlerRootView>
