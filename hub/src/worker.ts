@@ -14,13 +14,15 @@ import {
 import { D1AccountStore, type AccountStore } from "./account-store.js";
 import { AccountService, bearerToken, webSessionCookie } from "./accounts.js";
 import { authFor } from "./auth.js";
+import { D1OrganizationStore, type OrganizationStore } from "./organization-store.js";
+import { OrganizationError, OrganizationService } from "./organizations.js";
 
 export interface Env {
   AUTH_SECRET: SecretsStoreSecret;
   BETTER_AUTH_URL: string;
   COORDINATOR: DurableObjectNamespace;
   DB: D1Database;
-  EMAILS?: Queue<{ kind: "auth.magic-link" | "auth.verify-email" | "auth.change-email"; recipient: string; url: string }>;
+  EMAILS?: Queue<{ kind: "auth.magic-link" | "auth.verify-email" | "auth.change-email" | "organization.invite"; recipient: string; url: string }>;
   ENVIRONMENT: HubEnvironment;
   JOBS: Queue<UptimeCheckFrame>;
   OBJECTS: R2Bucket;
@@ -42,6 +44,8 @@ type HandlerDependencies = {
 type AccountRouteDependencies = {
   accountStore?: (env: Env) => AccountStore;
   accountService?: (store: AccountStore) => AccountService;
+  organizationStore?: (env: Env) => OrganizationStore;
+  organizationService?: (store: OrganizationStore) => OrganizationService;
   betterAuth?: typeof authFor;
 };
 
@@ -103,6 +107,8 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
   }
   const store = (dependencies.accountStore ?? ((current) => new D1AccountStore(current.DB)))(env);
   const service = (dependencies.accountService ?? ((current) => new AccountService(current)))(store);
+  const organizationStore = (dependencies.organizationStore ?? ((current) => new D1OrganizationStore(current.DB)))(env);
+  const organizations = (dependencies.organizationService ?? ((current) => new OrganizationService(current)))(organizationStore);
 
   if (url.pathname === "/api/auth/sign-in/magic-link" && request.method === "POST") {
     const cloned = request.clone();
@@ -147,11 +153,62 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     || url.pathname === "/api/sessions"
     || url.pathname === "/api/sessions/revoke-all"
     || url.pathname === "/api/profile"
-    || /^\/api\/sessions\/[^/]+$/.test(url.pathname);
+    || /^\/api\/sessions\/[^/]+$/.test(url.pathname)
+    || url.pathname === "/api/invitations/accept"
+    || url.pathname === "/api/organizations"
+    || url.pathname.startsWith("/api/organizations/");
   if (!protectedRoute) return Response.json(hubErrorSchema.parse({ error: "Not found" }), { status: 404 });
 
   const identity = await identityFor(request, service);
   if (!identity) return jsonError("Sign in again.", 401);
+  try {
+    if (url.pathname === "/api/organizations" && request.method === "GET") return Response.json({ organizations: await organizations.list(identity.userId) });
+    if (url.pathname === "/api/organizations" && request.method === "POST") {
+      const input = await body<{ name?: string }>(request); const name = input?.name?.trim();
+      if (!name || name.length > 120) return jsonError("Enter an organization name.", 400);
+      return Response.json(await organizations.create(identity.userId, name), { status: 201 });
+    }
+    if (url.pathname === "/api/invitations/accept" && request.method === "POST") {
+      const input = await body<{ token?: string }>(request);
+      if (!input?.token) return jsonError("Open a valid invitation link.", 400);
+      const profile = await store.profile(identity.userId);
+      return Response.json(await organizations.acceptInvite(identity.userId, input.token, profile?.verifiedEmails ?? []));
+    }
+    const organizationMatch = /^\/api\/organizations\/([^/]+)(?:\/(.*))?$/.exec(url.pathname);
+    if (organizationMatch) {
+      const organizationId = decodeURIComponent(organizationMatch[1]); const tail = organizationMatch[2] ?? "";
+      if (tail === "members" && request.method === "GET") return Response.json({ members: await organizations.members(organizationId, identity.userId) });
+      if (tail === "invites" && request.method === "POST") {
+        const input = await body<{ email?: string; role?: "admin" | "member" }>(request);
+        if (input?.role !== "admin" && input?.role !== "member") return jsonError("Choose admin or member access.", 400);
+        if (input.email !== undefined && (!/^\S+@\S+\.\S+$/.test(input.email) || input.email.length > 254)) return jsonError("Enter a valid email address.", 400);
+        if (input.email && !env.EMAILS) return jsonError("Email invitations are unavailable.", 503);
+        const invite = await organizations.createInvite(organizationId, identity.userId, { ...(input.email ? { email: input.email } : {}), role: input.role });
+        if (input.email) { await env.EMAILS!.send({ kind: "organization.invite", recipient: input.email, url: `${url.origin}/invite/${encodeURIComponent(invite.token)}` }); const { token: _, ...delivered } = invite; return Response.json(delivered, { status: 201 }); }
+        return Response.json(invite, { status: 201 });
+      }
+      if (tail === "teams" && request.method === "GET") return Response.json({ teams: await organizations.teams(organizationId, identity.userId) });
+      if (tail === "teams" && request.method === "POST") { const input = await body<{ name?: string }>(request); const name = input?.name?.trim(); if (!name || name.length > 120) return jsonError("Enter a team name.", 400); return Response.json(await organizations.createTeam(organizationId, identity.userId, name), { status: 201 }); }
+      if (tail === "leave" && request.method === "POST") { await organizations.leave(organizationId, identity.userId); return new Response(null, { status: 204 }); }
+      if (tail === "transfer" && request.method === "POST") { const input = await body<{ userId?: string }>(request); if (!input?.userId) return jsonError("Choose a new owner.", 400); await organizations.transfer(organizationId, identity.userId, input.userId); return new Response(null, { status: 204 }); }
+      if (tail === "deletion-impact" && request.method === "GET") return Response.json(await organizations.deletionImpact(organizationId, identity.userId));
+      if (!tail && request.method === "PATCH") { const input = await body<{ name?: string }>(request); const name = input?.name?.trim(); if (!name || name.length > 120) return jsonError("Enter an organization name.", 400); await organizations.rename(organizationId, identity.userId, name); return new Response(null, { status: 204 }); }
+      if (!tail && request.method === "DELETE") { const input = await body<{ confirmation?: string }>(request); await organizations.delete(organizationId, identity.userId, input?.confirmation ?? ""); return new Response(null, { status: 204 }); }
+      const memberMatch = /^members\/([^/]+)$/.exec(tail);
+      if (memberMatch && request.method === "PATCH") { const input = await body<{ role?: "admin" | "member" }>(request); if (input?.role !== "admin" && input?.role !== "member") return jsonError("Choose admin or member access.", 400); await organizations.changeRole(organizationId, identity.userId, decodeURIComponent(memberMatch[1]), input.role); return new Response(null, { status: 204 }); }
+      if (memberMatch && request.method === "DELETE") { await organizations.removeMember(organizationId, identity.userId, decodeURIComponent(memberMatch[1])); return new Response(null, { status: 204 }); }
+      const teamMatch = /^teams\/([^/]+)$/.exec(tail);
+      if (teamMatch && request.method === "PATCH") { const input = await body<{ name?: string }>(request); const name = input?.name?.trim(); if (!name || name.length > 120) return jsonError("Enter a team name.", 400); await organizations.renameTeam(organizationId, identity.userId, decodeURIComponent(teamMatch[1]), name); return new Response(null, { status: 204 }); }
+      if (teamMatch && request.method === "DELETE") { await organizations.deleteTeam(organizationId, identity.userId, decodeURIComponent(teamMatch[1])); return new Response(null, { status: 204 }); }
+      const teamMemberMatch = /^teams\/([^/]+)\/members\/([^/]+)$/.exec(tail);
+      if (teamMemberMatch && (request.method === "PUT" || request.method === "DELETE")) { await organizations.changeTeamMember(organizationId, identity.userId, decodeURIComponent(teamMemberMatch[1]), decodeURIComponent(teamMemberMatch[2]), request.method === "PUT"); return new Response(null, { status: 204 }); }
+      const teamMembersMatch = /^teams\/([^/]+)\/members$/.exec(tail);
+      if (teamMembersMatch && request.method === "GET") return Response.json({ userIds: await organizations.teamMembers(organizationId, identity.userId, decodeURIComponent(teamMembersMatch[1])) });
+    }
+  } catch (error) {
+    if (error instanceof OrganizationError) return jsonError(error.message, error.status);
+    throw error;
+  }
   if (url.pathname === "/api/device/approve" && request.method === "POST") {
     const input = await body<{ userCode?: string }>(request);
     if (typeof input?.userCode !== "string") return jsonError("Enter the code shown on your device.", 400);

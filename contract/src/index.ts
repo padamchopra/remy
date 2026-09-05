@@ -129,10 +129,27 @@ export const accountSessionSchema = z.object({
 });
 export type AccountSession = z.infer<typeof accountSessionSchema>;
 
+export const organizationRoleSchema = z.enum(["owner", "admin", "member"]);
+export type OrganizationRole = z.infer<typeof organizationRoleSchema>;
+export const organizationSchema = z.object({ id: z.string().min(1), name: z.string().min(1), role: organizationRoleSchema, createdAt: z.number().int(), updatedAt: z.number().int() });
+export type Organization = z.infer<typeof organizationSchema>;
+export const organizationMemberSchema = z.object({ id: z.string().min(1), organizationId: z.string().min(1), userId: z.string().min(1), role: organizationRoleSchema, createdAt: z.number().int(), updatedAt: z.number().int() });
+export type OrganizationMember = z.infer<typeof organizationMemberSchema>;
+export const organizationTeamSchema = z.object({ id: z.string().min(1), organizationId: z.string().min(1), name: z.string().min(1), createdAt: z.number().int(), updatedAt: z.number().int() });
+export type OrganizationTeam = z.infer<typeof organizationTeamSchema>;
+export const organizationInviteSchema = z.object({ id: z.string().min(1), organizationId: z.string().min(1), email: z.string().email().optional(), role: z.enum(["admin", "member"]), expiresAt: z.number().int(), token: z.string().min(32).optional() });
+export type OrganizationInvite = z.infer<typeof organizationInviteSchema>;
+export const organizationDeletionImpactSchema = z.object({ organizationId: z.string().min(1), name: z.string().min(1), members: z.number().int().nonnegative(), teams: z.number().int().nonnegative(), invites: z.number().int().nonnegative(), deletes: z.array(z.string().min(1)) });
+export type OrganizationDeletionImpact = z.infer<typeof organizationDeletionImpactSchema>;
+
 export const hubRoutes = {
   health: { method: "GET", path: "/health", response: hubHealthSchema },
   profile: { method: "GET", path: "/api/profile", response: accountProfileSchema },
   sessions: { method: "GET", path: "/api/sessions", response: z.object({ sessions: z.array(accountSessionSchema) }) },
   startDeviceAuthorization: { method: "POST", path: "/api/device/authorization", response: deviceAuthorizationSchema },
   refreshSession: { method: "POST", path: "/api/sessions/refresh", response: tokenPairSchema },
+  organizations: { method: "GET", path: "/api/organizations", response: z.object({ organizations: z.array(organizationSchema) }) },
+  organizationMembers: { method: "GET", path: "/api/organizations/:organizationId/members", response: z.object({ members: z.array(organizationMemberSchema) }) },
+  organizationTeams: { method: "GET", path: "/api/organizations/:organizationId/teams", response: z.object({ teams: z.array(organizationTeamSchema) }) },
+  organizationDeletionImpact: { method: "GET", path: "/api/organizations/:organizationId/deletion-impact", response: organizationDeletionImpactSchema },
 } as const;

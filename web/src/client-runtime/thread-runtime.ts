@@ -1,6 +1,7 @@
 import { applyProjectIdentity } from "~/lib/projects";
 import type { Transport } from "~/lib/transport";
 import { warmSnapshot, writeWarmCache } from "~/lib/warm-cache";
+import { mergeEntryUpdates, uniqueEntries } from "~/lib/thread-entry-merge";
 import type { State } from "~/state/store";
 import type {
   ArchivedThread,
@@ -601,7 +602,7 @@ function mergeDetailRefresh(current: ChatDetail | undefined, fresh: ChatDetail):
   if (overlap < 0) return fresh;
   return {
     ...fresh,
-    entries: [...current.entries.slice(0, overlap), ...fresh.entries],
+    entries: uniqueEntries([...current.entries.slice(0, overlap), ...fresh.entries]),
     history: overlap > 0 ? current.history : fresh.history,
   };
 }
@@ -625,13 +626,7 @@ function mergeDetail(detail: ChatDetail, frame: ChatFrame): ChatDetail {
     entries = entries.filter((entry) => !removed.has(entry.id));
   }
   if (frame.entries?.length) {
-    const next = entries.slice();
-    for (const entry of frame.entries) {
-      const index = next.findIndex((current) => current.id === entry.id);
-      if (index >= 0) next[index] = entry;
-      else next.push(entry);
-    }
-    entries = next;
+    entries = mergeEntryUpdates(entries, frame.entries, detail.id, detail.serverId);
   }
   return {
     ...detail,
