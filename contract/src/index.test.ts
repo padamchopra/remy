@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CONTRACT_VERSION, accountProfileSchema, computerHeartbeatSchema, deviceAuthorizationSchema, organizationDeletionImpactSchema, organizationSchema, parseHubHealth, tokenPairSchema, uptimeCheckFrameSchema } from "./index.js";
+import { CONTRACT_VERSION, accountProfileSchema, computerHeartbeatSchema, deviceAuthorizationSchema, organizationDeletionImpactSchema, organizationSchema, organizationWorkspaceSchema, parseHubHealth, tokenPairSchema, uptimeCheckFrameSchema } from "./index.js";
 
 test("accepts a compatible hub health response", () => {
   const health = parseHubHealth({
@@ -61,5 +61,11 @@ test("validates account, token, and device authorization contracts", () => {
 
 test("validates organization membership and deletion contracts", () => {
   assert.equal(organizationSchema.parse({ id: "org-1", name: "Acme", role: "owner", createdAt: 1, updatedAt: 1 }).role, "owner");
-  assert.equal(organizationDeletionImpactSchema.parse({ organizationId: "org-1", name: "Acme", members: 2, teams: 1, invites: 1, deletes: ["memberships"] }).members, 2);
+  assert.equal(organizationDeletionImpactSchema.parse({ organizationId: "org-1", name: "Acme", members: 2, teams: 1, invites: 1, workspaces: 3, deletes: ["memberships"] }).workspaces, 3);
+});
+
+test("validates organization workspaces and optional administrative access", () => {
+  const workspace = { id: "workspace-1", organizationId: "org-1", name: "Remy", origin: "github.com/padam/remy", restricted: true, createdAt: 1, updatedAt: 1 };
+  assert.equal(organizationWorkspaceSchema.parse(workspace).restricted, true);
+  assert.deepEqual(organizationWorkspaceSchema.parse({ ...workspace, access: { teamIds: ["team-1"], userIds: [] } }).access?.teamIds, ["team-1"]);
 });

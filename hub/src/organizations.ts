@@ -1,5 +1,5 @@
 import { tokenHash } from "./accounts.js";
-import type { AuditEvent, Membership, OrganizationInvite, OrganizationRole, OrganizationStore, OrganizationTeam } from "./organization-store.js";
+import type { AuditEvent, Membership, OrganizationInvite, OrganizationRole, OrganizationStore, OrganizationTeam, WorkspaceAccess } from "./organization-store.js";
 
 const INVITE_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
 type Clock = () => number;
@@ -10,6 +10,10 @@ function token(random: Random): string {
   let raw = "";
   for (const byte of random(32)) raw += String.fromCharCode(byte);
   return btoa(raw).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+}
+
+function repositoryOrigin(value: string): string {
+  return value.trim().replace(/\.git$/i, "").replace(/^git@([^:]+):/, "$1/").replace(/^ssh:\/\//, "").replace(/^https?:\/\//, "").replace(/\/$/, "");
 }
 
 export class OrganizationError extends Error {
@@ -27,6 +31,13 @@ export class OrganizationService {
     const member = await this.store.membership(organizationId, userId);
     if (!member || (allowed && !allowed.includes(member.role))) throw new OrganizationError(404, "Organization not found.");
     return member;
+  }
+  private async workspaceAccessInput(organizationId: string, access: WorkspaceAccess): Promise<WorkspaceAccess> {
+    const teamIds = [...new Set(access.teamIds)];
+    const userIds = [...new Set(access.userIds)];
+    for (const teamId of teamIds) if (!await this.store.team(organizationId, teamId)) throw new OrganizationError(404, "Team not found.");
+    for (const memberId of userIds) if (!await this.store.membership(organizationId, memberId)) throw new OrganizationError(404, "Member not found.");
+    return { teamIds, userIds };
   }
   async list(userId: string) { return this.store.organizationsFor(userId); }
   async create(userId: string, name: string) {
@@ -62,10 +73,39 @@ export class OrganizationService {
   async renameTeam(organizationId: string, userId: string, teamId: string, name: string) { await this.access(organizationId, userId, ["owner", "admin"]); if (!await this.store.renameTeam(organizationId, teamId, name, this.now())) throw new OrganizationError(404, "Team not found."); await this.audit(organizationId, userId, "team.renamed", "team", teamId); }
   async deleteTeam(organizationId: string, userId: string, teamId: string) { await this.access(organizationId, userId, ["owner", "admin"]); if (!await this.store.deleteTeam(organizationId, teamId)) throw new OrganizationError(404, "Team not found."); await this.audit(organizationId, userId, "team.deleted", "team", teamId); }
   async changeTeamMember(organizationId: string, userId: string, teamId: string, memberUserId: string, add: boolean) { await this.access(organizationId, userId, ["owner", "admin"]); if (!await this.store.team(organizationId, teamId) || !await this.store.membership(organizationId, memberUserId)) throw new OrganizationError(404, "Team not found."); const changed = add ? await this.store.addTeamMember(organizationId, teamId, memberUserId, this.now()) : await this.store.removeTeamMember(organizationId, teamId, memberUserId); if (!changed) throw new OrganizationError(404, add ? "Member not found." : "Team member not found."); await this.audit(organizationId, userId, add ? "team.member_added" : "team.member_removed", "team", teamId, { userId: memberUserId }); }
+  async workspaces(organizationId: string, userId: string) { const member = await this.access(organizationId, userId); return this.store.visibleWorkspaces(organizationId, userId, member.role !== "member"); }
+  async workspace(organizationId: string, userId: string, workspaceId: string) {
+    const member = await this.access(organizationId, userId);
+    const workspace = (await this.store.visibleWorkspaces(organizationId, userId, member.role !== "member")).find((candidate) => candidate.id === workspaceId);
+    if (!workspace) throw new OrganizationError(404, "Workspace not found.");
+    return member.role === "member" ? workspace : { ...workspace, access: await this.store.workspaceAccess(organizationId, workspaceId) };
+  }
+  async createWorkspace(organizationId: string, userId: string, input: { name: string; origin: string; access?: WorkspaceAccess }) {
+    await this.access(organizationId, userId, ["owner", "admin"]);
+    const origin = repositoryOrigin(input.origin);
+    if (!origin) throw new OrganizationError(400, "Enter the repository origin.");
+    if (await this.store.workspaceByOrigin(organizationId, origin)) throw new OrganizationError(409, "This workspace is already registered.");
+    const access = input.access ? await this.workspaceAccessInput(organizationId, input.access) : { teamIds: [], userIds: [] };
+    const now = this.now();
+    const workspace = { id: crypto.randomUUID(), organizationId, name: input.name, origin, restricted: input.access !== undefined, createdAt: now, updatedAt: now };
+    await this.store.createWorkspace(workspace, access);
+    await this.audit(organizationId, userId, "workspace.created", "workspace", workspace.id, { restricted: workspace.restricted });
+    return { ...workspace, access };
+  }
+  async updateWorkspace(organizationId: string, userId: string, workspaceId: string, patch: { name?: string; access?: WorkspaceAccess | null }) {
+    await this.access(organizationId, userId, ["owner", "admin"]);
+    if (!await this.store.workspace(organizationId, workspaceId)) throw new OrganizationError(404, "Workspace not found.");
+    const access = patch.access === undefined ? undefined : patch.access === null ? { teamIds: [], userIds: [] } : await this.workspaceAccessInput(organizationId, patch.access);
+    await this.store.updateWorkspace(organizationId, workspaceId, { ...(patch.name ? { name: patch.name } : {}), ...(patch.access !== undefined ? { restricted: patch.access !== null } : {}) }, this.now());
+    if (access) await this.store.replaceWorkspaceAccess(organizationId, workspaceId, access);
+    await this.audit(organizationId, userId, "workspace.updated", "workspace", workspaceId, { ...(patch.name ? { name: true } : {}), ...(patch.access !== undefined ? { access: patch.access === null ? "organization" : "restricted" } : {}) });
+    return this.workspace(organizationId, userId, workspaceId);
+  }
+  async deleteWorkspace(organizationId: string, userId: string, workspaceId: string) { await this.access(organizationId, userId, ["owner", "admin"]); if (!await this.store.deleteWorkspace(organizationId, workspaceId)) throw new OrganizationError(404, "Workspace not found."); await this.audit(organizationId, userId, "workspace.deleted", "workspace", workspaceId); }
   async removeMember(organizationId: string, userId: string, memberUserId: string) { const actor = await this.access(organizationId, userId, ["owner", "admin"]); const target = await this.store.membership(organizationId, memberUserId); if (!target || target.role === "owner" || (actor.role === "admin" && target.role === "admin")) throw new OrganizationError(404, "Member not found."); await this.store.removeMembership(organizationId, memberUserId); await this.audit(organizationId, userId, "membership.removed", "user", memberUserId); }
   async changeRole(organizationId: string, userId: string, memberUserId: string, role: "admin" | "member") { await this.access(organizationId, userId, ["owner"]); const target = await this.store.membership(organizationId, memberUserId); if (!target || target.role === "owner") throw new OrganizationError(404, "Member not found."); await this.store.updateMembershipRole(organizationId, memberUserId, role, this.now()); await this.audit(organizationId, userId, "membership.role_changed", "user", memberUserId, { role }); }
   async leave(organizationId: string, userId: string) { const member = await this.access(organizationId, userId); if (member.role === "owner") throw new OrganizationError(409, "Transfer ownership before you leave."); await this.store.removeMembership(organizationId, userId); await this.audit(organizationId, userId, "membership.left", "user", userId); }
   async transfer(organizationId: string, userId: string, nextOwnerId: string) { await this.access(organizationId, userId, ["owner"]); const next = await this.store.membership(organizationId, nextOwnerId); if (!next) throw new OrganizationError(404, "Member not found."); const now = this.now(); await this.store.updateMembershipRole(organizationId, nextOwnerId, "owner", now); await this.store.updateMembershipRole(organizationId, userId, "admin", now); await this.audit(organizationId, userId, "ownership.transferred", "user", nextOwnerId); }
-  async deletionImpact(organizationId: string, userId: string) { await this.access(organizationId, userId, ["owner"]); const organization = await this.store.organization(organizationId); if (!organization) throw new OrganizationError(404, "Organization not found."); return { organizationId, name: organization.name, ...(await this.store.counts(organizationId)), deletes: ["memberships", "teams", "invitations", "organization settings"] as const }; }
+  async deletionImpact(organizationId: string, userId: string) { await this.access(organizationId, userId, ["owner"]); const organization = await this.store.organization(organizationId); if (!organization) throw new OrganizationError(404, "Organization not found."); return { organizationId, name: organization.name, ...(await this.store.counts(organizationId)), deletes: ["memberships", "teams", "invitations", "workspaces", "organization settings"] as const }; }
   async delete(organizationId: string, userId: string, confirmation: string) { const impact = await this.deletionImpact(organizationId, userId); if (confirmation !== impact.name) throw new OrganizationError(400, "Enter the organization name to confirm deletion."); await this.audit(organizationId, userId, "organization.deleted", "organization", organizationId, impact); await this.store.deleteOrganization(organizationId); }
 }

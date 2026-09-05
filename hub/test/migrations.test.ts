@@ -14,6 +14,7 @@ import { authOptionsFor } from "../src/auth.js";
 const identityMigration = readFileSync(new URL("../migrations/0001_identity.sql", import.meta.url), "utf8");
 const accountsMigration = readFileSync(new URL("../migrations/0002_accounts.sql", import.meta.url), "utf8");
 const organizationsMigration = readFileSync(new URL("../migrations/0003_organizations.sql", import.meta.url), "utf8");
+const workspacesMigration = readFileSync(new URL("../migrations/0004_workspaces.sql", import.meta.url), "utf8");
 const hubRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
 function migratedDatabase(): DatabaseSync {
@@ -22,6 +23,7 @@ function migratedDatabase(): DatabaseSync {
   database.exec(identityMigration);
   database.exec(accountsMigration);
   database.exec(organizationsMigration);
+  database.exec(workspacesMigration);
   return database;
 }
 
@@ -113,6 +115,17 @@ test("organization teams cannot contain a member from another tenant", () => {
   assert.throws(() => database.prepare("INSERT INTO organization_team_members (organization_id,team_id,user_id,created_at) VALUES ('first','team','other',1)").run(), /FOREIGN KEY/);
 });
 
+test("workspace access cannot grant teams or members from another tenant", () => {
+  const database = migratedDatabase();
+  database.prepare("INSERT INTO user (id,name,email,createdAt,updatedAt) VALUES ('owner','Owner','owner@example.com',1,1),('other','Other','other@example.com',1,1)").run();
+  database.prepare("INSERT INTO organizations (id,name,createdAt,updatedAt) VALUES ('first','First',1,1),('second','Second',1,1)").run();
+  database.prepare("INSERT INTO memberships (id,organization_id,user_id,role,createdAt,updatedAt) VALUES ('m1','first','owner','owner',1,1),('m2','second','other','owner',1,1)").run();
+  database.prepare("INSERT INTO organization_teams (id,organization_id,name,created_at,updated_at) VALUES ('team','second','Builders',1,1)").run();
+  database.prepare("INSERT INTO organization_workspaces (id,organization_id,name,origin,restricted,created_at,updated_at) VALUES ('workspace','first','Remy','github.com/padam/remy',1,1,1)").run();
+  assert.throws(() => database.prepare("INSERT INTO organization_workspace_teams (organization_id,workspace_id,team_id) VALUES ('first','workspace','team')").run(), /FOREIGN KEY/);
+  assert.throws(() => database.prepare("INSERT INTO organization_workspace_members (organization_id,workspace_id,user_id) VALUES ('first','workspace','other')").run(), /FOREIGN KEY/);
+});
+
 test("Wrangler records the migration and makes a second apply a no-op", (context) => {
   const fixture = mkdtempSync(join(tmpdir(), "remy-hub-migrations-"));
   context.after(() => rmSync(fixture, { force: true, recursive: true }));
@@ -122,6 +135,7 @@ test("Wrangler records the migration and makes a second apply a no-op", (context
   copyFileSync(new URL("../migrations/0001_identity.sql", import.meta.url), join(migrations, "0001_identity.sql"));
   copyFileSync(new URL("../migrations/0002_accounts.sql", import.meta.url), join(migrations, "0002_accounts.sql"));
   copyFileSync(new URL("../migrations/0003_organizations.sql", import.meta.url), join(migrations, "0003_organizations.sql"));
+  copyFileSync(new URL("../migrations/0004_workspaces.sql", import.meta.url), join(migrations, "0004_workspaces.sql"));
   const config = join(fixture, "wrangler.jsonc");
   writeFileSync(
     config,
@@ -151,5 +165,6 @@ test("Wrangler records the migration and makes a second apply a no-op", (context
   assert.match(firstApply, /0001_identity\.sql/);
   assert.match(firstApply, /0002_accounts\.sql/);
   assert.match(firstApply, /0003_organizations\.sql/);
+  assert.match(firstApply, /0004_workspaces\.sql/);
   assert.match(apply(), /No migrations to apply/);
 });
