@@ -5,13 +5,12 @@ import { promisify } from "node:util";
 
 import { CONTRACT_VERSION, parseHubHealth, type HubEnvironment } from "@remy/contract";
 
-type RunCommand = (file: string, args: string[], input?: string) => Promise<void>;
+type RunCommand = (file: string, args: string[]) => Promise<void>;
 
 type DeployOptions = {
   environment: HubEnvironment;
   release: string;
   hubUrl: string;
-  authSecret: string;
   run?: RunCommand;
   fetchHealth?: typeof fetch;
 };
@@ -28,7 +27,7 @@ export function deploymentHubUrl(environment: HubEnvironment): string {
   return hubUrls[environment];
 }
 
-const runCommand: RunCommand = (file, args, input) =>
+const runCommand: RunCommand = (file, args) =>
   new Promise((resolve, reject) => {
     const child = spawn(file, args, { cwd: hubRoot, stdio: ["pipe", "inherit", "inherit"] });
     child.once("error", reject);
@@ -36,14 +35,12 @@ const runCommand: RunCommand = (file, args, input) =>
       if (code === 0) resolve();
       else reject(new Error(`${file} exited with status ${code ?? "unknown"}`));
     });
-    if (input !== undefined) child.stdin.end(input);
-    else child.stdin.end();
+    child.stdin.end();
   });
 
 export async function deployHub(options: DeployOptions): Promise<void> {
   const run = options.run ?? runCommand;
   await run(wrangler, ["d1", "migrations", "apply", "DB", "--remote", "--env", options.environment]);
-  await run(wrangler, ["secret", "put", "BETTER_AUTH_SECRET", "--env", options.environment], options.authSecret);
   await run(wrangler, [
     "deploy",
     "--env",
@@ -70,9 +67,6 @@ if (invokedPath && fileURLToPath(import.meta.url) === invokedPath) {
   }
   const release = process.env.RELEASE ?? (await execute("git", ["rev-parse", "HEAD"], { cwd: hubRoot })).stdout.trim();
   const hubUrl = deploymentHubUrl(environment);
-  const authSecret = process.env.BETTER_AUTH_SECRET;
-  if (!release || !authSecret) {
-    throw new Error("BETTER_AUTH_SECRET is required");
-  }
-  await deployHub({ authSecret, environment, hubUrl, release });
+  if (!release) throw new Error("The release is required");
+  await deployHub({ environment, hubUrl, release });
 }

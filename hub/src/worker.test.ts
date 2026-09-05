@@ -3,13 +3,19 @@ import test from "node:test";
 
 import { CONTRACT_VERSION, parseHubHealth } from "@remy/contract";
 
-import { createHandler, handleRequest, type Env } from "./worker.js";
+import { createHandler, handleRequest, runUptimeCheck, type Env } from "./worker.js";
 
 const env = {
-  BETTER_AUTH_SECRET: "test-secret-with-at-least-thirty-two-characters",
+  AUTH_SECRET: { get: async () => "test-secret-with-at-least-thirty-two-characters" } as SecretsStoreSecret,
   BETTER_AUTH_URL: "https://hub.example",
-  DB: {} as D1Database,
+  COORDINATOR: {
+    idFromName: () => ({}) as DurableObjectId,
+    get: () => ({ fetch: async () => Response.json({ status: "ok" }) }),
+  } as unknown as DurableObjectNamespace,
+  DB: { prepare: () => ({ first: async () => ({ 1: 1 }) }) } as unknown as D1Database,
   ENVIRONMENT: "staging",
+  JOBS: {} as Queue,
+  OBJECTS: { head: async () => null } as unknown as R2Bucket,
   RELEASE: "0123456789abcdef",
 } satisfies Env;
 
@@ -21,6 +27,14 @@ test("reports the deployed hub contract", async () => {
     contractVersion: CONTRACT_VERSION,
     environment: "staging",
     release: "0123456789abcdef",
+    status: "ok",
+    dependencies: {
+      database: "ready",
+      coordinator: "ready",
+      objectStore: "ready",
+      queue: "ready",
+      secrets: "ready",
+    },
   });
 });
 
@@ -29,6 +43,38 @@ test("returns JSON for an unknown route", async () => {
 
   assert.equal(response.status, 404);
   assert.deepEqual(await response.json(), { error: "Not found" });
+});
+
+test("reports a degraded dependency without exposing its failure", async () => {
+  const response = await handleRequest(new Request("https://hub.example/health"), {
+    ...env,
+    AUTH_SECRET: { get: async () => { throw new Error("secret value"); } } as unknown as SecretsStoreSecret,
+  });
+
+  assert.equal(response.status, 503);
+  const body = await response.json() as { status: string; dependencies: { secrets: string } };
+  assert.equal(body.status, "degraded");
+  assert.equal(body.dependencies.secrets, "unavailable");
+  assert.doesNotMatch(JSON.stringify(body), /secret value/);
+});
+
+test("the scheduled uptime check publishes the typed result", async () => {
+  const frames: unknown[] = [];
+  await runUptimeCheck(
+    { ...env, JOBS: { send: async (frame: unknown) => { frames.push(frame); } } as unknown as Queue },
+    async () => Response.json(await (await handleRequest(new Request("https://hub.example/health"), env)).json()),
+  );
+
+  assert.equal(frames.length, 1);
+  assert.deepEqual(frames[0], {
+    checkedAt: (frames[0] as { checkedAt: string }).checkedAt,
+    contractVersion: CONTRACT_VERSION,
+    environment: "staging",
+    kind: "uptime.check",
+    release: "0123456789abcdef",
+    status: "ok",
+    statusCode: 200,
+  });
 });
 
 test("emits one correlated outcome for success and missing routes", async () => {
@@ -90,8 +136,17 @@ test("turns an uncaught failure into one redacted error outcome", async () => {
   assert.equal(response.status, 500);
   assert.equal(response.headers.get("x-request-id"), "error-id");
   assert.deepEqual(await response.json(), { error: "Internal server error" });
-  assert.equal(events.length, 1);
+  assert.equal(events.length, 2);
   assert.deepEqual(events[0], {
+    event: "error.unhandled",
+    environment: "staging",
+    release: "0123456789abcdef",
+    requestId: "error-id",
+    method: "GET",
+    route: "/fail",
+    errorType: "Error",
+  });
+  assert.deepEqual(events[1], {
     event: "request.outcome",
     environment: "staging",
     release: "0123456789abcdef",

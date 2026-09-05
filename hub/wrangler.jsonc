@@ -12,6 +12,12 @@
       "invocation_logs": true
     }
   },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["HubCoordinator"]
+    }
+  ],
   "env": {
     "staging": {
       "name": "remy-hub-staging",
@@ -39,7 +45,47 @@
           "database_id": "e4ce6806-cc4b-4538-b99d-85e2171ffc44",
           "migrations_dir": "migrations"
         }
-      ]
+      ],
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "COORDINATOR",
+            "class_name": "HubCoordinator"
+          }
+        ]
+      },
+      "r2_buckets": [
+        {
+          "binding": "OBJECTS",
+          "bucket_name": "remy-hub-production-artifacts"
+        }
+      ],
+      "queues": {
+        "producers": [
+          {
+            "binding": "JOBS",
+            "queue": "remy-hub-production-jobs"
+          }
+        ],
+        "consumers": [
+          {
+            "queue": "remy-hub-production-jobs",
+            "max_batch_size": 10,
+            "max_batch_timeout": 5,
+            "max_retries": 3
+          }
+        ]
+      },
+      "secrets_store_secrets": [
+        {
+          "binding": "AUTH_SECRET",
+          "store_id": "9f04524ffaa040fdaa53acbaaa06d064",
+          "secret_name": "BETTER_AUTH_SECRET"
+        }
+      ],
+      "triggers": {
+        "crons": ["*/5 * * * *"]
+      }
     }
   }
 }
