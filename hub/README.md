@@ -54,7 +54,9 @@ A person may belong to any number of organizations as an owner, admin, or member
 
 Owners and admins can invite people by email or a single-use link and manage named teams. Email invitations are delivered through the `EMAILS` queue and may be accepted only by the addressed verified account. Removing a member also removes that person's team memberships. An owner must transfer ownership before leaving.
 
-Deleting an organization is a two-step operation. `GET /api/organizations/:id/deletion-impact` returns the affected membership, team, and outstanding invitation counts; `DELETE /api/organizations/:id` requires the exact organization name. The deletion cascades through memberships, teams, team memberships, invitations, domains, and SSO configuration. Audit events remain available for the later security log even after the organization is deleted.
+Deleting an organization is a two-step operation. `GET /api/organizations/:id/deletion-impact` returns the affected membership, team, outstanding invitation, and workspace counts; `DELETE /api/organizations/:id` requires the exact organization name. The deletion cascades through memberships, teams, team memberships, invitations, workspaces, access grants, domains, and SSO configuration. Audit events remain available for the later security log even after the organization is deleted.
+
+An organization workspace identifies one repository by its normalized origin. It is visible to the whole organization by default, or restricted to explicit teams and members; owners and admins always retain visibility so they can manage access. `GET /api/organizations/:id/workspaces` applies that filter before returning the catalogue, so every consumer—including command-palette search—starts from the same authorized set.
 
 ## Release
 

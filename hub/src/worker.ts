@@ -189,6 +189,14 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       }
       if (tail === "teams" && request.method === "GET") return Response.json({ teams: await organizations.teams(organizationId, identity.userId) });
       if (tail === "teams" && request.method === "POST") { const input = await body<{ name?: string }>(request); const name = input?.name?.trim(); if (!name || name.length > 120) return jsonError("Enter a team name.", 400); return Response.json(await organizations.createTeam(organizationId, identity.userId, name), { status: 201 }); }
+      if (tail === "workspaces" && request.method === "GET") return Response.json({ workspaces: await organizations.workspaces(organizationId, identity.userId) });
+      if (tail === "workspaces" && request.method === "POST") {
+        const input = await body<{ name?: string; origin?: string; access?: { teamIds?: unknown; userIds?: unknown } }>(request); const name = input?.name?.trim(); const origin = input?.origin?.trim();
+        if (!name || name.length > 120) return jsonError("Enter a workspace name.", 400);
+        if (!origin || origin.length > 512) return jsonError("Enter the repository origin.", 400);
+        if (input?.access && (!Array.isArray(input.access.teamIds) || !input.access.teamIds.every((id) => typeof id === "string") || !Array.isArray(input.access.userIds) || !input.access.userIds.every((id) => typeof id === "string"))) return jsonError("Choose valid workspace access.", 400);
+        return Response.json(await organizations.createWorkspace(organizationId, identity.userId, { name, origin, ...(input?.access ? { access: input.access as { teamIds: string[]; userIds: string[] } } : {}) }), { status: 201 });
+      }
       if (tail === "leave" && request.method === "POST") { await organizations.leave(organizationId, identity.userId); return new Response(null, { status: 204 }); }
       if (tail === "transfer" && request.method === "POST") { const input = await body<{ userId?: string }>(request); if (!input?.userId) return jsonError("Choose a new owner.", 400); await organizations.transfer(organizationId, identity.userId, input.userId); return new Response(null, { status: 204 }); }
       if (tail === "deletion-impact" && request.method === "GET") return Response.json(await organizations.deletionImpact(organizationId, identity.userId));
@@ -204,6 +212,16 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       if (teamMemberMatch && (request.method === "PUT" || request.method === "DELETE")) { await organizations.changeTeamMember(organizationId, identity.userId, decodeURIComponent(teamMemberMatch[1]), decodeURIComponent(teamMemberMatch[2]), request.method === "PUT"); return new Response(null, { status: 204 }); }
       const teamMembersMatch = /^teams\/([^/]+)\/members$/.exec(tail);
       if (teamMembersMatch && request.method === "GET") return Response.json({ userIds: await organizations.teamMembers(organizationId, identity.userId, decodeURIComponent(teamMembersMatch[1])) });
+      const workspaceMatch = /^workspaces\/([^/]+)$/.exec(tail);
+      if (workspaceMatch && request.method === "GET") return Response.json(await organizations.workspace(organizationId, identity.userId, decodeURIComponent(workspaceMatch[1])));
+      if (workspaceMatch && request.method === "PATCH") {
+        const input = await body<{ name?: unknown; access?: null | { teamIds?: unknown; userIds?: unknown } }>(request);
+        if (!input || (input.name === undefined && input.access === undefined)) return jsonError("Choose a workspace change.", 400);
+        if (input.name !== undefined && (typeof input.name !== "string" || !input.name.trim() || input.name.length > 120)) return jsonError("Enter a workspace name.", 400);
+        if (input.access !== undefined && input.access !== null && (!Array.isArray(input.access.teamIds) || !input.access.teamIds.every((id) => typeof id === "string") || !Array.isArray(input.access.userIds) || !input.access.userIds.every((id) => typeof id === "string"))) return jsonError("Choose valid workspace access.", 400);
+        return Response.json(await organizations.updateWorkspace(organizationId, identity.userId, decodeURIComponent(workspaceMatch[1]), { ...(typeof input.name === "string" ? { name: input.name.trim() } : {}), ...(input.access !== undefined ? { access: input.access as { teamIds: string[]; userIds: string[] } | null } : {}) }));
+      }
+      if (workspaceMatch && request.method === "DELETE") { await organizations.deleteWorkspace(organizationId, identity.userId, decodeURIComponent(workspaceMatch[1])); return new Response(null, { status: 204 }); }
     }
   } catch (error) {
     if (error instanceof OrganizationError) return jsonError(error.message, error.status);

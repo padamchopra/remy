@@ -139,7 +139,11 @@ export const organizationTeamSchema = z.object({ id: z.string().min(1), organiza
 export type OrganizationTeam = z.infer<typeof organizationTeamSchema>;
 export const organizationInviteSchema = z.object({ id: z.string().min(1), organizationId: z.string().min(1), email: z.string().email().optional(), role: z.enum(["admin", "member"]), expiresAt: z.number().int(), token: z.string().min(32).optional() });
 export type OrganizationInvite = z.infer<typeof organizationInviteSchema>;
-export const organizationDeletionImpactSchema = z.object({ organizationId: z.string().min(1), name: z.string().min(1), members: z.number().int().nonnegative(), teams: z.number().int().nonnegative(), invites: z.number().int().nonnegative(), deletes: z.array(z.string().min(1)) });
+export const workspaceAccessSchema = z.object({ teamIds: z.array(z.string().min(1)), userIds: z.array(z.string().min(1)) });
+export type WorkspaceAccess = z.infer<typeof workspaceAccessSchema>;
+export const organizationWorkspaceSchema = z.object({ id: z.string().min(1), organizationId: z.string().min(1), name: z.string().min(1), origin: z.string().min(1), restricted: z.boolean(), createdAt: z.number().int(), updatedAt: z.number().int(), access: workspaceAccessSchema.optional() });
+export type OrganizationWorkspace = z.infer<typeof organizationWorkspaceSchema>;
+export const organizationDeletionImpactSchema = z.object({ organizationId: z.string().min(1), name: z.string().min(1), members: z.number().int().nonnegative(), teams: z.number().int().nonnegative(), invites: z.number().int().nonnegative(), workspaces: z.number().int().nonnegative(), deletes: z.array(z.string().min(1)) });
 export type OrganizationDeletionImpact = z.infer<typeof organizationDeletionImpactSchema>;
 
 export const hubRoutes = {
@@ -151,5 +155,7 @@ export const hubRoutes = {
   organizations: { method: "GET", path: "/api/organizations", response: z.object({ organizations: z.array(organizationSchema) }) },
   organizationMembers: { method: "GET", path: "/api/organizations/:organizationId/members", response: z.object({ members: z.array(organizationMemberSchema) }) },
   organizationTeams: { method: "GET", path: "/api/organizations/:organizationId/teams", response: z.object({ teams: z.array(organizationTeamSchema) }) },
+  organizationWorkspaces: { method: "GET", path: "/api/organizations/:organizationId/workspaces", response: z.object({ workspaces: z.array(organizationWorkspaceSchema) }) },
+  organizationWorkspace: { method: "GET", path: "/api/organizations/:organizationId/workspaces/:workspaceId", response: organizationWorkspaceSchema },
   organizationDeletionImpact: { method: "GET", path: "/api/organizations/:organizationId/deletion-impact", response: organizationDeletionImpactSchema },
 } as const;
