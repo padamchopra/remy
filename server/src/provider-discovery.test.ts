@@ -69,6 +69,12 @@ test("Codex app-server models keep its live names and default", () => {
   assert.equal(models.length, 2);
 });
 
+test("Codex formats Astra model names for the picker", () => {
+  const models = codexModels([{ model: "gpt-6-astra", displayName: "GPT-6-Astra" }]);
+
+  assert.equal(models[1]?.label, "GPT-6 Astra");
+});
+
 test("Cursor models come from the installed CLI and show its active default", () => {
   const models = cursorModels(
     "Available models\n\nauto - Auto (default)\ngrok-4.6[effort=high,fast=true] - Grok 4.6 High Fast (256K)\n",

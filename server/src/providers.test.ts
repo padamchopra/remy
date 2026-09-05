@@ -30,6 +30,7 @@ test("a model only ever belongs to the provider that answers to it", () => {
   assert.equal(providerModel("claude", "sonnet"), "sonnet");
   assert.equal(providerModel("claude", "claude-fable-5-1[1m]"), "claude-fable-5-1[1m]");
   assert.equal(providerModel("codex", "sonnet"), "");
+  assert.equal(providerModel("codex", "gpt-6-astra"), "gpt-6-astra");
   assert.equal(providerModel("codex", "gpt-5.6-sol"), "gpt-5.6-sol");
   assert.equal(knowsModel("claude", "gpt-5.6-sol"), false);
   assert.equal(knowsModel("claude", ""), true);
@@ -40,6 +41,7 @@ test("a model only ever belongs to the provider that answers to it", () => {
 test("a model reads as its own name, and an empty one as the default", () => {
   assert.equal(modelLabel("claude", "opus"), "Opus 5");
   assert.equal(modelLabel("claude", "claude-fable-5-1[1m]"), "Fable 5.1");
+  assert.equal(modelLabel("codex", "gpt-6-astra"), "GPT-6 Astra");
   assert.equal(modelLabel("codex", "gpt-5.6-luna"), "GPT-5.6 Luna");
   assert.equal(modelLabel("codex", ""), "Default");
 });
