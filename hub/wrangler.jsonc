@@ -21,13 +21,6 @@
   "env": {
     "staging": {
       "name": "remy-hub-staging",
-      "workers_dev": false,
-      "routes": [
-        {
-          "pattern": "staging.tryremy.dev",
-          "custom_domain": true
-        }
-      ],
       "vars": {
         "ENVIRONMENT": "staging"
       },
