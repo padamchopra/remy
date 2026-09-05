@@ -48,6 +48,14 @@ Only SHA-256 token hashes are stored in `auth_sessions` and `device_authorizatio
 
 An organization's verified domain may enforce its SSO provider. Enforcement blocks magic links before Better Auth sends mail. Follow the [Okta](docs/sso/okta.md) or [Microsoft Entra ID](docs/sso/entra.md) setup guide and test the provider before enabling enforcement.
 
+## Organizations
+
+A person may belong to any number of organizations as an owner, admin, or member. Every organization route authorizes the signed-in person against the organization ID in that request; a valid session cannot distinguish another organization's resource from a missing one.
+
+Owners and admins can invite people by email or a single-use link and manage named teams. Email invitations are delivered through the `EMAILS` queue and may be accepted only by the addressed verified account. Removing a member also removes that person's team memberships. An owner must transfer ownership before leaving.
+
+Deleting an organization is a two-step operation. `GET /api/organizations/:id/deletion-impact` returns the affected membership, team, and outstanding invitation counts; `DELETE /api/organizations/:id` requires the exact organization name. The deletion cascades through memberships, teams, team memberships, invitations, domains, and SSO configuration. Audit events remain available for the later security log even after the organization is deleted.
+
 ## Release
 
 Pull requests that touch `contract/`, `hub/`, or the hub workflow run contract tests, hub tests, typechecks, migration replay, and both environment dry-runs in GitHub Actions. GitHub Actions never receives deployment credentials.
@@ -64,4 +72,4 @@ Workers Logs records one `request.outcome` JSON event for every request and a re
 
 A Cron Trigger checks `/health` every five minutes. Its typed result travels through Queue, is retained at `uptime/latest.json` in R2, and is serialized through the coordinator object. Failed checks retry through Queue and appear as Worker errors. The health response probes D1, R2, the coordinator, Queue binding, and Secrets Store without returning credentials or stored data.
 
-Hosted computer provisioning remains behind `ComputerRuntimeProvider`. This service setup does not connect authentication routes, organisation board objects, or a runtime provider yet.
+Hosted computer provisioning remains behind `ComputerRuntimeProvider`. This service setup does not connect organization board objects or a runtime provider yet.
