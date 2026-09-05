@@ -1,6 +1,6 @@
 # Remy for Teams hub
 
-The optional hub connects people and Remy computers while local Remy remains a complete product with no hosted dependency. Production runs on Cloudflare Workers; the provider-neutral contract keeps a later self-hosted adapter possible.
+The optional hub connects people and Remy computers while local Remy remains a complete product with no hosted dependency. Production runs at `https://tryremy.dev` on Cloudflare Workers; the provider-neutral contract keeps a later self-hosted adapter possible. The production Worker has no public `workers.dev` route.
 
 Run every command below from `hub/`.
 

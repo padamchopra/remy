@@ -2,7 +2,7 @@
 
 Create a SAML 2.0 application in Okta and use these values:
 
-- Single sign-on URL: `https://<your-hub>/api/auth/sso/saml2/callback/<provider-id>`
+- Single sign-on URL: `https://tryremy.dev/api/auth/sso/saml2/callback/<provider-id>`
 - Audience URI: the provider ID you choose in Remy
 - Name ID format: EmailAddress
 - Name ID: `user.email`

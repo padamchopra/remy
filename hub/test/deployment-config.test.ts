@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 
 type EnvironmentConfig = {
   name: string;
+  workers_dev?: boolean;
+  routes?: Array<{ pattern: string; custom_domain: boolean }>;
   vars: { ENVIRONMENT: string };
   d1_databases: Array<{ binding: string; database_id: string; database_name: string }>;
   durable_objects?: { bindings: Array<{ name: string; class_name: string }> };
@@ -40,6 +42,8 @@ test("staging and production have isolated deployable topology", () => {
   assert.equal(staging.vars.ENVIRONMENT, "staging");
   assert.equal(production.vars.ENVIRONMENT, "production");
   assert.equal(production.name, "remy-prod");
+  assert.equal(production.workers_dev, false);
+  assert.deepEqual(production.routes, [{ pattern: "tryremy.dev", custom_domain: true }]);
   assert.notEqual(staging.name, production.name);
   assert.notEqual(staging.d1_databases[0]?.database_id, production.d1_databases[0]?.database_id);
   for (const environment of [staging, production]) {

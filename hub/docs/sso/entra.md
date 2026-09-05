@@ -2,7 +2,7 @@
 
 Register a web application in Microsoft Entra ID and add this redirect URI:
 
-`https://<your-hub>/api/auth/sso/callback/<provider-id>`
+`https://tryremy.dev/api/auth/sso/callback/<provider-id>`
 
 Create a client secret, then copy the tenant issuer, client ID, and secret into your organization's OpenID Connect settings. Request the `openid`, `profile`, and `email` scopes. The email claim must contain the person's verified organization address.
 
