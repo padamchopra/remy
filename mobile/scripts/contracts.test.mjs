@@ -72,6 +72,18 @@ test("message images accept only formats the daemon validates", options, async (
   assert.equal(extensionFor("image/webp"), "webp");
 });
 
+test("phone board moves mint ranks between the same neighbours as desktop", options, async () => {
+  const { neighboursAt } = await load("lib/tickets.ts");
+  const tickets = [
+    { id: "a", parentId: undefined, status: "todo", rank: "b", createdAt: 1 },
+    { id: "b", parentId: undefined, status: "todo", rank: "m", createdAt: 2 },
+    { id: "c", parentId: undefined, status: "todo", rank: "t", createdAt: 3 },
+    { id: "child", parentId: "a", status: "todo", rank: "c", createdAt: 4 },
+  ];
+  assert.deepEqual(neighboursAt(tickets, "todo", 0, "c"), { before: undefined, after: "b" });
+  assert.deepEqual(neighboursAt(tickets, "todo", 2, "b"), { before: "t", after: undefined });
+});
+
 test("a reachable relayed computer becomes an independent phone pairing", options, async () => {
   const { directPairingForPeer, pairingServerId, upsertFleetPairing } = await load("lib/fleet-pairing.ts");
   const learned = directPairingForPeer(

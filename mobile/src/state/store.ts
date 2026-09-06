@@ -119,6 +119,7 @@ interface State {
   tickets: Ticket[];
   routines: Routine[];
   boardDevices: { deviceId: string; serverId: string }[];
+  boardUnavailable: Record<string, string>;
   boardLoading: boolean;
   loading: boolean;
   error?: string;
@@ -196,9 +197,19 @@ interface State {
   stopThread(id: string): Promise<void>;
   ticketFromThread(id: string): Promise<Ticket>;
   createTicket(input: { projectId: string; title: string; body?: string; parentId?: string }): Promise<Ticket>;
+  startTicket(
+    id: string,
+    options?: { provider?: string; model?: string; effort?: string; checkout?: "main" | "worktree" },
+  ): Promise<{ id: string; serverId: string }>;
   updateTicket(id: string, patch: Record<string, unknown>): Promise<void>;
-  moveTicket(id: string, status: TicketStatus): Promise<void>;
+  moveTicket(id: string, status: TicketStatus, before?: string, after?: string): Promise<void>;
   commentOnTicket(id: string, body: string): Promise<void>;
+  editTicketComment(id: string, commentId: string, body: string): Promise<void>;
+  deleteTicketComment(id: string, commentId: string): Promise<void>;
+  deleteTicket(id: string): Promise<void>;
+  attachThread(ticketId: string, chatId: string): Promise<void>;
+  detachThread(ticketId: string, chatId: string, deviceId: string): Promise<void>;
+  handoffTicket(id: string, agentId: string): Promise<void>;
   ticketActivity(id: string): Promise<TicketActivity[]>;
   answerPair(id: string, decision: "approve" | "deny"): Promise<void>;
 }
@@ -262,6 +273,7 @@ export const useStore = create<State>((set, get) => ({
   routines: [],
   pairRequests: [],
   boardDevices: [],
+  boardUnavailable: {},
   boardLoading: false,
   detailLoading: false,
   loading: true,
@@ -416,6 +428,7 @@ export const useStore = create<State>((set, get) => ({
         providers: {},
         missing: {},
         threadsUnavailable: {},
+        boardUnavailable: {},
         loading: false,
         error: undefined,
         connected: false,
@@ -439,6 +452,7 @@ export const useStore = create<State>((set, get) => ({
       settings: onlyPaired(current.settings, paired),
       providers: onlyPaired(current.providers, paired),
       missing: onlyPaired(current.missing, paired),
+      boardUnavailable: onlyPaired(current.boardUnavailable, paired),
       threadsUnavailable: Object.fromEntries(
         results.flatMap((r) => (r.unavailable ? [[r.server.id, r.unavailable]] : [])),
       ),
@@ -563,10 +577,11 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async loadBoard(serverId) {
-    const servers = get().servers.length ? get().servers : await transport.servers();
+    const servers = (get().servers.length ? get().servers : await transport.servers())
+      .filter((server) => !server.cloud);
     if (servers.length === 0) {
       slices.clear();
-      set({ agents: [], projects: [], tickets: [], routines: [], boardDevices: [], boardLoading: false });
+      set({ agents: [], projects: [], tickets: [], routines: [], boardDevices: [], boardUnavailable: {}, boardLoading: false });
       return;
     }
     // One Mac's frame refreshes one Mac's slice. The board converges rather
@@ -575,7 +590,7 @@ export const useStore = create<State>((set, get) => ({
     const wanted = serverId ? servers.filter((server) => server.id === serverId) : servers;
     if (wanted.length === 0) return;
     if (get().tickets.length === 0) set({ boardLoading: true });
-    await Promise.all(wanted.map(async (server) => {
+    const availability = await Promise.all(wanted.map(async (server) => {
       try {
         const board = await transport.request<{
           deviceId?: string;
@@ -602,8 +617,10 @@ export const useStore = create<State>((set, get) => ({
           routines: (board.routines ?? []).map((raw) => ({ ...raw, serverId: server.id }) as Routine),
           hasRoutines: board.routines !== undefined,
         });
-      } catch {
+        return [server.id, undefined] as const;
+      } catch (error) {
         // Its last answer stays on screen; the Mac shows as unreachable.
+        return [server.id, error instanceof Error ? error.message : String(error)] as const;
       }
     }));
     const dedupe = <T extends { id: string }>(rows: T[]): T[] =>
@@ -619,6 +636,11 @@ export const useStore = create<State>((set, get) => ({
     set((current) => {
       const projects = dedupe(ordered.flatMap((slice) => slice.projects));
       const missing = { ...current.missing };
+      const boardUnavailable = { ...current.boardUnavailable };
+      for (const [id, failure] of availability) {
+        if (failure) boardUnavailable[id] = failure;
+        else delete boardUnavailable[id];
+      }
       for (const server of servers) {
         const slice = slices.get(server.id);
         if (!slice) continue;
@@ -634,6 +656,7 @@ export const useStore = create<State>((set, get) => ({
           .sort((a, b) => a.rank.localeCompare(b.rank)),
         routines: dedupe(ordered.flatMap((slice) => slice.routines)),
         boardDevices: ordered.flatMap((slice) => slice.devices),
+        boardUnavailable,
         boardLoading: false,
         missing,
       };
@@ -652,6 +675,23 @@ export const useStore = create<State>((set, get) => ({
     // event and send a board frame of their own when they do.
     await get().loadBoard(serverId);
     return { ...body.ticket, serverId, threads: body.ticket.threads ?? [] } as Ticket;
+  },
+
+  async startTicket(id, options = {}) {
+    const ticket = get().tickets.find((entry) => entry.id === id);
+    if (!ticket) throw new Error("That ticket is gone.");
+    const serverId = ticket.deviceId
+      ? get().boardDevices.find((entry) => entry.deviceId === ticket.deviceId)?.serverId
+      : ticket.serverId;
+    if (!serverId) throw new Error("That computer isn't connected.");
+    const body = await transport.request<{ chat?: RawChat }>(
+      serverId,
+      `/tickets/${encodeURIComponent(id)}/start`,
+      { method: "POST", body: options },
+    );
+    if (!body.chat?.id) throw new Error("Couldn't start that thread.");
+    await Promise.all([get().refresh(), get().loadBoard(serverId)]);
+    return { id: body.chat.id, serverId };
   },
 
   async updateServer(id, patch) {
@@ -1141,11 +1181,19 @@ export const useStore = create<State>((set, get) => ({
   async updateTicket(id, patch) {
     const ticket = get().tickets.find((entry) => entry.id === id);
     if (!ticket) return;
-    await transport.request(ticket.serverId, `/tickets/${encodeURIComponent(id)}`, { method: "PATCH", body: patch });
-    await get().loadBoard(ticket.serverId);
+    const body = await transport.request<{ ticket?: RawTicket }>(
+      ticket.serverId,
+      `/tickets/${encodeURIComponent(id)}`,
+      { method: "PATCH", body: patch },
+    );
+    if (body.ticket) {
+      const updated = { ...body.ticket, serverId: ticket.serverId, threads: body.ticket.threads ?? [] } as Ticket;
+      set((current) => ({ tickets: replace(current.tickets, updated) }));
+    }
+    void get().loadBoard(ticket.serverId).catch(() => {});
   },
 
-  async moveTicket(id, status) {
+  async moveTicket(id, status, before, after) {
     const ticket = get().tickets.find((entry) => entry.id === id);
     if (!ticket) return;
     set((current) => ({
@@ -1154,7 +1202,7 @@ export const useStore = create<State>((set, get) => ({
     try {
       await transport.request(ticket.serverId, `/tickets/${encodeURIComponent(id)}/move`, {
         method: "POST",
-        body: { status },
+        body: { status, before, after },
       });
     } finally {
       await get().loadBoard(ticket.serverId);
@@ -1169,6 +1217,93 @@ export const useStore = create<State>((set, get) => ({
       body: { body },
     });
     await get().loadBoard(ticket.serverId);
+  },
+
+  async editTicketComment(id, commentId, body) {
+    const ticket = get().tickets.find((entry) => entry.id === id);
+    if (!ticket) return;
+    await transport.request(
+      ticket.serverId,
+      `/tickets/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
+      { method: "PATCH", body: { body } },
+    );
+    void get().loadBoard(ticket.serverId).catch(() => {});
+  },
+
+  async deleteTicketComment(id, commentId) {
+    const ticket = get().tickets.find((entry) => entry.id === id);
+    if (!ticket) return;
+    await transport.request(
+      ticket.serverId,
+      `/tickets/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
+      { method: "DELETE" },
+    );
+    void get().loadBoard(ticket.serverId).catch(() => {});
+  },
+
+  async deleteTicket(id) {
+    const ticket = get().tickets.find((entry) => entry.id === id);
+    if (!ticket) return;
+    await transport.request(ticket.serverId, `/tickets/${encodeURIComponent(id)}`, { method: "DELETE" });
+    set((current) => ({ tickets: current.tickets.filter((entry) => entry.id !== id) }));
+    void get().loadBoard(ticket.serverId).catch(() => {});
+  },
+
+  async attachThread(ticketId, chatId) {
+    const ticket = get().tickets.find((entry) => entry.id === ticketId);
+    const chat = get().chats.find((entry) => entry.id === chatId);
+    if (!ticket) throw new Error("That ticket is gone.");
+    if (!chat) throw new Error("That thread is gone.");
+    const deviceId = get().boardDevices.find((entry) => entry.serverId === chat.serverId)?.deviceId;
+    if (!deviceId) throw new Error("That thread's computer isn't connected.");
+    const body = await transport.request<{ ticket?: RawTicket }>(
+      ticket.serverId,
+      `/tickets/${encodeURIComponent(ticketId)}/threads`,
+      {
+        method: "POST",
+        body: {
+          chatId,
+          deviceId,
+          state: chat.state,
+          ...(chat.agentId ? { agentId: chat.agentId } : {}),
+        },
+      },
+    );
+    if (body.ticket) {
+      const updated = { ...body.ticket, serverId: ticket.serverId, threads: body.ticket.threads ?? [] } as Ticket;
+      set((current) => ({ tickets: replace(current.tickets, updated) }));
+    }
+    void get().loadBoard(ticket.serverId).catch(() => {});
+  },
+
+  async detachThread(ticketId, chatId, deviceId) {
+    const ticket = get().tickets.find((entry) => entry.id === ticketId);
+    if (!ticket) return;
+    const body = await transport.request<{ ticket?: RawTicket }>(
+      ticket.serverId,
+      `/tickets/${encodeURIComponent(ticketId)}/threads/${encodeURIComponent(chatId)}?device=${encodeURIComponent(deviceId)}`,
+      { method: "DELETE" },
+    );
+    if (body.ticket) {
+      const updated = { ...body.ticket, serverId: ticket.serverId, threads: body.ticket.threads ?? [] } as Ticket;
+      set((current) => ({ tickets: replace(current.tickets, updated) }));
+    }
+    void get().loadBoard(ticket.serverId).catch(() => {});
+  },
+
+  async handoffTicket(id, agentId) {
+    const ticket = get().tickets.find((entry) => entry.id === id);
+    if (!ticket) throw new Error("That ticket is gone.");
+    const body = await transport.request<{ ticket?: RawTicket }>(
+      ticket.serverId,
+      `/tickets/${encodeURIComponent(id)}/handoff`,
+      { method: "POST", body: { agentId } },
+    );
+    if (body.ticket) {
+      const updated = { ...body.ticket, serverId: ticket.serverId, threads: body.ticket.threads ?? [] } as Ticket;
+      set((current) => ({ tickets: replace(current.tickets, updated) }));
+    }
+    void get().loadBoard(ticket.serverId).catch(() => {});
   },
 
   async ticketActivity(id) {

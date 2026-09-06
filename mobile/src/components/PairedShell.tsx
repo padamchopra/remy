@@ -261,7 +261,12 @@ export function PairedShell({
             }}
           />
         ) : section === "board" && ticket ? (
-          <TicketScreen ticketKey={ticket.key} onOpenThread={openThread} />
+          <TicketScreen
+            ticketKey={ticket.key}
+            onOpenThread={openThread}
+            onOpenTicket={openTicket}
+            onDeleted={() => setTicketKey(undefined)}
+          />
         ) : section === "board" ? (
           <BoardScreen onOpen={(key) => setTicketKey(key)} onCompose={() => setComposingTicket(true)} />
         ) : section === "workspaces" && workspaceId ? (

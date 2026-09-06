@@ -56,3 +56,17 @@ export function subTicketProgress(tickets: Ticket[], ticket: Ticket): { done: nu
   const done = children.filter((entry) => entry.status === "done" || entry.status === "cancelled").length;
   return { done, total: children.length };
 }
+
+export function ticketsInColumn(tickets: Ticket[], status: TicketStatus): Ticket[] {
+  return topLevel(tickets).filter((ticket) => ticket.status === status).sort(byRank);
+}
+
+export function neighboursAt(
+  tickets: Ticket[],
+  status: TicketStatus,
+  index: number,
+  moving: string,
+): { before?: string; after?: string } {
+  const column = ticketsInColumn(tickets, status).filter((ticket) => ticket.id !== moving);
+  return { before: column[index - 1]?.rank, after: column[index]?.rank };
+}

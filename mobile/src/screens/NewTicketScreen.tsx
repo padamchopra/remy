@@ -57,7 +57,7 @@ export function NewTicketScreen({ onCreated }: { onCreated: (key: string) => voi
         <Text style={[type.body, { color: color.mutedForeground }]}>Name the work. You can assign it once it exists.</Text>
         {projects.length > 1 ? (
           <>
-            <Text style={type.caption}>Project</Text>
+            <Text style={type.caption}>Workspace</Text>
             <ScrollView horizontal style={styles.chips} contentContainerStyle={{ gap: 8 }}>
               {projects.map((project) => (
                 <Pressable
