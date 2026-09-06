@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { Archive, GitFork, GitPullRequest, MoreHorizontal, Pencil, Pin, PinOff, Square, SquareKanban, Trash2 } from "lucide-react-native";
+import { Archive, GitFork, GitPullRequest, Globe, MoreHorizontal, Pencil, Pin, PinOff, Square, SquareKanban, SquareTerminal, Trash2 } from "lucide-react-native";
 import { color, radius, space, type } from "../theme";
 import { apiError } from "../lib/api-error";
 import { useStore } from "../state/store";
@@ -16,12 +16,16 @@ export function ThreadMenu({
   onOpenThread,
   onOpenTicket,
   onOpenPullRequest,
+  onOpenBrowser,
+  onOpenTerminal,
 }: {
   chat: Chat;
   onGone: () => void;
   onOpenThread: (id: string) => void;
   onOpenTicket: (key: string) => void;
   onOpenPullRequest: (pullRequest: PullRequestSummary) => void;
+  onOpenBrowser: () => void;
+  onOpenTerminal: () => void;
 }) {
   const pinThread = useStore((s) => s.pinThread);
   const renameThread = useStore((s) => s.renameThread);
@@ -135,6 +139,8 @@ export function ThreadMenu({
             }}
           />
         ) : null}
+        <MenuItem icon={Globe} label="Open shared browser" onPress={() => { setOpen(false); onOpenBrowser(); }} />
+        <MenuItem icon={SquareTerminal} label="Open terminal" onPress={() => { setOpen(false); onOpenTerminal(); }} />
         <MenuSeparator />
         <MenuItem
           icon={Pencil}

@@ -1,5 +1,5 @@
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { ArchiveRestore, CornerDownRight, Folder, Inbox, Laptop, MessagesSquare, Plus, SquareKanban, type LucideIcon } from "lucide-react-native";
+import { ArchiveRestore, CornerDownRight, Folder, GitPullRequest, Inbox, Laptop, MessagesSquare, Plus, SquareKanban, type LucideIcon } from "lucide-react-native";
 import { color, radius, space, type } from "../theme";
 import { useStore } from "../state/store";
 import { displayPath } from "../lib/path";
@@ -8,13 +8,14 @@ import { StateDot } from "./Badge";
 import type { Chat } from "../state/types";
 import { apiError } from "../lib/api-error";
 
-export type AppSection = "inbox" | "threads" | "board" | "workspaces" | "devices";
+export type AppSection = "inbox" | "threads" | "board" | "prs" | "workspaces" | "devices";
 
 const SECTIONS: { id: AppSection; label: string; Icon: LucideIcon }[] = [
   { id: "inbox", label: "Inbox", Icon: Inbox },
   { id: "threads", label: "Threads", Icon: MessagesSquare },
   { id: "workspaces", label: "Workspaces", Icon: Folder },
-  { id: "board", label: "Board", Icon: SquareKanban },
+  { id: "board", label: "Tasks", Icon: SquareKanban },
+  { id: "prs", label: "Pull requests", Icon: GitPullRequest },
   { id: "devices", label: "Devices", Icon: Laptop },
 ];
 

@@ -84,6 +84,29 @@ test("phone board moves mint ranks between the same neighbours as desktop", opti
   assert.deepEqual(neighboursAt(tickets, "todo", 2, "b"), { before: "t", after: undefined });
 });
 
+test("pull requests from several computers collapse and keep desktop stack order", options, async () => {
+  const { mergePullRequests, pullRequestAttention } = await load("lib/pull-requests.ts");
+  const row = (url, serverId, extra = {}) => ({
+    url, serverId, number: 1, title: "One", repository: "acme/repo", headRefName: "one",
+    state: "OPEN", body: "", baseRefName: "main", isDraft: false, reviewDecision: "",
+    authorLogin: "me", updatedAt: "2026-09-01T00:00:00Z", additions: 1, deletions: 0,
+    changedFiles: 1, checks: [], comments: [], unreadComments: [], hasUnreadActivity: false,
+    workspaceId: "workspace", workspaceName: "Repo", workspacePath: "/repo", worktreePath: null,
+    ...extra,
+  });
+  const merged = mergePullRequests([
+    row("https://github.com/acme/repo/pull/1", "laptop"),
+    row("https://github.com/acme/repo/pull/1", "studio", { worktreePath: "/repo/one" }),
+    row("https://github.com/acme/repo/pull/2", "laptop", { number: 2, title: "Two", updatedAt: "2026-09-02T00:00:00Z", stack: { number: 7, position: 1, size: 2, baseRefName: "main" } }),
+    row("https://github.com/acme/repo/pull/3", "laptop", { number: 3, title: "Three", updatedAt: "2026-09-03T00:00:00Z", stack: { number: 7, position: 2, size: 2, baseRefName: "two" } }),
+  ]);
+  assert.equal(merged.length, 3);
+  assert.deepEqual(merged.slice(0, 2).map((entry) => entry.number), [3, 2]);
+  assert.equal(merged[2].serverId, "studio");
+  assert.deepEqual(merged[2].sourceServerIds.sort(), ["laptop", "studio"]);
+  assert.equal(pullRequestAttention(row("x", "laptop", { checks: [{ name: "CI", state: "fail" }] })), "failing");
+});
+
 test("a reachable relayed computer becomes an independent phone pairing", options, async () => {
   const { directPairingForPeer, pairingServerId, upsertFleetPairing } = await load("lib/fleet-pairing.ts");
   const learned = directPairingForPeer(

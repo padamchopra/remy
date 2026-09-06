@@ -304,6 +304,149 @@ export interface PullRequestSummary {
   state: string;
 }
 
+export interface PullRequestCheck {
+  name: string;
+  state: "pass" | "fail" | "pending" | "skipping";
+}
+
+export interface PullRequestComment {
+  author: string;
+  body: string;
+  createdAt: string | null;
+  path?: string | null;
+  line?: number | null;
+}
+
+export interface PullRequestStack {
+  number: number;
+  position: number;
+  size: number;
+  baseRefName: string;
+  entries?: { position: number; number: number; title: string; state: string; isDraft: boolean }[];
+}
+
+export interface AuthoredPullRequest extends PullRequestSummary {
+  stack?: PullRequestStack | null;
+  body: string;
+  repository: string;
+  baseRefName: string;
+  isDraft: boolean;
+  reviewDecision: string;
+  authorLogin: string;
+  updatedAt: string;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  checks: PullRequestCheck[];
+  comments: PullRequestComment[];
+  unreadComments: PullRequestComment[];
+  hasUnreadActivity: boolean;
+  workspaceId: string;
+  workspaceName: string;
+  workspacePath: string;
+  worktreePath: string | null;
+  serverId: string;
+  sourceServerIds?: string[];
+}
+
+export interface PullRequestDiffLine {
+  kind: "add" | "del" | "ctx";
+  text: string;
+  oldLine: number | null;
+  newLine: number | null;
+}
+
+export interface PullRequestDiffHunk {
+  header: string;
+  lines: PullRequestDiffLine[];
+}
+
+export interface PullRequestDiffFile {
+  path: string;
+  previousPath?: string;
+  deleted?: boolean;
+  hunks: PullRequestDiffHunk[];
+  viewed?: boolean;
+}
+
+export interface PullRequestDiff extends Omit<AuthoredPullRequest, "serverId" | "sourceServerIds" | "workspaceName" | "workspacePath" | "worktreePath" | "authorLogin" | "updatedAt" | "comments" | "unreadComments" | "hasUnreadActivity" | "stack"> {
+  nodeId?: string;
+  headRefOid?: string;
+  baseRefOid?: string;
+  mergeable: string;
+  mergeStateStatus: string;
+  files: PullRequestDiffFile[];
+}
+
+export interface PullRequestTimelineItem {
+  id: string;
+  kind: "commit" | "comment" | "review" | "review_comment";
+  author: string;
+  body: string;
+  createdAt: string;
+  url: string;
+  sha?: string | null;
+  state?: string | null;
+  path?: string | null;
+  line?: number | null;
+}
+
+export interface PullRequestGuideCommit {
+  sha: string;
+  title: string;
+  author: string;
+  committedAt: string;
+}
+
+export interface PullRequestGuideHunk {
+  revision?: { head: string; base?: string; previousPath?: string; deleted?: boolean };
+  id: string;
+  path: string;
+  header: string;
+  lines: PullRequestDiffLine[];
+}
+
+export interface PullRequestGuideStep {
+  id: string;
+  title: string;
+  summary: string;
+  hunkIds: string[];
+}
+
+export interface PullRequestGuideQuestion {
+  id: string;
+  stepId: string;
+  hunkId: string;
+  start: number;
+  end: number;
+  question: string;
+  answer: string;
+  createdAt: number;
+}
+
+export interface PullRequestGuide {
+  repository: string;
+  number: number;
+  provider: string;
+  model: string;
+  effort: string;
+  commitShas: string[];
+  commits: PullRequestGuideCommit[];
+  hunks: PullRequestGuideHunk[];
+  steps: PullRequestGuideStep[];
+  uncoveredHunkIds?: string[];
+  questions: PullRequestGuideQuestion[];
+  createdAt: number;
+}
+
+export interface PullRequestMonitoringPolicy {
+  enabled: boolean;
+  agentId: string | null;
+  chatId: string | null;
+  source: "default" | "workspace" | "pull-request";
+  explicit: boolean;
+}
+
 /// What one paired Mac answers with at `GET /server/settings`. Every field an
 /// older Mac may not have is optional, so a missing one reads as "it never
 /// said" rather than as a value the phone then writes back.

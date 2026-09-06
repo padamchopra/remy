@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
-import { Animated, Easing, Keyboard, Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Easing, Keyboard, Pressable, StyleSheet, Text, View } from "react-native";
 import { PanelLeft, PanelLeftClose, Plus, SlidersHorizontal } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { color, space, type } from "../theme";
@@ -17,7 +17,11 @@ import { NewTicketScreen } from "../screens/NewTicketScreen";
 import { DevicesScreen } from "../screens/DevicesScreen";
 import { WorkspacesScreen } from "../screens/WorkspacesScreen";
 import { WorkspaceScreen } from "../screens/WorkspaceScreen";
-import type { ConvArtifact } from "../state/types";
+import { PullRequestsScreen } from "../screens/PullRequestsScreen";
+import { PullRequestScreen } from "../screens/PullRequestScreen";
+import { ThreadToolScreen } from "../screens/ThreadToolScreen";
+import type { AuthoredPullRequest, ConvArtifact, PullRequestSummary } from "../state/types";
+import { workspaceForPath } from "../lib/projects";
 
 const DRAWER_WIDTH = 300;
 const DRAWER_EASING = Easing.bezier(0.32, 0.72, 0, 1);
@@ -56,6 +60,9 @@ export function PairedShell({
   const [composingTicket, setComposingTicket] = useState(false);
   const [workspaceId, setWorkspaceId] = useState<string>();
   const [inboxAgentId, setInboxAgentId] = useState<string>();
+  const [pullRequest, setPullRequest] = useState<AuthoredPullRequest>();
+  const [pullRequestThreadId, setPullRequestThreadId] = useState<string>();
+  const [threadTool, setThreadTool] = useState<"browser" | "terminal">();
 
   const thread = threadId ? chats.find((chat) => chat.id === threadId) : undefined;
   const ticket = ticketKey ? tickets.find((entry) => entry.key === ticketKey) : undefined;
@@ -91,6 +98,9 @@ export function PairedShell({
     setTicketKey(undefined);
     setComposingTicket(false);
     setWorkspaceId(undefined);
+    setPullRequest(undefined);
+    setPullRequestThreadId(undefined);
+    setThreadTool(undefined);
     setSidebarOpen(false);
     if (dm?.agentId) {
       setSection("inbox");
@@ -116,6 +126,7 @@ export function PairedShell({
       setInboxAgentId(undefined);
       setComposingTicket(false);
       setWorkspaceId(undefined);
+      setPullRequest(undefined);
       setTicketKey(artifact.key);
       return;
     }
@@ -132,6 +143,8 @@ export function PairedShell({
       setTicketKey(undefined);
       setComposingTicket(false);
       setWorkspaceId(artifact.id);
+      setPullRequest(undefined);
+      setPullRequestThreadId(undefined);
     }
   };
 
@@ -141,6 +154,9 @@ export function PairedShell({
     setTicketKey(undefined);
     setComposingTicket(false);
     setWorkspaceId(undefined);
+    setPullRequest(undefined);
+    setPullRequestThreadId(undefined);
+    setThreadTool(undefined);
     setInboxAgentId(undefined);
     setSidebarOpen(false);
   };
@@ -151,6 +167,9 @@ export function PairedShell({
     setInboxAgentId(undefined);
     setComposingTicket(false);
     setWorkspaceId(undefined);
+    setPullRequest(undefined);
+    setPullRequestThreadId(undefined);
+    setThreadTool(undefined);
     setTicketKey(key);
     setSidebarOpen(false);
   };
@@ -160,9 +179,46 @@ export function PairedShell({
     setTicketKey(undefined);
     setComposingTicket(false);
     setWorkspaceId(undefined);
+    setPullRequest(undefined);
+    setPullRequestThreadId(undefined);
+    setThreadTool(undefined);
     setThreadId(undefined);
     setInboxAgentId(undefined);
     setSidebarOpen(false);
+  };
+
+  const openPullRequest = (summary: PullRequestSummary, fromThreadId?: string) => {
+    const sourceThread = fromThreadId ? chats.find((chat) => chat.id === fromThreadId) : undefined;
+    const sourceWorkspaces = sourceThread ? workspaces.filter((entry) => entry.serverId === sourceThread.serverId) : [];
+    const workspaceIndex = sourceThread ? workspaceForPath(sourceThread.cwd, sourceWorkspaces) : -1;
+    const workspace = workspaceIndex >= 0 ? sourceWorkspaces[workspaceIndex] : undefined;
+    const match = summary.url.match(/github\.com\/([^/]+\/[^/]+)\/pull\/\d+/);
+    setSection("prs");
+    setThreadId(undefined);
+    setInboxAgentId(undefined);
+    setTicketKey(undefined);
+    setComposingTicket(false);
+    setWorkspaceId(undefined);
+    setPullRequestThreadId(fromThreadId);
+    setPullRequest({
+      ...summary,
+      body: "",
+      repository: match?.[1] ?? workspace?.origin?.replace(/^.*github\.com[/:]/, "").replace(/\.git$/, "") ?? "",
+      baseRefName: "",
+      isDraft: summary.state.toUpperCase() === "DRAFT",
+      reviewDecision: "",
+      authorLogin: "",
+      updatedAt: new Date(0).toISOString(),
+      additions: 0,
+      deletions: 0,
+      changedFiles: 0,
+      checks: [], comments: [], unreadComments: [], hasUnreadActivity: false,
+      workspaceId: workspace?.id ?? "",
+      workspaceName: workspace?.name ?? "Workspace",
+      workspacePath: workspace?.path ?? sourceThread?.cwd ?? "",
+      worktreePath: sourceThread?.cwd ?? null,
+      serverId: sourceThread?.serverId ?? workspace?.serverId ?? "",
+    });
   };
 
   useEffect(() => {
@@ -189,7 +245,8 @@ export function PairedShell({
     : section === "threads" ? "New thread"
     : section === "inbox" && inboxAgent ? inboxAgent.name
     : section === "inbox" ? "Inbox"
-    : section === "board" ? "Board"
+    : section === "board" ? "Tasks"
+    : section === "prs" ? "Pull requests"
     : section === "workspaces" ? "Workspaces"
     : "Devices";
 
@@ -223,7 +280,9 @@ export function PairedShell({
               onGone={newThread}
               onOpenThread={openThread}
               onOpenTicket={openTicket}
-              onOpenPullRequest={(pullRequest) => void Linking.openURL(pullRequest.url)}
+              onOpenPullRequest={(next) => openPullRequest(next, thread.id)}
+              onOpenBrowser={() => setThreadTool("browser")}
+              onOpenTerminal={() => setThreadTool("terminal")}
             />
             <Pressable onPress={newThread} accessibilityLabel="New thread" style={styles.plus}>
               <Plus size={18} color={color.foreground} />
@@ -249,7 +308,7 @@ export function PairedShell({
             id={inboxDm.id}
             onOpenArtifact={openArtifact}
             onOpenThread={openThread}
-            onOpenPullRequest={(pullRequest) => void Linking.openURL(pullRequest.url)}
+            onOpenPullRequest={(next) => openPullRequest(next, inboxDm.id)}
           />
         ) : section === "inbox" ? (
           <InboxScreen onOpen={setInboxAgentId} onSettings={onOpenAgent} />
@@ -273,16 +332,23 @@ export function PairedShell({
           <WorkspaceScreen id={workspaceId} onGone={() => setWorkspaceId(undefined)} />
         ) : section === "workspaces" ? (
           <WorkspacesScreen onWorkspace={setWorkspaceId} />
+        ) : section === "prs" && pullRequest ? (
+          <PullRequestScreen pullRequest={pullRequest} threadId={pullRequestThreadId} onBack={() => setPullRequest(undefined)} onOpenThread={openThread} />
+        ) : section === "prs" ? (
+          <PullRequestsScreen onOpen={(next) => { setPullRequest(next); setPullRequestThreadId(undefined); }} />
         ) : section === "devices" ? (
           <DevicesScreen onPairAnother={onPairAnother} onUnpair={onUnpair} />
         ) : thread ? (
-          <ThreadScreen
-            key={thread.id}
-            id={thread.id}
-            onOpenArtifact={openArtifact}
-            onOpenThread={openThread}
-            onOpenPullRequest={(pullRequest) => void Linking.openURL(pullRequest.url)}
-          />
+          <View style={{ flex: 1 }}>
+            <ThreadScreen
+              key={thread.id}
+              id={thread.id}
+              onOpenArtifact={openArtifact}
+              onOpenThread={openThread}
+              onOpenPullRequest={(next) => openPullRequest(next, thread.id)}
+            />
+            {threadTool ? <ThreadToolScreen chat={thread} tool={threadTool} onClose={() => setThreadTool(undefined)} /> : null}
+          </View>
         ) : (
           <ComposeScreen onCreated={openThread} />
         )}
