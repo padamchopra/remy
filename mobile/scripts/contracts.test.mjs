@@ -63,6 +63,15 @@ test("a relayed device survives a phone restart when discovery is temporarily un
   assert.deepEqual(unpaired.catalogues, {});
 });
 
+test("message images accept only formats the daemon validates", options, async () => {
+  const { extensionFor, imageMimeType } = await load("lib/message-attachments.ts");
+  assert.equal(imageMimeType("image/png"), "image/png");
+  assert.equal(imageMimeType(undefined, "photo.JPEG"), "image/jpeg");
+  assert.equal(imageMimeType("image/heic", "photo.heic"), undefined);
+  assert.equal(extensionFor("image/jpeg"), "jpg");
+  assert.equal(extensionFor("image/webp"), "webp");
+});
+
 test("a reachable relayed computer becomes an independent phone pairing", options, async () => {
   const { directPairingForPeer, pairingServerId, upsertFleetPairing } = await load("lib/fleet-pairing.ts");
   const learned = directPairingForPeer(

@@ -10,7 +10,9 @@ import type {
   Agent,
   Chat,
   ChatApproval,
+  ChatCodeReference,
   ChatDetail,
+  ChatImageAttachment,
   ChatQuestionRequest,
   ChatState,
   ContextUsage,
@@ -140,7 +142,16 @@ interface State {
   /// Clears an inbox conversation's unread mark.
   readChat(id: string): Promise<void>;
   closeChat(): void;
-  sendMessage(text: string): Promise<void>;
+  uploadMessageImage(
+    file: { uri: string; name: string; mimeType: string },
+    onProgress?: (ratio: number) => void,
+  ): Promise<ChatImageAttachment>;
+  messageImage(chatId: string, serverId: string, attachmentId: string): Promise<string>;
+  sendMessage(
+    text: string,
+    attachments?: ChatImageAttachment[],
+    codeReferences?: ChatCodeReference[],
+  ): Promise<void>;
   answerApproval(requestId: string, decision: "allow" | "allowAlways" | "deny"): Promise<void>;
   answerQuestion(requestId: string, answers: Record<string, unknown>): Promise<void>;
   interrupt(): Promise<void>;
@@ -784,13 +795,39 @@ export const useStore = create<State>((set, get) => ({
       });
   },
 
-  async sendMessage(text) {
+  async uploadMessageImage(file, onProgress) {
+    const detail = get().detail;
+    if (!detail) throw new Error("Open a thread before attaching an image.");
+    const body = await transport.upload<{ attachment?: ChatImageAttachment }>(
+      detail.serverId,
+      `/chats/${encodeURIComponent(detail.id)}/upload`,
+      file,
+      onProgress,
+    );
+    if (!body.attachment) throw new Error("That image didn't finish uploading.");
+    return body.attachment;
+  },
+
+  async messageImage(chatId, serverId, attachmentId) {
+    const body = await transport.request<{ image?: { dataUrl?: string } }>(
+      serverId,
+      `/chats/${encodeURIComponent(chatId)}/attachments/${encodeURIComponent(attachmentId)}`,
+    );
+    if (!body.image?.dataUrl) throw new Error("That image is not available.");
+    return body.image.dataUrl;
+  },
+
+  async sendMessage(text, attachments = [], codeReferences = []) {
     const detail = get().detail;
     const trimmed = text.trim();
-    if (!detail || !trimmed) return;
+    if (!detail || (!trimmed && attachments.length === 0 && codeReferences.length === 0)) return;
     await transport.request(detail.serverId, `/chats/${encodeURIComponent(detail.id)}/message`, {
       method: "POST",
-      body: { text: trimmed },
+      body: {
+        text: trimmed,
+        ...(attachments.length > 0 ? { attachments } : {}),
+        ...(codeReferences.length > 0 ? { codeReferences } : {}),
+      },
     });
     if (!get().connected) await get().openChat(detail.id);
   },
