@@ -262,6 +262,17 @@ export interface ChatDetail {
   costUsd?: number;
 }
 
+export interface ArchivedThread {
+  id: string;
+  chatId?: string;
+  serverId: string;
+  title: string;
+  cwd: string;
+  provider?: string;
+  parentChatId?: string;
+  archivedAt: number;
+}
+
 /// The pull request on a thread's branch. Mirrors `PullRequestSummary` in
 /// `server/src/git.ts`.
 export interface PullRequestSummary {

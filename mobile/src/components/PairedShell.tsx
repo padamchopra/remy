@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
-import { Animated, Easing, Keyboard, Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Easing, Keyboard, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { PanelLeft, PanelLeftClose, Plus, SlidersHorizontal } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { color, space, type } from "../theme";
@@ -145,6 +145,16 @@ export function PairedShell({
     setSidebarOpen(false);
   };
 
+  const openTicket = (key: string) => {
+    setSection("board");
+    setThreadId(undefined);
+    setInboxAgentId(undefined);
+    setComposingTicket(false);
+    setWorkspaceId(undefined);
+    setTicketKey(key);
+    setSidebarOpen(false);
+  };
+
   const goSection = (next: AppSection) => {
     setSection(next);
     setTicketKey(undefined);
@@ -208,7 +218,13 @@ export function PairedShell({
           </Pressable>
         ) : section === "threads" && thread ? (
           <View style={styles.actions}>
-            <ThreadMenu chat={thread} onGone={newThread} />
+            <ThreadMenu
+              chat={thread}
+              onGone={newThread}
+              onOpenThread={openThread}
+              onOpenTicket={openTicket}
+              onOpenPullRequest={(pullRequest) => void Linking.openURL(pullRequest.url)}
+            />
             <Pressable onPress={newThread} accessibilityLabel="New thread" style={styles.plus}>
               <Plus size={18} color={color.foreground} />
             </Pressable>
@@ -228,7 +244,13 @@ export function PairedShell({
 
       <View style={styles.body}>
         {section === "inbox" && inboxDm ? (
-          <ThreadScreen key={inboxDm.id} id={inboxDm.id} onOpenArtifact={openArtifact} />
+          <ThreadScreen
+            key={inboxDm.id}
+            id={inboxDm.id}
+            onOpenArtifact={openArtifact}
+            onOpenThread={openThread}
+            onOpenPullRequest={(pullRequest) => void Linking.openURL(pullRequest.url)}
+          />
         ) : section === "inbox" ? (
           <InboxScreen onOpen={setInboxAgentId} onSettings={onOpenAgent} />
         ) : section === "board" && composingTicket ? (
@@ -249,7 +271,13 @@ export function PairedShell({
         ) : section === "devices" ? (
           <DevicesScreen onPairAnother={onPairAnother} onUnpair={onUnpair} />
         ) : thread ? (
-          <ThreadScreen key={thread.id} id={thread.id} onOpenArtifact={openArtifact} />
+          <ThreadScreen
+            key={thread.id}
+            id={thread.id}
+            onOpenArtifact={openArtifact}
+            onOpenThread={openThread}
+            onOpenPullRequest={(pullRequest) => void Linking.openURL(pullRequest.url)}
+          />
         ) : (
           <ComposeScreen onCreated={openThread} />
         )}

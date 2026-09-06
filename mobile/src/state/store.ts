@@ -8,6 +8,7 @@ import { transport } from "../lib/transport";
 import type { TintId } from "../lib/tints";
 import type {
   Agent,
+  ArchivedThread,
   Chat,
   ChatApproval,
   ChatCodeReference,
@@ -78,11 +79,26 @@ interface RawWorkspace {
   virtual?: boolean;
 }
 
+interface RawArchive {
+  id: string;
+  chatId?: string;
+  session: string;
+  archivedAt: number;
+  cwd?: string | null;
+  agent?: string;
+  summary?: boolean;
+  conversation?: {
+    title?: string;
+    parentChatId?: string;
+  };
+}
+
 interface State {
   servers: Server[];
   chats: Chat[];
   /// The inbox: one conversation per agent, across every paired machine.
   dms: Chat[];
+  archived: ArchivedThread[];
   workspaces: Workspace[];
   openId?: string;
   detail?: ChatDetail;
@@ -135,6 +151,7 @@ interface State {
     effort?: string;
     permissionMode?: string;
   }): Promise<{ id: string; serverId: string }>;
+  createSubthread(input: { parentId: string; text: string; includeParent: boolean }): Promise<Chat>;
   openChat(id: string): Promise<void>;
   /// Opens an agent's conversation, making it if this is the first time. The
   /// Mac holding the agent is the one that holds the conversation.
@@ -171,11 +188,13 @@ interface State {
   deleteRoutine(id: string): Promise<void>;
   runRoutine(id: string): Promise<Routine>;
   archiveThread(id: string): Promise<void>;
+  restoreThread(id: string, serverId: string): Promise<Chat>;
   deleteThread(id: string): Promise<void>;
   renameThread(id: string, title: string): Promise<void>;
   pinThread(id: string, pinned: boolean): Promise<void>;
   /// Ends the run a thread is in without sending anything.
   stopThread(id: string): Promise<void>;
+  ticketFromThread(id: string): Promise<Ticket>;
   createTicket(input: { projectId: string; title: string; body?: string; parentId?: string }): Promise<Ticket>;
   updateTicket(id: string, patch: Record<string, unknown>): Promise<void>;
   moveTicket(id: string, status: TicketStatus): Promise<void>;
@@ -199,12 +218,39 @@ const pushing = new Set<string>();
 /// first connect — whose state the boot read already covers — from a reconnect,
 /// which may have missed frames while the socket was gone.
 const streamed = new Set<string>();
-let detailSubscription: (() => void) | undefined;
+const detailCache = new Map<string, ChatDetail>();
+const detailSubscriptions = new Map<string, () => void>();
+const DETAIL_CACHE_LIMIT = 12;
+
+function detailKey(id: string, serverId: string): string {
+  return `${serverId}:${id}`;
+}
+
+function cacheDetail(detail: ChatDetail): void {
+  const key = detailKey(detail.id, detail.serverId);
+  detailCache.delete(key);
+  detailCache.set(key, detail);
+  while (detailCache.size > DETAIL_CACHE_LIMIT) {
+    const oldest = detailCache.keys().next().value as string | undefined;
+    if (!oldest) break;
+    detailCache.delete(oldest);
+    detailSubscriptions.get(oldest)?.();
+    detailSubscriptions.delete(oldest);
+  }
+}
+
+function forgetDetail(id: string, serverId: string): void {
+  const key = detailKey(id, serverId);
+  detailCache.delete(key);
+  detailSubscriptions.get(key)?.();
+  detailSubscriptions.delete(key);
+}
 
 export const useStore = create<State>((set, get) => ({
   servers: [],
   chats: [],
   dms: [],
+  archived: [],
   workspaces: [],
   settings: {},
   providers: {},
@@ -312,8 +358,9 @@ export const useStore = create<State>((set, get) => ({
       if (timer) clearTimeout(timer);
       pushing.clear();
       streamed.clear();
-      detailSubscription?.();
-      detailSubscription = undefined;
+      for (const unsubscribe of detailSubscriptions.values()) unsubscribe();
+      detailSubscriptions.clear();
+      detailCache.clear();
       offPush();
       offStatus();
     };
@@ -336,8 +383,17 @@ export const useStore = create<State>((set, get) => ({
         : []),
     ]);
     if (!reconnect) return;
-    const open = get().detail;
-    if (open?.serverId === serverId) await get().openChat(open.id).catch(() => {});
+    const warm = [...detailCache.values()].filter((detail) => detail.serverId === serverId);
+    await Promise.all(warm.map(async (detail) => {
+      try {
+        const raw = await transport.request<RawChatDetail>(serverId, `/chats/${encodeURIComponent(detail.id)}`);
+        const next = toDetail(raw, serverId);
+        cacheDetail(next);
+        if (get().openId === detail.id && get().detail?.serverId === serverId) set({ detail: next });
+      } catch {
+        forgetDetail(detail.id, serverId);
+      }
+    }));
   },
 
   async refresh() {
@@ -347,10 +403,14 @@ export const useStore = create<State>((set, get) => ({
       slices.clear();
       pushing.clear();
       streamed.clear();
+      for (const unsubscribe of detailSubscriptions.values()) unsubscribe();
+      detailSubscriptions.clear();
+      detailCache.clear();
       set({
         servers: [],
         chats: [],
         dms: [],
+        archived: [],
         workspaces: [],
         settings: {},
         providers: {},
@@ -371,6 +431,9 @@ export const useStore = create<State>((set, get) => ({
     for (const id of [...slices.keys()]) if (!paired.has(id)) slices.delete(id);
     for (const id of [...pushing]) if (!paired.has(id)) pushing.delete(id);
     for (const id of [...streamed]) if (!paired.has(id)) streamed.delete(id);
+    for (const detail of [...detailCache.values()]) {
+      if (!paired.has(detail.serverId)) forgetDetail(detail.id, detail.serverId);
+    }
 
     set((current) => ({
       settings: onlyPaired(current.settings, paired),
@@ -382,6 +445,7 @@ export const useStore = create<State>((set, get) => ({
       servers: results.map((r) => r.server),
       chats: results.flatMap((r) => r.chats).sort(byNewest),
       dms: results.flatMap((r) => r.dms),
+      archived: results.flatMap((r) => r.archived).sort((a, b) => b.archivedAt - a.archivedAt),
       workspaces: applyProjectIdentity(results.flatMap((r) => r.workspaces), get().projects),
       loading: false,
       error: failures.length === servers.length ? failures.join("; ") : undefined,
@@ -407,6 +471,7 @@ export const useStore = create<State>((set, get) => ({
         servers: current.servers.map((entry) => (entry.id === serverId ? result.server : entry)),
         chats: [...others(current.chats), ...result.chats].sort(byNewest),
         dms: [...others(current.dms), ...result.dms],
+        archived: [...others(current.archived), ...result.archived].sort((a, b) => b.archivedAt - a.archivedAt),
         workspaces: applyProjectIdentity(
           [...others(current.workspaces), ...result.workspaces],
           current.projects,
@@ -724,21 +789,46 @@ export const useStore = create<State>((set, get) => ({
     return { id, serverId: server.id };
   },
 
+  async createSubthread(input) {
+    const parent = get().chats.find((chat) => chat.id === input.parentId);
+    if (!parent) throw new Error("That parent thread is no longer available.");
+    if (parent.parentChatId) throw new Error("A subthread can't start another subthread.");
+    const body = await transport.request<{ chat?: RawChat }>(
+      parent.serverId,
+      `/chats/${encodeURIComponent(parent.id)}/subthreads`,
+      { method: "POST", body: { text: input.text, includeParent: input.includeParent } },
+    );
+    if (!body.chat) throw new Error("Couldn't start that subthread.");
+    const child = toChat(body.chat, parent.serverId);
+    set((current) => ({
+      chats: [...current.chats.filter((chat) => chat.id !== child.id), child].sort(byNewest),
+    }));
+    await get().refreshServer(parent.serverId);
+    return child;
+  },
+
   async openChat(id) {
     // Both lists: an inbox conversation opens the same way a thread does.
     const chat = get().chats.find((entry) => entry.id === id)
       ?? get().dms.find((entry) => entry.id === id);
     if (!chat) return;
-    if (get().openId !== id) {
-      detailSubscription?.();
-      detailSubscription = transport.subscribe(() => {}, [`thread:${id}`]);
+    const key = detailKey(id, chat.serverId);
+    if (!detailSubscriptions.has(key)) {
+      detailSubscriptions.set(key, transport.subscribe(() => {}, [`thread:${id}`]));
     }
-    const same = get().detail?.id === id;
-    set({ openId: id, detailLoading: !same, ...(same ? {} : { detail: undefined }) });
+    const cached = detailCache.get(key);
+    const same = get().detail?.id === id && get().detail?.serverId === chat.serverId;
+    set({
+      openId: id,
+      detailLoading: !same && !cached,
+      ...(!same ? { detail: cached } : {}),
+    });
     try {
       const raw = await transport.request<RawChatDetail>(chat.serverId, `/chats/${encodeURIComponent(id)}`);
+      const detail = toDetail(raw, chat.serverId);
+      cacheDetail(detail);
       if (get().openId !== id) return;
-      set({ detail: toDetail(raw, chat.serverId), detailLoading: false });
+      set({ detail, detailLoading: false });
     } catch (error) {
       if (get().openId !== id) return;
       set({ detailLoading: false });
@@ -747,8 +837,8 @@ export const useStore = create<State>((set, get) => ({
   },
 
   closeChat() {
-    detailSubscription?.();
-    detailSubscription = undefined;
+    const detail = get().detail;
+    if (detail) cacheDetail(detail);
     set({ openId: undefined, detail: undefined, detailLoading: false });
   },
 
@@ -971,13 +1061,26 @@ export const useStore = create<State>((set, get) => ({
     const chat = get().chats.find((entry) => entry.id === id);
     if (!chat) return;
     await transport.request(chat.serverId, `/chats/${encodeURIComponent(id)}/archive`, { method: "POST", body: {} });
+    forgetDetail(id, chat.serverId);
     await get().refreshServer(chat.serverId);
+  },
+
+  async restoreThread(id, serverId) {
+    const body = await transport.request<{ chat?: RawChat }>(
+      serverId,
+      `/archives/${encodeURIComponent(id)}/restore`,
+      { method: "POST", body: {} },
+    );
+    if (!body.chat) throw new Error("Couldn't restore that thread.");
+    await get().refreshServer(serverId);
+    return toChat(body.chat, serverId);
   },
 
   async deleteThread(id) {
     const chat = get().chats.find((entry) => entry.id === id);
     if (!chat) return;
     await transport.request(chat.serverId, `/chats/${encodeURIComponent(id)}`, { method: "DELETE" });
+    forgetDetail(id, chat.serverId);
     await get().refreshServer(chat.serverId);
     // A deleted thread was a ticket's linked thread until a moment ago.
     await get().loadBoard(chat.serverId).catch(() => {});
@@ -1018,6 +1121,21 @@ export const useStore = create<State>((set, get) => ({
       method: "POST",
       body: {},
     });
+  },
+
+  async ticketFromThread(id) {
+    const chat = get().chats.find((entry) => entry.id === id);
+    if (!chat) throw new Error("That thread is gone.");
+    const body = await transport.request<{ ticket?: RawTicket }>(
+      chat.serverId,
+      `/chats/${encodeURIComponent(id)}/ticket`,
+      { method: "POST", body: {} },
+    );
+    if (!body.ticket) throw new Error("Couldn't track that thread.");
+    const ticket = { ...body.ticket, serverId: chat.serverId } as Ticket;
+    set((current) => ({ tickets: replace(current.tickets, ticket) }));
+    void get().loadBoard(chat.serverId).catch(() => {});
+    return ticket;
   },
 
   async updateTicket(id, patch) {
@@ -1142,6 +1260,9 @@ function applyChatFrame(current: State, frame: ChatFrame, serverId: string): Par
   const owned = (chat: Chat) => chat.serverId === serverId;
   const chats = current.chats.map((chat) => (owned(chat) ? patchRow(chat, frame) : chat));
   const dms = current.dms.map((chat) => (owned(chat) ? patchRow(chat, frame) : chat));
+  const key = frame.chatId ? detailKey(frame.chatId, serverId) : undefined;
+  const cached = key ? detailCache.get(key) : undefined;
+  if (cached) cacheDetail(mergeDetail(cached, frame));
   const detail =
     current.detail && current.detail.id === frame.chatId && current.detail.serverId === serverId
       ? mergeDetail(current.detail, frame)
@@ -1313,11 +1434,13 @@ async function readServer(
   server: Server;
   chats: Chat[];
   dms: Chat[];
+  archived: ArchivedThread[];
   workspaces: Workspace[];
   unavailable?: string;
   failure?: string;
 }> {
   const held = () => get().workspaces.filter((workspace) => workspace.serverId === server.id);
+  const heldArchived = () => get().archived.filter((thread) => thread.serverId === server.id);
   try {
     let chats: { chats?: RawChat[]; dms?: RawChat[]; unavailable?: string };
     try {
@@ -1334,10 +1457,19 @@ async function readServer(
     } catch {
       workspaces = held();
     }
+    let archived = heldArchived();
+    try {
+      const listed = await transport.request<{ archives?: RawArchive[] }>(server.id, "/archives?summary=1");
+      archived = (listed.archives ?? []).map((raw) => toArchivedThread(raw, server.id));
+    } catch {
+      // Archives are optional on older Macs, and a temporary failure keeps the
+      // last answer visible until that computer answers again.
+    }
     return {
       server: { ...server, online: server.cloud ? server.online : true },
       chats: (chats.chats ?? []).map((raw) => toChat(raw, server.id)),
       dms: (chats.dms ?? []).map((raw) => toChat(raw, server.id)),
+      archived,
       workspaces,
       ...(chats.unavailable ? { unavailable: chats.unavailable } : {}),
     };
@@ -1346,10 +1478,24 @@ async function readServer(
       server: { ...server, online: false },
       chats: [],
       dms: [],
+      archived: heldArchived(),
       workspaces: held(),
       failure: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+function toArchivedThread(raw: RawArchive, serverId: string): ArchivedThread {
+  return {
+    id: raw.id,
+    chatId: raw.chatId,
+    serverId,
+    title: raw.conversation?.title?.trim() || raw.session,
+    cwd: raw.cwd ?? "~",
+    provider: raw.agent,
+    parentChatId: raw.conversation?.parentChatId,
+    archivedAt: raw.archivedAt,
+  };
 }
 
 /// The catalogue for one Mac: what it answered with, or the one this app ships

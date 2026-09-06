@@ -21,6 +21,7 @@ import {
   X,
   Bot,
   FolderGit2,
+  GitFork,
   GitPullRequest,
   Loader,
   Square,
@@ -70,10 +71,14 @@ interface PendingImage {
 export function ThreadScreen({
   id,
   onOpenArtifact,
+  onOpenThread,
+  onOpenPullRequest,
 }: {
   id: string;
   /// Where a card a Remy tool left in the feed goes when you tap it.
   onOpenArtifact?: (artifact: ConvArtifact) => void;
+  onOpenThread?: (id: string) => void;
+  onOpenPullRequest?: (pullRequest: PullRequestSummary) => void;
 }) {
   // Both lists: an inbox conversation is opened by this screen too, and it is
   // never in `chats`.
@@ -241,7 +246,19 @@ export function ThreadScreen({
         </View>
         <StateBadge state={state} />
       </View>
-      {pullRequest ? <PullRequestRow pullRequest={pullRequest} /> : null}
+      {chat.parentChatId && onOpenThread ? (
+        <Pressable
+          onPress={() => onOpenThread(chat.parentChatId!)}
+          accessibilityLabel="Open parent thread"
+          style={styles.parent}
+        >
+          <GitFork size={14} color={color.mutedForeground} />
+          <Text style={type.caption}>Open parent thread</Text>
+        </Pressable>
+      ) : null}
+      {pullRequest ? (
+        <PullRequestRow pullRequest={pullRequest} onOpen={onOpenPullRequest} />
+      ) : null}
       {open?.todos.length ? <TodoStrip todos={open.todos} /> : null}
 
       <ScrollView
@@ -704,16 +721,31 @@ function ActivityEntry({ activity }: { activity: ThreadActivity }) {
 }
 
 /// The pull request on this thread's branch.
-function PullRequestRow({ pullRequest }: { pullRequest: PullRequestSummary }) {
-  return (
-    <View style={styles.pr}>
+function PullRequestRow({
+  pullRequest,
+  onOpen,
+}: {
+  pullRequest: PullRequestSummary;
+  onOpen?: (pullRequest: PullRequestSummary) => void;
+}) {
+  const content = (
+    <>
       <GitPullRequest size={14} color={color.mutedForeground} />
       <Text style={type.caption} numberOfLines={1}>
         {`#${pullRequest.number} · ${pullRequest.title}`}
       </Text>
       <Text style={styles.prState}>{pullRequest.state.toLowerCase()}</Text>
-    </View>
+    </>
   );
+  return onOpen ? (
+    <Pressable
+      onPress={() => onOpen(pullRequest)}
+      accessibilityLabel={`Open pull request #${pullRequest.number}`}
+      style={({ pressed }) => [styles.pr, pressed && { backgroundColor: color.accent }]}
+    >
+      {content}
+    </Pressable>
+  ) : <View style={styles.pr}>{content}</View>;
 }
 
 function Diff({ lines }: { lines: ConvDiffLine[] }) {
@@ -839,6 +871,15 @@ const styles = StyleSheet.create({
   },
   headerText: { flex: 1, minWidth: 0, gap: 2 },
   action: { ...type.caption, color: color.foreground },
+  parent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    minHeight: 36,
+    paddingHorizontal: space.lg,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: color.border,
+  },
   todoStrip: {
     flexDirection: "row",
     alignItems: "center",
