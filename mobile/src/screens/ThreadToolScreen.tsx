@@ -162,7 +162,7 @@ const styles = StyleSheet.create({
   overlay: { position: "absolute", inset: 0, backgroundColor: color.background },
   surface: { flex: 1, backgroundColor: color.background },
   toolbar: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
-  icon: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
+  icon: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   address: { flexDirection: "row", alignItems: "center", gap: 6, padding: 7 }, addressInput: { flex: 1, minHeight: 40, borderWidth: 1, borderColor: color.border, borderRadius: radius.md, color: color.foreground, paddingHorizontal: 10 },
   browserActions: { flexDirection: "row", justifyContent: "space-around", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
   browserScroll: { flex: 1, backgroundColor: "#fff" }, browserCanvas: { width: "100%" },

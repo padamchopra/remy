@@ -136,7 +136,7 @@ export function ThreadScreen({
   if (!chat) {
     return (
       <View style={styles.wrap}>
-        <EmptyState title="That thread is gone" detail="It was deleted on the Mac." />
+        <EmptyState title="That thread is gone" detail="It was deleted on its computer." />
       </View>
     );
   }
@@ -240,7 +240,7 @@ export function ThreadScreen({
       <View style={styles.header}>
         <View style={styles.headerText}>
           <Text style={type.caption} numberOfLines={1}>
-            {workspace?.name ?? server?.name ?? "This Mac"} · {displayPath(chat.cwd)}
+            {workspace?.name ?? server?.name ?? "This computer"} · {displayPath(chat.cwd)}
           </Text>
           {open?.action ? <Text style={styles.action} numberOfLines={1}>{open.action}</Text> : null}
         </View>

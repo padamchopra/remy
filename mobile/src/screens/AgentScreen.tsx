@@ -35,7 +35,7 @@ const PERMISSIONS = [
 ] as const;
 
 const IDENTITIES = [
-  { value: REMY_DEFAULT, label: "Remy default", detail: "Follows the choice on this Mac." },
+  { value: REMY_DEFAULT, label: "Remy default", detail: "Follows the choice on this computer." },
   { value: "off", label: "You", detail: "Commits carry your name." },
   { value: "author", label: "Agent", detail: "The agent is the author; you remain the committer." },
 ] as const;
@@ -65,7 +65,7 @@ export function AgentScreen({
   if (!agent) {
     return (
       <View style={styles.wrap}>
-        <EmptyState title="That agent is gone" detail="It was deleted on the Mac that held it." />
+        <EmptyState title="That agent is gone" detail="It was deleted on the computer that held it." />
       </View>
     );
   }
@@ -173,7 +173,7 @@ export function AgentScreen({
       <Section title="Routines">
         <Text style={type.caption}>
           {routinesUnknown
-            ? `Routines need a newer Remy on ${machine ?? "this Mac"}.`
+            ? `Routines need a newer Remy on ${machine ?? "this computer"}.`
             : `Ask ${agent.name} in Inbox to create work that repeats.`}
         </Text>
         {!routinesUnknown && routines.length === 0 ? (

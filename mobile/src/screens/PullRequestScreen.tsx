@@ -102,7 +102,7 @@ export function PullRequestScreen({
       <View style={styles.chrome}>
         <Pressable onPress={onBack} accessibilityLabel="Back to pull requests" style={styles.icon}><ArrowLeft size={18} color={color.foreground} /></Pressable>
         <GitPullRequest size={17} color={color.mutedForeground} />
-        <Text style={[type.callout, { flex: 1 }]} numberOfLines={1}>{`#${listed.number} · ${listed.title}`}</Text>
+        <Text style={[type.callout, { flex: 1 }]} numberOfLines={1}>{`#${listed.number} · ${pullRequest?.title ?? listed.title}`}</Text>
         <Pressable onPress={() => void load()} accessibilityLabel="Refresh pull request" style={styles.icon}><RefreshCw size={17} color={color.mutedForeground} /></Pressable>
         <Pressable onPress={() => void Linking.openURL(listed.url)} accessibilityLabel="Open on GitHub" style={styles.icon}><ExternalLink size={17} color={color.mutedForeground} /></Pressable>
       </View>
@@ -276,7 +276,7 @@ function DiffLine({ line }: { line: PullRequestDiff["files"][number]["hunks"][nu
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: color.background },
   chrome: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
-  icon: { width: 38, height: 38, alignItems: "center", justifyContent: "center" },
+  icon: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   tabs: { flexDirection: "row", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
   tab: { flex: 1, alignItems: "center", paddingVertical: 10, borderBottomWidth: 2, borderBottomColor: "transparent" },
   tabOn: { borderBottomColor: color.primary },

@@ -7,9 +7,10 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { color } from "./src/theme";
 import { pairingError } from "./src/lib/api-error";
-import { hostLabel, parsePairingLink, threadIdFromLink } from "./src/lib/pairing";
+import { hostLabel, parsePairingLink } from "./src/lib/pairing";
 import { hydrateAppearance } from "./src/lib/devices";
-import { loadPairings, originOf, type Pairing } from "./src/lib/session";
+import { loadLastDestination, loadPairings, originOf, type Pairing } from "./src/lib/session";
+import { navigationDestination, type NavigationDestination } from "./src/lib/navigation-destination";
 import { transport } from "./src/lib/transport";
 import { listenForNotificationTap, registerPush } from "./src/notifications";
 import { useStore } from "./src/state/store";
@@ -24,7 +25,7 @@ import { ScanScreen } from "./src/screens/ScanScreen";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const navRef = createNavigationContainerRef<RootStackParamList>();
-const openThreadFromOutside: { current: (id: string) => void } = { current: () => {} };
+const openFromOutside: { current: (destination: NavigationDestination) => void } = { current: () => {} };
 const NAV_THEME = {
   ...DarkTheme,
   colors: {
@@ -41,10 +42,12 @@ function PairedApp({
   onCommit,
   onPairError,
   onUnpair,
+  initialDestination,
 }: {
   onCommit: (pairing: Pairing) => Promise<void>;
   onPairError: (error: unknown) => void;
   onUnpair: (url: string) => void;
+  initialDestination?: NavigationDestination;
 }) {
   const start = useStore((s) => s.start);
   const loadSettings = useStore((s) => s.loadSettings);
@@ -69,7 +72,7 @@ function PairedApp({
     void registerPush().catch(() => {});
   }, [onlineHomes, loadSettings, loadProviders, loadBoard]);
 
-  useEffect(() => listenForNotificationTap((id) => openThreadFromOutside.current(id)), []);
+  useEffect(() => listenForNotificationTap((destination) => openFromOutside.current(destination)), []);
 
   return (
     <>
@@ -84,7 +87,8 @@ function PairedApp({
         <Stack.Screen name="Home" options={{ headerShown: false }}>
           {() => (
             <PairedShell
-              openThreadRef={openThreadFromOutside}
+              openDestinationRef={openFromOutside}
+              initialDestination={initialDestination}
               onPairAnother={() => navRef.isReady() && navRef.navigate("Pair")}
               onOpenAgent={(agentId) => navRef.isReady() && navRef.navigate("Agent", { agentId })}
               onUnpair={onUnpair}
@@ -105,7 +109,7 @@ function PairedApp({
             <RoutineScreen routineId={route.params.routineId} onDone={() => navigation.goBack()} />
           )}
         </Stack.Screen>
-        <Stack.Screen name="Pair" options={{ title: "Pair another Mac" }}>
+        <Stack.Screen name="Pair" options={{ title: "Pair another computer" }}>
           {({ navigation }) => (
             <PairScreen
               onPaired={async (pairing) => {
@@ -158,20 +162,22 @@ export default function App() {
   const [pairings, setPairings] = useState<Pairing[]>([]);
   const [scan, setScan] = useState(false);
   const [toast, setToast] = useState<ToastMessage>();
+  const [initialDestination, setInitialDestination] = useState<NavigationDestination>();
 
   const dismissToast = useCallback(() => setToast(undefined), []);
   const showPairError = useCallback((error: unknown) => {
     setToast({
       id: Date.now(),
-      title: "Couldn't pair with that Mac",
+      title: "Couldn't pair with that computer",
       detail: pairingError(error),
     });
   }, []);
 
   useEffect(() => {
-    void Promise.all([loadPairings(), hydrateAppearance(), transport.hydratePeerCatalogues()]).then(([loaded]) => {
+    void Promise.all([loadPairings(), hydrateAppearance(), transport.hydratePeerCatalogues(), loadLastDestination()]).then(([loaded, , , destination]) => {
       transport.setPairings(loaded);
       setPairings(loaded);
+      setInitialDestination(destination);
       setReady(true);
     });
   }, []);
@@ -210,8 +216,8 @@ export default function App() {
       setScan(false);
       return;
     }
-    const threadId = threadIdFromLink(raw);
-    if (threadId) openThreadFromOutside.current(threadId);
+    const destination = navigationDestination(raw);
+    if (destination) openFromOutside.current(destination);
   };
 
   useEffect(() => {
@@ -239,7 +245,7 @@ export default function App() {
         <SafeAreaView style={styles.root} edges={pairings.length > 0 ? ["left", "right"] : ["top", "left", "right"]}>
           {pairings.length > 0 ? (
             <NavigationContainer ref={navRef} theme={NAV_THEME}>
-              <PairedApp onCommit={commit} onPairError={showPairError} onUnpair={forget} />
+              <PairedApp onCommit={commit} onPairError={showPairError} onUnpair={forget} initialDestination={initialDestination} />
             </NavigationContainer>
           ) : scan ? (
             <ScanScreen

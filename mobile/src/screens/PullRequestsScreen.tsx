@@ -126,7 +126,7 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: color.background },
   content: { padding: space.lg, gap: space.md, paddingBottom: 48 },
   header: { flexDirection: "row", alignItems: "center", gap: 8 },
-  refresh: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
+  refresh: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   filters: { flexDirection: "row", gap: 6 },
   filter: { borderWidth: 1, borderColor: color.border, borderRadius: radius.full, paddingHorizontal: 11, paddingVertical: 7 },
   filterOn: { backgroundColor: color.primary, borderColor: color.primary },

@@ -694,7 +694,7 @@ export const useStore = create<State>((set, get) => ({
   async createTicket(input) {
     const project = get().projects.find((entry) => entry.id === input.projectId);
     const serverId = project?.serverId ?? homeServer(get().servers)?.id;
-    if (!serverId) throw new Error("This Mac isn't connected.");
+    if (!serverId) throw new Error("This computer isn't connected.");
     const body = await transport.request<{ ticket: RawTicket }>(serverId, "/tickets", {
       method: "POST",
       body: input,
@@ -800,7 +800,7 @@ export const useStore = create<State>((set, get) => ({
     const name = input.name?.trim() || nameFromPath(path);
     if (!name) throw new Error("Pick a folder to add.");
     const server = get().servers.find((entry) => entry.id === input.serverId) ?? homeServer(get().servers);
-    if (!server) throw new Error("This Mac isn't connected.");
+    if (!server) throw new Error("This computer isn't connected.");
     await transport.request(server.id, "/workspaces", { method: "POST", body: { name, path } });
     await get().refreshServer(server.id);
   },
@@ -969,7 +969,7 @@ export const useStore = create<State>((set, get) => ({
       if (detached) return { path: detached.path };
     }
     const server = get().servers.find((entry) => entry.id === workspace?.serverId) ?? homeServer(get().servers);
-    if (!server) throw new Error("This Mac isn't connected.");
+    if (!server) throw new Error("This computer isn't connected.");
     const result = await transport.request<{ path?: string }>(
       server.id,
       `/workspaces/${encodeURIComponent(input.workspaceId)}/checkout`,
@@ -986,7 +986,7 @@ export const useStore = create<State>((set, get) => ({
     const cwd = input.cwd.trim() || "~";
     const title = text.split("\n")[0]?.slice(0, 80) || "New thread";
     const server = get().servers.find((entry) => entry.id === input.serverId) ?? homeServer(get().servers);
-    if (!server) throw new Error("This Mac isn't connected.");
+    if (!server) throw new Error("This computer isn't connected.");
     const created = await transport.request<{ chat?: RawChat }>(server.id, "/chats", {
       method: "POST",
       body: {
@@ -1096,7 +1096,7 @@ export const useStore = create<State>((set, get) => ({
       }
     }
     if (failure) throw failure;
-    throw new Error("No Mac is available to run this agent.");
+    throw new Error("No computer is available to run this agent.");
   },
 
   async readChat(id) {
@@ -1225,7 +1225,7 @@ export const useStore = create<State>((set, get) => ({
     // A new agent belongs on the Mac this phone would run it on.
     const serverId = existing?.serverId
       ?? preferredServer(get().servers, deviceOrderOf(get()))?.id;
-    if (!serverId) throw new Error("This Mac isn't connected.");
+    if (!serverId) throw new Error("This computer isn't connected.");
     const body = await transport.request<{ agent: RawAgent }>(
       serverId,
       id ? `/agents/${encodeURIComponent(id)}` : "/agents",

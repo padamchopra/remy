@@ -107,6 +107,22 @@ test("pull requests from several computers collapse and keep desktop stack order
   assert.equal(pullRequestAttention(row("x", "laptop", { checks: [{ name: "CI", state: "fail" }] })), "failing");
 });
 
+test("deep links address every durable iPhone destination", options, async () => {
+  const { navigationDestination, notificationDestination, storedDestination } = await load("lib/navigation-destination.ts");
+  assert.deepEqual(navigationDestination("remy://thread/chat-1?server=studio"), { kind: "thread", id: "chat-1", serverId: "studio" });
+  assert.deepEqual(navigationDestination("remy://agent/reviewer"), { kind: "agent", id: "reviewer" });
+  assert.deepEqual(navigationDestination("remy://workspace/repo?server=laptop"), { kind: "workspace", id: "repo", serverId: "laptop" });
+  assert.deepEqual(navigationDestination("remy://ticket/remy-27"), { kind: "ticket", key: "REMY-27" });
+  assert.deepEqual(navigationDestination("remy://pull-request/acme/repo/42?server=studio"), { kind: "pull-request", repository: "acme/repo", number: 42, serverId: "studio" });
+  assert.deepEqual(navigationDestination("remy://settings/studio"), { kind: "settings", serverId: "studio" });
+  assert.deepEqual(navigationDestination("remy://prs"), { kind: "section", section: "prs" });
+  assert.deepEqual(navigationDestination("remy://tasks"), { kind: "section", section: "board" });
+  assert.equal(navigationDestination("https://example.com"), undefined);
+  assert.deepEqual(notificationDestination({ session: "chat-1", deviceId: "studio" }), { kind: "thread", id: "chat-1", serverId: "studio" });
+  assert.deepEqual(storedDestination({ kind: "ticket", key: "REMY-27", ignored: "value" }), { kind: "ticket", key: "REMY-27" });
+  assert.equal(storedDestination({ kind: "thread" }), undefined);
+});
+
 test("a reachable relayed computer becomes an independent phone pairing", options, async () => {
   const { directPairingForPeer, pairingServerId, upsertFleetPairing } = await load("lib/fleet-pairing.ts");
   const learned = directPairingForPeer(

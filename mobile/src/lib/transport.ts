@@ -144,7 +144,7 @@ function toPeer(peer: WirePeer): Server {
 
 function targetFor(serverId: string, path: string): { pairing: Pairing; path: string } {
   const route = routes.get(serverId);
-  if (!route) throw new Error("This phone is not paired with that Mac.");
+  if (!route) throw new Error("This phone is not paired with that computer.");
   if (route.cloud) return { pairing: route.pairing, path: `/cursor-cloud/api${path}` };
   if (route.peerId) {
     return {
@@ -388,7 +388,7 @@ export const transport: Transport = {
   async probe(pairing) {
     const target = { ...pairing, url: originOf(pairing.url) };
     const health = await fetchPath<{ ok?: boolean }>(target, "/health");
-    if (health.ok !== true) throw new Error("Can't reach that Mac. Check Tailscale and try again.");
+    if (health.ok !== true) throw new Error("Can't reach that computer. Check Tailscale and try again.");
     let name = pairing.name || hostLabel(target.url);
     let deviceId = pairing.deviceId;
     try {

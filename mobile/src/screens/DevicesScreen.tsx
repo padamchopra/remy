@@ -15,9 +15,13 @@ import { EditableName } from "../components/EditableName";
 import { DeviceSettingsScreen } from "./DeviceSettingsScreen";
 
 export function DevicesScreen({
+  initialServerId,
+  onSettingsChange,
   onPairAnother,
   onUnpair,
 }: {
+  initialServerId?: string;
+  onSettingsChange?: (serverId?: string) => void;
   onPairAnother: () => void;
   onUnpair: (url: string) => void;
 }) {
@@ -28,13 +32,15 @@ export function DevicesScreen({
   const pairingAttempt = useStore((s) => s.pairingAttempt);
   const refresh = useStore((s) => s.refresh);
   const [picking, setPicking] = useState<Server>();
-  const [settingsId, setSettingsId] = useState<string>();
+  const [settingsId, setSettingsId] = useState<string | undefined>(initialServerId);
   const [discovered, setDiscovered] = useState<TailnetDevice[]>();
   const [attempt, setAttempt] = useState<PairAttempt>();
   const [error, setError] = useState<string>();
   const home = servers.find((server) => server.home && server.online && !server.cloud)
     ?? servers.find((server) => server.online && !server.cloud);
   const selected = settingsId ? servers.find((server) => server.id === settingsId) : undefined;
+
+  useEffect(() => { if (initialServerId) setSettingsId(initialServerId); }, [initialServerId]);
 
   const load = async (force = false) => {
     if (!home) {
@@ -66,7 +72,7 @@ export function DevicesScreen({
     return () => clearInterval(timer);
   }, [home?.id, attempt?.id, attempt?.state, pairingAttempt, refresh]);
 
-  if (selected) return <DeviceSettingsScreen server={selected} onBack={() => setSettingsId(undefined)} />;
+  if (selected) return <DeviceSettingsScreen server={selected} onBack={() => { setSettingsId(undefined); onSettingsChange?.(undefined); }} />;
 
   const unpair = (server: Server) => {
     Alert.alert(`Unpair ${server.name}?`, "This phone stops talking to it until you pair again.", [
@@ -100,7 +106,7 @@ export function DevicesScreen({
             <EditableName value={server.name} label="computer name" onCommit={(name) => void updateServer(server.id, { name })} />
             <Text style={type.caption} numberOfLines={1}>{`${server.online ? "Available" : "Unavailable"} · ${hostLabel(server.url)}`}</Text>
           </View>
-          <Button label="Settings" variant="ghost" onPress={() => setSettingsId(server.id)} style={styles.small} />
+          <Button label="Settings" variant="ghost" onPress={() => { setSettingsId(server.id); onSettingsChange?.(server.id); }} style={styles.small} />
           {server.home ? <Button label="Unpair" variant="ghost" onPress={() => unpair(server)} style={styles.small} /> : null}
         </View>
       ))}
@@ -173,9 +179,9 @@ const styles = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: color.background },
   content: { padding: space.lg, gap: space.md, paddingBottom: 40 },
   card: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: color.card, borderWidth: 1, borderColor: color.border, borderRadius: radius.lg, padding: 10 },
-  small: { minHeight: 32, paddingHorizontal: 8 },
+  small: { minHeight: 44, paddingHorizontal: 8 },
   sectionHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: space.md },
-  refresh: { flexDirection: "row", alignItems: "center", gap: 5, minHeight: 36 },
+  refresh: { flexDirection: "row", alignItems: "center", gap: 5, minHeight: 44 },
   attempt: { alignItems: "center", gap: 6, borderWidth: 1, borderColor: color.border, backgroundColor: color.card, borderRadius: radius.lg, padding: space.md },
   code: { ...type.title, fontFamily: "Menlo", letterSpacing: 4 },
   discovery: { flexDirection: "row", alignItems: "center", gap: 10, borderWidth: 1, borderColor: color.border, borderRadius: radius.lg, padding: 11 },

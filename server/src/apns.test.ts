@@ -37,6 +37,7 @@ test("payload carries the alert and the remy deep link", () => {
     body: "A thread is waiting.",
     click: "remy://chat/abc",
     session: "abc",
+    deviceId: "computer-1",
     highPriority: true,
   });
   assert.deepEqual(body.aps, {
@@ -46,6 +47,7 @@ test("payload carries the alert and the remy deep link", () => {
   });
   assert.equal(body.click, "remy://chat/abc");
   assert.equal(body.session, "abc");
+  assert.equal(body.deviceId, "computer-1");
 });
 
 test("JWT is ES256, named by the key, and issued by the team", () => {

@@ -5,10 +5,12 @@ import {
   type PeerCatalogues,
 } from "./peer-catalogue";
 import { upsertFleetPairing } from "./fleet-pairing";
+import { storedDestination, type NavigationDestination } from "./navigation-destination";
 
 const KEY = "remy.pairings";
 const LEGACY = "remy.pairing";
 const PEER_CATALOGUES = "remy.peer-catalogues";
+const LAST_DESTINATION = "remy.last-destination";
 
 export interface Pairing {
   url: string;
@@ -93,4 +95,13 @@ export async function loadPeerCatalogues(): Promise<PeerCatalogues> {
 
 export async function savePeerCatalogues(catalogues: PeerCatalogues): Promise<void> {
   await SecureStore.setItemAsync(PEER_CATALOGUES, serializePeerCatalogues(catalogues));
+}
+
+export async function loadLastDestination(): Promise<NavigationDestination | undefined> {
+  try { return storedDestination(JSON.parse(await SecureStore.getItemAsync(LAST_DESTINATION) ?? "null")); }
+  catch { return undefined; }
+}
+
+export async function saveLastDestination(destination: NavigationDestination): Promise<void> {
+  await SecureStore.setItemAsync(LAST_DESTINATION, JSON.stringify(destination));
 }

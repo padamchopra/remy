@@ -141,7 +141,7 @@ export function ModelPicker({
             {shown.length === 0 ? (
               // Only reachable when this thread runs on a provider the catalogue
               // in hand has never heard of — a newer Mac that has not answered.
-              <MenuEmpty>This Mac hasn't said what this thread can run on.</MenuEmpty>
+              <MenuEmpty>This computer hasn't said what this thread can run on.</MenuEmpty>
             ) : (
               shown.map((provider, index) => (
                 <View key={provider.id}>
@@ -172,7 +172,7 @@ export function ModelPicker({
           </>
         )}
         {!effortStep && effortUnavailable ? (
-          <Text style={styles.note}>Reasoning effort needs a newer Remy on this Mac.</Text>
+          <Text style={styles.note}>Reasoning effort needs a newer Remy on this computer.</Text>
         ) : null}
       </Popover>
     </>

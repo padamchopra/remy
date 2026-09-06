@@ -6,6 +6,7 @@ import { sendPush } from "./push.js";
 import type { RegistryEntry } from "./registry.js";
 import { attachAppUpdateHost } from "./app-update.js";
 import { attachNativeBrowserHost } from "./browser-host.js";
+import { deviceId } from "./board-log.js";
 
 export interface NotifyEvent {
   session: string;
@@ -16,6 +17,8 @@ export interface NotifyEvent {
   click?: string;
   /// The machine the thread runs on when it is not this one.
   device?: string;
+  /// Stable routing identity for a phone paired with several computers.
+  deviceId?: string;
 }
 
 interface Subscriber {
@@ -336,6 +339,7 @@ setInterval(() => {
 
 /// Routes a local notification to this machine and its opted-in peers.
 export async function sendNotification(evt: NotifyEvent): Promise<void> {
+  evt = { ...evt, deviceId: evt.deviceId ?? deviceId };
   const throttleKey = `${evt.session}:${evt.highPriority}:${evt.message}:${evt.title}`;
   const now = Date.now();
   if (now - (lastSent.get(throttleKey) ?? 0) < THROTTLE_MS) return;

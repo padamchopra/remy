@@ -83,8 +83,8 @@ export function AppSidebar({
         {Object.entries(threadsUnavailable).map(([id, reason]) => (
           <Text key={id} style={[type.caption, { paddingHorizontal: 10 }]}>
             {many
-              ? `${servers.find((server) => server.id === id)?.name ?? "A Mac"} can't hold threads: ${reason}`
-              : `This Mac can't hold threads: ${reason}`}
+              ? `${servers.find((server) => server.id === id)?.name ?? "A computer"} can't hold threads: ${reason}`
+              : `This computer can't hold threads: ${reason}`}
           </Text>
         ))}
         {chats.length === 0 && Object.keys(threadsUnavailable).length === 0 ? (

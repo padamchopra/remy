@@ -75,6 +75,7 @@ export async function sendPush(evt: {
   highPriority: boolean;
   click?: string;
   device?: string;
+  deviceId?: string;
 }): Promise<void> {
   const devices = listPushDevices();
   if (devices.length === 0) return;
@@ -92,6 +93,7 @@ export async function sendPush(evt: {
         body: evt.message || evt.title,
         click,
         session: evt.session,
+        deviceId: evt.deviceId,
         highPriority: evt.highPriority,
       });
       if (!result.ok && DEAD.has(result.reason)) dropToken(device.token);

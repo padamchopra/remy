@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
-import { Animated, Easing, Keyboard, Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Easing, Keyboard, Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { PanelLeft, PanelLeftClose, Plus, SlidersHorizontal } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { color, space, type } from "../theme";
@@ -22,17 +22,20 @@ import { PullRequestScreen } from "../screens/PullRequestScreen";
 import { ThreadToolScreen } from "../screens/ThreadToolScreen";
 import type { AuthoredPullRequest, ConvArtifact, PullRequestSummary } from "../state/types";
 import { workspaceForPath } from "../lib/projects";
+import { type NavigationDestination, type PrimarySection } from "../lib/navigation-destination";
+import { saveLastDestination } from "../lib/session";
 
-const DRAWER_WIDTH = 300;
 const DRAWER_EASING = Easing.bezier(0.32, 0.72, 0, 1);
 
 export function PairedShell({
-  openThreadRef,
+  openDestinationRef,
+  initialDestination,
   onPairAnother,
   onOpenAgent,
   onUnpair,
 }: {
-  openThreadRef: MutableRefObject<(id: string) => void>;
+  openDestinationRef: MutableRefObject<(destination: NavigationDestination) => void>;
+  initialDestination?: NavigationDestination;
   onPairAnother: () => void;
   /// An agent's own screen, pushed on top: a long form gets the whole width and
   /// the thread list stays one back-tap away.
@@ -40,6 +43,8 @@ export function PairedShell({
   onUnpair: (url: string) => void;
 }) {
   const insets = useSafeAreaInsets();
+  const window = useWindowDimensions();
+  const drawerWidth = Math.min(360, Math.max(280, window.width * 0.78));
   const chats = useStore((s) => s.chats);
   const dms = useStore((s) => s.dms);
   const agents = useStore((s) => s.agents);
@@ -50,6 +55,9 @@ export function PairedShell({
   const loading = useStore((s) => s.loading);
   const openDm = useStore((s) => s.openDm);
   const readChat = useStore((s) => s.readChat);
+  const connected = useStore((s) => s.connected);
+  const connectionError = useStore((s) => s.error);
+  const refresh = useStore((s) => s.refresh);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(false);
   const sidebarProgress = useRef(new Animated.Value(0)).current;
@@ -63,6 +71,9 @@ export function PairedShell({
   const [pullRequest, setPullRequest] = useState<AuthoredPullRequest>();
   const [pullRequestThreadId, setPullRequestThreadId] = useState<string>();
   const [threadTool, setThreadTool] = useState<"browser" | "terminal">();
+  const [settingsServerId, setSettingsServerId] = useState<string>();
+  const pendingDestination = useRef<NavigationDestination | undefined>(undefined);
+  const restoredDestination = useRef(false);
 
   const thread = threadId ? chats.find((chat) => chat.id === threadId) : undefined;
   const ticket = ticketKey ? tickets.find((entry) => entry.key === ticketKey) : undefined;
@@ -93,14 +104,15 @@ export function PairedShell({
   /// Where a conversation opens, whichever list it is in. A notification only
   /// carries an id, and an inbox conversation opened as a thread would land on
   /// a screen that cannot find it.
-  const openThread = (id: string) => {
-    const dm = dms.find((chat) => chat.id === id);
+  const openThread = (id: string, serverId?: string) => {
+    const dm = dms.find((chat) => chat.id === id && (!serverId || chat.serverId === serverId));
     setTicketKey(undefined);
     setComposingTicket(false);
     setWorkspaceId(undefined);
     setPullRequest(undefined);
     setPullRequestThreadId(undefined);
     setThreadTool(undefined);
+    setSettingsServerId(undefined);
     setSidebarOpen(false);
     if (dm?.agentId) {
       setSection("inbox");
@@ -109,11 +121,9 @@ export function PairedShell({
       return;
     }
     setSection("threads");
-    setThreadId(id);
+    setThreadId(chats.some((chat) => chat.id === id && (!serverId || chat.serverId === serverId)) ? id : undefined);
     setInboxAgentId(undefined);
   };
-
-  openThreadRef.current = openThread;
 
   /// What a Remy tool made, opened where it lives. A thing this phone cannot
   /// see — a ticket on a Mac that is not answering, a workspace that was never
@@ -128,6 +138,7 @@ export function PairedShell({
       setWorkspaceId(undefined);
       setPullRequest(undefined);
       setTicketKey(artifact.key);
+      setSettingsServerId(undefined);
       return;
     }
     if (artifact.kind === "thread" && artifact.id) {
@@ -145,6 +156,7 @@ export function PairedShell({
       setWorkspaceId(artifact.id);
       setPullRequest(undefined);
       setPullRequestThreadId(undefined);
+      setSettingsServerId(undefined);
     }
   };
 
@@ -157,6 +169,7 @@ export function PairedShell({
     setPullRequest(undefined);
     setPullRequestThreadId(undefined);
     setThreadTool(undefined);
+    setSettingsServerId(undefined);
     setInboxAgentId(undefined);
     setSidebarOpen(false);
   };
@@ -170,6 +183,7 @@ export function PairedShell({
     setPullRequest(undefined);
     setPullRequestThreadId(undefined);
     setThreadTool(undefined);
+    setSettingsServerId(undefined);
     setTicketKey(key);
     setSidebarOpen(false);
   };
@@ -182,6 +196,7 @@ export function PairedShell({
     setPullRequest(undefined);
     setPullRequestThreadId(undefined);
     setThreadTool(undefined);
+    setSettingsServerId(undefined);
     setThreadId(undefined);
     setInboxAgentId(undefined);
     setSidebarOpen(false);
@@ -199,6 +214,7 @@ export function PairedShell({
     setTicketKey(undefined);
     setComposingTicket(false);
     setWorkspaceId(undefined);
+    setSettingsServerId(undefined);
     setPullRequestThreadId(fromThreadId);
     setPullRequest({
       ...summary,
@@ -220,6 +236,94 @@ export function PairedShell({
       serverId: sourceThread?.serverId ?? workspace?.serverId ?? "",
     });
   };
+
+  const openDestination = (destination: NavigationDestination) => {
+    if (destination.kind === "thread") {
+      openThread(destination.id, destination.serverId);
+      return;
+    }
+    if (destination.kind === "agent") {
+      const agent = agents.find((entry) => entry.id === destination.id);
+      goSection("inbox");
+      setInboxAgentId(agent?.id);
+      return;
+    }
+    if (destination.kind === "workspace") {
+      const workspace = workspaces.find((entry) => entry.id === destination.id && (!destination.serverId || entry.serverId === destination.serverId));
+      goSection("workspaces");
+      setWorkspaceId(workspace?.id);
+      return;
+    }
+    if (destination.kind === "ticket") {
+      const found = tickets.find((entry) => entry.key === destination.key);
+      goSection("board");
+      setTicketKey(found?.key);
+      return;
+    }
+    if (destination.kind === "pull-request") {
+      const targetServer = servers.find((entry) => entry.id === destination.serverId)
+        ?? servers.find((entry) => entry.online && !entry.cloud);
+      const workspace = workspaces.find((entry) => entry.serverId === targetServer?.id
+        && entry.origin?.toLowerCase().includes(destination.repository.toLowerCase()));
+      goSection("prs");
+      setPullRequest({
+        url: `https://github.com/${destination.repository}/pull/${destination.number}`,
+        number: destination.number,
+        title: `Pull request #${destination.number}`,
+        headRefName: "",
+        state: "OPEN",
+        body: "",
+        repository: destination.repository,
+        baseRefName: "",
+        isDraft: false,
+        reviewDecision: "",
+        authorLogin: "",
+        updatedAt: new Date(0).toISOString(),
+        additions: 0,
+        deletions: 0,
+        changedFiles: 0,
+        checks: [], comments: [], unreadComments: [], hasUnreadActivity: false,
+        workspaceId: workspace?.id ?? "",
+        workspaceName: workspace?.name ?? "Workspace",
+        workspacePath: workspace?.path ?? "",
+        worktreePath: null,
+        serverId: targetServer?.id ?? "",
+      });
+      return;
+    }
+    if (destination.kind === "settings") {
+      goSection("devices");
+      setSettingsServerId(servers.some((entry) => entry.id === destination.serverId) ? destination.serverId : undefined);
+      return;
+    }
+    goSection(destination.section as AppSection);
+  };
+
+  openDestinationRef.current = (destination) => {
+    if (loading) pendingDestination.current = destination;
+    else openDestination(destination);
+  };
+
+  useEffect(() => {
+    if (loading || restoredDestination.current) return;
+    restoredDestination.current = true;
+    const destination = pendingDestination.current ?? initialDestination;
+    pendingDestination.current = undefined;
+    if (destination) openDestination(destination);
+  }, [loading]);
+
+  useEffect(() => {
+    if (loading || !restoredDestination.current) return;
+    let destination: NavigationDestination;
+    if (thread) destination = { kind: "thread", id: thread.id, serverId: thread.serverId };
+    else if (section === "inbox" && inboxAgent) destination = { kind: "agent", id: inboxAgent.id };
+    else if (section === "workspaces" && workspaceId) destination = { kind: "workspace", id: workspaceId, serverId: workspaces.find((entry) => entry.id === workspaceId)?.serverId };
+    else if (section === "board" && ticket) destination = { kind: "ticket", key: ticket.key };
+    else if (section === "prs" && pullRequest) destination = { kind: "pull-request", repository: pullRequest.repository, number: pullRequest.number, serverId: pullRequest.serverId };
+    else if (section === "devices" && settingsServerId) destination = { kind: "settings", serverId: settingsServerId };
+    else destination = { kind: "section", section: section as PrimarySection };
+    void saveLastDestination(destination).catch(() => {});
+  }, [inboxAgent?.id, loading, pullRequest?.number, pullRequest?.repository, pullRequest?.serverId, section, settingsServerId, thread?.id, thread?.serverId, ticket?.key, workspaceId]);
 
   useEffect(() => {
     if (sidebarMounted.current) {
@@ -301,6 +405,13 @@ export function PairedShell({
         )}
       </View>
 
+      {!connected && !loading ? (
+        <View style={styles.offline} accessibilityRole="alert">
+          <Text style={[type.caption, { flex: 1 }]} numberOfLines={2}>{connectionError ? `Offline · ${connectionError}` : "Reconnecting… Cached content stays available."}</Text>
+          <Pressable onPress={() => void refresh()} accessibilityRole="button" accessibilityLabel="Retry connection" style={styles.retry}><Text style={styles.retryText}>Try again</Text></Pressable>
+        </View>
+      ) : null}
+
       <View style={styles.body}>
         {section === "inbox" && inboxDm ? (
           <ThreadScreen
@@ -337,7 +448,7 @@ export function PairedShell({
         ) : section === "prs" ? (
           <PullRequestsScreen onOpen={(next) => { setPullRequest(next); setPullRequestThreadId(undefined); }} />
         ) : section === "devices" ? (
-          <DevicesScreen onPairAnother={onPairAnother} onUnpair={onUnpair} />
+          <DevicesScreen initialServerId={settingsServerId} onSettingsChange={setSettingsServerId} onPairAnother={onPairAnother} onUnpair={onUnpair} />
         ) : thread ? (
           <View style={{ flex: 1 }}>
             <ThreadScreen
@@ -369,11 +480,12 @@ export function PairedShell({
               style={[
                 styles.drawer,
                 {
+                  width: drawerWidth,
                   transform: [
                     {
                       translateX: sidebarProgress.interpolate({
                         inputRange: [0, 1],
-                        outputRange: [-DRAWER_WIDTH, 0],
+                        outputRange: [-drawerWidth, 0],
                       }),
                     },
                   ],
@@ -420,6 +532,8 @@ const styles = StyleSheet.create({
     top: 0,
     bottom: 0,
     left: 0,
-    width: DRAWER_WIDTH,
   },
+  offline: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, backgroundColor: color.card, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
+  retry: { minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center" },
+  retryText: { color: color.primary, fontSize: 13, fontWeight: "600" },
 });

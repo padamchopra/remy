@@ -67,14 +67,14 @@ export function RoutineScreen({ routineId, onDone }: { routineId: string; onDone
   if (!routine) {
     return (
       <View style={styles.wrap}>
-        <EmptyState title="That routine is gone" detail="It was deleted on the Mac that owns its clock." />
+        <EmptyState title="That routine is gone" detail="It was deleted on the computer that owns its clock." />
       </View>
     );
   }
 
   const clockMatch = boardDevices.find((entry) => entry.deviceId === routine.schedulerDeviceId);
   const clock = servers.find((entry) => entry.id === clockMatch?.serverId);
-  const clockName = clock?.name ?? "The Mac that created it";
+  const clockName = clock?.name ?? "The computer that created it";
   const preference = clock ? settings[clock.id]?.devicePreferenceOrder ?? [] : [];
   const preferredNames = preference.map((deviceId) => {
     const match = boardDevices.find((entry) => entry.deviceId === deviceId);
@@ -121,8 +121,8 @@ export function RoutineScreen({ routineId, onDone }: { routineId: string; onDone
         </Text>
         <Text style={type.caption}>
           {preferredNames.length
-            ? `Preferred device order: ${preferredNames.join(", ")}, then another available Mac.`
-            : `No preferred device order is set, so it tries ${clockName}, then another available Mac.`}
+            ? `Preferred computer order: ${preferredNames.join(", ")}, then another available computer.`
+            : `No preferred computer order is set, so it tries ${clockName}, then another available computer.`}
         </Text>
         <Text style={type.caption}>
           {routine.lastRunAt ? `Last run: ${whenLast(routine.lastRunAt)}` : "It has not run yet."}

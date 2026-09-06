@@ -221,7 +221,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 8,
     borderRadius: radius.sm,
-    minHeight: 36,
+    minHeight: 44,
   },
   itemLabel: { flex: 1, minWidth: 0, color: color.foreground, fontSize: 14 },
   itemDetail: { color: color.mutedForeground, fontSize: 12, maxWidth: 96 },
