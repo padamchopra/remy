@@ -25,6 +25,72 @@ test("pairing failures tell the phone how to recover", options, async () => {
   assert.equal(pairingError(new Error("That Mac isn't running Remy.")), "That Mac isn't running Remy.");
 });
 
+test("a relayed device survives a phone restart when discovery is temporarily unavailable", options, async () => {
+  const {
+    parsePeerCatalogues,
+    rememberPeerCatalogue,
+    retainPeerCatalogues,
+    serializePeerCatalogues,
+  } = await load("lib/peer-catalogue.ts");
+  const first = rememberPeerCatalogue({}, "https://home.tailnet/", [{
+    id: "studio",
+    name: "Studio",
+    url: "https://studio.tailnet/",
+    icon: "monitor",
+    notify: false,
+    online: true,
+    lastSeen: 123,
+  }]);
+  assert.equal(first.changed, true);
+
+  const restored = parsePeerCatalogues(serializePeerCatalogues(first.catalogues));
+  assert.deepEqual(restored, {
+    "https://home.tailnet": [{
+      id: "studio",
+      name: "Studio",
+      url: "https://studio.tailnet",
+      icon: "monitor",
+      notify: false,
+    }],
+  });
+
+  const removed = rememberPeerCatalogue(restored, "https://home.tailnet", []);
+  assert.equal(removed.changed, true);
+  assert.deepEqual(removed.catalogues, {});
+
+  const unpaired = retainPeerCatalogues(restored, new Set());
+  assert.equal(unpaired.changed, true);
+  assert.deepEqual(unpaired.catalogues, {});
+});
+
+test("a reachable relayed computer becomes an independent phone pairing", options, async () => {
+  const { directPairingForPeer, pairingServerId, upsertFleetPairing } = await load("lib/fleet-pairing.ts");
+  const learned = directPairingForPeer(
+    { id: "studio", name: "Studio", url: "https://old-studio.tailnet" },
+    { deviceId: "studio", name: "Studio Mac", url: "https://studio.tailnet/", token: "studio-token" },
+  );
+  assert.deepEqual(learned, {
+    deviceId: "studio",
+    name: "Studio Mac",
+    url: "https://studio.tailnet",
+    token: "studio-token",
+  });
+  assert.equal(pairingServerId(learned), "studio");
+
+  const moved = upsertFleetPairing(
+    [{ deviceId: "studio", name: "Old", url: "https://old-studio.tailnet", token: "old-token" }],
+    learned,
+  );
+  assert.deepEqual(moved, [learned]);
+  assert.equal(
+    directPairingForPeer(
+      { id: "studio", name: "Studio", url: "https://studio.tailnet" },
+      { deviceId: "someone-else", url: "https://studio.tailnet", token: "token" },
+    ),
+    undefined,
+  );
+});
+
 test("a model that belongs to another provider becomes that provider's default", options, async () => {
   const { PROVIDERS, pairChoice } = await load("lib/providers.ts");
   assert.deepEqual(

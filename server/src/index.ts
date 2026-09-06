@@ -888,9 +888,9 @@ const server = createServer(async (req, res) => {
       broadcast({ type: "peers" });
       return json(res, 200, { ok: true });
     }
-    // Everything a client wants from a paired machine goes out through here.
-    // This daemon is the only side holding that machine's token, and a browser
-    // could not call it directly anyway — no CORS headers over there.
+    // Browser clients reach a paired machine through here because its token
+    // never enters the renderer and the peer exposes no CORS headers. A native
+    // phone may also use this route to bootstrap its own direct fleet link.
     if (parts[0] === "peers" && parts[2] === "api" && parts.length >= 4) {
       const peerId = decodeURIComponent(parts[1]);
       const target = `/${parts.slice(3).join("/")}${url.search}`;

@@ -27,11 +27,11 @@ Check local and remote list, detail, write, live-update, reconnect, restart, and
 
 ## Keep Remy's trust boundary
 
-The renderer reaches a paired machine through the local daemon in `web/src/lib/transport.ts`; the paired machine's token stays in `server/src/peers.ts`.
+The renderer reaches a paired machine through the local daemon in `web/src/lib/transport.ts`; the paired machine's token stays in `server/src/peers.ts` and never enters the browser. The native phone is different: it is a fleet client, keeps direct computer credentials in secure storage, and may learn one through an authenticated paired-computer route.
 
 Live peer events follow the same ownership: `server/src/peer-stream.ts` authenticates to the paired daemon, `server/src/notify.ts` supplies resumable frames, and the local daemon relays those frames to its clients.
 
-Do not put a peer token in the renderer, widen the loopback bind, or make each client independently maintain privileged peer connections.
+Do not put a peer token in the renderer or widen the loopback bind. Only the native phone independently maintains privileged peer connections, because it cannot host a daemon that could proxy them.
 
 ## Choose freshness deliberately
 
