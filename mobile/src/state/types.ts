@@ -31,6 +31,27 @@ export interface PairRequest {
   at: number;
 }
 
+export interface TailnetDevice {
+  host: string;
+  name: string;
+  os: string;
+  online: boolean;
+  remy: boolean;
+  url?: string;
+  paired: boolean;
+}
+
+export interface PairAttempt {
+  id: string;
+  code: string;
+  url: string;
+  name: string;
+  at: number;
+  state: "waiting" | "approved" | "denied" | "expired" | "failed";
+  error?: string;
+  peerId?: string;
+}
+
 export interface Chat {
   id: string;
   serverId: string;
@@ -319,6 +340,68 @@ export interface ServerSettings {
   pullRequestMonitoringEnabled?: boolean;
   pullRequestMonitoringAgentId?: string;
   notifySelf?: boolean;
+}
+
+export interface ToolStatus {
+  available: boolean;
+  version?: string;
+  latestVersion?: string;
+  updateAvailable?: boolean;
+  authenticated?: boolean;
+  account?: string;
+  plan?: string;
+  organization?: string;
+  error?: string;
+}
+
+export interface Tooling {
+  git: ToolStatus;
+  gh: ToolStatus;
+  claude: ToolStatus;
+  codex: ToolStatus;
+  cursor: ToolStatus;
+}
+
+export interface ProviderMcpStatus {
+  provider: string;
+  installed: boolean;
+  configured: boolean;
+}
+
+export interface EnvironmentVariable {
+  name: string;
+  configured: true;
+  updatedAt: number;
+}
+
+/// Environment metadata intentionally has no value field. Management APIs may
+/// tell the phone only which names are configured, never what they contain.
+export interface WorkspaceEnvironment {
+  id: string;
+  name: string;
+  active: boolean;
+  variables: EnvironmentVariable[];
+  updatedAt: number;
+}
+
+export interface AnalyticsReport {
+  from: number;
+  to: number;
+  timeZone: string;
+  totals: {
+    threads: number;
+    turns: number;
+    toolCalls: number;
+    skillInvocations: number;
+    usageSessions: number;
+    totalTokens: number;
+    costUsd: number;
+  };
+  tools: { name: string; count: number }[];
+  skills: { name: string; count: number }[];
+  providers: { provider: string; sessions: number; totalTokens: number; costUsd: number }[];
+  sources: { provider: string; status: string; message?: string }[];
+  scanDurationMs: number;
 }
 
 export interface Agent {

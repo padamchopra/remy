@@ -270,7 +270,7 @@ export function PairedShell({
         ) : section === "board" ? (
           <BoardScreen onOpen={(key) => setTicketKey(key)} onCompose={() => setComposingTicket(true)} />
         ) : section === "workspaces" && workspaceId ? (
-          <WorkspaceScreen id={workspaceId} />
+          <WorkspaceScreen id={workspaceId} onGone={() => setWorkspaceId(undefined)} />
         ) : section === "workspaces" ? (
           <WorkspacesScreen onWorkspace={setWorkspaceId} />
         ) : section === "devices" ? (

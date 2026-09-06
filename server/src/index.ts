@@ -155,12 +155,14 @@ import {
 } from "./peers.js";
 import {
   createEnvironment,
+  disableEnvironment,
   deleteEnvironment,
   deleteEnvironmentValue,
   exportEnvironmentSync,
   importEnvironmentFile,
   listEnvironmentFiles,
   listEnvironments,
+  renameEnvironment,
   mergeEnvironmentSync,
   parseEnvironmentValues,
   selectEnvironment,
@@ -1270,11 +1272,22 @@ const server = createServer(async (req, res) => {
         }
         if (parts[3] === "active" && parts.length === 4 && req.method === "PUT") {
           const body = await readJson(req);
-          const environment = selectEnvironment(projectId, String(body.environmentId ?? ""));
+          const environmentId = String(body.environmentId ?? "");
+          if (!environmentId) {
+            disableEnvironment(projectId);
+            broadcast({ type: "environments", projectId });
+            return json(res, 200, { environment: null });
+          }
+          const environment = selectEnvironment(projectId, environmentId);
           broadcast({ type: "environments", projectId });
           return json(res, 200, { environment });
         }
         const environmentId = parts[3] ? decodeURIComponent(parts[3]) : "";
+        if (environmentId && parts.length === 4 && req.method === "PATCH") {
+          const environment = renameEnvironment(projectId, environmentId, (await readJson(req)).name);
+          broadcast({ type: "environments", projectId });
+          return json(res, 200, { environment });
+        }
         if (environmentId && parts.length === 4 && req.method === "DELETE") {
           deleteEnvironment(projectId, environmentId);
           broadcast({ type: "environments", projectId });

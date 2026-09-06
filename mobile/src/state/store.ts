@@ -8,6 +8,7 @@ import { transport } from "../lib/transport";
 import type { TintId } from "../lib/tints";
 import type {
   Agent,
+  AnalyticsReport,
   ArchivedThread,
   Chat,
   ChatApproval,
@@ -21,9 +22,11 @@ import type {
   ConvTodo,
   GitBranch,
   GitWorktree,
+  PairAttempt,
   PairRequest,
   PathSuggestion,
   Project,
+  ProviderMcpStatus,
   PullRequestSummary,
   Routine,
   Server,
@@ -31,7 +34,10 @@ import type {
   Ticket,
   TicketActivity,
   TicketStatus,
+  Tooling,
+  TailnetDevice,
   Workspace,
+  WorkspaceEnvironment,
 } from "./types";
 
 /// A capability a paired Mac may not have. Remembered per device the first time
@@ -138,7 +144,29 @@ interface State {
   loadBoard(serverId?: string): Promise<void>;
   loadPairRequests(): Promise<void>;
   updateServer(id: string, patch: { name?: string; icon?: DeviceIconId; tint?: TintId }): Promise<void>;
+  patchSettings(id: string, patch: Partial<ServerSettings>): Promise<void>;
+  tooling(id: string): Promise<Tooling>;
+  providerMcp(id: string): Promise<ProviderMcpStatus[]>;
+  setProviderMcp(id: string, provider: string, installed: boolean): Promise<void>;
+  setProviderEnabled(id: string, provider: string, enabled: boolean): Promise<void>;
+  analytics(id: string, days?: number): Promise<AnalyticsReport>;
+  discoverDevices(id: string, refresh?: boolean): Promise<TailnetDevice[]>;
+  startPairing(id: string, device: TailnetDevice): Promise<PairAttempt>;
+  pairingAttempt(id: string, attemptId: string): Promise<PairAttempt>;
   addWorkspace(input: { path: string; name?: string; serverId?: string }): Promise<void>;
+  updateWorkspace(id: string, patch: { name?: string; icon?: string | null; tint?: string | null; provider?: string | null; model?: string | null; effort?: string | null }): Promise<void>;
+  removeWorkspace(id: string): Promise<void>;
+  closeWorktree(id: string, path: string, force?: boolean): Promise<void>;
+  closeAllWorktrees(id: string, force?: boolean): Promise<void>;
+  environments(projectId: string, serverId: string): Promise<WorkspaceEnvironment[]>;
+  createEnvironment(projectId: string, serverId: string, name: string): Promise<void>;
+  renameEnvironment(projectId: string, serverId: string, id: string, name: string): Promise<void>;
+  activateEnvironment(projectId: string, serverId: string, id?: string): Promise<void>;
+  deleteEnvironment(projectId: string, serverId: string, id: string): Promise<void>;
+  saveEnvironmentValues(projectId: string, serverId: string, id: string, text: string): Promise<void>;
+  deleteEnvironmentValue(projectId: string, serverId: string, id: string, name: string): Promise<void>;
+  environmentFiles(projectId: string, serverId: string): Promise<string[]>;
+  importEnvironmentFile(projectId: string, serverId: string, id: string, file: string, remove: boolean): Promise<void>;
   workspaceFile(id: string, path: string): Promise<{ mime: string; data: string } | undefined>;
   suggestPaths(query: string, serverId?: string): Promise<PathSuggestion[]>;
   listBranches(workspaceId: string): Promise<GitBranch[]>;
@@ -711,6 +739,62 @@ export const useStore = create<State>((set, get) => ({
     }));
   },
 
+  async patchSettings(id, patch) {
+    const settings = await transport.request<ServerSettings>(id, "/server/settings", {
+      method: "PATCH",
+      body: patch,
+    });
+    set((current) => ({ settings: { ...current.settings, [id]: settings } }));
+  },
+
+  tooling(id) {
+    return transport.request<Tooling>(id, "/server/tooling");
+  },
+
+  async providerMcp(id) {
+    const body = await transport.request<{ providers?: ProviderMcpStatus[] }>(id, "/server/mcp");
+    return body.providers ?? [];
+  },
+
+  async setProviderMcp(id, provider, installed) {
+    await transport.request(id, `/server/mcp/${encodeURIComponent(provider)}`, {
+      method: installed ? "POST" : "DELETE",
+      body: {},
+    });
+  },
+
+  async setProviderEnabled(id, provider, enabled) {
+    const settings = await transport.request<ServerSettings>(
+      id,
+      `/server/providers/${encodeURIComponent(provider)}`,
+      { method: "PATCH", body: { enabled } },
+    );
+    set((current) => ({ settings: { ...current.settings, [id]: settings } }));
+    await get().loadProviders(id);
+  },
+
+  analytics(id, days = 30) {
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return transport.request<AnalyticsReport>(id, `/analytics?days=${days}&timeZone=${encodeURIComponent(timeZone)}`);
+  },
+
+  async discoverDevices(id, refresh = false) {
+    const body = await transport.request<{ devices?: TailnetDevice[] }>(id, `/tailnet${refresh ? "?refresh=1" : ""}`);
+    return body.devices ?? [];
+  },
+
+  startPairing(id, device) {
+    if (!device.url) throw new Error("That computer is not running Remy.");
+    return transport.request<PairAttempt>(id, "/pair/start", {
+      method: "POST",
+      body: { url: device.url, name: device.name },
+    });
+  },
+
+  pairingAttempt(id, attemptId) {
+    return transport.request<PairAttempt>(id, `/pair/attempt/${encodeURIComponent(attemptId)}`);
+  },
+
   async addWorkspace(input) {
     const path = input.path.trim();
     const name = input.name?.trim() || nameFromPath(path);
@@ -719,6 +803,110 @@ export const useStore = create<State>((set, get) => ({
     if (!server) throw new Error("This Mac isn't connected.");
     await transport.request(server.id, "/workspaces", { method: "POST", body: { name, path } });
     await get().refreshServer(server.id);
+  },
+
+  async updateWorkspace(id, patch) {
+    const workspace = get().workspaces.find((entry) => entry.id === id);
+    if (!workspace) throw new Error("That workspace is gone.");
+    const body = await transport.request<{ workspace?: RawWorkspace }>(
+      workspace.serverId,
+      `/workspaces/${encodeURIComponent(id)}`,
+      { method: "PATCH", body: patch },
+    );
+    if (body.workspace) {
+      const updated = toWorkspace(body.workspace, workspace.serverId);
+      set((current) => ({
+        workspaces: current.workspaces.map((entry) => entry.id === id && entry.serverId === workspace.serverId ? updated : entry),
+      }));
+    }
+    void get().loadBoard(workspace.serverId).catch(() => {});
+  },
+
+  async removeWorkspace(id) {
+    const workspace = get().workspaces.find((entry) => entry.id === id);
+    if (!workspace) return;
+    await transport.request(workspace.serverId, `/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" });
+    await Promise.all([get().refreshServer(workspace.serverId), get().loadBoard(workspace.serverId)]);
+  },
+
+  async closeWorktree(id, path, force = false) {
+    const workspace = get().workspaces.find((entry) => entry.id === id);
+    if (!workspace) throw new Error("That workspace is gone.");
+    await transport.request(
+      workspace.serverId,
+      `/workspaces/${encodeURIComponent(id)}/worktrees/close`,
+      { method: "POST", body: { path, force } },
+    );
+    await get().refreshServer(workspace.serverId);
+  },
+
+  async closeAllWorktrees(id, force = false) {
+    const workspace = get().workspaces.find((entry) => entry.id === id);
+    if (!workspace) throw new Error("That workspace is gone.");
+    await transport.request(
+      workspace.serverId,
+      `/workspaces/${encodeURIComponent(id)}/worktrees/close-all`,
+      { method: "POST", body: { force } },
+    );
+    await get().refreshServer(workspace.serverId);
+  },
+
+  async environments(projectId, serverId) {
+    const body = await transport.request<{ environments?: WorkspaceEnvironment[] }>(
+      serverId,
+      `/projects/${encodeURIComponent(projectId)}/environments`,
+    );
+    return body.environments ?? [];
+  },
+
+  async createEnvironment(projectId, serverId, name) {
+    await transport.request(serverId, `/projects/${encodeURIComponent(projectId)}/environments`, {
+      method: "POST", body: { name },
+    });
+  },
+
+  async renameEnvironment(projectId, serverId, id, name) {
+    await transport.request(serverId, `/projects/${encodeURIComponent(projectId)}/environments/${encodeURIComponent(id)}`, {
+      method: "PATCH", body: { name },
+    });
+  },
+
+  async activateEnvironment(projectId, serverId, id) {
+    await transport.request(serverId, `/projects/${encodeURIComponent(projectId)}/environments/active`, {
+      method: "PUT", body: { environmentId: id ?? "" },
+    });
+  },
+
+  async deleteEnvironment(projectId, serverId, id) {
+    await transport.request(serverId, `/projects/${encodeURIComponent(projectId)}/environments/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  },
+
+  async saveEnvironmentValues(projectId, serverId, id, text) {
+    await transport.request(serverId, `/projects/${encodeURIComponent(projectId)}/environments/${encodeURIComponent(id)}/import`, {
+      method: "POST", body: { text },
+    });
+  },
+
+  async deleteEnvironmentValue(projectId, serverId, id, name) {
+    await transport.request(serverId, `/projects/${encodeURIComponent(projectId)}/environments/${encodeURIComponent(id)}/variables/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    });
+  },
+
+  async environmentFiles(projectId, serverId) {
+    const body = await transport.request<{ files?: string[] }>(
+      serverId,
+      `/projects/${encodeURIComponent(projectId)}/environments/files`,
+    );
+    return body.files ?? [];
+  },
+
+  async importEnvironmentFile(projectId, serverId, id, file, remove) {
+    await transport.request(serverId, `/projects/${encodeURIComponent(projectId)}/environments/${encodeURIComponent(id)}/import`, {
+      method: "POST", body: { file, remove },
+    });
   },
 
   async workspaceFile(id, path) {
