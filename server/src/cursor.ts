@@ -236,7 +236,7 @@ class AcpCursorSession implements CursorSession {
         let sent = prompt;
         if (this.needsInstructions && this.options.developerInstructions?.trim()) {
           sent = [
-            "Follow these agent-specific instructions in addition to the workspace rules:",
+            "Follow these Remy and agent-specific instructions in addition to the workspace rules:",
             this.options.developerInstructions.trim(),
             "User request:",
             prompt,

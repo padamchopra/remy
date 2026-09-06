@@ -1,0 +1,59 @@
+name: Release labels
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      # Read only trusted code from the base commit; pull request files come
+      # from GitHub's API and are never executed on this privileged trigger.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const {
+              MAC_LABEL,
+              TESTFLIGHT_LABEL,
+              releaseLabelsForPaths,
+            } = require("./.github/scripts/release-labels.cjs");
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const issue_number = context.issue.number;
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner,
+              repo,
+              pull_number: issue_number,
+              per_page: 100,
+            });
+            const wanted = new Set(releaseLabelsForPaths(files.map((file) => file.filename)));
+            const definitions = [
+              { name: MAC_LABEL, color: "6f42c1", description: "Merging this pull request builds a Mac release." },
+              { name: TESTFLIGHT_LABEL, color: "0969da", description: "Merging this pull request builds a TestFlight release." },
+            ];
+            const current = new Set(context.payload.pull_request.labels.map((label) => label.name));
+
+            for (const definition of definitions) {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name: definition.name });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                await github.rest.issues.createLabel({ owner, repo, ...definition });
+              }
+              if (wanted.has(definition.name) && !current.has(definition.name)) {
+                await github.rest.issues.addLabels({ owner, repo, issue_number, labels: [definition.name] });
+              }
+              if (!wanted.has(definition.name) && current.has(definition.name)) {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number, name: definition.name });
+              }
+            }

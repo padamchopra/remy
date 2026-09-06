@@ -482,7 +482,7 @@ function AddMenu({ group, chat, bench }: { group: TabGroup; chat: Chat; bench: B
   const canAddBrowser = !conversational && (bench.browsers.supportsInstances || !hasBrowser);
   const closedThreads = bench.chats.filter((entry) => !openTabs.some((tab) => tab.kind === "thread" && tab.threadId === entry.id));
   const here: Placement = group.id === "all" ? { at: "focused" } : { at: "group", groupId: group.id };
-  const tool = (kind: ToolKind) => bench.openTool(kind, chat.id, here);
+  const tool = (kind: ToolKind) => bench.openTool(kind, chat.id, { at: "tool", threadId: chat.id });
 
   return (
     <DropdownMenu>
