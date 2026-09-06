@@ -1,13 +1,32 @@
 import { httpError } from "./api-error";
 import { appearanceOf, codeFor, isDeviceIcon, saveAppearance, type DeviceIconId } from "./devices";
+import { directPairingForPeer, pairingServerId, type PeerIdentity } from "./fleet-pairing";
+import {
+  rememberPeerCatalogue,
+  retainPeerCatalogues,
+  type PeerCatalogues,
+  type RememberedPeer,
+} from "./peer-catalogue";
 import { hostLabel } from "./pairing";
-import { directId, originOf, type Pairing } from "./session";
+import {
+  loadPeerCatalogues,
+  originOf,
+  removePairing,
+  savePairings,
+  savePeerCatalogues,
+  upsertPairing,
+  type Pairing,
+} from "./session";
 import { isTint, type TintId } from "./tints";
 import type { Server } from "../state/types";
 
 export interface Transport {
   pairings(): Pairing[];
+  hydratePeerCatalogues(): Promise<void>;
   setPairings(next: Pairing[]): void;
+  savePairing(pairing: Pairing): Promise<void>;
+  forgetPairing(url: string): Promise<void>;
+  onPairings(handler: (pairings: Pairing[]) => void): () => void;
   probe(pairing: Pairing): Promise<{ name: string; deviceId?: string }>;
   servers(): Promise<Server[]>;
   request<T>(serverId: string, path: string, init?: { method?: string; body?: unknown }): Promise<T>;
@@ -16,13 +35,7 @@ export interface Transport {
   onStatus(handler: (serverId: string, online: boolean, error?: string) => void): () => void;
 }
 
-interface WirePeer {
-  id: string;
-  name: string;
-  url: string;
-  icon?: string;
-  tint?: string;
-  notify?: boolean;
+interface WirePeer extends RememberedPeer {
   online?: boolean;
   lastSeen?: number;
 }
@@ -45,9 +58,16 @@ const sockets = new Map<string, WebSocket>();
 const attempts = new Map<string, number>();
 const pushHandlers = new Set<(serverId: string, payload: unknown) => void>();
 const statusHandlers = new Set<(serverId: string, online: boolean, error?: string) => void>();
+const pairingHandlers = new Set<(pairings: Pairing[]) => void>();
 const topicRefs = new Map<string, number>();
 const cursors = new Map<string, { streamId?: string; sequence?: number }>();
 const peerCatalogues = new Map<string, WirePeer[]>();
+let durablePeerCatalogues: PeerCatalogues = {};
+let peerCataloguesHydrated = false;
+let catalogueWrite = Promise.resolve();
+let savedCatalogueSnapshot = "{}";
+let pairingWrite = Promise.resolve();
+const learningPeers = new Set<string>();
 let closed = true;
 
 type RNWebSocket = {
@@ -116,24 +136,35 @@ function toPeer(peer: WirePeer): Server {
   };
 }
 
-async function fetchPath<T>(target: Pairing, path: string, init?: { method?: string; body?: unknown }): Promise<T> {
-  const response = await fetch(`${originOf(target.url)}${path}`, {
-    method: init?.method ?? "GET",
-    headers: {
-      Authorization: `Bearer ${target.token}`,
-      ...(init?.body === undefined ? {} : { "Content-Type": "application/json" }),
-    },
-    ...(init?.body === undefined ? {} : { body: JSON.stringify(init.body) }),
-  });
-  const text = await response.text();
-  if (!response.ok) throw httpError(response.status, text);
-  return (text ? JSON.parse(text) : null) as T;
+async function fetchPath<T>(
+  target: Pairing,
+  path: string,
+  init?: { method?: string; body?: unknown; timeoutMs?: number },
+): Promise<T> {
+  const controller = init?.timeoutMs ? new AbortController() : undefined;
+  const timer = controller ? setTimeout(() => controller.abort(), init?.timeoutMs) : undefined;
+  try {
+    const response = await fetch(`${originOf(target.url)}${path}`, {
+      method: init?.method ?? "GET",
+      headers: {
+        Authorization: `Bearer ${target.token}`,
+        ...(init?.body === undefined ? {} : { "Content-Type": "application/json" }),
+      },
+      ...(init?.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+    const text = await response.text();
+    if (!response.ok) throw httpError(response.status, text);
+    return (text ? JSON.parse(text) : null) as T;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function connectOne(pairing: Pairing): void {
   const origin = originOf(pairing.url);
   if (closed || sockets.has(origin)) return;
-  const serverId = directId(pairing.url);
+  const serverId = pairingServerId(pairing);
   const ws = new (WebSocket as unknown as RNWebSocket)(notifyUrl(pairing.url), undefined, {
     headers: { Authorization: `Bearer ${pairing.token}` },
   });
@@ -212,9 +243,86 @@ function syncTopics(): void {
   }
 }
 
+function persistPeerCatalogues(): Promise<void> {
+  const snapshot = durablePeerCatalogues;
+  const serialized = JSON.stringify(snapshot);
+  catalogueWrite = catalogueWrite
+    .catch(() => {})
+    .then(async () => {
+      if (serialized === savedCatalogueSnapshot) return;
+      await savePeerCatalogues(snapshot);
+      savedCatalogueSnapshot = serialized;
+    });
+  return catalogueWrite.catch(() => {});
+}
+
+async function cachePeerCatalogue(origin: string, peers: WirePeer[]): Promise<void> {
+  peerCatalogues.set(origin, peers);
+  const remembered = rememberPeerCatalogue(durablePeerCatalogues, origin, peers);
+  if (remembered.changed) durablePeerCatalogues = remembered.catalogues;
+  await persistPeerCatalogues();
+}
+
+function updateStoredPairings(update: (current: Pairing[]) => Pairing[]): Promise<void> {
+  pairingWrite = pairingWrite
+    .catch(() => {})
+    .then(async () => {
+      const next = update(pairings);
+      await savePairings(next);
+      transport.setPairings(next);
+      for (const handler of pairingHandlers) handler(pairings);
+    });
+  return pairingWrite;
+}
+
+async function learnDirectPairings(gateway: Pairing, peers: WirePeer[]): Promise<void> {
+  const knownIds = new Set(pairings.flatMap((pairing) => pairing.deviceId ? [pairing.deviceId] : []));
+  const knownUrls = new Set(pairings.map((pairing) => originOf(pairing.url)));
+  const candidates = peers.filter((peer) =>
+    peer.online === true
+    && !knownIds.has(peer.id)
+    && !knownUrls.has(originOf(peer.url))
+    && !learningPeers.has(peer.id));
+  if (candidates.length === 0) return;
+
+  for (const peer of candidates) learningPeers.add(peer.id);
+  const learned = await Promise.all(candidates.map(async (peer) => {
+    try {
+      const identity = await fetchPath<PeerIdentity>(
+        gateway,
+        `/peers/${encodeURIComponent(peer.id)}/api/server/identity`,
+      );
+      return directPairingForPeer(peer, identity) as Pairing | undefined;
+    } catch {
+      return undefined;
+    } finally {
+      learningPeers.delete(peer.id);
+    }
+  }));
+
+  const additions = learned.filter((pairing): pairing is Pairing => Boolean(pairing));
+  if (additions.length === 0) return;
+  await updateStoredPairings((current) =>
+    additions.reduce((next, pairing) => upsertPairing(next, pairing), current));
+}
+
 export const transport: Transport = {
   pairings() {
     return pairings;
+  },
+
+  async hydratePeerCatalogues() {
+    try {
+      durablePeerCatalogues = await loadPeerCatalogues();
+    } catch {
+      durablePeerCatalogues = {};
+    }
+    savedCatalogueSnapshot = JSON.stringify(durablePeerCatalogues);
+    peerCatalogues.clear();
+    for (const [origin, peers] of Object.entries(durablePeerCatalogues)) {
+      peerCatalogues.set(origin, peers);
+    }
+    peerCataloguesHydrated = true;
   },
 
   setPairings(next) {
@@ -225,11 +333,37 @@ export const transport: Transport = {
       ...(entry.deviceId ? { deviceId: entry.deviceId } : {}),
     }));
     const retained = new Set(pairings.map((entry) => originOf(entry.url)));
+    const byOrigin = new Map(pairings.map((pairing) => [originOf(pairing.url), pairing]));
     for (const origin of peerCatalogues.keys()) {
       if (!retained.has(origin)) peerCatalogues.delete(origin);
     }
-    routes.clear();
+    if (peerCataloguesHydrated) {
+      const kept = retainPeerCatalogues(durablePeerCatalogues, retained);
+      if (kept.changed) {
+        durablePeerCatalogues = kept.catalogues;
+        void persistPeerCatalogues();
+      }
+    }
+    for (const [id, route] of routes) {
+      const current = byOrigin.get(originOf(route.pairing.url));
+      if (current) routes.set(id, { ...route, pairing: current });
+      else routes.delete(id);
+    }
+    for (const pairing of pairings) routes.set(pairingServerId(pairing), { pairing });
     syncSockets();
+  },
+
+  savePairing(pairing) {
+    return updateStoredPairings((current) => upsertPairing(current, pairing));
+  },
+
+  forgetPairing(url) {
+    return updateStoredPairings((current) => removePairing(current, url));
+  },
+
+  onPairings(handler) {
+    pairingHandlers.add(handler);
+    return () => pairingHandlers.delete(handler);
   },
 
   async probe(pairing) {
@@ -260,68 +394,98 @@ export const transport: Transport = {
     // that one Mac can be re-read on its own — failed as "not paired".
     const next = new Map<string, Route>();
     const directUrls = new Set(pairings.map((entry) => originOf(entry.url)));
+    const directIds = new Set(pairings.map(pairingServerId));
     const seenIds = new Set<string>();
     const seenUrls = new Set<string>();
     const out: Server[] = [];
+    const appendPeers = (pairing: Pairing, peers: WirePeer[]) => {
+      for (const peer of peers) {
+        const peerOrigin = originOf(peer.url);
+        if (directIds.has(peer.id) || directUrls.has(peerOrigin)) continue;
+        if (seenIds.has(peer.id)) {
+          const index = out.findIndex((server) => server.id === peer.id);
+          if (index >= 0 && !out[index].online && peer.online === true) {
+            next.set(peer.id, { pairing, peerId: peer.id });
+            out[index] = withAppearance(toPeer(peer));
+          }
+          continue;
+        }
+        if (seenUrls.has(peerOrigin)) continue;
+        next.set(peer.id, { pairing, peerId: peer.id });
+        seenIds.add(peer.id);
+        seenUrls.add(peerOrigin);
+        out.push(withAppearance(toPeer(peer)));
+      }
+    };
 
-    for (const pairing of pairings) {
+    const scans = await Promise.all(pairings.map(async (pairing) => {
       const origin = originOf(pairing.url);
-      const id = directId(pairing.url);
+      const id = pairingServerId(pairing);
       const name = pairing.name || hostLabel(origin);
       try {
-        const health = await fetchPath<{ ok?: boolean }>(pairing, "/health");
+        const health = await fetchPath<{ ok?: boolean }>(pairing, "/health", { timeoutMs: 8_000 });
         let listed: { deviceId?: string; name?: string; icon?: string; tint?: string; peers?: WirePeer[] } = {};
         let cursorCloud: CursorCloudStatus = {};
         try {
           [listed, cursorCloud] = await Promise.all([
-            fetchPath<typeof listed>(pairing, "/peers"),
-            fetchPath<CursorCloudStatus>(pairing, "/cursor-cloud/status").catch(() => ({})),
+            fetchPath<typeof listed>(pairing, "/peers", { timeoutMs: 8_000 }),
+            fetchPath<CursorCloudStatus>(pairing, "/cursor-cloud/status", { timeoutMs: 8_000 })
+              .catch(() => ({})),
           ]);
-          peerCatalogues.set(origin, listed.peers ?? []);
+          await cachePeerCatalogue(origin, listed.peers ?? []);
+          void learnDirectPairings(pairing, listed.peers ?? []).catch(() => {});
         } catch {
           listed = {
             peers: (peerCatalogues.get(origin) ?? []).map((peer) => ({ ...peer, online: false })),
           };
         }
-        if (!seenIds.has(id) && !seenUrls.has(origin)) {
-          next.set(id, { pairing });
-          seenIds.add(id);
-          seenUrls.add(origin);
-          out.push(withAppearance(toDirect(listed.name || name, origin, health.ok === true, id, listed.icon, listed.tint)));
-        }
-        for (const peer of listed.peers ?? []) {
-          const peerOrigin = originOf(peer.url);
-          if (directUrls.has(peerOrigin) || seenIds.has(peer.id) || seenUrls.has(peerOrigin)) continue;
-          next.set(peer.id, { pairing, peerId: peer.id });
-          seenIds.add(peer.id);
-          seenUrls.add(peerOrigin);
-          out.push(withAppearance(toPeer(peer)));
-        }
-        if (cursorCloud.visible) {
-          const cloudId = `${id}:cursor-cloud`;
-          next.set(cloudId, { pairing, cloud: true });
-          out.push({
-            id: cloudId,
-            name: pairings.length > 1 ? `${listed.name || name} · Cursor Cloud` : "Cursor Cloud",
-            url: "cursor://cloud",
-            code: "CLOUD",
-            online: true,
-            icon: "cloud",
-            cloud: true,
-            workspaceOnly: true,
-            cloudConnected: cursorCloud.configured === true && cursorCloud.enabled !== false,
-          });
-        }
+        return { pairing, origin, id, name, health, listed, cursorCloud };
       } catch {
-        if (seenUrls.has(origin)) continue;
+        return {
+          pairing,
+          origin,
+          id,
+          name,
+          health: { ok: false },
+          listed: {
+            peers: (peerCatalogues.get(origin) ?? []).map((peer) => ({ ...peer, online: false })),
+          },
+          cursorCloud: {},
+        };
+      }
+    }));
+
+    for (const { pairing, origin, id, name, health, listed, cursorCloud } of scans) {
+      if (!seenIds.has(id) && !seenUrls.has(origin)) {
         next.set(id, { pairing });
         seenIds.add(id);
         seenUrls.add(origin);
-        out.push(withAppearance(toDirect(name, origin, false, id)));
+        out.push(withAppearance(
+          toDirect(listed.name || name, origin, health.ok === true, id, listed.icon, listed.tint),
+        ));
+      }
+      appendPeers(pairing, listed.peers ?? []);
+      if (cursorCloud.visible) {
+        const cloudId = `${id}:cursor-cloud`;
+        next.set(cloudId, { pairing, cloud: true });
+        out.push({
+          id: cloudId,
+          name: pairings.length > 1 ? `${listed.name || name} · Cursor Cloud` : "Cursor Cloud",
+          url: "cursor://cloud",
+          code: "CLOUD",
+          online: true,
+          icon: "cloud",
+          cloud: true,
+          workspaceOnly: true,
+          cloudConnected: cursorCloud.configured === true && cursorCloud.enabled !== false,
+        });
       }
     }
     routes.clear();
     for (const [id, route] of next) routes.set(id, route);
+    // Discovery can promote a relayed computer while this sweep is in flight.
+    // Its direct route wins immediately instead of waiting for another poll.
+    for (const pairing of pairings) routes.set(pairingServerId(pairing), { pairing });
     return out;
   },
 

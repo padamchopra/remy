@@ -1,7 +1,14 @@
 import * as SecureStore from "expo-secure-store";
+import {
+  parsePeerCatalogues,
+  serializePeerCatalogues,
+  type PeerCatalogues,
+} from "./peer-catalogue";
+import { upsertFleetPairing } from "./fleet-pairing";
 
 const KEY = "remy.pairings";
 const LEGACY = "remy.pairing";
+const PEER_CATALOGUES = "remy.peer-catalogues";
 
 export interface Pairing {
   url: string;
@@ -12,12 +19,6 @@ export interface Pairing {
 
 export function originOf(url: string): string {
   return url.replace(/\/+$/, "");
-}
-
-/// Stable id for a Mac this phone talks to directly, so a later /peers
-/// deviceId does not rename the row mid-session.
-export function directId(url: string): string {
-  return `direct:${originOf(url)}`;
 }
 
 function parseOne(raw: unknown): Pairing | undefined {
@@ -45,8 +46,7 @@ function serialize(pairing: Pairing): Pairing {
 }
 
 export function upsertPairing(list: Pairing[], next: Pairing): Pairing[] {
-  const origin = originOf(next.url);
-  return [...list.filter((entry) => originOf(entry.url) !== origin), serialize(next)];
+  return upsertFleetPairing(list, serialize(next));
 }
 
 export function removePairing(list: Pairing[], url: string): Pairing[] {
@@ -85,4 +85,12 @@ export async function loadPairings(): Promise<Pairing[]> {
 
 export async function savePairings(pairings: Pairing[]): Promise<void> {
   await SecureStore.setItemAsync(KEY, JSON.stringify(pairings.map(serialize)));
+}
+
+export async function loadPeerCatalogues(): Promise<PeerCatalogues> {
+  return parsePeerCatalogues(await SecureStore.getItemAsync(PEER_CATALOGUES));
+}
+
+export async function savePeerCatalogues(catalogues: PeerCatalogues): Promise<void> {
+  await SecureStore.setItemAsync(PEER_CATALOGUES, serializePeerCatalogues(catalogues));
 }

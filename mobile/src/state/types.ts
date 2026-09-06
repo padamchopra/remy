@@ -11,7 +11,7 @@ export interface Server {
   online: boolean;
   icon: DeviceIconId;
   tint?: TintId;
-  /// A Mac this phone is paired with directly. Peers of those Macs are reached through them.
+  /// A computer this phone can reach directly. Relayed computers are promoted here after discovery.
   home?: boolean;
   peer?: boolean;
   notify?: boolean;

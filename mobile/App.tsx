@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, StatusBar, StyleSheet, View } from "react-native";
 import { DarkTheme, NavigationContainer, createNavigationContainerRef } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
@@ -9,7 +9,7 @@ import { color } from "./src/theme";
 import { pairingError } from "./src/lib/api-error";
 import { hostLabel, parsePairingLink, threadIdFromLink } from "./src/lib/pairing";
 import { hydrateAppearance } from "./src/lib/devices";
-import { loadPairings, originOf, removePairing, savePairings, upsertPairing, type Pairing } from "./src/lib/session";
+import { loadPairings, originOf, type Pairing } from "./src/lib/session";
 import { transport } from "./src/lib/transport";
 import { listenForNotificationTap, registerPush } from "./src/notifications";
 import { useStore } from "./src/state/store";
@@ -50,7 +50,11 @@ function PairedApp({
   const loadSettings = useStore((s) => s.loadSettings);
   const loadProviders = useStore((s) => s.loadProviders);
   const loadBoard = useStore((s) => s.loadBoard);
-  const anyOnline = useStore((s) => s.servers.some((server) => server.online));
+  const onlineHomes = useStore((s) => s.servers
+    .filter((server) => server.home && server.online)
+    .map((server) => server.id)
+    .sort()
+    .join("\n"));
 
   useEffect(() => start(), [start]);
 
@@ -58,12 +62,12 @@ function PairedApp({
   // for one whose stream never does — an older build, or a tunnel that will not
   // hold a socket — so its defaults and its catalogue still arrive.
   useEffect(() => {
-    if (!anyOnline) return;
+    if (!onlineHomes) return;
     void loadSettings().catch(() => {});
     void loadProviders().catch(() => {});
     void loadBoard().catch(() => {});
     void registerPush().catch(() => {});
-  }, [anyOnline, loadSettings, loadProviders, loadBoard]);
+  }, [onlineHomes, loadSettings, loadProviders, loadBoard]);
 
   useEffect(() => listenForNotificationTap((id) => openThreadFromOutside.current(id)), []);
 
@@ -154,8 +158,6 @@ export default function App() {
   const [pairings, setPairings] = useState<Pairing[]>([]);
   const [scan, setScan] = useState(false);
   const [toast, setToast] = useState<ToastMessage>();
-  const pairingsRef = useRef<Pairing[]>([]);
-  pairingsRef.current = pairings;
 
   const dismissToast = useCallback(() => setToast(undefined), []);
   const showPairError = useCallback((error: unknown) => {
@@ -167,34 +169,26 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    void Promise.all([loadPairings(), hydrateAppearance()]).then(([loaded]) => {
-      if (loaded.length) transport.setPairings(loaded);
-      pairingsRef.current = loaded;
+    void Promise.all([loadPairings(), hydrateAppearance(), transport.hydratePeerCatalogues()]).then(([loaded]) => {
+      transport.setPairings(loaded);
       setPairings(loaded);
       setReady(true);
     });
   }, []);
 
-  const commit = async (pairing: Pairing) => {
-    const wasPaired = pairingsRef.current.length > 0;
-    const next = upsertPairing(pairingsRef.current, pairing);
-    pairingsRef.current = next;
-    await savePairings(next);
-    transport.setPairings(next);
+  useEffect(() => transport.onPairings((next) => {
     setPairings(next);
-    if (wasPaired) {
-      await useStore.getState().refresh();
-      void registerPush().catch(() => {});
-    }
+  }), []);
+
+  const commit = async (pairing: Pairing) => {
+    const wasPaired = transport.pairings().length > 0;
+    await transport.savePairing(pairing);
+    if (wasPaired) await useStore.getState().refresh();
   };
 
-  const forget = (url: string) => {
-    const next = removePairing(pairingsRef.current, url);
-    pairingsRef.current = next;
-    void savePairings(next);
-    transport.setPairings(next);
-    setPairings(next);
-    if (next.length) void useStore.getState().refresh();
+  const forget = async (url: string) => {
+    await transport.forgetPairing(url);
+    await useStore.getState().refresh();
   };
 
   const applyLink = async (raw: string) => {

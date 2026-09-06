@@ -536,10 +536,10 @@ export function acceptAnnouncement(body: Record<string, unknown>): PeerView {
 
 /// One request forwarded to a peer.
 ///
-/// Clients only ever talk to the daemon on their own machine: a browser cannot
-/// reach a peer directly (no CORS headers there, and the notify upgrade wants a
-/// header a browser socket cannot set), and a peer's token is deliberately not
-/// something a client holds. So the local daemon makes the call.
+/// Browser clients talk to the daemon on their own machine: they cannot reach a
+/// peer directly (no CORS headers there, and the notify upgrade wants a header
+/// a browser socket cannot set), and a peer's token never enters the renderer.
+/// The native phone may use this path to bootstrap its direct fleet links.
 export async function proxyToPeer<T>(
   peerId: string,
   path: string,

@@ -532,10 +532,14 @@ export const useStore = create<State>((set, get) => ({
     }));
     const dedupe = <T extends { id: string }>(rows: T[]): T[] =>
       [...new Map(rows.map((row) => [row.id, row])).values()];
-    const ordered = servers.flatMap((server) => {
-      const slice = slices.get(server.id);
-      return slice ? [slice] : [];
-    });
+    // Every computer answers the convergent board. Apply stale/offline slices
+    // first so any reachable computer's current projection wins by entity id.
+    const ordered = [...servers]
+      .sort((a, b) => Number(a.online) - Number(b.online))
+      .flatMap((server) => {
+        const slice = slices.get(server.id);
+        return slice ? [slice] : [];
+      });
     set((current) => {
       const projects = dedupe(ordered.flatMap((slice) => slice.projects));
       const missing = { ...current.missing };
@@ -1194,7 +1198,10 @@ function branchesFromWorktrees(workspace?: Workspace): GitBranch[] {
 }
 
 function homeServer(servers: Server[]): Server | undefined {
-  return servers.find((server) => server.home) ?? servers.find((server) => server.online) ?? servers[0];
+  return servers.find((server) => server.home && server.online)
+    ?? servers.find((server) => server.online)
+    ?? servers.find((server) => server.home)
+    ?? servers[0];
 }
 
 function nameFromPath(path: string): string {
@@ -1337,17 +1344,15 @@ export function useServerSettings(serverId?: string): ServerSettings | undefined
 
 const NO_ORDER: string[] = [];
 
-/// The order a device-agnostic piece of work tries paired Macs in, as the Mac
-/// this phone is paired with directly has it.
+/// The order a device-agnostic piece of work tries computers in. Every direct
+/// connection is eligible to supply it; none is a permanent phone gateway.
 function deviceOrderOf(state: State): string[] {
   const home = state.servers.find((server) => server.home && server.online)
     ?? state.servers.find((server) => server.home);
   return (home ? state.settings[home.id]?.devicePreferenceOrder : undefined) ?? NO_ORDER;
 }
 
-/// The order to try devices in for work that could run on any of them. It comes
-/// from the Mac this phone is paired with directly: the phone is a view onto
-/// that machine, so it is that machine's preference the phone follows.
+/// The order to try devices in for work that could run on any of them.
 export function useDevicePreferenceOrder(): string[] {
   return useStore(deviceOrderOf);
 }

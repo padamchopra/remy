@@ -12,8 +12,8 @@ const STATE_RANK: Record<Chat["state"], number> = {
 };
 
 /// Devices that can hold an agent's home-folder conversation, preferred first.
-/// The order comes from the Mac's own preference list; without one, a Mac this
-/// phone is paired with directly leads.
+/// The order comes from the fleet preference list; without one, any directly
+/// reachable computer may lead.
 export function availableAgentServers(servers: Server[], preferenceOrder: string[] = []): Server[] {
   const rank = new Map(preferenceOrder.map((id, index) => [id, index]));
   return servers
