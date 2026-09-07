@@ -54,9 +54,15 @@ A person may belong to any number of organizations as an owner, admin, or member
 
 Owners and admins can invite people by email or a single-use link and manage named teams. Email invitations are delivered through the `EMAILS` queue and may be accepted only by the addressed verified account. Removing a member also removes that person's team memberships. An owner must transfer ownership before leaving.
 
-Deleting an organization is a two-step operation. `GET /api/organizations/:id/deletion-impact` returns the affected membership, team, outstanding invitation, and workspace counts; `DELETE /api/organizations/:id` requires the exact organization name. The deletion cascades through memberships, teams, team memberships, invitations, workspaces, access grants, domains, and SSO configuration. Audit events remain available for the later security log even after the organization is deleted.
+Deleting an organization is a two-step operation. `GET /api/organizations/:id/deletion-impact` returns the affected membership, team, outstanding invitation, and workspace counts; `DELETE /api/organizations/:id` requires the exact organization name. The deletion cascades through memberships, teams, team memberships, invitations, workspaces, access grants, Tasks data, domains, and SSO configuration. Audit events remain available for the later security log even after the organization is deleted.
 
 An organization workspace identifies one repository by its normalized origin. It is visible to the whole organization by default, or restricted to explicit teams and members; owners and admins always retain visibility so they can manage access. `GET /api/organizations/:id/workspaces` applies that filter before returning the catalogue, so every consumer—including command-palette search—starts from the same authorized set.
+
+## Tasks state
+
+Each organization keeps its Tasks history and live stream in one `HubCoordinator` Durable Object. Authenticated members read projected tickets, agents, memories, and routines through `/api/organizations/:id/board`; writes derive the member identity from the session, so a browser cannot claim another actor.
+
+`GET /api/organizations/:id/board/live` upgrades to a hibernating WebSocket. A retained cursor replays missed changes once; an expired or future cursor receives a reset frame so the client replaces its state from the list routes.
 
 ## Release
 
@@ -74,4 +80,4 @@ Workers Logs records one `request.outcome` JSON event for every request and a re
 
 A Cron Trigger checks `/health` every five minutes. Its typed result travels through Queue, is retained at `uptime/latest.json` in R2, and is serialized through the coordinator object. Failed checks retry through Queue and appear as Worker errors. The health response probes D1, R2, the coordinator, Queue binding, and Secrets Store without returning credentials or stored data.
 
-Hosted computer provisioning remains behind `ComputerRuntimeProvider`. This service setup does not connect organization board objects or a runtime provider yet.
+Hosted computer provisioning remains behind `ComputerRuntimeProvider`; connecting computers to organization Tasks state belongs to the later computer-sync work.

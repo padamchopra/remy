@@ -146,6 +146,65 @@ export type OrganizationWorkspace = z.infer<typeof organizationWorkspaceSchema>;
 export const organizationDeletionImpactSchema = z.object({ organizationId: z.string().min(1), name: z.string().min(1), members: z.number().int().nonnegative(), teams: z.number().int().nonnegative(), invites: z.number().int().nonnegative(), workspaces: z.number().int().nonnegative(), deletes: z.array(z.string().min(1)) });
 export type OrganizationDeletionImpact = z.infer<typeof organizationDeletionImpactSchema>;
 
+export const boardLogEntitySchema = z.enum(["project", "ticket", "agent", "memory", "recurrence"]);
+export type BoardLogEntity = z.infer<typeof boardLogEntitySchema>;
+export const boardProjectionEntitySchema = z.enum(["tickets", "agents", "memories", "routines"]);
+export type BoardProjectionEntity = z.infer<typeof boardProjectionEntitySchema>;
+export const boardLogKindSchema = z.enum(["create", "field", "status", "comment", "comment_edit", "comment_delete", "handoff", "link", "unlink", "ran", "tombstone"]);
+export type BoardLogKind = z.infer<typeof boardLogKindSchema>;
+export const boardActorSchema = z.object({
+  kind: z.enum(["member", "agent", "computer"]),
+  id: z.string().min(1),
+  label: z.string().min(1),
+});
+export type BoardActor = z.infer<typeof boardActorSchema>;
+export const boardLogEventSchema = z.object({
+  id: z.string().min(1),
+  deviceId: z.string().min(1),
+  lamport: z.number().int().positive(),
+  at: z.number().int().nonnegative(),
+  entity: boardLogEntitySchema,
+  entityId: z.string().min(1),
+  kind: boardLogKindSchema,
+  payload: z.record(z.string(), z.unknown()),
+  actor: boardActorSchema,
+});
+export type BoardLogEvent = z.infer<typeof boardLogEventSchema>;
+export const boardAppendInputSchema = z.object({
+  entity: boardLogEntitySchema,
+  entityId: z.string().min(1),
+  kind: boardLogKindSchema,
+  payload: z.record(z.string(), z.unknown()).default({}),
+});
+export type BoardAppendInput = z.infer<typeof boardAppendInputSchema>;
+export const boardActivitySchema = z.object({
+  eventId: z.string().min(1),
+  at: z.number().int().nonnegative(),
+  kind: boardLogKindSchema,
+  actor: boardActorSchema,
+  payload: z.record(z.string(), z.unknown()),
+});
+export type BoardActivity = z.infer<typeof boardActivitySchema>;
+export const boardProjectionSchema = z.object({
+  entity: boardLogEntitySchema,
+  id: z.string().min(1),
+  fields: z.record(z.string(), z.unknown()),
+  activity: z.array(boardActivitySchema),
+  createdAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
+  lastActor: boardActorSchema,
+});
+export type BoardProjection = z.infer<typeof boardProjectionSchema>;
+export const boardVersionVectorSchema = z.record(z.string(), z.number().int().nonnegative());
+export type BoardVersionVector = z.infer<typeof boardVersionVectorSchema>;
+export const boardLiveFrameSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("event"), cursor: z.number().int().positive(), event: boardLogEventSchema }),
+  z.object({ kind: z.literal("reset"), cursor: z.number().int().nonnegative(), reason: z.literal("cursor_unavailable") }),
+]);
+export type BoardLiveFrame = z.infer<typeof boardLiveFrameSchema>;
+export const boardAppendResultSchema = z.object({ event: boardLogEventSchema, projection: boardProjectionSchema.nullable(), cursor: z.number().int().positive(), version: boardVersionVectorSchema });
+export type BoardAppendResult = z.infer<typeof boardAppendResultSchema>;
+
 export const hubRoutes = {
   health: { method: "GET", path: "/health", response: hubHealthSchema },
   profile: { method: "GET", path: "/api/profile", response: accountProfileSchema },
@@ -158,4 +217,8 @@ export const hubRoutes = {
   organizationWorkspaces: { method: "GET", path: "/api/organizations/:organizationId/workspaces", response: z.object({ workspaces: z.array(organizationWorkspaceSchema) }) },
   organizationWorkspace: { method: "GET", path: "/api/organizations/:organizationId/workspaces/:workspaceId", response: organizationWorkspaceSchema },
   organizationDeletionImpact: { method: "GET", path: "/api/organizations/:organizationId/deletion-impact", response: organizationDeletionImpactSchema },
+  organizationBoard: { method: "GET", path: "/api/organizations/:organizationId/board/:entity", response: z.object({ items: z.array(boardProjectionSchema), version: boardVersionVectorSchema }) },
+  organizationBoardEntity: { method: "GET", path: "/api/organizations/:organizationId/board/:entity/:entityId", response: boardProjectionSchema },
+  appendOrganizationBoardEvent: { method: "POST", path: "/api/organizations/:organizationId/board/events", response: boardAppendResultSchema },
+  organizationBoardLive: { method: "GET", path: "/api/organizations/:organizationId/board/live", response: boardLiveFrameSchema },
 } as const;
