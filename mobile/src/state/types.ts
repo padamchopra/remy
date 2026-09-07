@@ -31,6 +31,27 @@ export interface PairRequest {
   at: number;
 }
 
+export interface TailnetDevice {
+  host: string;
+  name: string;
+  os: string;
+  online: boolean;
+  remy: boolean;
+  url?: string;
+  paired: boolean;
+}
+
+export interface PairAttempt {
+  id: string;
+  code: string;
+  url: string;
+  name: string;
+  at: number;
+  state: "waiting" | "approved" | "denied" | "expired" | "failed";
+  error?: string;
+  peerId?: string;
+}
+
 export interface Chat {
   id: string;
   serverId: string;
@@ -262,6 +283,17 @@ export interface ChatDetail {
   costUsd?: number;
 }
 
+export interface ArchivedThread {
+  id: string;
+  chatId?: string;
+  serverId: string;
+  title: string;
+  cwd: string;
+  provider?: string;
+  parentChatId?: string;
+  archivedAt: number;
+}
+
 /// The pull request on a thread's branch. Mirrors `PullRequestSummary` in
 /// `server/src/git.ts`.
 export interface PullRequestSummary {
@@ -270,6 +302,149 @@ export interface PullRequestSummary {
   title: string;
   headRefName: string;
   state: string;
+}
+
+export interface PullRequestCheck {
+  name: string;
+  state: "pass" | "fail" | "pending" | "skipping";
+}
+
+export interface PullRequestComment {
+  author: string;
+  body: string;
+  createdAt: string | null;
+  path?: string | null;
+  line?: number | null;
+}
+
+export interface PullRequestStack {
+  number: number;
+  position: number;
+  size: number;
+  baseRefName: string;
+  entries?: { position: number; number: number; title: string; state: string; isDraft: boolean }[];
+}
+
+export interface AuthoredPullRequest extends PullRequestSummary {
+  stack?: PullRequestStack | null;
+  body: string;
+  repository: string;
+  baseRefName: string;
+  isDraft: boolean;
+  reviewDecision: string;
+  authorLogin: string;
+  updatedAt: string;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  checks: PullRequestCheck[];
+  comments: PullRequestComment[];
+  unreadComments: PullRequestComment[];
+  hasUnreadActivity: boolean;
+  workspaceId: string;
+  workspaceName: string;
+  workspacePath: string;
+  worktreePath: string | null;
+  serverId: string;
+  sourceServerIds?: string[];
+}
+
+export interface PullRequestDiffLine {
+  kind: "add" | "del" | "ctx";
+  text: string;
+  oldLine: number | null;
+  newLine: number | null;
+}
+
+export interface PullRequestDiffHunk {
+  header: string;
+  lines: PullRequestDiffLine[];
+}
+
+export interface PullRequestDiffFile {
+  path: string;
+  previousPath?: string;
+  deleted?: boolean;
+  hunks: PullRequestDiffHunk[];
+  viewed?: boolean;
+}
+
+export interface PullRequestDiff extends Omit<AuthoredPullRequest, "serverId" | "sourceServerIds" | "workspaceName" | "workspacePath" | "worktreePath" | "authorLogin" | "updatedAt" | "comments" | "unreadComments" | "hasUnreadActivity" | "stack"> {
+  nodeId?: string;
+  headRefOid?: string;
+  baseRefOid?: string;
+  mergeable: string;
+  mergeStateStatus: string;
+  files: PullRequestDiffFile[];
+}
+
+export interface PullRequestTimelineItem {
+  id: string;
+  kind: "commit" | "comment" | "review" | "review_comment";
+  author: string;
+  body: string;
+  createdAt: string;
+  url: string;
+  sha?: string | null;
+  state?: string | null;
+  path?: string | null;
+  line?: number | null;
+}
+
+export interface PullRequestGuideCommit {
+  sha: string;
+  title: string;
+  author: string;
+  committedAt: string;
+}
+
+export interface PullRequestGuideHunk {
+  revision?: { head: string; base?: string; previousPath?: string; deleted?: boolean };
+  id: string;
+  path: string;
+  header: string;
+  lines: PullRequestDiffLine[];
+}
+
+export interface PullRequestGuideStep {
+  id: string;
+  title: string;
+  summary: string;
+  hunkIds: string[];
+}
+
+export interface PullRequestGuideQuestion {
+  id: string;
+  stepId: string;
+  hunkId: string;
+  start: number;
+  end: number;
+  question: string;
+  answer: string;
+  createdAt: number;
+}
+
+export interface PullRequestGuide {
+  repository: string;
+  number: number;
+  provider: string;
+  model: string;
+  effort: string;
+  commitShas: string[];
+  commits: PullRequestGuideCommit[];
+  hunks: PullRequestGuideHunk[];
+  steps: PullRequestGuideStep[];
+  uncoveredHunkIds?: string[];
+  questions: PullRequestGuideQuestion[];
+  createdAt: number;
+}
+
+export interface PullRequestMonitoringPolicy {
+  enabled: boolean;
+  agentId: string | null;
+  chatId: string | null;
+  source: "default" | "workspace" | "pull-request";
+  explicit: boolean;
 }
 
 /// What one paired Mac answers with at `GET /server/settings`. Every field an
@@ -308,6 +483,68 @@ export interface ServerSettings {
   pullRequestMonitoringEnabled?: boolean;
   pullRequestMonitoringAgentId?: string;
   notifySelf?: boolean;
+}
+
+export interface ToolStatus {
+  available: boolean;
+  version?: string;
+  latestVersion?: string;
+  updateAvailable?: boolean;
+  authenticated?: boolean;
+  account?: string;
+  plan?: string;
+  organization?: string;
+  error?: string;
+}
+
+export interface Tooling {
+  git: ToolStatus;
+  gh: ToolStatus;
+  claude: ToolStatus;
+  codex: ToolStatus;
+  cursor: ToolStatus;
+}
+
+export interface ProviderMcpStatus {
+  provider: string;
+  installed: boolean;
+  configured: boolean;
+}
+
+export interface EnvironmentVariable {
+  name: string;
+  configured: true;
+  updatedAt: number;
+}
+
+/// Environment metadata intentionally has no value field. Management APIs may
+/// tell the phone only which names are configured, never what they contain.
+export interface WorkspaceEnvironment {
+  id: string;
+  name: string;
+  active: boolean;
+  variables: EnvironmentVariable[];
+  updatedAt: number;
+}
+
+export interface AnalyticsReport {
+  from: number;
+  to: number;
+  timeZone: string;
+  totals: {
+    threads: number;
+    turns: number;
+    toolCalls: number;
+    skillInvocations: number;
+    usageSessions: number;
+    totalTokens: number;
+    costUsd: number;
+  };
+  tools: { name: string; count: number }[];
+  skills: { name: string; count: number }[];
+  providers: { provider: string; sessions: number; totalTokens: number; costUsd: number }[];
+  sources: { provider: string; status: string; message?: string }[];
+  scanDurationMs: number;
 }
 
 export interface Agent {

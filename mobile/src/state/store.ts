@@ -8,9 +8,13 @@ import { transport } from "../lib/transport";
 import type { TintId } from "../lib/tints";
 import type {
   Agent,
+  AnalyticsReport,
+  ArchivedThread,
   Chat,
   ChatApproval,
+  ChatCodeReference,
   ChatDetail,
+  ChatImageAttachment,
   ChatQuestionRequest,
   ChatState,
   ContextUsage,
@@ -18,9 +22,11 @@ import type {
   ConvTodo,
   GitBranch,
   GitWorktree,
+  PairAttempt,
   PairRequest,
   PathSuggestion,
   Project,
+  ProviderMcpStatus,
   PullRequestSummary,
   Routine,
   Server,
@@ -28,7 +34,10 @@ import type {
   Ticket,
   TicketActivity,
   TicketStatus,
+  Tooling,
+  TailnetDevice,
   Workspace,
+  WorkspaceEnvironment,
 } from "./types";
 
 /// A capability a paired Mac may not have. Remembered per device the first time
@@ -76,11 +85,26 @@ interface RawWorkspace {
   virtual?: boolean;
 }
 
+interface RawArchive {
+  id: string;
+  chatId?: string;
+  session: string;
+  archivedAt: number;
+  cwd?: string | null;
+  agent?: string;
+  summary?: boolean;
+  conversation?: {
+    title?: string;
+    parentChatId?: string;
+  };
+}
+
 interface State {
   servers: Server[];
   chats: Chat[];
   /// The inbox: one conversation per agent, across every paired machine.
   dms: Chat[];
+  archived: ArchivedThread[];
   workspaces: Workspace[];
   openId?: string;
   detail?: ChatDetail;
@@ -101,6 +125,7 @@ interface State {
   tickets: Ticket[];
   routines: Routine[];
   boardDevices: { deviceId: string; serverId: string }[];
+  boardUnavailable: Record<string, string>;
   boardLoading: boolean;
   loading: boolean;
   error?: string;
@@ -119,7 +144,29 @@ interface State {
   loadBoard(serverId?: string): Promise<void>;
   loadPairRequests(): Promise<void>;
   updateServer(id: string, patch: { name?: string; icon?: DeviceIconId; tint?: TintId }): Promise<void>;
+  patchSettings(id: string, patch: Partial<ServerSettings>): Promise<void>;
+  tooling(id: string): Promise<Tooling>;
+  providerMcp(id: string): Promise<ProviderMcpStatus[]>;
+  setProviderMcp(id: string, provider: string, installed: boolean): Promise<void>;
+  setProviderEnabled(id: string, provider: string, enabled: boolean): Promise<void>;
+  analytics(id: string, days?: number): Promise<AnalyticsReport>;
+  discoverDevices(id: string, refresh?: boolean): Promise<TailnetDevice[]>;
+  startPairing(id: string, device: TailnetDevice): Promise<PairAttempt>;
+  pairingAttempt(id: string, attemptId: string): Promise<PairAttempt>;
   addWorkspace(input: { path: string; name?: string; serverId?: string }): Promise<void>;
+  updateWorkspace(id: string, patch: { name?: string; icon?: string | null; tint?: string | null; provider?: string | null; model?: string | null; effort?: string | null }): Promise<void>;
+  removeWorkspace(id: string): Promise<void>;
+  closeWorktree(id: string, path: string, force?: boolean): Promise<void>;
+  closeAllWorktrees(id: string, force?: boolean): Promise<void>;
+  environments(projectId: string, serverId: string): Promise<WorkspaceEnvironment[]>;
+  createEnvironment(projectId: string, serverId: string, name: string): Promise<void>;
+  renameEnvironment(projectId: string, serverId: string, id: string, name: string): Promise<void>;
+  activateEnvironment(projectId: string, serverId: string, id?: string): Promise<void>;
+  deleteEnvironment(projectId: string, serverId: string, id: string): Promise<void>;
+  saveEnvironmentValues(projectId: string, serverId: string, id: string, text: string): Promise<void>;
+  deleteEnvironmentValue(projectId: string, serverId: string, id: string, name: string): Promise<void>;
+  environmentFiles(projectId: string, serverId: string): Promise<string[]>;
+  importEnvironmentFile(projectId: string, serverId: string, id: string, file: string, remove: boolean): Promise<void>;
   workspaceFile(id: string, path: string): Promise<{ mime: string; data: string } | undefined>;
   suggestPaths(query: string, serverId?: string): Promise<PathSuggestion[]>;
   listBranches(workspaceId: string): Promise<GitBranch[]>;
@@ -133,6 +180,7 @@ interface State {
     effort?: string;
     permissionMode?: string;
   }): Promise<{ id: string; serverId: string }>;
+  createSubthread(input: { parentId: string; text: string; includeParent: boolean }): Promise<Chat>;
   openChat(id: string): Promise<void>;
   /// Opens an agent's conversation, making it if this is the first time. The
   /// Mac holding the agent is the one that holds the conversation.
@@ -140,7 +188,16 @@ interface State {
   /// Clears an inbox conversation's unread mark.
   readChat(id: string): Promise<void>;
   closeChat(): void;
-  sendMessage(text: string): Promise<void>;
+  uploadMessageImage(
+    file: { uri: string; name: string; mimeType: string },
+    onProgress?: (ratio: number) => void,
+  ): Promise<ChatImageAttachment>;
+  messageImage(chatId: string, serverId: string, attachmentId: string): Promise<string>;
+  sendMessage(
+    text: string,
+    attachments?: ChatImageAttachment[],
+    codeReferences?: ChatCodeReference[],
+  ): Promise<void>;
   answerApproval(requestId: string, decision: "allow" | "allowAlways" | "deny"): Promise<void>;
   answerQuestion(requestId: string, answers: Record<string, unknown>): Promise<void>;
   interrupt(): Promise<void>;
@@ -160,15 +217,27 @@ interface State {
   deleteRoutine(id: string): Promise<void>;
   runRoutine(id: string): Promise<Routine>;
   archiveThread(id: string): Promise<void>;
+  restoreThread(id: string, serverId: string): Promise<Chat>;
   deleteThread(id: string): Promise<void>;
   renameThread(id: string, title: string): Promise<void>;
   pinThread(id: string, pinned: boolean): Promise<void>;
   /// Ends the run a thread is in without sending anything.
   stopThread(id: string): Promise<void>;
+  ticketFromThread(id: string): Promise<Ticket>;
   createTicket(input: { projectId: string; title: string; body?: string; parentId?: string }): Promise<Ticket>;
+  startTicket(
+    id: string,
+    options?: { provider?: string; model?: string; effort?: string; checkout?: "main" | "worktree" },
+  ): Promise<{ id: string; serverId: string }>;
   updateTicket(id: string, patch: Record<string, unknown>): Promise<void>;
-  moveTicket(id: string, status: TicketStatus): Promise<void>;
+  moveTicket(id: string, status: TicketStatus, before?: string, after?: string): Promise<void>;
   commentOnTicket(id: string, body: string): Promise<void>;
+  editTicketComment(id: string, commentId: string, body: string): Promise<void>;
+  deleteTicketComment(id: string, commentId: string): Promise<void>;
+  deleteTicket(id: string): Promise<void>;
+  attachThread(ticketId: string, chatId: string): Promise<void>;
+  detachThread(ticketId: string, chatId: string, deviceId: string): Promise<void>;
+  handoffTicket(id: string, agentId: string): Promise<void>;
   ticketActivity(id: string): Promise<TicketActivity[]>;
   answerPair(id: string, decision: "approve" | "deny"): Promise<void>;
 }
@@ -188,12 +257,39 @@ const pushing = new Set<string>();
 /// first connect — whose state the boot read already covers — from a reconnect,
 /// which may have missed frames while the socket was gone.
 const streamed = new Set<string>();
-let detailSubscription: (() => void) | undefined;
+const detailCache = new Map<string, ChatDetail>();
+const detailSubscriptions = new Map<string, () => void>();
+const DETAIL_CACHE_LIMIT = 12;
+
+function detailKey(id: string, serverId: string): string {
+  return `${serverId}:${id}`;
+}
+
+function cacheDetail(detail: ChatDetail): void {
+  const key = detailKey(detail.id, detail.serverId);
+  detailCache.delete(key);
+  detailCache.set(key, detail);
+  while (detailCache.size > DETAIL_CACHE_LIMIT) {
+    const oldest = detailCache.keys().next().value as string | undefined;
+    if (!oldest) break;
+    detailCache.delete(oldest);
+    detailSubscriptions.get(oldest)?.();
+    detailSubscriptions.delete(oldest);
+  }
+}
+
+function forgetDetail(id: string, serverId: string): void {
+  const key = detailKey(id, serverId);
+  detailCache.delete(key);
+  detailSubscriptions.get(key)?.();
+  detailSubscriptions.delete(key);
+}
 
 export const useStore = create<State>((set, get) => ({
   servers: [],
   chats: [],
   dms: [],
+  archived: [],
   workspaces: [],
   settings: {},
   providers: {},
@@ -205,6 +301,7 @@ export const useStore = create<State>((set, get) => ({
   routines: [],
   pairRequests: [],
   boardDevices: [],
+  boardUnavailable: {},
   boardLoading: false,
   detailLoading: false,
   loading: true,
@@ -301,8 +398,9 @@ export const useStore = create<State>((set, get) => ({
       if (timer) clearTimeout(timer);
       pushing.clear();
       streamed.clear();
-      detailSubscription?.();
-      detailSubscription = undefined;
+      for (const unsubscribe of detailSubscriptions.values()) unsubscribe();
+      detailSubscriptions.clear();
+      detailCache.clear();
       offPush();
       offStatus();
     };
@@ -325,8 +423,17 @@ export const useStore = create<State>((set, get) => ({
         : []),
     ]);
     if (!reconnect) return;
-    const open = get().detail;
-    if (open?.serverId === serverId) await get().openChat(open.id).catch(() => {});
+    const warm = [...detailCache.values()].filter((detail) => detail.serverId === serverId);
+    await Promise.all(warm.map(async (detail) => {
+      try {
+        const raw = await transport.request<RawChatDetail>(serverId, `/chats/${encodeURIComponent(detail.id)}`);
+        const next = toDetail(raw, serverId);
+        cacheDetail(next);
+        if (get().openId === detail.id && get().detail?.serverId === serverId) set({ detail: next });
+      } catch {
+        forgetDetail(detail.id, serverId);
+      }
+    }));
   },
 
   async refresh() {
@@ -336,15 +443,20 @@ export const useStore = create<State>((set, get) => ({
       slices.clear();
       pushing.clear();
       streamed.clear();
+      for (const unsubscribe of detailSubscriptions.values()) unsubscribe();
+      detailSubscriptions.clear();
+      detailCache.clear();
       set({
         servers: [],
         chats: [],
         dms: [],
+        archived: [],
         workspaces: [],
         settings: {},
         providers: {},
         missing: {},
         threadsUnavailable: {},
+        boardUnavailable: {},
         loading: false,
         error: undefined,
         connected: false,
@@ -360,17 +472,22 @@ export const useStore = create<State>((set, get) => ({
     for (const id of [...slices.keys()]) if (!paired.has(id)) slices.delete(id);
     for (const id of [...pushing]) if (!paired.has(id)) pushing.delete(id);
     for (const id of [...streamed]) if (!paired.has(id)) streamed.delete(id);
+    for (const detail of [...detailCache.values()]) {
+      if (!paired.has(detail.serverId)) forgetDetail(detail.id, detail.serverId);
+    }
 
     set((current) => ({
       settings: onlyPaired(current.settings, paired),
       providers: onlyPaired(current.providers, paired),
       missing: onlyPaired(current.missing, paired),
+      boardUnavailable: onlyPaired(current.boardUnavailable, paired),
       threadsUnavailable: Object.fromEntries(
         results.flatMap((r) => (r.unavailable ? [[r.server.id, r.unavailable]] : [])),
       ),
       servers: results.map((r) => r.server),
       chats: results.flatMap((r) => r.chats).sort(byNewest),
       dms: results.flatMap((r) => r.dms),
+      archived: results.flatMap((r) => r.archived).sort((a, b) => b.archivedAt - a.archivedAt),
       workspaces: applyProjectIdentity(results.flatMap((r) => r.workspaces), get().projects),
       loading: false,
       error: failures.length === servers.length ? failures.join("; ") : undefined,
@@ -396,6 +513,7 @@ export const useStore = create<State>((set, get) => ({
         servers: current.servers.map((entry) => (entry.id === serverId ? result.server : entry)),
         chats: [...others(current.chats), ...result.chats].sort(byNewest),
         dms: [...others(current.dms), ...result.dms],
+        archived: [...others(current.archived), ...result.archived].sort((a, b) => b.archivedAt - a.archivedAt),
         workspaces: applyProjectIdentity(
           [...others(current.workspaces), ...result.workspaces],
           current.projects,
@@ -487,10 +605,11 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async loadBoard(serverId) {
-    const servers = get().servers.length ? get().servers : await transport.servers();
+    const servers = (get().servers.length ? get().servers : await transport.servers())
+      .filter((server) => !server.cloud);
     if (servers.length === 0) {
       slices.clear();
-      set({ agents: [], projects: [], tickets: [], routines: [], boardDevices: [], boardLoading: false });
+      set({ agents: [], projects: [], tickets: [], routines: [], boardDevices: [], boardUnavailable: {}, boardLoading: false });
       return;
     }
     // One Mac's frame refreshes one Mac's slice. The board converges rather
@@ -499,7 +618,7 @@ export const useStore = create<State>((set, get) => ({
     const wanted = serverId ? servers.filter((server) => server.id === serverId) : servers;
     if (wanted.length === 0) return;
     if (get().tickets.length === 0) set({ boardLoading: true });
-    await Promise.all(wanted.map(async (server) => {
+    const availability = await Promise.all(wanted.map(async (server) => {
       try {
         const board = await transport.request<{
           deviceId?: string;
@@ -526,8 +645,10 @@ export const useStore = create<State>((set, get) => ({
           routines: (board.routines ?? []).map((raw) => ({ ...raw, serverId: server.id }) as Routine),
           hasRoutines: board.routines !== undefined,
         });
-      } catch {
+        return [server.id, undefined] as const;
+      } catch (error) {
         // Its last answer stays on screen; the Mac shows as unreachable.
+        return [server.id, error instanceof Error ? error.message : String(error)] as const;
       }
     }));
     const dedupe = <T extends { id: string }>(rows: T[]): T[] =>
@@ -543,6 +664,11 @@ export const useStore = create<State>((set, get) => ({
     set((current) => {
       const projects = dedupe(ordered.flatMap((slice) => slice.projects));
       const missing = { ...current.missing };
+      const boardUnavailable = { ...current.boardUnavailable };
+      for (const [id, failure] of availability) {
+        if (failure) boardUnavailable[id] = failure;
+        else delete boardUnavailable[id];
+      }
       for (const server of servers) {
         const slice = slices.get(server.id);
         if (!slice) continue;
@@ -558,6 +684,7 @@ export const useStore = create<State>((set, get) => ({
           .sort((a, b) => a.rank.localeCompare(b.rank)),
         routines: dedupe(ordered.flatMap((slice) => slice.routines)),
         boardDevices: ordered.flatMap((slice) => slice.devices),
+        boardUnavailable,
         boardLoading: false,
         missing,
       };
@@ -567,7 +694,7 @@ export const useStore = create<State>((set, get) => ({
   async createTicket(input) {
     const project = get().projects.find((entry) => entry.id === input.projectId);
     const serverId = project?.serverId ?? homeServer(get().servers)?.id;
-    if (!serverId) throw new Error("This Mac isn't connected.");
+    if (!serverId) throw new Error("This computer isn't connected.");
     const body = await transport.request<{ ticket: RawTicket }>(serverId, "/tickets", {
       method: "POST",
       body: input,
@@ -576,6 +703,23 @@ export const useStore = create<State>((set, get) => ({
     // event and send a board frame of their own when they do.
     await get().loadBoard(serverId);
     return { ...body.ticket, serverId, threads: body.ticket.threads ?? [] } as Ticket;
+  },
+
+  async startTicket(id, options = {}) {
+    const ticket = get().tickets.find((entry) => entry.id === id);
+    if (!ticket) throw new Error("That ticket is gone.");
+    const serverId = ticket.deviceId
+      ? get().boardDevices.find((entry) => entry.deviceId === ticket.deviceId)?.serverId
+      : ticket.serverId;
+    if (!serverId) throw new Error("That computer isn't connected.");
+    const body = await transport.request<{ chat?: RawChat }>(
+      serverId,
+      `/tickets/${encodeURIComponent(id)}/start`,
+      { method: "POST", body: options },
+    );
+    if (!body.chat?.id) throw new Error("Couldn't start that thread.");
+    await Promise.all([get().refresh(), get().loadBoard(serverId)]);
+    return { id: body.chat.id, serverId };
   },
 
   async updateServer(id, patch) {
@@ -595,14 +739,174 @@ export const useStore = create<State>((set, get) => ({
     }));
   },
 
+  async patchSettings(id, patch) {
+    const settings = await transport.request<ServerSettings>(id, "/server/settings", {
+      method: "PATCH",
+      body: patch,
+    });
+    set((current) => ({ settings: { ...current.settings, [id]: settings } }));
+  },
+
+  tooling(id) {
+    return transport.request<Tooling>(id, "/server/tooling");
+  },
+
+  async providerMcp(id) {
+    const body = await transport.request<{ providers?: ProviderMcpStatus[] }>(id, "/server/mcp");
+    return body.providers ?? [];
+  },
+
+  async setProviderMcp(id, provider, installed) {
+    await transport.request(id, `/server/mcp/${encodeURIComponent(provider)}`, {
+      method: installed ? "POST" : "DELETE",
+      body: {},
+    });
+  },
+
+  async setProviderEnabled(id, provider, enabled) {
+    const settings = await transport.request<ServerSettings>(
+      id,
+      `/server/providers/${encodeURIComponent(provider)}`,
+      { method: "PATCH", body: { enabled } },
+    );
+    set((current) => ({ settings: { ...current.settings, [id]: settings } }));
+    await get().loadProviders(id);
+  },
+
+  analytics(id, days = 30) {
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return transport.request<AnalyticsReport>(id, `/analytics?days=${days}&timeZone=${encodeURIComponent(timeZone)}`);
+  },
+
+  async discoverDevices(id, refresh = false) {
+    const body = await transport.request<{ devices?: TailnetDevice[] }>(id, `/tailnet${refresh ? "?refresh=1" : ""}`);
+    return body.devices ?? [];
+  },
+
+  startPairing(id, device) {
+    if (!device.url) throw new Error("That computer is not running Remy.");
+    return transport.request<PairAttempt>(id, "/pair/start", {
+      method: "POST",
+      body: { url: device.url, name: device.name },
+    });
+  },
+
+  pairingAttempt(id, attemptId) {
+    return transport.request<PairAttempt>(id, `/pair/attempt/${encodeURIComponent(attemptId)}`);
+  },
+
   async addWorkspace(input) {
     const path = input.path.trim();
     const name = input.name?.trim() || nameFromPath(path);
     if (!name) throw new Error("Pick a folder to add.");
     const server = get().servers.find((entry) => entry.id === input.serverId) ?? homeServer(get().servers);
-    if (!server) throw new Error("This Mac isn't connected.");
+    if (!server) throw new Error("This computer isn't connected.");
     await transport.request(server.id, "/workspaces", { method: "POST", body: { name, path } });
     await get().refreshServer(server.id);
+  },
+
+  async updateWorkspace(id, patch) {
+    const workspace = get().workspaces.find((entry) => entry.id === id);
+    if (!workspace) throw new Error("That workspace is gone.");
+    const body = await transport.request<{ workspace?: RawWorkspace }>(
+      workspace.serverId,
+      `/workspaces/${encodeURIComponent(id)}`,
+      { method: "PATCH", body: patch },
+    );
+    if (body.workspace) {
+      const updated = toWorkspace(body.workspace, workspace.serverId);
+      set((current) => ({
+        workspaces: current.workspaces.map((entry) => entry.id === id && entry.serverId === workspace.serverId ? updated : entry),
+      }));
+    }
+    void get().loadBoard(workspace.serverId).catch(() => {});
+  },
+
+  async removeWorkspace(id) {
+    const workspace = get().workspaces.find((entry) => entry.id === id);
+    if (!workspace) return;
+    await transport.request(workspace.serverId, `/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" });
+    await Promise.all([get().refreshServer(workspace.serverId), get().loadBoard(workspace.serverId)]);
+  },
+
+  async closeWorktree(id, path, force = false) {
+    const workspace = get().workspaces.find((entry) => entry.id === id);
+    if (!workspace) throw new Error("That workspace is gone.");
+    await transport.request(
+      workspace.serverId,
+      `/workspaces/${encodeURIComponent(id)}/worktrees/close`,
+      { method: "POST", body: { path, force } },
+    );
+    await get().refreshServer(workspace.serverId);
+  },
+
+  async closeAllWorktrees(id, force = false) {
+    const workspace = get().workspaces.find((entry) => entry.id === id);
+    if (!workspace) throw new Error("That workspace is gone.");
+    await transport.request(
+      workspace.serverId,
+      `/workspaces/${encodeURIComponent(id)}/worktrees/close-all`,
+      { method: "POST", body: { force } },
+    );
+    await get().refreshServer(workspace.serverId);
+  },
+
+  async environments(projectId, serverId) {
+    const body = await transport.request<{ environments?: WorkspaceEnvironment[] }>(
+      serverId,
+      `/projects/${encodeURIComponent(projectId)}/environments`,
+    );
+    return body.environments ?? [];
+  },
+
+  async createEnvironment(projectId, serverId, name) {
+    await transport.request(serverId, `/projects/${encodeURIComponent(projectId)}/environments`, {
+      method: "POST", body: { name },
+    });
+  },
+
+  async renameEnvironment(projectId, serverId, id, name) {
+    await transport.request(serverId, `/projects/${encodeURIComponent(projectId)}/environments/${encodeURIComponent(id)}`, {
+      method: "PATCH", body: { name },
+    });
+  },
+
+  async activateEnvironment(projectId, serverId, id) {
+    await transport.request(serverId, `/projects/${encodeURIComponent(projectId)}/environments/active`, {
+      method: "PUT", body: { environmentId: id ?? "" },
+    });
+  },
+
+  async deleteEnvironment(projectId, serverId, id) {
+    await transport.request(serverId, `/projects/${encodeURIComponent(projectId)}/environments/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  },
+
+  async saveEnvironmentValues(projectId, serverId, id, text) {
+    await transport.request(serverId, `/projects/${encodeURIComponent(projectId)}/environments/${encodeURIComponent(id)}/import`, {
+      method: "POST", body: { text },
+    });
+  },
+
+  async deleteEnvironmentValue(projectId, serverId, id, name) {
+    await transport.request(serverId, `/projects/${encodeURIComponent(projectId)}/environments/${encodeURIComponent(id)}/variables/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    });
+  },
+
+  async environmentFiles(projectId, serverId) {
+    const body = await transport.request<{ files?: string[] }>(
+      serverId,
+      `/projects/${encodeURIComponent(projectId)}/environments/files`,
+    );
+    return body.files ?? [];
+  },
+
+  async importEnvironmentFile(projectId, serverId, id, file, remove) {
+    await transport.request(serverId, `/projects/${encodeURIComponent(projectId)}/environments/${encodeURIComponent(id)}/import`, {
+      method: "POST", body: { file, remove },
+    });
   },
 
   async workspaceFile(id, path) {
@@ -665,7 +969,7 @@ export const useStore = create<State>((set, get) => ({
       if (detached) return { path: detached.path };
     }
     const server = get().servers.find((entry) => entry.id === workspace?.serverId) ?? homeServer(get().servers);
-    if (!server) throw new Error("This Mac isn't connected.");
+    if (!server) throw new Error("This computer isn't connected.");
     const result = await transport.request<{ path?: string }>(
       server.id,
       `/workspaces/${encodeURIComponent(input.workspaceId)}/checkout`,
@@ -682,7 +986,7 @@ export const useStore = create<State>((set, get) => ({
     const cwd = input.cwd.trim() || "~";
     const title = text.split("\n")[0]?.slice(0, 80) || "New thread";
     const server = get().servers.find((entry) => entry.id === input.serverId) ?? homeServer(get().servers);
-    if (!server) throw new Error("This Mac isn't connected.");
+    if (!server) throw new Error("This computer isn't connected.");
     const created = await transport.request<{ chat?: RawChat }>(server.id, "/chats", {
       method: "POST",
       body: {
@@ -713,21 +1017,46 @@ export const useStore = create<State>((set, get) => ({
     return { id, serverId: server.id };
   },
 
+  async createSubthread(input) {
+    const parent = get().chats.find((chat) => chat.id === input.parentId);
+    if (!parent) throw new Error("That parent thread is no longer available.");
+    if (parent.parentChatId) throw new Error("A subthread can't start another subthread.");
+    const body = await transport.request<{ chat?: RawChat }>(
+      parent.serverId,
+      `/chats/${encodeURIComponent(parent.id)}/subthreads`,
+      { method: "POST", body: { text: input.text, includeParent: input.includeParent } },
+    );
+    if (!body.chat) throw new Error("Couldn't start that subthread.");
+    const child = toChat(body.chat, parent.serverId);
+    set((current) => ({
+      chats: [...current.chats.filter((chat) => chat.id !== child.id), child].sort(byNewest),
+    }));
+    await get().refreshServer(parent.serverId);
+    return child;
+  },
+
   async openChat(id) {
     // Both lists: an inbox conversation opens the same way a thread does.
     const chat = get().chats.find((entry) => entry.id === id)
       ?? get().dms.find((entry) => entry.id === id);
     if (!chat) return;
-    if (get().openId !== id) {
-      detailSubscription?.();
-      detailSubscription = transport.subscribe(() => {}, [`thread:${id}`]);
+    const key = detailKey(id, chat.serverId);
+    if (!detailSubscriptions.has(key)) {
+      detailSubscriptions.set(key, transport.subscribe(() => {}, [`thread:${id}`]));
     }
-    const same = get().detail?.id === id;
-    set({ openId: id, detailLoading: !same, ...(same ? {} : { detail: undefined }) });
+    const cached = detailCache.get(key);
+    const same = get().detail?.id === id && get().detail?.serverId === chat.serverId;
+    set({
+      openId: id,
+      detailLoading: !same && !cached,
+      ...(!same ? { detail: cached } : {}),
+    });
     try {
       const raw = await transport.request<RawChatDetail>(chat.serverId, `/chats/${encodeURIComponent(id)}`);
+      const detail = toDetail(raw, chat.serverId);
+      cacheDetail(detail);
       if (get().openId !== id) return;
-      set({ detail: toDetail(raw, chat.serverId), detailLoading: false });
+      set({ detail, detailLoading: false });
     } catch (error) {
       if (get().openId !== id) return;
       set({ detailLoading: false });
@@ -736,8 +1065,8 @@ export const useStore = create<State>((set, get) => ({
   },
 
   closeChat() {
-    detailSubscription?.();
-    detailSubscription = undefined;
+    const detail = get().detail;
+    if (detail) cacheDetail(detail);
     set({ openId: undefined, detail: undefined, detailLoading: false });
   },
 
@@ -767,7 +1096,7 @@ export const useStore = create<State>((set, get) => ({
       }
     }
     if (failure) throw failure;
-    throw new Error("No Mac is available to run this agent.");
+    throw new Error("No computer is available to run this agent.");
   },
 
   async readChat(id) {
@@ -784,13 +1113,39 @@ export const useStore = create<State>((set, get) => ({
       });
   },
 
-  async sendMessage(text) {
+  async uploadMessageImage(file, onProgress) {
+    const detail = get().detail;
+    if (!detail) throw new Error("Open a thread before attaching an image.");
+    const body = await transport.upload<{ attachment?: ChatImageAttachment }>(
+      detail.serverId,
+      `/chats/${encodeURIComponent(detail.id)}/upload`,
+      file,
+      onProgress,
+    );
+    if (!body.attachment) throw new Error("That image didn't finish uploading.");
+    return body.attachment;
+  },
+
+  async messageImage(chatId, serverId, attachmentId) {
+    const body = await transport.request<{ image?: { dataUrl?: string } }>(
+      serverId,
+      `/chats/${encodeURIComponent(chatId)}/attachments/${encodeURIComponent(attachmentId)}`,
+    );
+    if (!body.image?.dataUrl) throw new Error("That image is not available.");
+    return body.image.dataUrl;
+  },
+
+  async sendMessage(text, attachments = [], codeReferences = []) {
     const detail = get().detail;
     const trimmed = text.trim();
-    if (!detail || !trimmed) return;
+    if (!detail || (!trimmed && attachments.length === 0 && codeReferences.length === 0)) return;
     await transport.request(detail.serverId, `/chats/${encodeURIComponent(detail.id)}/message`, {
       method: "POST",
-      body: { text: trimmed },
+      body: {
+        text: trimmed,
+        ...(attachments.length > 0 ? { attachments } : {}),
+        ...(codeReferences.length > 0 ? { codeReferences } : {}),
+      },
     });
     if (!get().connected) await get().openChat(detail.id);
   },
@@ -870,7 +1225,7 @@ export const useStore = create<State>((set, get) => ({
     // A new agent belongs on the Mac this phone would run it on.
     const serverId = existing?.serverId
       ?? preferredServer(get().servers, deviceOrderOf(get()))?.id;
-    if (!serverId) throw new Error("This Mac isn't connected.");
+    if (!serverId) throw new Error("This computer isn't connected.");
     const body = await transport.request<{ agent: RawAgent }>(
       serverId,
       id ? `/agents/${encodeURIComponent(id)}` : "/agents",
@@ -934,13 +1289,26 @@ export const useStore = create<State>((set, get) => ({
     const chat = get().chats.find((entry) => entry.id === id);
     if (!chat) return;
     await transport.request(chat.serverId, `/chats/${encodeURIComponent(id)}/archive`, { method: "POST", body: {} });
+    forgetDetail(id, chat.serverId);
     await get().refreshServer(chat.serverId);
+  },
+
+  async restoreThread(id, serverId) {
+    const body = await transport.request<{ chat?: RawChat }>(
+      serverId,
+      `/archives/${encodeURIComponent(id)}/restore`,
+      { method: "POST", body: {} },
+    );
+    if (!body.chat) throw new Error("Couldn't restore that thread.");
+    await get().refreshServer(serverId);
+    return toChat(body.chat, serverId);
   },
 
   async deleteThread(id) {
     const chat = get().chats.find((entry) => entry.id === id);
     if (!chat) return;
     await transport.request(chat.serverId, `/chats/${encodeURIComponent(id)}`, { method: "DELETE" });
+    forgetDetail(id, chat.serverId);
     await get().refreshServer(chat.serverId);
     // A deleted thread was a ticket's linked thread until a moment ago.
     await get().loadBoard(chat.serverId).catch(() => {});
@@ -983,14 +1351,37 @@ export const useStore = create<State>((set, get) => ({
     });
   },
 
+  async ticketFromThread(id) {
+    const chat = get().chats.find((entry) => entry.id === id);
+    if (!chat) throw new Error("That thread is gone.");
+    const body = await transport.request<{ ticket?: RawTicket }>(
+      chat.serverId,
+      `/chats/${encodeURIComponent(id)}/ticket`,
+      { method: "POST", body: {} },
+    );
+    if (!body.ticket) throw new Error("Couldn't track that thread.");
+    const ticket = { ...body.ticket, serverId: chat.serverId } as Ticket;
+    set((current) => ({ tickets: replace(current.tickets, ticket) }));
+    void get().loadBoard(chat.serverId).catch(() => {});
+    return ticket;
+  },
+
   async updateTicket(id, patch) {
     const ticket = get().tickets.find((entry) => entry.id === id);
     if (!ticket) return;
-    await transport.request(ticket.serverId, `/tickets/${encodeURIComponent(id)}`, { method: "PATCH", body: patch });
-    await get().loadBoard(ticket.serverId);
+    const body = await transport.request<{ ticket?: RawTicket }>(
+      ticket.serverId,
+      `/tickets/${encodeURIComponent(id)}`,
+      { method: "PATCH", body: patch },
+    );
+    if (body.ticket) {
+      const updated = { ...body.ticket, serverId: ticket.serverId, threads: body.ticket.threads ?? [] } as Ticket;
+      set((current) => ({ tickets: replace(current.tickets, updated) }));
+    }
+    void get().loadBoard(ticket.serverId).catch(() => {});
   },
 
-  async moveTicket(id, status) {
+  async moveTicket(id, status, before, after) {
     const ticket = get().tickets.find((entry) => entry.id === id);
     if (!ticket) return;
     set((current) => ({
@@ -999,7 +1390,7 @@ export const useStore = create<State>((set, get) => ({
     try {
       await transport.request(ticket.serverId, `/tickets/${encodeURIComponent(id)}/move`, {
         method: "POST",
-        body: { status },
+        body: { status, before, after },
       });
     } finally {
       await get().loadBoard(ticket.serverId);
@@ -1014,6 +1405,93 @@ export const useStore = create<State>((set, get) => ({
       body: { body },
     });
     await get().loadBoard(ticket.serverId);
+  },
+
+  async editTicketComment(id, commentId, body) {
+    const ticket = get().tickets.find((entry) => entry.id === id);
+    if (!ticket) return;
+    await transport.request(
+      ticket.serverId,
+      `/tickets/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
+      { method: "PATCH", body: { body } },
+    );
+    void get().loadBoard(ticket.serverId).catch(() => {});
+  },
+
+  async deleteTicketComment(id, commentId) {
+    const ticket = get().tickets.find((entry) => entry.id === id);
+    if (!ticket) return;
+    await transport.request(
+      ticket.serverId,
+      `/tickets/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
+      { method: "DELETE" },
+    );
+    void get().loadBoard(ticket.serverId).catch(() => {});
+  },
+
+  async deleteTicket(id) {
+    const ticket = get().tickets.find((entry) => entry.id === id);
+    if (!ticket) return;
+    await transport.request(ticket.serverId, `/tickets/${encodeURIComponent(id)}`, { method: "DELETE" });
+    set((current) => ({ tickets: current.tickets.filter((entry) => entry.id !== id) }));
+    void get().loadBoard(ticket.serverId).catch(() => {});
+  },
+
+  async attachThread(ticketId, chatId) {
+    const ticket = get().tickets.find((entry) => entry.id === ticketId);
+    const chat = get().chats.find((entry) => entry.id === chatId);
+    if (!ticket) throw new Error("That ticket is gone.");
+    if (!chat) throw new Error("That thread is gone.");
+    const deviceId = get().boardDevices.find((entry) => entry.serverId === chat.serverId)?.deviceId;
+    if (!deviceId) throw new Error("That thread's computer isn't connected.");
+    const body = await transport.request<{ ticket?: RawTicket }>(
+      ticket.serverId,
+      `/tickets/${encodeURIComponent(ticketId)}/threads`,
+      {
+        method: "POST",
+        body: {
+          chatId,
+          deviceId,
+          state: chat.state,
+          ...(chat.agentId ? { agentId: chat.agentId } : {}),
+        },
+      },
+    );
+    if (body.ticket) {
+      const updated = { ...body.ticket, serverId: ticket.serverId, threads: body.ticket.threads ?? [] } as Ticket;
+      set((current) => ({ tickets: replace(current.tickets, updated) }));
+    }
+    void get().loadBoard(ticket.serverId).catch(() => {});
+  },
+
+  async detachThread(ticketId, chatId, deviceId) {
+    const ticket = get().tickets.find((entry) => entry.id === ticketId);
+    if (!ticket) return;
+    const body = await transport.request<{ ticket?: RawTicket }>(
+      ticket.serverId,
+      `/tickets/${encodeURIComponent(ticketId)}/threads/${encodeURIComponent(chatId)}?device=${encodeURIComponent(deviceId)}`,
+      { method: "DELETE" },
+    );
+    if (body.ticket) {
+      const updated = { ...body.ticket, serverId: ticket.serverId, threads: body.ticket.threads ?? [] } as Ticket;
+      set((current) => ({ tickets: replace(current.tickets, updated) }));
+    }
+    void get().loadBoard(ticket.serverId).catch(() => {});
+  },
+
+  async handoffTicket(id, agentId) {
+    const ticket = get().tickets.find((entry) => entry.id === id);
+    if (!ticket) throw new Error("That ticket is gone.");
+    const body = await transport.request<{ ticket?: RawTicket }>(
+      ticket.serverId,
+      `/tickets/${encodeURIComponent(id)}/handoff`,
+      { method: "POST", body: { agentId } },
+    );
+    if (body.ticket) {
+      const updated = { ...body.ticket, serverId: ticket.serverId, threads: body.ticket.threads ?? [] } as Ticket;
+      set((current) => ({ tickets: replace(current.tickets, updated) }));
+    }
+    void get().loadBoard(ticket.serverId).catch(() => {});
   },
 
   async ticketActivity(id) {
@@ -1105,6 +1583,9 @@ function applyChatFrame(current: State, frame: ChatFrame, serverId: string): Par
   const owned = (chat: Chat) => chat.serverId === serverId;
   const chats = current.chats.map((chat) => (owned(chat) ? patchRow(chat, frame) : chat));
   const dms = current.dms.map((chat) => (owned(chat) ? patchRow(chat, frame) : chat));
+  const key = frame.chatId ? detailKey(frame.chatId, serverId) : undefined;
+  const cached = key ? detailCache.get(key) : undefined;
+  if (cached) cacheDetail(mergeDetail(cached, frame));
   const detail =
     current.detail && current.detail.id === frame.chatId && current.detail.serverId === serverId
       ? mergeDetail(current.detail, frame)
@@ -1276,11 +1757,13 @@ async function readServer(
   server: Server;
   chats: Chat[];
   dms: Chat[];
+  archived: ArchivedThread[];
   workspaces: Workspace[];
   unavailable?: string;
   failure?: string;
 }> {
   const held = () => get().workspaces.filter((workspace) => workspace.serverId === server.id);
+  const heldArchived = () => get().archived.filter((thread) => thread.serverId === server.id);
   try {
     let chats: { chats?: RawChat[]; dms?: RawChat[]; unavailable?: string };
     try {
@@ -1297,10 +1780,19 @@ async function readServer(
     } catch {
       workspaces = held();
     }
+    let archived = heldArchived();
+    try {
+      const listed = await transport.request<{ archives?: RawArchive[] }>(server.id, "/archives?summary=1");
+      archived = (listed.archives ?? []).map((raw) => toArchivedThread(raw, server.id));
+    } catch {
+      // Archives are optional on older Macs, and a temporary failure keeps the
+      // last answer visible until that computer answers again.
+    }
     return {
       server: { ...server, online: server.cloud ? server.online : true },
       chats: (chats.chats ?? []).map((raw) => toChat(raw, server.id)),
       dms: (chats.dms ?? []).map((raw) => toChat(raw, server.id)),
+      archived,
       workspaces,
       ...(chats.unavailable ? { unavailable: chats.unavailable } : {}),
     };
@@ -1309,10 +1801,24 @@ async function readServer(
       server: { ...server, online: false },
       chats: [],
       dms: [],
+      archived: heldArchived(),
       workspaces: held(),
       failure: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+function toArchivedThread(raw: RawArchive, serverId: string): ArchivedThread {
+  return {
+    id: raw.id,
+    chatId: raw.chatId,
+    serverId,
+    title: raw.conversation?.title?.trim() || raw.session,
+    cwd: raw.cwd ?? "~",
+    provider: raw.agent,
+    parentChatId: raw.conversation?.parentChatId,
+    archivedAt: raw.archivedAt,
+  };
 }
 
 /// The catalogue for one Mac: what it answered with, or the one this app ships

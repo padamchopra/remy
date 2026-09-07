@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from "react";
+import * as ImagePicker from "expo-image-picker";
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   Platform,
   Pressable,
   ScrollView,
@@ -12,8 +16,12 @@ import {
 } from "react-native";
 import {
   ArrowUp,
+  ImagePlus,
+  RotateCcw,
+  X,
   Bot,
   FolderGit2,
+  GitFork,
   GitPullRequest,
   Loader,
   Square,
@@ -25,12 +33,15 @@ import { color, radius, space, type } from "../theme";
 import { apiError } from "../lib/api-error";
 import { CLOUD_MODES, cloudModeOf, PERMISSIONS, permissionOf } from "../lib/chat-options";
 import { displayPath } from "../lib/path";
+import { extensionFor, imageMimeType, type ImageMimeType } from "../lib/message-attachments";
 import { workspaceForPath } from "../lib/projects";
 import { pairChoice, providerOf } from "../lib/providers";
 import { useProviders, useStore, useSupportsEffort } from "../state/store";
 import type {
   Agent,
   ChatApproval,
+  ChatCodeReference,
+  ChatImageAttachment,
   ChatQuestionRequest,
   ConvArtifact,
   ConvDiffLine,
@@ -46,13 +57,28 @@ import { Markdown } from "../components/Markdown";
 import { AgentMark } from "../components/AgentMark";
 import { ModelPicker } from "../components/ModelPicker";
 
+interface PendingImage {
+  key: string;
+  uri: string;
+  name: string;
+  mimeType: ImageMimeType;
+  status: "uploading" | "ready" | "failed";
+  progress: number;
+  attachment?: ChatImageAttachment;
+  error?: string;
+}
+
 export function ThreadScreen({
   id,
   onOpenArtifact,
+  onOpenThread,
+  onOpenPullRequest,
 }: {
   id: string;
   /// Where a card a Remy tool left in the feed goes when you tap it.
   onOpenArtifact?: (artifact: ConvArtifact) => void;
+  onOpenThread?: (id: string) => void;
+  onOpenPullRequest?: (pullRequest: PullRequestSummary) => void;
 }) {
   // Both lists: an inbox conversation is opened by this screen too, and it is
   // never in `chats`.
@@ -63,6 +89,8 @@ export function ThreadScreen({
   const openChat = useStore((s) => s.openChat);
   const closeChat = useStore((s) => s.closeChat);
   const sendMessage = useStore((s) => s.sendMessage);
+  const uploadMessageImage = useStore((s) => s.uploadMessageImage);
+  const messageImage = useStore((s) => s.messageImage);
   const answerApproval = useStore((s) => s.answerApproval);
   const answerQuestion = useStore((s) => s.answerQuestion);
   const interrupt = useStore((s) => s.interrupt);
@@ -78,7 +106,10 @@ export function ThreadScreen({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [pullRequest, setPullRequest] = useState<PullRequestSummary>();
+  const [images, setImages] = useState<PendingImage[]>([]);
   const scroll = useRef<ScrollView>(null);
+  const atEnd = useRef(true);
+  const initialScroll = useRef(true);
 
   useEffect(() => {
     void openChat(id).catch((caught) => setError(apiError(caught)));
@@ -105,7 +136,7 @@ export function ThreadScreen({
   if (!chat) {
     return (
       <View style={styles.wrap}>
-        <EmptyState title="That thread is gone" detail="It was deleted on the Mac." />
+        <EmptyState title="That thread is gone" detail="It was deleted on its computer." />
       </View>
     );
   }
@@ -129,12 +160,14 @@ export function ThreadScreen({
 
   const submit = async () => {
     const trimmed = text.trim();
-    if (!trimmed || busy) return;
+    const attachments = images.flatMap((image) => image.attachment ? [image.attachment] : []);
+    if ((!trimmed && attachments.length === 0) || busy || images.some((image) => image.status !== "ready")) return;
     setBusy(true);
     setError(undefined);
     try {
-      await sendMessage(trimmed);
+      await sendMessage(trimmed, attachments);
       setText("");
+      setImages([]);
     } catch (caught) {
       setError(apiError(caught));
     } finally {
@@ -142,21 +175,103 @@ export function ThreadScreen({
     }
   };
 
+  const upload = async (pending: PendingImage) => {
+    setImages((current) => current.map((image) => image.key === pending.key
+      ? { ...image, status: "uploading", progress: 0, error: undefined }
+      : image));
+    try {
+      const attachment = await uploadMessageImage(
+        { uri: pending.uri, name: pending.name, mimeType: pending.mimeType },
+        (progress) => setImages((current) => current.map((image) => image.key === pending.key
+          ? { ...image, progress }
+          : image)),
+      );
+      setImages((current) => current.map((image) => image.key === pending.key
+        ? { ...image, status: "ready", progress: 1, attachment }
+        : image));
+    } catch (caught) {
+      setImages((current) => current.map((image) => image.key === pending.key
+        ? { ...image, status: "failed", error: apiError(caught) }
+        : image));
+    }
+  };
+
+  const pickImages = async () => {
+    setError(undefined);
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsMultipleSelection: true,
+      selectionLimit: Math.max(1, 8 - images.length),
+      quality: 1,
+    });
+    if (result.canceled) return;
+    const accepted: PendingImage[] = [];
+    for (const asset of result.assets) {
+      const mimeType = imageMimeType(asset.mimeType, asset.fileName);
+      if (!mimeType) {
+        setError("Use a PNG, JPEG, GIF, or WebP image.");
+        continue;
+      }
+      if ((asset.fileSize ?? 0) > 10 * 1024 * 1024) {
+        setError("Choose an image smaller than 10 MB.");
+        continue;
+      }
+      accepted.push({
+        key: `${asset.assetId ?? asset.uri}:${Date.now()}:${accepted.length}`,
+        uri: asset.uri,
+        name: asset.fileName?.trim() || `image.${extensionFor(mimeType)}`,
+        mimeType,
+        status: "uploading",
+        progress: 0,
+      });
+    }
+    if (accepted.length === 0) return;
+    setImages((current) => [...current, ...accepted].slice(0, 8));
+    for (const pending of accepted) void upload(pending);
+  };
+
+  const onFeedScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    atEnd.current = contentOffset.y + layoutMeasurement.height >= contentSize.height - 48;
+  };
+
   return (
     <KeyboardAvoidingView style={styles.wrap} behavior={Platform.OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={88}>
       <View style={styles.header}>
-        <Text style={[type.caption, { flex: 1 }]} numberOfLines={1}>
-          {workspace?.name ?? server?.name ?? "This Mac"} · {displayPath(chat.cwd)}
-        </Text>
+        <View style={styles.headerText}>
+          <Text style={type.caption} numberOfLines={1}>
+            {workspace?.name ?? server?.name ?? "This computer"} · {displayPath(chat.cwd)}
+          </Text>
+          {open?.action ? <Text style={styles.action} numberOfLines={1}>{open.action}</Text> : null}
+        </View>
         <StateBadge state={state} />
       </View>
-      {pullRequest ? <PullRequestRow pullRequest={pullRequest} /> : null}
+      {chat.parentChatId && onOpenThread ? (
+        <Pressable
+          onPress={() => onOpenThread(chat.parentChatId!)}
+          accessibilityLabel="Open parent thread"
+          style={styles.parent}
+        >
+          <GitFork size={14} color={color.mutedForeground} />
+          <Text style={type.caption}>Open parent thread</Text>
+        </Pressable>
+      ) : null}
+      {pullRequest ? (
+        <PullRequestRow pullRequest={pullRequest} onOpen={onOpenPullRequest} />
+      ) : null}
+      {open?.todos.length ? <TodoStrip todos={open.todos} /> : null}
 
       <ScrollView
         ref={scroll}
         style={styles.feed}
         contentContainerStyle={styles.feedContent}
-        onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: true })}
+        onScroll={onFeedScroll}
+        scrollEventThrottle={32}
+        onContentSizeChange={() => {
+          if (!initialScroll.current && !atEnd.current) return;
+          scroll.current?.scrollToEnd({ animated: !initialScroll.current });
+          initialScroll.current = false;
+        }}
       >
         {loading && entries.length === 0 ? (
           <ActivityIndicator color={color.foreground} style={{ marginTop: 40 }} />
@@ -169,6 +284,9 @@ export function ThreadScreen({
               entry={entry}
               speaker={speaker}
               mark={agent}
+              chatId={chat.id}
+              serverId={chat.serverId}
+              messageImage={messageImage}
               onOpenArtifact={onOpenArtifact}
             />
           ))
@@ -202,6 +320,37 @@ export function ThreadScreen({
 
       <View style={styles.composer}>
         {error ? <Text style={styles.threadError}>{error}</Text> : null}
+        {images.length ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.imageDrafts}>
+            {images.map((image) => (
+              <View key={image.key} style={styles.imageDraft}>
+                <Image source={{ uri: image.uri }} style={styles.imageDraftPreview} />
+                {image.status === "uploading" ? (
+                  <View style={styles.imageProgress}>
+                    <View style={[styles.imageProgressFill, { width: `${Math.max(6, image.progress * 100)}%` }]} />
+                  </View>
+                ) : null}
+                {image.status === "failed" ? (
+                  <Pressable
+                    onPress={() => void upload(image)}
+                    accessibilityLabel={`Retry ${image.name}`}
+                    style={styles.imageRetry}
+                  >
+                    <RotateCcw size={14} color={color.foreground} />
+                  </Pressable>
+                ) : null}
+                <Pressable
+                  onPress={() => setImages((current) => current.filter((item) => item.key !== image.key))}
+                  accessibilityLabel={`Remove ${image.name}`}
+                  style={styles.imageRemove}
+                >
+                  <X size={14} color={color.foreground} />
+                </Pressable>
+                {image.error ? <Text style={styles.imageError} numberOfLines={2}>{image.error}</Text> : null}
+              </View>
+            ))}
+          </ScrollView>
+        ) : null}
         <View style={styles.toolbar}>
           {cloud ? (
             <Text style={type.caption}>Cursor Cloud default</Text>
@@ -228,6 +377,15 @@ export function ThreadScreen({
             onChange={(value) => void setChatOptions({ permissionMode: value })}
             options={cloud ? CLOUD_MODES : PERMISSIONS}
           />
+          <Pressable
+            onPress={() => void pickImages()}
+            disabled={images.length >= 8}
+            accessibilityLabel="Attach images"
+            style={styles.attach}
+          >
+            <ImagePlus size={17} color={color.foreground} />
+          </Pressable>
+          {open?.context ? <ContextLabel context={open.context} /> : null}
           {working ? (
             <Pressable onPress={() => void interrupt()} style={styles.stop}>
               <Square size={14} color={color.foreground} fill={color.foreground} />
@@ -251,8 +409,12 @@ export function ThreadScreen({
           />
           <Pressable
             onPress={() => void submit()}
-            disabled={!text.trim() || busy}
-            style={[styles.send, (!text.trim() || busy) && { opacity: 0.4 }]}
+            disabled={(!text.trim() && images.length === 0) || busy || images.some((image) => image.status !== "ready")}
+            style={[
+              styles.send,
+              ((!text.trim() && images.length === 0) || busy || images.some((image) => image.status !== "ready"))
+                && { opacity: 0.4 },
+            ]}
           >
             <ArrowUp size={18} color={color.primaryForeground} />
           </Pressable>
@@ -266,6 +428,9 @@ function Entry({
   entry,
   speaker,
   mark,
+  chatId,
+  serverId,
+  messageImage,
   onOpenArtifact,
 }: {
   entry: ConvEntry;
@@ -273,6 +438,9 @@ function Entry({
   /// The agent whose conversation this is, when it is one. Its face goes beside
   /// its name, the way it does on its own row in the Inbox.
   mark?: Agent;
+  chatId: string;
+  serverId: string;
+  messageImage: (chatId: string, serverId: string, attachmentId: string) => Promise<string>;
   onOpenArtifact?: (artifact: ConvArtifact) => void;
 }) {
   // Work the provider is running beside the turn arrives on its own entry.
@@ -281,13 +449,29 @@ function Entry({
     return (
       <View style={styles.you}>
         <Text style={styles.speaker}>You</Text>
-        <View style={styles.bubbleYou}>
-          <Text style={styles.youText}>{entry.text}</Text>
-        </View>
+        {entry.text ? (
+          <View style={styles.bubbleYou}>
+            <Text style={styles.youText}>{entry.text}</Text>
+          </View>
+        ) : null}
+        {entry.attachments?.length ? (
+          <AttachmentGallery
+            chatId={chatId}
+            serverId={serverId}
+            attachments={entry.attachments}
+            messageImage={messageImage}
+          />
+        ) : null}
+        {entry.codeReferences?.map((reference) => (
+          <CodeReferenceCard key={reference.id} reference={reference} />
+        ))}
       </View>
     );
   }
   if (entry.kind === "assistant") {
+    if (entry.text === "— context compacted —") {
+      return <Text style={styles.checkpoint}>Context compacted · earlier messages remain in history</Text>;
+    }
     return (
       <View style={styles.claude}>
         <View style={styles.speakerRow}>
@@ -305,6 +489,118 @@ function Entry({
   }
   return <ToolEntry entry={entry} onOpenArtifact={onOpenArtifact} />;
 }
+
+function AttachmentGallery({
+  chatId,
+  serverId,
+  attachments,
+  messageImage,
+}: {
+  chatId: string;
+  serverId: string;
+  attachments: ChatImageAttachment[];
+  messageImage: (chatId: string, serverId: string, attachmentId: string) => Promise<string>;
+}) {
+  return (
+    <View style={styles.attachmentGallery}>
+      {attachments.map((attachment) => (
+        <MessageImage
+          key={attachment.id}
+          chatId={chatId}
+          serverId={serverId}
+          attachment={attachment}
+          messageImage={messageImage}
+        />
+      ))}
+    </View>
+  );
+}
+
+function MessageImage({
+  chatId,
+  serverId,
+  attachment,
+  messageImage,
+}: {
+  chatId: string;
+  serverId: string;
+  attachment: ChatImageAttachment;
+  messageImage: (chatId: string, serverId: string, attachmentId: string) => Promise<string>;
+}) {
+  const [uri, setUri] = useState<string>();
+  const [failed, setFailed] = useState(false);
+  const load = () => {
+    setFailed(false);
+    void messageImage(chatId, serverId, attachment.id)
+      .then(setUri)
+      .catch(() => setFailed(true));
+  };
+  useEffect(load, [chatId, serverId, attachment.id]);
+  if (failed) {
+    return (
+      <Pressable onPress={load} accessibilityLabel={`Retry ${attachment.name}`} style={styles.messageImageMissing}>
+        <RotateCcw size={16} color={color.mutedForeground} />
+        <Text style={type.caption}>Load image</Text>
+      </Pressable>
+    );
+  }
+  if (!uri) return <View style={styles.messageImageMissing}><ActivityIndicator color={color.mutedForeground} /></View>;
+  return <Image source={{ uri }} accessibilityLabel={attachment.name} resizeMode="cover" style={styles.messageImage} />;
+}
+
+function CodeReferenceCard({ reference }: { reference: ChatCodeReference }) {
+  const range = reference.startLine === reference.endLine
+    ? `L${reference.startLine}`
+    : `L${reference.startLine}–${reference.endLine}`;
+  return (
+    <View style={styles.codeReference}>
+      <Text style={styles.codeReferenceTitle} numberOfLines={1}>{reference.path} · {range}</Text>
+      <Text style={type.caption}>{reference.comment}</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <View style={styles.referenceLines}>
+          {reference.lines.map((line, index) => (
+            <Text
+              key={`${line.oldLine}:${line.newLine}:${index}`}
+              style={[
+                styles.diffLine,
+                line.kind === "add" && { color: color.success },
+                line.kind === "del" && { color: color.destructive },
+              ]}
+            >
+              {line.kind === "add" ? "+" : line.kind === "del" ? "-" : " "}{line.text}
+            </Text>
+          ))}
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
+
+function TodoStrip({ todos }: { todos: { content: string; status: string }[] }) {
+  const done = todos.filter((todo) => todo.status === "completed").length;
+  const current = todos.find((todo) => todo.status === "in_progress")
+    ?? todos.find((todo) => todo.status !== "completed");
+  return (
+    <View style={styles.todoStrip}>
+      <Text style={styles.todoCount}>{done}/{todos.length}</Text>
+      <Text style={type.caption} numberOfLines={1}>{current?.content ?? "Plan complete"}</Text>
+    </View>
+  );
+}
+
+function ContextLabel({ context }: { context: { tokens: number; limit: number; compactions: number } }) {
+  if (context.limit <= 0) return null;
+  const percent = Math.min(100, Math.round((context.tokens / context.limit) * 100));
+  return (
+    <Text
+      style={[styles.context, percent >= 90 && { color: color.destructive }]}
+      accessibilityLabel={`${percent}% of context used${context.compactions ? `, compacted ${context.compactions} times` : ""}`}
+    >
+      {percent}%
+    </Text>
+  );
+}
+
 
 function ToolEntry({
   entry,
@@ -425,16 +721,31 @@ function ActivityEntry({ activity }: { activity: ThreadActivity }) {
 }
 
 /// The pull request on this thread's branch.
-function PullRequestRow({ pullRequest }: { pullRequest: PullRequestSummary }) {
-  return (
-    <View style={styles.pr}>
+function PullRequestRow({
+  pullRequest,
+  onOpen,
+}: {
+  pullRequest: PullRequestSummary;
+  onOpen?: (pullRequest: PullRequestSummary) => void;
+}) {
+  const content = (
+    <>
       <GitPullRequest size={14} color={color.mutedForeground} />
       <Text style={type.caption} numberOfLines={1}>
         {`#${pullRequest.number} · ${pullRequest.title}`}
       </Text>
       <Text style={styles.prState}>{pullRequest.state.toLowerCase()}</Text>
-    </View>
+    </>
   );
+  return onOpen ? (
+    <Pressable
+      onPress={() => onOpen(pullRequest)}
+      accessibilityLabel={`Open pull request #${pullRequest.number}`}
+      style={({ pressed }) => [styles.pr, pressed && { backgroundColor: color.accent }]}
+    >
+      {content}
+    </Pressable>
+  ) : <View style={styles.pr}>{content}</View>;
 }
 
 function Diff({ lines }: { lines: ConvDiffLine[] }) {
@@ -558,6 +869,27 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: color.border,
   },
+  headerText: { flex: 1, minWidth: 0, gap: 2 },
+  action: { ...type.caption, color: color.foreground },
+  parent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    minHeight: 36,
+    paddingHorizontal: space.lg,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: color.border,
+  },
+  todoStrip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: space.lg,
+    paddingVertical: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: color.border,
+  },
+  todoCount: { fontSize: 11, fontWeight: "700", color: color.primary },
   feed: { flex: 1 },
   feedContent: { padding: space.lg, gap: space.lg, paddingBottom: 40 },
   you: { alignItems: "flex-end", gap: 4 },
@@ -572,6 +904,42 @@ const styles = StyleSheet.create({
     maxWidth: "85%",
   },
   youText: { color: color.foreground, fontSize: 15, lineHeight: 21 },
+  checkpoint: {
+    ...type.caption,
+    textAlign: "center",
+    paddingVertical: 4,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: color.border,
+  },
+  attachmentGallery: {
+    maxWidth: "85%",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
+    gap: 6,
+  },
+  messageImage: { width: 144, height: 112, borderRadius: radius.lg, backgroundColor: color.muted },
+  messageImageMissing: {
+    width: 144,
+    height: 112,
+    borderRadius: radius.lg,
+    backgroundColor: color.muted,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  },
+  codeReference: {
+    maxWidth: "92%",
+    borderWidth: 1,
+    borderColor: color.border,
+    borderRadius: radius.lg,
+    backgroundColor: color.card,
+    padding: 10,
+    gap: 5,
+  },
+  codeReferenceTitle: { ...type.callout, fontFamily: "Menlo", fontSize: 12 },
+  referenceLines: { minWidth: "100%", paddingTop: 4 },
   thinking: { color: color.mutedForeground, fontStyle: "italic", fontSize: 13, lineHeight: 18 },
   tool: {
     borderWidth: 1,
@@ -638,7 +1006,51 @@ const styles = StyleSheet.create({
     padding: space.md,
     gap: 8,
   },
+  imageDrafts: { gap: 8 },
+  imageDraft: {
+    width: 96,
+    minHeight: 80,
+    borderRadius: radius.md,
+    backgroundColor: color.muted,
+    overflow: "hidden",
+  },
+  imageDraftPreview: { width: 96, height: 72 },
+  imageProgress: { height: 3, backgroundColor: color.border },
+  imageProgressFill: { height: 3, backgroundColor: color.primary },
+  imageRetry: {
+    position: "absolute",
+    left: 4,
+    top: 4,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "rgba(0,0,0,0.65)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  imageRemove: {
+    position: "absolute",
+    right: 4,
+    top: 4,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "rgba(0,0,0,0.65)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  imageError: { ...type.caption, color: color.destructive, padding: 4 },
   toolbar: { flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center" },
+  attach: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: color.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  context: { ...type.caption, color: color.foreground, fontVariant: ["tabular-nums"] },
   stop: { flexDirection: "row", alignItems: "center", gap: 4, marginLeft: "auto" },
   stopLabel: { fontSize: 13, color: color.foreground },
   box: {

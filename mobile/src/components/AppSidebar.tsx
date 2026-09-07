@@ -1,19 +1,21 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { Folder, Inbox, Laptop, MessagesSquare, Plus, SquareKanban, type LucideIcon } from "lucide-react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ArchiveRestore, CornerDownRight, Folder, GitPullRequest, Inbox, Laptop, MessagesSquare, Plus, SquareKanban, type LucideIcon } from "lucide-react-native";
 import { color, radius, space, type } from "../theme";
 import { useStore } from "../state/store";
 import { displayPath } from "../lib/path";
 import { workspaceForPath } from "../lib/projects";
 import { StateDot } from "./Badge";
 import type { Chat } from "../state/types";
+import { apiError } from "../lib/api-error";
 
-export type AppSection = "inbox" | "threads" | "board" | "workspaces" | "devices";
+export type AppSection = "inbox" | "threads" | "board" | "prs" | "workspaces" | "devices";
 
 const SECTIONS: { id: AppSection; label: string; Icon: LucideIcon }[] = [
   { id: "inbox", label: "Inbox", Icon: Inbox },
   { id: "threads", label: "Threads", Icon: MessagesSquare },
   { id: "workspaces", label: "Workspaces", Icon: Folder },
-  { id: "board", label: "Board", Icon: SquareKanban },
+  { id: "board", label: "Tasks", Icon: SquareKanban },
+  { id: "prs", label: "Pull requests", Icon: GitPullRequest },
   { id: "devices", label: "Devices", Icon: Laptop },
 ];
 
@@ -31,6 +33,8 @@ export function AppSidebar({
   onNewThread: () => void;
 }) {
   const chats = useStore((s) => s.chats);
+  const archived = useStore((s) => s.archived);
+  const restoreThread = useStore((s) => s.restoreThread);
   const dms = useStore((s) => s.dms);
   const agents = useStore((s) => s.agents);
   const workspaces = useStore((s) => s.workspaces);
@@ -43,6 +47,9 @@ export function AppSidebar({
   const unread = agents.filter((agent) =>
     dms.some((chat) => chat.agentId === agent.id && chat.unread)).length;
   const many = servers.length > 1;
+  const ids = new Set(chats.map((chat) => chat.id));
+  const roots = chats.filter((chat) => !chat.parentChatId || !ids.has(chat.parentChatId));
+  const ordered = roots.flatMap((root) => [root, ...chats.filter((chat) => chat.parentChatId === root.id)]);
 
   return (
     <View style={styles.wrap}>
@@ -76,14 +83,14 @@ export function AppSidebar({
         {Object.entries(threadsUnavailable).map(([id, reason]) => (
           <Text key={id} style={[type.caption, { paddingHorizontal: 10 }]}>
             {many
-              ? `${servers.find((server) => server.id === id)?.name ?? "A Mac"} can't hold threads: ${reason}`
-              : `This Mac can't hold threads: ${reason}`}
+              ? `${servers.find((server) => server.id === id)?.name ?? "A computer"} can't hold threads: ${reason}`
+              : `This computer can't hold threads: ${reason}`}
           </Text>
         ))}
         {chats.length === 0 && Object.keys(threadsUnavailable).length === 0 ? (
           <Text style={[type.caption, { paddingHorizontal: 10 }]}>No threads yet.</Text>
         ) : (
-          chats.map((chat) => (
+          ordered.map((chat) => (
             <SidebarThread
               key={`${chat.serverId}:${chat.id}`}
               chat={chat}
@@ -97,6 +104,26 @@ export function AppSidebar({
             />
           ))
         )}
+        {archived.length > 0 ? (
+          <View style={styles.archiveGroup}>
+            <Text style={type.caption}>Archived</Text>
+            {archived.map((thread) => (
+              <Pressable
+                key={`${thread.serverId}:${thread.id}`}
+                accessibilityLabel={`Restore ${thread.title}`}
+                onPress={() => {
+                  void restoreThread(thread.id, thread.serverId)
+                    .then((chat) => onSelectThread(chat.id))
+                    .catch((error) => Alert.alert("Couldn't restore that thread", apiError(error)));
+                }}
+                style={({ pressed }) => [styles.archived, pressed && styles.pressed]}
+              >
+                <ArchiveRestore size={16} color={color.mutedForeground} />
+                <Text style={[type.callout, styles.threadTitle]} numberOfLines={1}>{thread.title}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
       </ScrollView>
     </View>
   );
@@ -118,7 +145,11 @@ function SidebarThread({
       onPress={onPress}
       style={({ pressed }) => [styles.thread, active && styles.threadOn, pressed && styles.pressed]}
     >
-      <StateDot state={chat.state} />
+      {chat.parentChatId ? (
+        <CornerDownRight size={14} color={color.mutedForeground} />
+      ) : (
+        <StateDot state={chat.state} />
+      )}
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={[type.callout, styles.threadTitle]} numberOfLines={1}>
           {chat.title}
@@ -175,6 +206,15 @@ const styles = StyleSheet.create({
   },
   list: { flex: 1 },
   listContent: { paddingHorizontal: 6, paddingBottom: 24, gap: 2 },
+  archiveGroup: { gap: 2, marginTop: space.lg, paddingHorizontal: 8 },
+  archived: {
+    minHeight: 40,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 6,
+    borderRadius: radius.md,
+  },
   thread: {
     flexDirection: "row",
     alignItems: "flex-start",

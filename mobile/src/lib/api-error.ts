@@ -52,11 +52,11 @@ export function httpError(status: number, text: string): HttpError {
     return carry("This iPhone is not on your tailnet. Open Tailscale and try again.");
   }
   if (status === 502 || status === 503 || status === 504) {
-    return carry("That Mac isn't running Remy.");
+    return carry("That computer isn't running Remy.");
   }
   const trimmed = text.trim();
   if (trimmed && trimmed.length < 200 && !trimmed.startsWith("<")) return carry(trimmed);
-  return carry(`Couldn't reach that Mac (${status}).`);
+  return carry(`Couldn't reach that computer (${status}).`);
 }
 
 export function chatIdFrom(error: unknown): string | undefined {

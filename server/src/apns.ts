@@ -23,6 +23,7 @@ export interface ApnsNotification {
   /// Where tapping should land, typically `remy://chat/<id>`.
   click?: string;
   session?: string;
+  deviceId?: string;
   highPriority?: boolean;
 }
 
@@ -146,6 +147,7 @@ export function apnsPayload(evt: ApnsNotification): Record<string, unknown> {
     },
     click: evt.click,
     session: evt.session,
+    deviceId: evt.deviceId,
   };
 }
 

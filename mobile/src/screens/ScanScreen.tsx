@@ -21,7 +21,7 @@ export function ScanScreen({
       <View style={styles.wrap}>
         <Text style={type.title}>Camera access</Text>
         <Text style={[type.body, { color: color.mutedForeground }]}>
-          Scan the pairing QR from Remy on your Mac.
+          Scan the pairing QR from Remy on your computer.
         </Text>
         <Button label="Allow camera" onPress={() => void requestPermission()} />
         <Button label="Cancel" variant="ghost" onPress={onCancel} />
@@ -44,7 +44,7 @@ export function ScanScreen({
       <View style={styles.top}>
         <Button label="Cancel" variant="ghost" onPress={onCancel} />
       </View>
-      <Text style={styles.hint}>Point at the QR on the Mac</Text>
+      <Text style={styles.hint}>Point at the QR on the computer</Text>
     </View>
   );
 }

@@ -30,6 +30,12 @@ export interface Transport {
   probe(pairing: Pairing): Promise<{ name: string; deviceId?: string }>;
   servers(): Promise<Server[]>;
   request<T>(serverId: string, path: string, init?: { method?: string; body?: unknown }): Promise<T>;
+  upload<T>(
+    serverId: string,
+    path: string,
+    file: { uri: string; name: string; mimeType: string },
+    onProgress?: (ratio: number) => void,
+  ): Promise<T>;
   updateServer(id: string, patch: { name?: string; icon?: DeviceIconId; tint?: TintId }): Promise<void>;
   subscribe(handler: (serverId: string, payload: unknown) => void, topics: readonly string[]): () => void;
   onStatus(handler: (serverId: string, online: boolean, error?: string) => void): () => void;
@@ -134,6 +140,19 @@ function toPeer(peer: WirePeer): Server {
     notify: peer.notify === true,
     ...(peer.lastSeen ? { lastSeen: peer.lastSeen } : {}),
   };
+}
+
+function targetFor(serverId: string, path: string): { pairing: Pairing; path: string } {
+  const route = routes.get(serverId);
+  if (!route) throw new Error("This phone is not paired with that computer.");
+  if (route.cloud) return { pairing: route.pairing, path: `/cursor-cloud/api${path}` };
+  if (route.peerId) {
+    return {
+      pairing: route.pairing,
+      path: `/peers/${encodeURIComponent(route.peerId)}/api${path}`,
+    };
+  }
+  return { pairing: route.pairing, path };
 }
 
 async function fetchPath<T>(
@@ -369,7 +388,7 @@ export const transport: Transport = {
   async probe(pairing) {
     const target = { ...pairing, url: originOf(pairing.url) };
     const health = await fetchPath<{ ok?: boolean }>(target, "/health");
-    if (health.ok !== true) throw new Error("Can't reach that Mac. Check Tailscale and try again.");
+    if (health.ok !== true) throw new Error("Can't reach that computer. Check Tailscale and try again.");
     let name = pairing.name || hostLabel(target.url);
     let deviceId = pairing.deviceId;
     try {
@@ -490,13 +509,44 @@ export const transport: Transport = {
   },
 
   request<T>(serverId: string, path: string, init?: { method?: string; body?: unknown }) {
-    const route = routes.get(serverId);
-    if (!route) throw new Error("This phone is not paired with that Mac.");
-    if (route.cloud) return fetchPath<T>(route.pairing, `/cursor-cloud/api${path}`, init);
-    if (route.peerId) {
-      return fetchPath<T>(route.pairing, `/peers/${encodeURIComponent(route.peerId)}/api${path}`, init);
-    }
-    return fetchPath<T>(route.pairing, path, init);
+    const target = targetFor(serverId, path);
+    return fetchPath<T>(target.pairing, target.path, init);
+  },
+
+  async upload<T>(
+    serverId: string,
+    path: string,
+    file: { uri: string; name: string; mimeType: string },
+    onProgress?: (ratio: number) => void,
+  ): Promise<T> {
+    const target = targetFor(serverId, path);
+    const source = await fetch(file.uri);
+    if (!source.ok) throw new Error("That image couldn't be opened.");
+    const blob = await source.blob();
+    return new Promise<T>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${originOf(target.pairing.url)}${target.path}`);
+      xhr.setRequestHeader("Authorization", `Bearer ${target.pairing.token}`);
+      xhr.setRequestHeader("Content-Type", file.mimeType);
+      xhr.setRequestHeader("X-Filename", file.name);
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && event.total > 0) onProgress?.(event.loaded / event.total);
+      };
+      xhr.onerror = () => reject(new Error("That image couldn't be uploaded."));
+      xhr.onload = () => {
+        const body = xhr.responseText ?? "";
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(httpError(xhr.status, body));
+          return;
+        }
+        try {
+          resolve((body ? JSON.parse(body) : null) as T);
+        } catch {
+          reject(new Error("That image returned an unreadable response."));
+        }
+      };
+      xhr.send(blob);
+    });
   },
 
   async updateServer(id, patch) {

@@ -50,16 +50,16 @@ export function PairScreen({
   return (
     <KeyboardAvoidingView style={styles.wrap} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <View style={styles.body}>
-        {onCancel ? null : <Text style={type.title}>Pair with a Mac</Text>}
+        {onCancel ? null : <Text style={type.title}>Pair with a computer</Text>}
         <Text style={[type.body, styles.detail]}>
-          Remy on your phone is a remote for the Macs that hold your repos.
+          Remy on your phone is a remote for the computers that hold your repositories.
         </Text>
 
         <Pressable onPress={onScan} style={({ pressed }) => [styles.card, pressed && styles.pressed]}>
           <Camera size={18} color={color.foreground} />
           <View style={styles.cardText}>
             <Text style={type.heading}>Scan the pairing QR</Text>
-            <Text style={type.caption}>Settings → Devices on the Mac, then copy the link as a QR.</Text>
+            <Text style={type.caption}>Settings → Devices on the computer, then copy the link as a QR.</Text>
           </View>
         </Pressable>
 
@@ -91,7 +91,7 @@ export function PairScreen({
         </View>
         <View style={styles.hint}>
           <Link2 size={14} color={color.mutedForeground} />
-          <Text style={type.caption}>Each Mac has to be reachable on your tailnet.</Text>
+          <Text style={type.caption}>Each computer has to be reachable on your tailnet.</Text>
         </View>
       </View>
     </KeyboardAvoidingView>

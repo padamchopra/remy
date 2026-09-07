@@ -79,6 +79,12 @@ jobs:
       - name: Install
         run: npm ci --no-audit --no-fund
 
+      # The phone imports the shared contract from the sibling workspace. npm
+      # links its source but does not install that package's own dependencies.
+      - name: Install shared contract
+        working-directory: contract
+        run: npm ci --no-audit --no-fund
+
       - name: Typecheck
         run: npm run typecheck
 

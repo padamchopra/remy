@@ -2,7 +2,7 @@ import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import { transport } from "./lib/transport";
-import { threadIdFromLink } from "./lib/pairing";
+import { notificationDestination, type NavigationDestination } from "./lib/navigation-destination";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -39,11 +39,10 @@ export async function registerPush(): Promise<void> {
   );
 }
 
-export function listenForNotificationTap(onThread: (id: string) => void): () => void {
+export function listenForNotificationTap(onDestination: (destination: NavigationDestination) => void): () => void {
   const sub = Notifications.addNotificationResponseReceivedListener((response) => {
-    const data = response.notification.request.content.data as { click?: string; session?: string };
-    const id = (typeof data.click === "string" ? threadIdFromLink(data.click) : undefined) ?? data.session;
-    if (typeof id === "string" && id.trim()) onThread(id.trim());
+    const destination = notificationDestination(response.notification.request.content.data);
+    if (destination) onDestination(destination);
   });
   return () => sub.remove();
 }

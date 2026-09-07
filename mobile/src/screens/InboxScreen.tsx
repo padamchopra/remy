@@ -74,7 +74,7 @@ export function InboxScreen({
       <View style={styles.wrap}>
         <EmptyState
           icon={<Bot size={22} color={color.mutedForeground} />}
-          title={error ? (named ? "Can't reach your Macs" : "Can't reach this Mac") : "No agents yet"}
+          title={error ? (named ? "Can't reach your computers" : "Can't reach this computer") : "No agents yet"}
           detail={error ?? "Write one to hand work to, then talk to it here."}
           action={error ? undefined : <Button label="Add an agent" busy={creating} onPress={() => void create()} />}
         />
@@ -161,7 +161,7 @@ function AgentRow({
         <View style={styles.routine}>
           <Repeat size={12} color={color.mutedForeground} />
           <Text style={type.caption} numberOfLines={1}>
-            Routines need a newer Remy on {machine ?? "this Mac"}.
+            Routines need a newer Remy on {machine ?? "this computer"}.
           </Text>
         </View>
       ) : next ? (

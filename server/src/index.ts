@@ -155,12 +155,14 @@ import {
 } from "./peers.js";
 import {
   createEnvironment,
+  disableEnvironment,
   deleteEnvironment,
   deleteEnvironmentValue,
   exportEnvironmentSync,
   importEnvironmentFile,
   listEnvironmentFiles,
   listEnvironments,
+  renameEnvironment,
   mergeEnvironmentSync,
   parseEnvironmentValues,
   selectEnvironment,
@@ -201,6 +203,7 @@ import { questionBroker } from "./questions.js";
 import { MAX_UPLOAD_BYTES, saveUpload } from "./uploads.js";
 import {
   MAX_CHAT_IMAGE_BYTES,
+  readChatImage,
   saveChatImage,
   validateChatImages,
 } from "./chat-attachments.js";
@@ -1269,11 +1272,22 @@ const server = createServer(async (req, res) => {
         }
         if (parts[3] === "active" && parts.length === 4 && req.method === "PUT") {
           const body = await readJson(req);
-          const environment = selectEnvironment(projectId, String(body.environmentId ?? ""));
+          const environmentId = String(body.environmentId ?? "");
+          if (!environmentId) {
+            disableEnvironment(projectId);
+            broadcast({ type: "environments", projectId });
+            return json(res, 200, { environment: null });
+          }
+          const environment = selectEnvironment(projectId, environmentId);
           broadcast({ type: "environments", projectId });
           return json(res, 200, { environment });
         }
         const environmentId = parts[3] ? decodeURIComponent(parts[3]) : "";
+        if (environmentId && parts.length === 4 && req.method === "PATCH") {
+          const environment = renameEnvironment(projectId, environmentId, (await readJson(req)).name);
+          broadcast({ type: "environments", projectId });
+          return json(res, 200, { environment });
+        }
         if (environmentId && parts.length === 4 && req.method === "DELETE") {
           deleteEnvironment(projectId, environmentId);
           broadcast({ type: "environments", projectId });
@@ -1941,6 +1955,20 @@ const server = createServer(async (req, res) => {
           return json(res, 200, { ok: true });
         } catch (error) {
           return json(res, 409, { error: (error as Error).message || "that question is no longer waiting" });
+        }
+      }
+      if (req.method === "GET" && parts[2] === "attachments" && parts[3] && parts.length === 4) {
+        const chat = getChat(id);
+        if (!chat) return json(res, 404, { error: "no such chat" });
+        const attachmentId = decodeURIComponent(parts[3]);
+        const attachment = chat.entries
+          .flatMap((entry) => entry.attachments ?? [])
+          .find((candidate) => candidate.id === attachmentId);
+        if (!attachment) return json(res, 404, { error: "that image is not available" });
+        try {
+          return json(res, 200, { image: readChatImage(id, attachment) });
+        } catch (error) {
+          return json(res, 404, { error: (error as Error).message || "that image is not available" });
         }
       }
       if (req.method === "POST" && parts[2] === "upload") {

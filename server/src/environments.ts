@@ -238,6 +238,24 @@ export function createEnvironment(projectId: string, askedName: unknown): Worksp
   return listEnvironments(projectId).find((entry) => entry.id === id)!;
 }
 
+/// Renames an environment without touching its values or active selection.
+export function renameEnvironment(
+  projectId: string,
+  environmentId: string,
+  askedName: unknown,
+): WorkspaceEnvironmentView {
+  const row = environment(environmentId, projectId);
+  const name = typeof askedName === "string" ? askedName.trim().slice(0, 60) : "";
+  if (!name) throw new Error("an environment needs a name");
+  if (environmentRows(projectId).some((candidate) =>
+    candidate.id !== row.id && candidate.deleted === 0 && candidate.name.toLowerCase() === name.toLowerCase())) {
+    throw new Error("that environment already exists");
+  }
+  db.prepare("update workspace_environments set name = ?, updated_at = ?, device_id = ? where id = ?")
+    .run(name, nextTimestamp(row.updated_at), deviceId, row.id);
+  return listEnvironments(projectId).find((entry) => entry.id === row.id)!;
+}
+
 /// Chooses which named environment runtime commands use for a workspace.
 export function selectEnvironment(projectId: string, environmentId: string): WorkspaceEnvironmentView {
   const row = environment(environmentId, projectId);
@@ -250,6 +268,20 @@ export function selectEnvironment(projectId: string, environmentId: string): Wor
        environment_id = excluded.environment_id, updated_at = excluded.updated_at, device_id = excluded.device_id`,
   ).run(projectId, row.id, at, deviceId);
   return listEnvironments(projectId).find((entry) => entry.id === row.id)!;
+}
+
+/// Leaves every encrypted value in place while making none of the named sets
+/// available to runtime commands.
+export function disableEnvironment(projectId: string): void {
+  assertProject(projectId);
+  const previous = selection(projectId);
+  const at = nextTimestamp(previous?.updated_at);
+  db.prepare(
+    `insert into workspace_environment_selection (project_id, environment_id, updated_at, device_id)
+     values (?, '', ?, ?)
+     on conflict(project_id) do update set environment_id = '', updated_at = excluded.updated_at,
+       device_id = excluded.device_id`,
+  ).run(projectId, at, deviceId);
 }
 
 /// Deletes an environment without making its old encrypted values reappear on
@@ -440,7 +472,7 @@ async function environmentForCwd(cwd: string): Promise<{
   const project = workspace ? projectForWorkspace(workspace.id) : undefined;
   if (!project) throw new Error("this thread is not in a registered workspace");
   const picked = selection(project.id);
-  if (!picked) throw new Error("this workspace has no active environment");
+  if (!picked?.environment_id) throw new Error("this workspace has no active environment");
   const row = environment(picked.environment_id, project.id);
   const values = Object.fromEntries(valueRows(row.id).map((value) => [value.name, decrypt(value)]));
   cleartextCache.set(row.id, Object.values(values).filter(Boolean));
@@ -665,8 +697,8 @@ function syncRecord(value: unknown): EnvironmentSyncRecord | undefined {
   const projectId = typeof row.projectId === "string" ? row.projectId : "";
   const environmentId = typeof row.environmentId === "string" ? row.environmentId : "";
   const from = typeof row.deviceId === "string" ? row.deviceId : "";
-  if (!projectId || !environmentId || !from || !Number.isSafeInteger(updatedAt) || updatedAt <= 0) return undefined;
   const kind = row.kind as EnvironmentSyncRecord["kind"];
+  if (!projectId || (!environmentId && kind !== "selection") || !from || !Number.isSafeInteger(updatedAt) || updatedAt <= 0) return undefined;
   if (kind !== "selection" && (typeof row.name !== "string" || !row.name)) return undefined;
   if (kind === "value" && row.deleted !== true && typeof row.value !== "string") return undefined;
   return {

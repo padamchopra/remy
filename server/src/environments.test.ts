@@ -12,6 +12,7 @@ const { db } = await import("./db.js");
 const { bindWorkspace, createProject } = await import("./projects.js");
 const {
   createEnvironment,
+  disableEnvironment,
   deleteEnvironmentValue,
   exportEnvironmentSync,
   importEnvironmentFile,
@@ -19,6 +20,8 @@ const {
   listEnvironments,
   mergeEnvironmentSync,
   parseEnvironmentValues,
+  renameEnvironment,
+  selectEnvironment,
   redactForCwd,
   runWithEnvironment,
   setEnvironmentValues,
@@ -48,6 +51,19 @@ test("environment views and SQLite never expose cleartext values", () => {
   assert.ok(row.iv);
   assert.ok(row.tag);
   assert.equal(JSON.stringify(row).includes("exact-secret-value"), false);
+});
+
+test("an environment can be renamed or disabled without revealing or removing values", () => {
+  const environment = listEnvironments(project.id)[0];
+  const renamed = renameEnvironment(project.id, environment.id, "Local development");
+  assert.equal(renamed.name, "Local development");
+  assert.equal(renamed.active, true);
+  assert.deepEqual(renamed.variables.map((entry) => entry.name), ["API_KEY", "PORT"]);
+
+  disableEnvironment(project.id);
+  assert.equal(listEnvironments(project.id).some((entry) => entry.active), false);
+  assert.ok(exportEnvironmentSync().some((entry) => entry.kind === "selection" && entry.environmentId === ""));
+  selectEnvironment(project.id, environment.id);
 });
 
 test("dotenv and comma-separated values import without returning values", async () => {
