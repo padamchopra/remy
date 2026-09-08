@@ -83,7 +83,7 @@ export class OrganizationBoard {
     };
   }
 
-  async append(inputValue: unknown, actor: BoardActor): Promise<BoardAppendResult> {
+  async append(inputValue: unknown, actor: BoardActor, stamp?: {id:string;at:number}): Promise<BoardAppendResult> {
     const input = boardAppendInputSchema.parse(inputValue);
     const result = await this.storage.transaction(async (storage) => {
       const deviceId = await this.deviceId(storage);
@@ -92,12 +92,13 @@ export class OrganizationBoard {
         const tickets = await storage.list<BoardProjection>({ prefix: `${PROJECTION_PREFIX}ticket:` });
         input.payload.number = Math.max(0, ...[...tickets.values()].map((p) => Number(p.fields.number) || 0)) + 1;
       }
+      if(stamp){const existing=await storage.get<BoardLogEvent>(`${EVENT_PREFIX}${stamp.id}`);if(existing){const projection=await storage.get<BoardProjection>(projectionKey(existing.entity,existing.entityId));const cursor=await storage.get<number>(CURSOR_KEY)??1;return {event:existing,projection:projection??null,cursor,version,frame:{kind:"event" as const,cursor,event:existing}};}}
       const event = boardLogEventSchema.parse({
         ...input,
-        id: this.dependencies.id(),
+        id: stamp?.id ?? this.dependencies.id(),
         deviceId,
         lamport: Math.max(0, ...Object.values(version)) + 1,
-        at: this.dependencies.now(),
+        at: stamp?.at ?? this.dependencies.now(),
         actor,
       });
       await storage.put(`${EVENT_PREFIX}${event.id}`, event);

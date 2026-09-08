@@ -149,6 +149,9 @@ export class BoardAccess {
       if(input.payload.runAsUserId && input.payload.runAsUserId!==this.userId)return false;
     }
     if (input.entity === "ticket") {
+      if(input.payload.assigneeMemberId && (typeof input.payload.assigneeMemberId!=="string" || !await this.store.membership(this.organizationId,input.payload.assigneeMemberId)))return false;
+      if(input.payload.parentId){const parent=await this.board.detail("tickets",String(input.payload.parentId));if(!parent||parent.id===input.entityId||parent.fields.projectId!==(current?.fields.projectId??input.payload.projectId)||!await this.canRead(parent))return false;}
+
       const assigned = input.payload.assigneeAgentId ?? input.payload.toAgentId;
       if (assigned && !["you", "workspace"].includes(String(assigned))) {
         const agent =

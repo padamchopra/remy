@@ -34,6 +34,6 @@ export async function hubAgentTool(
     },
   );
   if (!response.ok)
-    throw Error("This agent cannot change your organization's routing.");
+    throw Error("This agent could not complete the organization action.");
   return response.json();
 }

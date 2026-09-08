@@ -316,6 +316,8 @@ test("a list cursor cannot skip an update that arrives while its snapshot is bei
     const values = new Map<string, unknown>([["organizationId", "org"]]);
     let afterList: (() => Promise<void>) | undefined;
     const storage = {
+      getAlarm: async()=>null,
+      setAlarm: async()=>{},
       get: async (key: string) => values.get(key),
       put: async (key: string, value: unknown) => { values.set(key, value); },
       delete: async (key: string) => values.delete(key),
@@ -326,7 +328,7 @@ test("a list cursor cannot skip an update that arrives while its snapshot is bei
       },
       transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => fn(storage),
     };
-    const coordinator = new HubCoordinator({ storage, getWebSockets: () => [] } as unknown as DurableObjectState, { DB: db } as never);
+    const coordinator = new HubCoordinator({ storage, getWebSockets: () => [], waitUntil: (work:Promise<unknown>)=>{void work;} } as unknown as DurableObjectState, { DB: db } as never);
     const threads = (coordinator as unknown as { threads: import("./thread-store.js").ThreadStore }).threads;
     const id = crypto.randomUUID();
     const snapshot = { id, revision: 1, access: { organizationId: "org", owner: { id: "ada", label: "Ada" }, visibility: "open" as const, participants: [] }, detail: { id, title: "Release", cwd: "/src/release", entries: [] } };
