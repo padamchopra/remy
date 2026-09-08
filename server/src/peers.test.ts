@@ -410,3 +410,48 @@ test("pairing again with the same machine updates it rather than doubling it", (
   assert.equal(peer?.tint, "amber", "the tint chosen here stays local");
   assert.equal(peer?.notify, true, "where its notifications go is yours, not the handshake's");
 });
+
+// ── delegates across machines ───────────────────────────────────────────────
+
+test("an older peer's agent arrives unavailable as a subagent", () => {
+  db.exec("delete from board_log");
+  // A machine running a Remy from before this field existed writes no key for
+  // it, and a flag that decides what a thread may delegate to fails closed.
+  log.mergeRemote([
+    remoteEvent("alpha", 1, {
+      entity: "agent",
+      entityId: "agent-old",
+      payload: { name: "Legacy", handle: "legacy", instructions: "Older machine." },
+    }),
+  ]);
+  agents.reprojectAll();
+
+  assert.equal(agents.getAgent("agent-old")?.delegable, false);
+});
+
+test("a peer turning an agent into a subagent survives reprojection", () => {
+  db.exec("delete from board_log");
+  log.mergeRemote([
+    remoteEvent("alpha", 1, {
+      entity: "agent",
+      entityId: "agent-shared",
+      payload: { name: "Shared", handle: "shared", instructions: "Reviews things." },
+    }),
+    remoteEvent("alpha", 2, {
+      id: "alpha-2",
+      entity: "agent",
+      entityId: "agent-shared",
+      kind: "field",
+      payload: { delegable: true, delegateDescription: "Use for reviews" },
+    }),
+  ]);
+  agents.reprojectAll();
+
+  const merged = agents.getAgent("agent-shared");
+  assert.equal(merged?.delegable, true);
+  assert.equal(merged?.delegateDescription, "Use for reviews");
+
+  // The projection is rebuilt from the log, not from the row it wrote.
+  agents.reprojectAll();
+  assert.equal(agents.getAgent("agent-shared")?.delegable, true);
+});

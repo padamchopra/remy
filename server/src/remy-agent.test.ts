@@ -98,6 +98,11 @@ test("Remy is not somebody work is handed to", () => {
 
   // … and not by the board.
   assert.equal(agents.getAgent(REMY_AGENT_ID)?.autoStart, false);
+
+  // … and not by a thread delegating to it. `updateAgent` refuses the field on
+  // the built-in, so there is nothing for the roster to pick up.
+  const asked = agents.updateAgent(REMY_AGENT_ID, { delegable: true });
+  assert.equal(asked.delegable, false);
 });
 
 test("no other agent may take the Remy handle", () => {

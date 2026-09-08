@@ -162,6 +162,23 @@ export function AgentScreen({
         />
         {!locked ? (
           <SwitchField
+            label="Available as a subagent"
+            description="Lets a Claude thread hand part of its work to this agent."
+            value={agent.delegable}
+            onChange={(next) => void save({ delegable: next }, "whether threads may delegate to it")}
+          />
+        ) : null}
+        {!locked && agent.delegable ? (
+          <TextField
+            label="When to delegate to it"
+            description="Falls back to its role when you leave this empty."
+            value={agent.delegateDescription ?? ""}
+            placeholder={agent.role ?? agent.name}
+            onCommit={(delegateDescription) => void save({ delegateDescription }, "when to delegate to it")}
+          />
+        ) : null}
+        {!locked ? (
+          <SwitchField
             label="Start unattended"
             description="Lets the board run this agent when a ticket reaches Todo."
             value={agent.autoStart}

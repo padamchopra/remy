@@ -419,6 +419,18 @@ function migrate(database: DatabaseSync): void {
   } catch {
     // Column already exists on databases created after this migration.
   }
+  // Offered to a thread as a subagent it may delegate to. Off for every
+  // existing agent, which is what they all are until somebody says otherwise.
+  try {
+    database.exec("alter table agents add column delegable integer not null default 0");
+  } catch {
+    // Column already exists on databases created after this migration.
+  }
+  try {
+    database.exec("alter table agents add column delegate_description text");
+  } catch {
+    // Column already exists on databases created after this migration.
+  }
   // Loops were scheduled prompts with no ticket behind them. Recurring tickets
   // replaced them, and a table nothing reads is worth dropping rather than
   // carrying.
