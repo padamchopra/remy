@@ -11,7 +11,7 @@ export type HubWorkspace = OrganizationWorkspace & {
   access?: { userIds: string[]; teamIds: string[] };
 };
 export type HubPeople = { members: HubMember[]; teams: OrganizationTeam[] };
-export function useHubResource<T>(organizationId: string, path: string) {
+export function useHubResource<T>(organizationId: string, path: string, livePath = "/live") {
   const [value, setValue] = useState<T>();
   const [stale, setStale] = useState(false);
   const [error, setError] = useState("");
@@ -26,8 +26,8 @@ export function useHubResource<T>(organizationId: string, path: string) {
         if (!outdated) setError("");
       },
       setError,
-      `${hubThreadBase(organizationId)}/live`,
+      `${hubThreadBase(organizationId)}${livePath}`,
     );
-  }, [organizationId, path]);
+  }, [organizationId, path, livePath]);
   return { value, stale, error };
 }

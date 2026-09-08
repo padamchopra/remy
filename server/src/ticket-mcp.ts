@@ -1,3 +1,4 @@
+import {hubGitHubInput} from "./hub-github-input.js";
 import {hubRoutineInput} from "./hub-routine-input.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -221,6 +222,7 @@ const server = new McpServer(
 );
 
 if(process.env.REMY_HUB_INBOX==="1")server.registerTool("create_organization_routine",{description:"Create repeated work when the person asks this agent for it.",inputSchema:hubRoutineInput},async input=>{const result=await request<{artifact?:ConvArtifact}>("/organization-tools/create_organization_routine",{method:"POST",body:input});return ok(JSON.stringify(result),result.artifact);});
+server.registerTool("github_action",{description:"Create a pull request, comment or review using the linked member account.",inputSchema:hubGitHubInput},async input=>ok(JSON.stringify(await request("/organization-tools/github_action",{method:"POST",body:input}))));
 for(const action of ["list_organization_computers","list_organization_workspaces"])server.registerTool(action,{description:"List organization resources visible to the person.",inputSchema:{}},async()=>ok(JSON.stringify(await request(`/organization-tools/${action}`,{method:"POST",body:{}}))));
 for(const action of ["explain_routing","start_organization_thread","create_organization_ticket","handoff_organization_ticket","move_organization_thread"])server.registerTool(action,{description:"Act within the person's visible organization workspaces.",inputSchema:{workspaceId:z.string(),prompt:z.string().optional(),title:z.string().optional(),ticketId:z.string().optional(),agentId:z.string().optional(),threadId:z.string().optional(),computerId:z.string().optional()}},async input=>{const result=await request<{artifact?:ConvArtifact}>(`/organization-tools/${action}`,{method:"POST",body:input});return ok(JSON.stringify(result),result.artifact);});
 server.registerTool("read_routing", {description:"Read your organization's routing rules.",inputSchema:{}}, async()=>ok(JSON.stringify(await request("/routing"))));
