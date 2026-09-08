@@ -1,3 +1,4 @@
+import { GitCapabilities, GithubInstallation, githubRepository, proxyGit } from "./hosted-git.js";
 import { HostedSettingsStore } from "./hosted-settings.js";
 import { HostedLifecycle } from "./hosted-lifecycle.js";
 import { HttpRuntimeProvider } from "./computer-runtime.js";
@@ -45,6 +46,8 @@ export interface Env extends ApplePushConfig {
   HOSTED_CONTROL_URL?: string;
   HOSTED_CONTROL_TOKEN?: SecretsStoreSecret;
   HOSTED_IMAGE?: string;
+  GITHUB_APP_ID?: string;
+  GITHUB_APP_PRIVATE_KEY?: SecretsStoreSecret;
   HOSTED_ARCHIVE?: string;
   AUTH_SECRET: SecretsStoreSecret;
   BETTER_AUTH_URL: string;
@@ -228,6 +231,36 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     return Response.json(hubErrorSchema.parse({ error: "Not found" }), { status: 404 });
   }
 
+  const gitRoute = /^\/api\/organizations\/([^/]+)\/git\/([^/]+)(?:\/(token|info\/refs|git-upload-pack|git-receive-pack))?$/.exec(url.pathname);
+  if (gitRoute) {
+    const org=decodeURIComponent(gitRoute[1]), workspaceId=decodeURIComponent(gitRoute[2]), action=gitRoute[3];
+    const workspace=await organizationStore.workspace(org,workspaceId);
+    const repository=workspace && githubRepository(workspace.origin);
+    const installation=await env.DB.prepare("SELECT installation_id,account FROM organization_git_installations WHERE organization_id=?").bind(org).first<{installation_id:number;account:string}>();
+    if(!repository || !installation || repository.split("/")[0]!==installation.account.toLowerCase())return jsonError("Connect this workspace to GitHub first.",404);
+    const capabilities=new GitCapabilities(()=>env.AUTH_SECRET.get());
+    const policy=await env.DB.prepare("SELECT branches FROM workspace_git_policies WHERE organization_id=? AND workspace_id=?").bind(org,workspaceId).first<{branches:string}>();
+    const branches=JSON.parse(policy?.branches??"[]") as string[];
+    if(action==="token" && request.method==="POST") {
+      const computer=await authenticateComputer(request,org,computerStore);
+      if(!computer || computer.ownership!=="hosted" || !computer.capabilities.workspaces.some(w=>githubRepository(w.origin??"")===repository))return jsonError("This computer cannot use this workspace.",403);
+      if(!await env.DB.prepare("SELECT 1 FROM hosted_workspace_bindings WHERE organization_id=? AND workspace_id=? AND computer_id=?").bind(org,workspaceId,computer.computerId).first())return jsonError("This computer cannot use this workspace.",403);
+      const input=await body<{write?:boolean}>(request);
+      return Response.json(await capabilities.issue({organizationId:org,computerId:computer.computerId,workspaceId,repository,branches,write:input?.write===true && branches.length>0}),{headers:{"cache-control":"no-store"}});
+    }
+    if(action && action!=="token") {
+      let token="";try{const auth=request.headers.get("authorization")??"";if(auth.startsWith("Basic "))token=atob(auth.slice(6)).split(":").slice(1).join(":");}catch{}
+      const grant=await capabilities.read(token);
+      if(!grant)return new Response(null,{status:401,headers:{"www-authenticate":'Basic realm="Remy Git"'}});
+      const computer=await computerStore.computer(org,grant.computerId);
+      if(grant.organizationId!==org || grant.workspaceId!==workspaceId || grant.repository!==repository || !computer || computer.ownership!=="hosted" || !computer.capabilities.workspaces.some(w=>githubRepository(w.origin??"")===repository))return jsonError("This computer cannot use this workspace.",403);
+      if(!await env.DB.prepare("SELECT 1 FROM hosted_workspace_bindings WHERE organization_id=? AND workspace_id=? AND computer_id=?").bind(org,workspaceId,grant.computerId).first())return jsonError("This computer cannot use this workspace.",403);
+      grant.branches=grant.branches.filter(b=>branches.includes(b));
+      if(!env.GITHUB_APP_ID || !env.GITHUB_APP_PRIVATE_KEY)return jsonError("GitHub access is unavailable.",503);
+      const github=new GithubInstallation(env.GITHUB_APP_ID,()=>env.GITHUB_APP_PRIVATE_KEY!.get());
+      return proxyGit(request,grant,action,()=>github.token(installation.installation_id,repository,grant.write));
+    }
+  }
   const boardSyncMatch = /^\/api\/organizations\/([^/]+)\/computers\/board-sync$/.exec(url.pathname);
   if (boardSyncMatch && request.method === "POST") {
     const organizationId = decodeURIComponent(boardSyncMatch[1]);
@@ -419,6 +452,19 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         if (request.headers.has("x-filename")) headers.set("x-filename", request.headers.get("x-filename")!);
         const internal = new URL(`https://internal/${tail}`); internal.search = url.search;
         return board().fetch(new Request(internal, { method: request.method, headers, body: request.body, ...(request.body ? { duplex: "half" } : {}) }));
+      }
+      const gitPolicy = /^workspaces\/([^/]+)\/git$/.exec(tail);
+      if(gitPolicy && ["GET","PUT"].includes(request.method)) {
+        const member=await organizations.member(organizationId,identity.userId);
+        const workspace=await organizations.workspace(organizationId,identity.userId,decodeURIComponent(gitPolicy[1]));
+        if(member.role==="member")return jsonError("Only an administrator can change Git access.",403);
+        if(request.method==="PUT") {
+          const input=await body<{branches?:unknown}>(request);
+          if(!Array.isArray(input?.branches) || input.branches.length>100 || !input.branches.every(b=>typeof b==="string" && /^[a-zA-Z0-9][a-zA-Z0-9/_-]{0,199}$/.test(b)))return jsonError("Enter the branches this computer can push.",400);
+          await env.DB.prepare("INSERT INTO workspace_git_policies(organization_id,workspace_id,branches) VALUES(?,?,?) ON CONFLICT(organization_id,workspace_id) DO UPDATE SET branches=excluded.branches").bind(organizationId,workspace.id,JSON.stringify(input.branches)).run();
+        }
+        const policy=await env.DB.prepare("SELECT branches FROM workspace_git_policies WHERE organization_id=? AND workspace_id=?").bind(organizationId,workspace.id).first<{branches:string}>();
+        return Response.json({branches:JSON.parse(policy?.branches??"[]")});
       }
       const boardGrant = /^computers\/([^/]+)\/board-access$/.exec(tail);
       if (boardGrant && ["GET", "PUT", "DELETE"].includes(request.method)) {
@@ -987,8 +1033,9 @@ export class HubCoordinator {
       const now=Date.now();
       const registration={computerId:state.computerId,organizationId:org,ownerUserId:null,ownership:"hosted" as const,name:`Hosted ${workspace.name}`,icon:"cloud",platform:"linux" as const,daemonVersion:this.env.MINIMUM_DAEMON_VERSION??"0.1.0",protocol:{minimum:1,maximum:1},publicKey:keys.publicKey,capabilities:{providers:[],workspaces:[{id:workspace.id,name:workspace.name,path:"/workspace",origin:workspace.origin}],worktrees:true,terminals:true,emulator:false},access:{mode:"organization" as const,userIds:[],teamIds:[]},registeredAt:now,updatedAt:now};
       if(!await this.computers.computer(org,state.computerId)) await this.computers.register({...registration,lastSeenAt:null});
+      await this.env.DB.prepare("INSERT INTO hosted_workspace_bindings(computer_id,organization_id,workspace_id) VALUES(?,?,?) ON CONFLICT(computer_id) DO NOTHING").bind(state.computerId,org,state.workspaceId).run();
       const actual=await this.computers.computer(org,state.computerId);
-      const environment={...await settings.secrets(org),MC_CONFIG_DIR:"/data/remy",REMY_HOSTED_BOOTSTRAP:JSON.stringify({registration:{...actual,hubUrl:this.env.BETTER_AUTH_URL},privateKey:keys.privateKey,workspace:{name:workspace.name,origin:workspace.origin}})};
+      const environment={...await settings.secrets(org),MC_CONFIG_DIR:"/data/remy",REMY_HOSTED_BOOTSTRAP:JSON.stringify({registration:{...actual,hubUrl:this.env.BETTER_AUTH_URL},privateKey:keys.privateKey,workspace:{id:workspace.id,name:workspace.name,origin:workspace.origin}})};
       const domains=[new URL(this.env.BETTER_AUTH_URL).hostname,"api.anthropic.com","api.openai.com","github.com","api.github.com","objects.githubusercontent.com","release-assets.githubusercontent.com","registry.npmjs.org"];
       return {organizationId:org,computerId:state.computerId,settings:state.settings,image:this.env.HOSTED_IMAGE,archive:this.env.HOSTED_ARCHIVE??"",environment,allowedDomains:domains};
     }, async id=>{

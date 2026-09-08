@@ -1,13 +1,13 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, chmodSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
 const raw = process.env.REMY_HOSTED_BOOTSTRAP;
 if (!raw) throw new Error("Hosted computer configuration is missing.");
 delete process.env.REMY_HOSTED_BOOTSTRAP;
 const bootstrap = JSON.parse(raw) as {
-  registration: Record<string, unknown> & { computerId: string };
+  registration: Record<string, unknown> & { computerId: string; organizationId: string; hubUrl: string };
   privateKey: string;
-  workspace: { name: string; origin: string };
+  workspace: { id?: string; name: string; origin: string };
 };
 process.env.MC_CONFIG_DIR ??= "/data/remy";
 mkdirSync(process.env.MC_CONFIG_DIR, { recursive: true });
@@ -31,24 +31,49 @@ setKv("config", {
   defaultProvider: process.env.ANTHROPIC_API_KEY ? "claude" : "codex",
   deviceName: `Hosted ${bootstrap.workspace.name}`,
 });
-try {
-  execFileSync("git", ["-C", "/workspace", "rev-parse", "--git-dir"], {
-    stdio: "ignore",
-  });
-} catch {
+if (bootstrap.workspace.id) {
+  setKv("hostedWorkspaceId", bootstrap.workspace.id);
+  const registration = bootstrap.registration as {
+    organizationId: string;
+    hubUrl: string;
+  };
+  const remote = new URL(
+    `/api/organizations/${encodeURIComponent(registration.organizationId)}/git/${encodeURIComponent(bootstrap.workspace.id)}`,
+    registration.hubUrl,
+  ).href;
+  const helper = new URL("./hosted-git-helper.js", import.meta.url).pathname;
+  chmodSync(helper, 0o755);
   execFileSync("git", ["init", "-q", "/workspace"], { stdio: "ignore" });
-  execFileSync(
-    "git",
-    [
-      "-C",
-      "/workspace",
-      "remote",
-      "add",
-      "origin",
-      `https://${bootstrap.workspace.origin}.git`,
-    ],
-    { stdio: "ignore" },
-  );
+  for (const args of [
+    ["credential.helper", ""],
+    ["--add", "credential.helper", helper],
+    ["credential.useHttpPath", "true"],
+    ["remote.origin.url", remote],
+  ])
+    execFileSync("git", ["-C", "/workspace", "config", "--local", ...args], {
+      stdio: "ignore",
+    });
+  try {
+    execFileSync("git", ["-C", "/workspace", "rev-parse", "--verify", "HEAD"], {
+      stdio: "ignore",
+    });
+  } catch {
+    execFileSync("git", ["-C", "/workspace", "fetch", "--depth=1", "origin"], {
+      stdio: "ignore",
+      env: {
+        ...process.env,
+        REMY_GIT_READ_ONLY: "1",
+        GIT_TERMINAL_PROMPT: "0",
+      },
+    });
+    execFileSync(
+      "git",
+      ["-C", "/workspace", "checkout", "--detach", "FETCH_HEAD"],
+      { stdio: "ignore" },
+    );
+  }
+} else {
+  execFileSync("git", ["init", "-q", "/workspace"], { stdio: "ignore" });
 }
 const { addWorkspace } = await import("./workspaces.js");
 await addWorkspace(bootstrap.workspace.name, "/workspace");
