@@ -1,3 +1,5 @@
+import {getKv} from "./db.js";
+import {hubRoutineInput} from "./hub-routine-input.js";
 import {hubAgentTool} from "./hub-agent-tools.js";
 import { createSdkMcpServer, tool } from "./provider-adapters/claude.js";
 import { basename } from "node:path";
@@ -181,6 +183,7 @@ export function inProcessTicketMcpServer(
     version: "1",
     instructions: REMY_TOOL_INSTRUCTIONS,
     tools: [
+      ...(getKv<boolean>(`hubInbox:${chatId}`)?[tool("create_organization_routine","Create repeated work when the person asks this agent for it.",hubRoutineInput,async input=>{const result=await hubAgentTool(chatId,"create_organization_routine",input) as {artifact?:ConvArtifact};return ok(JSON.stringify(result),result.artifact);})]:[]),
       ...["list_organization_computers","list_organization_workspaces"].map(action=>tool(action,"List organization resources visible to the person.",{},async()=>ok(JSON.stringify(await hubAgentTool(chatId,action))))),
       ...["explain_routing","start_organization_thread","create_organization_ticket","handoff_organization_ticket","move_organization_thread"].map(action=>tool(action,"Act within the person's visible organization workspaces.",{workspaceId:z.string(),prompt:z.string().optional(),title:z.string().optional(),ticketId:z.string().optional(),agentId:z.string().optional(),threadId:z.string().optional(),computerId:z.string().optional()},async input=>{const result=await hubAgentTool(chatId,action,input) as {artifact?:ConvArtifact};return ok(JSON.stringify(result),result.artifact);})),
 

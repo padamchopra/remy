@@ -1,3 +1,4 @@
+import { HubAgentRoutines } from "./HubAgentRoutines";
 import { useEffect, useState } from "react";
 import type { BoardProjection } from "@remy/contract";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
@@ -24,6 +25,13 @@ import {
   AlertDialogCancel,
   AlertDialogAction,
 } from "@/components/ui/alert-dialog";
+type AgentRun = {
+  threadId: string;
+  computerId: string;
+  computerName: string;
+  state: string;
+  available: boolean;
+};
 type Message = { id: string; role: string; text: string; at: number };
 export function HubInbox({
   organizationId,
@@ -49,6 +57,17 @@ export function HubInbox({
     [memory, setMemory] = useState(""),
     [promotion, setPromotion] = useState(""),
     [error, setError] = useState("");
+  const [runs, setRuns] = useState<AgentRun[]>([]);
+  useEffect(() => {
+    setRuns([]);
+    if (!agentId) return;
+    return watchHubResource<{ runs: AgentRun[] }>(
+      `${base}/agents/${agentId}/runs`,
+      (v) => setRuns(v?.runs ?? []),
+      setError,
+      `${base}/board/live`,
+    );
+  }, [base, agentId]);
   const agent = agents.find((a) => a.id === agentId);
   useEffect(
     () =>
@@ -294,6 +313,30 @@ export function HubInbox({
                 Send message
               </Button>
             </form>
+            <h3>Threads</h3>
+            {runs.map((run) => (
+              <Button
+                key={run.threadId}
+                variant="outline"
+                asChild
+                disabled={!run.available}
+              >
+                <a
+                  aria-disabled={!run.available}
+                  href={
+                    run.available
+                      ? `#/threads/${run.threadId}?organization=${encodeURIComponent(organizationId)}&computer=${encodeURIComponent(run.computerId)}`
+                      : undefined
+                  }
+                >
+                  {run.computerName} · {run.state}
+                </a>
+              </Button>
+            ))}
+            <HubAgentRoutines
+              organizationId={organizationId}
+              agentId={agent.id}
+            />
             <h3>Memories</h3>
             <p className="text-sm text-muted-foreground">
               Everyone who can see this agent can read its memories.

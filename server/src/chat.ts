@@ -622,6 +622,7 @@ This is the agent's Inbox conversation. When the person signals that something s
               apiUrl: `http://127.0.0.1:${config.port}`,
               token: remyToolToken(this.record.id),
               chatId: this.record.id,
+              hubInbox: getKv<boolean>(`hubInbox:${this.record.id}`)===true,
               deviceId,
               agentId: this.record.agentId,
               dm: this.record.dm,
@@ -1571,6 +1572,7 @@ export function deleteChat(id: string): void {
   chats.delete(id);
   removeChat(id);
   setKv(`hubPersona:${id}`, null);
+  setKv(`hubInbox:${id}`,null);
   broadcast({ type: "chat-list", operation: "remove", chatIds: [id] });
   broadcast({ type: "chats" });
   syncSleepAssertion();
