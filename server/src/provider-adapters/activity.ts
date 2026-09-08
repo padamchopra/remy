@@ -1,4 +1,4 @@
-import { clip, resultText, type ConvEntry } from "./transcript.js";
+import { clip, resultText, type ConvEntry } from "../transcript.js";
 
 export interface ThreadActivity {
   id: string;

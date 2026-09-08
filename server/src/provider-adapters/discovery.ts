@@ -1,16 +1,11 @@
 import { spawn } from "node:child_process";
 import { query, type ModelInfo, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import {
-  PROVIDERS,
-  rememberProviderModels,
-  type Provider,
   type ProviderEffort,
-  type ProviderId,
   type ProviderModel,
-} from "./providers.js";
+} from "../providers.js";
 
 const DISCOVERY_TIMEOUT_MS = 10_000;
-let cached: Promise<Provider[]> | undefined;
 
 function titlePart(part: string): string {
   if (/^gpt$/i.test(part)) return "GPT";
@@ -80,7 +75,7 @@ export function claudeModels(models: ModelInfo[]): ProviderModel[] {
   });
 }
 
-async function discoverClaude(): Promise<ProviderModel[]> {
+export async function discoverClaudeModels(): Promise<ProviderModel[]> {
   const abortController = new AbortController();
   const timer = setTimeout(() => abortController.abort(), DISCOVERY_TIMEOUT_MS);
   timer.unref?.();
@@ -168,7 +163,7 @@ export function codexModels(input: unknown): ProviderModel[] {
   ];
 }
 
-async function discoverCodex(): Promise<ProviderModel[]> {
+export async function discoverCodexModels(): Promise<ProviderModel[]> {
   return new Promise((resolve, reject) => {
     const child = spawn("codex", ["app-server"], { stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
@@ -258,35 +253,10 @@ function cursorOutput(args: string[]): Promise<string> {
   });
 }
 
-async function discoverCursor(): Promise<ProviderModel[]> {
+export async function discoverCursorModels(): Promise<ProviderModel[]> {
   const [list, about] = await Promise.all([
     cursorOutput(["--list-models"]),
     cursorOutput(["about"]).catch(() => ""),
   ]);
   return cursorModels(list, about);
-}
-
-function mergeModels(discovered: ProviderModel[], fallback: ProviderModel[]): ProviderModel[] {
-  const seen = new Set(discovered.map((model) => model.value));
-  return [...discovered, ...fallback.filter((model) => !seen.has(model.value))];
-}
-
-async function discover(): Promise<Provider[]> {
-  const runtime = await Promise.allSettled([discoverClaude(), discoverCodex(), discoverCursor()]);
-  return PROVIDERS.map((provider) => {
-    const index = provider.id === "claude" ? 0 : provider.id === "codex" ? 1 : 2;
-    const result = runtime[index];
-    const discovered = result?.status === "fulfilled" ? result.value : [];
-    const models = mergeModels(discovered, provider.models);
-    rememberProviderModels(provider.id, models);
-    return { ...provider, models };
-  });
-}
-
-/// The installed CLIs are the model authority. The promise is cached because
-/// both probes start a local subprocess and their answer changes only when the
-/// daemon restarts after a CLI update.
-export function discoveredProviders(): Promise<Provider[]> {
-  cached ??= discover();
-  return cached;
 }

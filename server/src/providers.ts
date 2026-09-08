@@ -46,6 +46,9 @@ export interface Provider {
   /// Whether a thread on this provider can stop and ask you to allow a tool
   /// call through its bidirectional integration.
   approvals: boolean;
+  /// Whether a newly provisioned hosted computer offers this runtime before an
+  /// administrator explicitly turns it on.
+  hostedDefault: boolean;
 }
 
 export const PROVIDERS: Provider[] = [
@@ -54,6 +57,7 @@ export const PROVIDERS: Provider[] = [
     label: "Claude",
     command: "claude",
     approvals: true,
+    hostedDefault: true,
     // Only the aliases Claude Code accepts on the command line. A free-string
     // model would fail at spawn time, long after the picker said it was fine.
     models: [
@@ -77,6 +81,7 @@ export const PROVIDERS: Provider[] = [
     label: "Codex",
     command: "codex",
     approvals: true,
+    hostedDefault: true,
     models: [
       { value: "", label: "Default", detail: "Whatever Codex is set to." },
       { value: "gpt-6-astra", label: "GPT-6 Astra" },
@@ -102,6 +107,7 @@ export const PROVIDERS: Provider[] = [
     label: "Cursor",
     command: "agent",
     approvals: true,
+    hostedDefault: false,
     models: [
       { value: "", label: "Default", detail: "Whatever Cursor is set to." },
       { value: "auto", label: "Auto", detail: "Cursor chooses the model." },
@@ -115,6 +121,10 @@ export const PROVIDERS: Provider[] = [
     ],
   },
 ];
+
+export function defaultProviderIds(hosted = false): ProviderId[] {
+  return PROVIDERS.filter((entry) => !hosted || entry.hostedDefault).map((entry) => entry.id);
+}
 
 const discoveredModels = new Map<ProviderId, Map<string, ProviderModel>>();
 

@@ -1,4 +1,4 @@
-import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
+import { createSdkMcpServer, tool } from "./provider-adapters/claude.js";
 import { basename } from "node:path";
 import { homedir } from "node:os";
 import { z } from "zod";
@@ -168,7 +168,7 @@ function describeThread(thread: ThreadDetail): string {
   ].filter(Boolean).join("\n");
 }
 
-export function claudeTicketMcpServer(
+export function inProcessTicketMcpServer(
   chatId: string,
   agentId: string | undefined,
   dm: boolean,

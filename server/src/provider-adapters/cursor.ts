@@ -12,9 +12,19 @@ import type {
   ToolCall,
   ToolCallUpdate,
 } from "@agentclientprotocol/sdk";
-import type { ChatPermissionMode } from "./chat.js";
-import { buildDiff, clip, describeTool, MAX_OUTPUT, type ConvEntry, type ConvTodo } from "./transcript.js";
-import { takeArtifacts } from "./remy-artifacts.js";
+import { buildDiff, clip, describeTool, MAX_OUTPUT, type ConvEntry, type ConvTodo } from "../transcript.js";
+import { takeArtifacts } from "../remy-artifacts.js";
+import { ThreadActivityTracker } from "./activity.js";
+import { discoverCursorModels } from "./discovery.js";
+import type {
+  ProviderAdapter,
+  ProviderApprovalDecision,
+  ProviderHandlers,
+  ProviderPermissionMode,
+  ProviderSession,
+  ProviderSessionOptions,
+  ProviderTurn,
+} from "./types.js";
 
 export interface CursorMcpServer {
   command: string;
@@ -27,7 +37,7 @@ export interface CursorSessionOptions {
   cwd: string;
   model?: string;
   effort?: string;
-  permissionMode: ChatPermissionMode;
+  permissionMode: ProviderPermissionMode;
   sessionId?: string;
   additionalDirectories?: string[];
   developerInstructions?: string;
@@ -95,6 +105,169 @@ export interface CursorSession {
   run(prompt: string, images?: Array<{ base64: string; mimeType: string }>): CursorRun;
   close(): void;
 }
+
+class CursorAdapterSession implements ProviderSession {
+  private readonly session: CursorSession;
+  private readonly activity: ThreadActivityTracker;
+  private readonly messages = new Map<string, ConvEntry>();
+  private turnId = "";
+
+  constructor(options: ProviderSessionOptions, private readonly handlers: ProviderHandlers) {
+    this.activity = new ThreadActivityTracker(options.entries ?? [], (entry) => this.emitEntry(entry));
+    this.activity.disconnected();
+    this.session = createCursorSession(
+      {
+        command: options.command,
+        cwd: options.cwd,
+        ...(options.model ? { model: options.model } : {}),
+        ...(options.effort ? { effort: options.effort } : {}),
+        permissionMode: options.permissionMode,
+        ...(options.sessionId ? { sessionId: options.sessionId } : {}),
+        ...(options.additionalDirectories ? { additionalDirectories: options.additionalDirectories } : {}),
+        ...(options.developerInstructions ? { developerInstructions: options.developerInstructions } : {}),
+        ...(options.mcpProcess ? { mcpServer: options.mcpProcess } : {}),
+        ...(options.env ? { env: options.env } : {}),
+      },
+      (event) => this.receive(event),
+      (request) => this.approve(request),
+      (request) => this.answer(request),
+      (request) => this.approvePlan(request),
+    );
+  }
+
+  turn(input: ProviderTurn) {
+    this.turnId = `${crypto.randomUUID().slice(0, 8)}-`;
+    this.messages.clear();
+    const run = this.session.run(
+      input.prompt,
+      input.images.map((image) => ({ base64: image.base64, mimeType: image.mimeType })),
+    );
+    return { done: run.done, interrupt: () => run.stop() };
+  }
+
+  close(): void {
+    this.session.close();
+  }
+
+  private receive(event: CursorEvent): void {
+    switch (event.type) {
+      case "session.closed":
+        this.activity.disconnected();
+        this.handlers.event({ type: "session.closed" });
+        return;
+      case "session.started":
+        this.handlers.event({ type: "session.started", sessionId: event.sessionId });
+        return;
+      case "turn.started":
+        this.handlers.event({ type: "turn.started" });
+        return;
+      case "turn.completed":
+        this.handlers.event({ type: "turn.completed" });
+        return;
+      case "turn.failed":
+        this.handlers.event({ type: "turn.failed", error: event.error });
+        return;
+      case "usage.updated":
+        this.handlers.event({
+          type: "usage.updated",
+          tokens: event.used,
+          limit: event.size,
+          ...(event.costUsd !== undefined ? { costUsd: event.costUsd } : {}),
+        });
+        return;
+      case "compacted":
+        this.handlers.event({ type: "compacted" });
+        return;
+      case "plan.updated":
+        this.handlers.event({ type: "todos.updated", todos: event.todos });
+        return;
+      case "tool.updated": {
+        const entry = cursorEntry(event.toolCall, this.turnId);
+        this.activity.cursor(event.toolCall, entry);
+        this.emitEntry(entry);
+        return;
+      }
+      case "message.delta": {
+        const key = `${event.kind}:${event.messageId ?? "current"}`;
+        const existing = this.messages.get(key);
+        if (existing) existing.text = clip(`${existing.text ?? ""}${event.text}`, event.kind === "thinking" ? 16_000 : 48_000);
+        else {
+          this.messages.set(key, {
+            id: `${this.turnId}${key}`,
+            kind: event.kind,
+            text: event.text,
+          });
+        }
+        this.emitEntry(this.messages.get(key)!);
+        return;
+      }
+    }
+  }
+
+  private emitEntry(entry: ConvEntry): void {
+    this.handlers.event({ type: "entry.updated", entry });
+  }
+
+  private async approve(request: CursorApprovalRequest) {
+    if (!this.handlers.approve) return "decline" as const;
+    const name = request.toolCall.name ?? "";
+    return cursorDecision(await this.handlers.approve({
+      tool: request.toolCall.kind === "execute" ? "Bash" : name || "Cursor",
+      input: record(request.toolCall.rawInput),
+      signal: request.signal,
+      title: request.toolCall.title,
+      allowAlways: request.allowAlways,
+      trusted: name.startsWith("mcp__remy__"),
+      edit: ["edit", "delete", "move"].includes(request.toolCall.kind ?? ""),
+    }));
+  }
+
+  private async answer(request: CursorQuestionRequest): Promise<Record<string, string[]>> {
+    if (!this.handlers.answer) return {};
+    const questions = request.questions.map((question) => ({
+      ...(request.title ? { header: request.title } : {}),
+      question: question.prompt,
+      multiSelect: question.allowMultiple,
+      options: question.options.map((option) => ({ label: option.label })),
+    }));
+    const answers = await this.handlers.answer({ questions, signal: request.signal });
+    return Object.fromEntries(request.questions.map((question) => {
+      const answer = answers[question.prompt];
+      const labels = Array.isArray(answer)
+        ? answer.filter((value): value is string => typeof value === "string")
+        : typeof answer === "string" ? [answer] : [];
+      return [question.id, question.options.filter((option) => labels.includes(option.label)).map((option) => option.id)];
+    }));
+  }
+
+  private async approvePlan(request: CursorPlanRequest): Promise<boolean> {
+    if (!this.handlers.approve) return false;
+    const decision = await this.handlers.approve({
+      tool: "ExitPlanMode",
+      input: { plan: request.plan },
+      signal: request.signal,
+      title: request.name ?? request.overview ?? "Start working from this plan?",
+      allowAlways: false,
+    });
+    return decision !== "deny";
+  }
+}
+
+function cursorDecision(decision: ProviderApprovalDecision): CursorApprovalDecision {
+  if (decision === "allowAlways") return "acceptForSession";
+  if (decision === "allow") return "accept";
+  return "decline";
+}
+
+export const cursorAdapter: ProviderAdapter = {
+  id: "cursor",
+  createSession: (options, handlers) => new CursorAdapterSession(options, handlers),
+  answer: (options) => cursorAnswer({
+    ...options,
+    prompt: [options.systemPrompt, options.developerInstructions, options.prompt].filter(Boolean).join("\n\n"),
+  }),
+  discoverModels: discoverCursorModels,
+};
 
 interface CursorAskQuestionRequest {
   title?: string;
@@ -219,9 +392,13 @@ class AcpCursorSession implements CursorSession {
   run(prompt: string, images: Array<{ base64: string; mimeType: string }> = []): CursorRun {
     if (this.active) throw new Error("a Cursor turn is already running");
     const controller = new AbortController();
+    let settleStop!: () => void;
+    const stopped = new Promise<void>((resolve) => { settleStop = resolve; });
     const active = {
       stop: () => {
+        if (controller.signal.aborted) return;
         controller.abort();
+        settleStop();
         if (this.sessionId) {
           void this.connection.agent.notify(acp.methods.agent.session.cancel, { sessionId: this.sessionId });
         }
@@ -231,6 +408,7 @@ class AcpCursorSession implements CursorSession {
     const done = (async () => {
       try {
         await this.ready;
+        if (controller.signal.aborted) return;
         if (!this.sessionId) throw new Error("Cursor did not create a session");
         this.onEvent({ type: "turn.started" });
         let sent = prompt;
@@ -243,7 +421,7 @@ class AcpCursorSession implements CursorSession {
           ].join("\n\n");
           this.needsInstructions = false;
         }
-        const response = await this.connection.agent.request(
+        const response = await Promise.race([this.connection.agent.request(
           acp.methods.agent.session.prompt,
           {
             sessionId: this.sessionId,
@@ -253,8 +431,8 @@ class AcpCursorSession implements CursorSession {
             ],
           },
           { cancellationSignal: controller.signal },
-        ) as PromptResponse;
-        this.onEvent({ type: "turn.completed", response });
+        ), stopped.then(() => undefined)]) as PromptResponse | undefined;
+        if (response) this.onEvent({ type: "turn.completed", response });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (!controller.signal.aborted && !/cancel/i.test(message)) {

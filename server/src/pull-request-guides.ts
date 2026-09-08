@@ -1,15 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { query, type Options } from "@anthropic-ai/claude-agent-sdk";
 import { agentCommand } from "./agent.js";
 import { getChat } from "./chat.js";
-import { codexAnswer } from "./codex.js";
 import { config } from "./config.js";
-import { cursorAnswer } from "./cursor.js";
 import { db } from "./db.js";
 import { callPeer, getPeer, peerViews } from "./peers.js";
 import { parsePullRequestPatch, pullRequestDiff, type PullRequestDiffLine } from "./pull-requests.js";
 import { providerEffort, providerId, providerModel, type ProviderId } from "./providers.js";
+import { providerAnswer } from "./provider-adapters/index.js";
 import { run as exec } from "./run.js";
 import { listWorkspaces } from "./workspaces.js";
 
@@ -474,42 +472,15 @@ export async function answerPullRequestQuestion(input: {
 
 async function modelAnswer(choice: PullRequestGuideChoice, prompt: string): Promise<string> {
   const command = agentCommand(choice.provider)!;
-  if (choice.provider === "codex") {
-    return codexAnswer({ command, prompt, cwd: homedir(), model: choice.model, effort: choice.effort, timeoutMs: GUIDE_TIMEOUT_MS });
-  }
-  if (choice.provider === "cursor") {
-    return (await cursorAnswer({ command, prompt, cwd: homedir(), model: choice.model, effort: choice.effort, timeoutMs: GUIDE_TIMEOUT_MS })) ?? "";
-  }
-  const options: Options = {
+  return (await providerAnswer(choice.provider, {
+    command,
+    prompt,
     cwd: homedir(),
-    pathToClaudeCodeExecutable: command,
     systemPrompt: "You create accurate, concise code-review guides from supplied diffs. You never use tools or inspect files outside the prompt.",
-    settingSources: [],
-    maxTurns: 1,
-    tools: [],
-    allowedTools: [],
     ...(choice.model ? { model: choice.model } : {}),
-    ...(choice.effort ? { effort: choice.effort as NonNullable<Options["effort"]> } : {}),
-  };
-  const handle = query({ prompt, options });
-  let timedOut = false;
-  const timer = setTimeout(() => { timedOut = true; handle.close(); }, GUIDE_TIMEOUT_MS);
-  timer.unref?.();
-  try {
-    let answer = "";
-    for await (const message of handle) {
-      if (message.type !== "assistant") continue;
-      for (const block of message.message.content) if (block.type === "text") answer += block.text;
-    }
-    if (timedOut) throw new Error("the model took too long; choose a faster model and try again");
-    return answer;
-  } catch (error) {
-    if (timedOut) throw new Error("the model took too long; choose a faster model and try again");
-    throw error;
-  } finally {
-    clearTimeout(timer);
-    handle.close();
-  }
+    ...(choice.effort ? { effort: choice.effort } : {}),
+    timeoutMs: GUIDE_TIMEOUT_MS,
+  })) ?? "";
 }
 
 export function readSavedPullRequestGuide(repository: string, number: number): PullRequestGuide | undefined {
