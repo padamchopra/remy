@@ -31,7 +31,7 @@ export function hubBoardState(org: string): State {
   return getKv<State>(key(org)) ?? { enabled: false, imported: false };
 }
 export function configureHubBoard(org: string, enabled: boolean) {
-  setKv(key(org), { ...hubBoardState(org), enabled });
+  setKv(key(org), { ...hubBoardState(org), enabled, error: undefined });
 }
 function all(org: string): BoardLogEvent[] {
   return (
@@ -214,7 +214,7 @@ export class HubBoardSync {
     }
     this.running = this.round()
       .catch(() => {
-        if (!this.stopped)
+        if (!this.stopped && hubBoardState(this.org).enabled)
           setKv(key(this.org), {
             ...hubBoardState(this.org),
             error: "Tasks could not synchronize; reconnect to try again.",
