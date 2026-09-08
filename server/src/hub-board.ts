@@ -20,6 +20,8 @@ import { broadcast } from "./notify.js";
 db.exec(`CREATE TABLE IF NOT EXISTS hub_board_events (organization_id TEXT NOT NULL,id TEXT NOT NULL,device_id TEXT NOT NULL,lamport INTEGER NOT NULL,json TEXT NOT NULL,PRIMARY KEY(organization_id,id));
 CREATE TABLE IF NOT EXISTS hub_board_imports (organization_id TEXT NOT NULL,entity TEXT NOT NULL,entity_id TEXT NOT NULL,PRIMARY KEY(organization_id,entity,entity_id));`);
 
+db.exec("DELETE FROM hub_board_events WHERE json_extract(json,'$.entity') IN ('agent','memory','recurrence'); DELETE FROM hub_board_imports WHERE entity IN ('agent','memory','recurrence');");
+
 const key = (org: string) => `hubBoard:${org}`;
 type State = {
   enabled: boolean;
@@ -54,7 +56,7 @@ export function hubBoardVersion(org: string): BoardVersionVector {
   );
 }
 export function mergeHubBoard(org: string, values: unknown[]): number {
-  const events = values.map((value) => boardLogEventSchema.parse(value));
+  const events = values.map((value) => boardLogEventSchema.parse(value)).filter(e=>["project","ticket"].includes(e.entity));
   let landed = 0;
   runTransaction(() => {
     for (const event of events)
@@ -122,7 +124,7 @@ export function importHubBoard(org: string) {
     const batch = eventsSince(vector);
     if (!batch.length) break;
     for (const event of batch) {
-      events.push(portable(event));
+      if (["project","ticket"].includes(event.entity)) events.push(portable(event));
       vector[event.deviceId] = Math.max(
         vector[event.deviceId] ?? 0,
         event.lamport,
@@ -153,6 +155,7 @@ export function appendHubBoard(org: string, input: unknown) {
   if (!hubBoardState(org).enabled)
     throw new Error("Enable Tasks synchronization first.");
   const value = boardAppendInputSchema.parse(input);
+  if (!["project","ticket"].includes(value.entity)) throw new Error("Manage your organization’s agents in Inbox.");
   const event: BoardLogEvent = {
     ...value,
     id: randomUUID(),

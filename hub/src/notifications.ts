@@ -102,6 +102,7 @@ export class HubNotifications {
       computerId: string,
       threadId: string,
     ) => Promise<HubThread | undefined>,
+    private readonly agentAccess: (threadId:string,userId:string)=>Promise<boolean> = async()=>true,
   ) {}
 
   private async allowed(
@@ -118,7 +119,7 @@ export class HubNotifications {
     return (
       !!computer &&
       !!thread &&
-      canReadThread(thread.access, user) &&
+      canReadThread(thread.access, user) && await this.agentAccess(threadId,user) &&
       (await new ComputerService(
         computers,
         Date.now,
