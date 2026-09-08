@@ -41,3 +41,9 @@ test("a tool that made nothing says so with text alone", () => {
   assert.deepEqual(result.artifacts, []);
   assert.equal(result.text, "No workspaces are registered on this machine.");
 });
+
+
+test("organization artifacts retain the computer address across transcript parsing", () => {
+  const artifact: ConvArtifact = {kind:"thread",organizationId:"studio",computerId:"build",id:"thread",title:"Release"};
+  assert.deepEqual(takeArtifacts(artifactMarker(artifact)).artifacts,[artifact]);
+});

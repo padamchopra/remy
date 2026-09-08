@@ -874,7 +874,7 @@ export class HubCoordinator {
           const change={entity:"ticket" as const,entityId:asked.ticketId??crypto.randomUUID(),kind:action==="create_organization_ticket"?"create" as const:"handoff" as const,payload:action==="create_organization_ticket"?{projectId:workspace.id,title:asked.title??"New ticket",body:asked.prompt??""}:{toAgentId:asked.agentId}};
           if(!await new BoardAccess(store,this.board,org,binding.userId).canWrite(change))return jsonError("This ticket or agent is unavailable.",404);
           const current=await this.board.detail("tickets",change.entityId);if(current && current.fields.projectId!==workspace.id)return jsonError("Choose the ticket's workspace.",403);
-          const result=await this.board.append(change,{kind:"member",...actor});return Response.json({...result,artifact:{kind:"ticket",id:change.entityId,title:String(result.projection?.fields.title??"Ticket"),detail:workspace.name}});
+          const result=await this.board.append(change,{kind:"member",...actor});return Response.json({...result,artifact:{kind:"ticket",organizationId:org,id:change.entityId,title:String(result.projection?.fields.title??"Ticket"),detail:workspace.name}});
         }
         let prompt=asked.prompt??"";
         if(action==="move_organization_thread") {
@@ -886,7 +886,7 @@ export class HubCoordinator {
         if(!prompt.trim() || prompt.length>64000)return jsonError("Enter a shorter task.",400);
         const result=await this.startAgentThread(binding.agentId,binding.userId,workspace.id,prompt);
         if(action==="move_organization_thread")await this.dispatchComputer(asked.computerId!,actor,"POST",`/hub/threads/${asked.threadId}/stop`,{});
-        return Response.json({...result,artifact:{kind:"thread",id:result.threadId,title:asked.title??"Organization thread",detail:workspace.name}});
+        return Response.json({...result,artifact:{kind:"thread",organizationId:org,computerId:result.computerId,id:result.threadId,title:asked.title??"Organization thread",detail:workspace.name}});
       }
       if(!binding.orchestrator || member.role==="member")return jsonError("Only an administrator's organization agent can change routing.",403);
       if(input?.action==="edit_routing") {

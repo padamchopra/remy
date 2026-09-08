@@ -1,3 +1,5 @@
+import { organizationArtifactRoute } from "@/lib/artifact-route";
+import { formatLocation } from "@/lib/route";
 import type { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, ReactNode, RefObject } from "react";
 import {
   forwardRef,
@@ -1676,6 +1678,8 @@ function ArtifactCard({
   artifact: ConvArtifact;
   onOpen?: () => void;
 }) {
+  const organizationRoute = organizationArtifactRoute(artifact);
+  if (organizationRoute) onOpen = () => { window.location.hash = formatLocation({route:organizationRoute}); };
   const Icon = ARTIFACT_ICON[artifact.kind];
   const body = (
     <>

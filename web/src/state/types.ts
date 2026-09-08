@@ -350,6 +350,8 @@ export interface PullRequestTimelineItem {
 /// Something a Remy tool made — a ticket, thread, workspace, or routine — with enough
 /// on it to draw a card and open the thing it names.
 export interface ConvArtifact {
+  organizationId?: string;
+  computerId?: string;
   kind: "ticket" | "thread" | "workspace" | "routine";
   /// A ticket is addressed by key, a thread and a workspace by id.
   key?: string;
