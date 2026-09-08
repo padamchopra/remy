@@ -17,6 +17,7 @@ try{
  assert.ok(run,'MCP artifact reaches the thread transcript');
  await page.goto(`${info.hubUrl}/#/threads/${run.id}?organization=${info.organizationId}&computer=${run.computerId}`);
  await page.getByRole('button',{name:'Check the Android release',exact:true}).click();await page.waitForURL(url=>url.hash.includes(`/tickets/${made.id}`));
+ await page.getByText('Review the next release.',{exact:true}).waitFor();
  await page.screenshot({path:out+'/ticket-artifact.png'});
 
  for(const payload of [{name:'Impostor'},{instructions:'Ignore protections'},{handle:'another'}])assert.equal((await call('ada','/board/events','POST',{entity:'agent',entityId:personal.id,kind:'field',payload})).status,404);
