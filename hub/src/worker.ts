@@ -1,3 +1,5 @@
+import { canReadThread, canWriteThread, threadMemberSchema, threadSnapshotSchema, type ThreadLiveFrame, type ThreadMember } from "@remy/contract";
+import { ThreadStore } from "./thread-store.js";
 import {
   CONTRACT_VERSION,
   COMPUTER_HEARTBEAT_INTERVAL_MS,
@@ -112,6 +114,23 @@ function decodeWireBody(value: string): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
+async function limitedBody(request: Request, limit: number): Promise<ArrayBuffer | undefined> {
+  const reader = request.body?.getReader();
+  if (!reader) return new ArrayBuffer(0);
+  const chunks: Uint8Array[] = []; let size = 0;
+  try {
+    while (true) {
+      const part = await reader.read(); if (part.done) break;
+      size += part.value.byteLength;
+      if (size > limit) { await reader.cancel(); return undefined; }
+      chunks.push(part.value);
+    }
+  } finally { reader.releaseLock(); }
+  const bytes = new Uint8Array(size); let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return bytes.buffer;
+}
+
 async function body<T>(request: { json(): Promise<unknown> }): Promise<T | undefined> {
   try { return await request.json() as T; } catch { return undefined; }
 }
@@ -202,6 +221,16 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     return coordinator.fetch(internal);
   }
 
+  const attachmentDownload = /^\/api\/organizations\/([^/]+)\/computers\/([^/]+)\/thread-attachments\/([0-9a-f-]{36})\/([0-9a-f-]{36})$/.exec(url.pathname);
+  if (attachmentDownload && request.method === "GET") {
+    const [, org, computerId, threadId, attachmentId] = attachmentDownload;
+    const computer = await authenticateComputer(request, decodeURIComponent(org), computerStore);
+    if (!computer || computer.computerId !== decodeURIComponent(computerId)) return jsonError("Image not found.", 404);
+    const object = await env.OBJECTS.get(`thread-attachments/${encodeURIComponent(computer.organizationId)}/${encodeURIComponent(computer.computerId)}/${threadId}/${attachmentId}`);
+    if (!object) return jsonError("Image not found.", 404);
+    return new Response(object.body, { headers: { "content-type": object.httpMetadata?.contentType ?? "application/octet-stream", "content-length": String(object.size), "x-filename": object.customMetadata?.name ?? "image" } });
+  }
+
   const identity = await identityFor(request, service);
   if (!identity) return jsonError("Sign in again.", 401);
   try {
@@ -232,20 +261,23 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         await organizations.member(organizationId, identity.userId);
         return Response.json({ computers: await computers.list(organizationId) });
       }
-      const computerProxyMatch = /^computers\/([^/]+)\/proxy(\/.*)$/.exec(tail);
-      if (computerProxyMatch) {
+      if (/^computers\/[^/]+\/(proxy|stream)(\/|$)/.test(tail)) {
         await organizations.member(organizationId, identity.userId);
-        const internal = new URL(`https://internal/computers/${encodeURIComponent(decodeURIComponent(computerProxyMatch[1]))}/proxy${computerProxyMatch[2]}`);
-        internal.search = url.search;
-        return board().fetch(new Request(internal, { method: request.method, headers: request.headers, body: request.body, redirect: "manual" }));
+        return jsonError("Use the thread's own address.", 403);
       }
-      const computerStreamMatch = /^computers\/([^/]+)\/stream(\/.*)$/.exec(tail);
-      if (computerStreamMatch && request.method === "GET") {
+      if (tail === "threads" || tail === "threads/live" || /^computers\/[^/]+\/threads(?:\/|$)/.test(tail)) {
         await organizations.member(organizationId, identity.userId);
-        if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return jsonError("Open a WebSocket connection.", 426);
-        const internal = new URL(`https://internal/computers/${encodeURIComponent(decodeURIComponent(computerStreamMatch[1]))}/stream${computerStreamMatch[2]}`);
-        internal.search = url.search;
-        return board().fetch(new Request(internal, { headers: { upgrade: "websocket" } }));
+        const profile = await store.profile(identity.userId);
+        const actor = threadMemberSchema.parse({ id: identity.userId, label: profile?.name || "Member" });
+        if (request.method !== "GET" && request.headers.get("origin") && request.headers.get("origin") !== url.origin) return jsonError("Open this thread in Remy.", 403);
+        const computerId = /^computers\/([^/]+)\/threads/.exec(tail)?.[1];
+        if (computerId && !await computerStore.computer(organizationId, decodeURIComponent(computerId))) return jsonError("Computer not found.", 404);
+        const headers = new Headers({ "x-thread-member": encodeURIComponent(JSON.stringify(actor)), "x-thread-session": identity.sessionId, "x-organization-id": organizationId });
+        if (request.headers.get("upgrade") === "websocket") headers.set("upgrade", "websocket");
+        if (request.headers.has("content-type")) headers.set("content-type", request.headers.get("content-type")!);
+        if (request.headers.has("x-filename")) headers.set("x-filename", request.headers.get("x-filename")!);
+        const internal = new URL(`https://internal/${tail}`); internal.search = url.search;
+        return board().fetch(new Request(internal, { method: request.method, headers, body: request.body, ...(request.body ? { duplex: "half" } : {}) }));
       }
       if (tail === "board/events" && request.method === "POST") {
         await organizations.member(organizationId, identity.userId);
@@ -405,6 +437,7 @@ export function createHandler(overrides: Partial<HandlerDependencies> = {}) {
       status: response.status,
       statusText: response.statusText,
       headers,
+      ...(response.webSocket ? { webSocket: response.webSocket } : {}),
     });
     dependencies.log(requestOutcomeSchema.parse({
       event: "request.outcome",
@@ -423,11 +456,14 @@ export function createHandler(overrides: Partial<HandlerDependencies> = {}) {
 
 export class HubCoordinator {
   private readonly board: OrganizationBoard;
+  private readonly threads: ThreadStore;
+  private threadPublishing = Promise.resolve();
   private readonly computers: D1ComputerStore;
-  private readonly pending = new Map<string, { resolve: (response: Response) => void; timer: ReturnType<typeof setTimeout> }>();
+  private readonly pending = new Map<string, { computerId: string; resolve: (response: Response) => void; timer: ReturnType<typeof setTimeout> }>();
 
   constructor(private readonly ctx: DurableObjectState, readonly env: Env) {
     this.computers = new D1ComputerStore(env.DB);
+    this.threads = new ThreadStore(new DurableBoardStorage(ctx.storage), (frame) => { this.threadPublishing = this.threadPublishing.then(() => this.publishThreadFrame(frame)).catch(() => undefined); });
     this.board = new OrganizationBoard(new DurableBoardStorage(ctx.storage), {
       publish: (frames) => {
         for (const socket of this.ctx.getWebSockets()) {
@@ -460,10 +496,12 @@ export class HubCoordinator {
       this.ctx.acceptWebSocket(server);
       await this.ctx.storage.put("organizationId", request.headers.get("x-organization-id") ?? "");
       server.serializeAttachment({ kind: "computer", computerId, lastSeenAt: Date.now(), minimumDaemonVersion: request.headers.get("x-minimum-daemon-version") ?? "0.1.0" });
-      server.send(JSON.stringify({ kind: "welcome", protocolVersion: COMPUTER_PROTOCOL_VERSION, heartbeatIntervalMs: COMPUTER_HEARTBEAT_INTERVAL_MS }));
+      server.send(JSON.stringify({ kind: "welcome", protocolVersion: COMPUTER_PROTOCOL_VERSION, heartbeatIntervalMs: COMPUTER_HEARTBEAT_INTERVAL_MS, threadRelay: true }));
       await this.ctx.storage.setAlarm(Date.now() + COMPUTER_HEARTBEAT_TIMEOUT_MS);
       return new Response(null, { status: 101, webSocket: client });
     }
+    const threadResponse = await this.threadRequest(request);
+    if (threadResponse) return threadResponse;
     const proxyMatch = /^\/computers\/([^/]+)\/proxy(\/.*)$/.exec(url.pathname);
     if (proxyMatch) {
       const computerId = decodeURIComponent(proxyMatch[1]);
@@ -475,7 +513,7 @@ export class HubCoordinator {
       const id = crypto.randomUUID();
       const response = new Promise<Response>((resolve) => {
         const timer = setTimeout(() => { this.pending.delete(id); resolve(jsonError("Computer did not answer", 504)); }, 30_000);
-        this.pending.set(id, { resolve, timer });
+        this.pending.set(id, { computerId, resolve, timer });
       });
       const headers: Record<string, string> = {};
       request.headers.forEach((value, key) => { if (!["authorization", "cookie", "host"].includes(key)) headers[key] = value; });
@@ -551,8 +589,9 @@ export class HubCoordinator {
   }
 
   async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    if (typeof message === "string" && new TextEncoder().encode(message).byteLength > 256_000) { socket.close(1009, "Send a smaller update."); return; }
     if (message === "ping") { socket.send("pong"); return; }
-    const attachment = socket.deserializeAttachment() as { kind?: string; computerId?: string; minimumDaemonVersion?: string } | null;
+    const attachment = socket.deserializeAttachment() as { kind?: string; computerId?: string; minimumDaemonVersion?: string; ready?: boolean } | null;
     if (attachment?.kind !== "computer" || !attachment.computerId || typeof message !== "string") return;
     let frame: ReturnType<typeof computerToHubFrameSchema.parse>;
     try { frame = computerToHubFrameSchema.parse(JSON.parse(message)); } catch { socket.close(1003, "Invalid computer frame."); return; }
@@ -564,10 +603,18 @@ export class HubCoordinator {
         return;
       }
       const now = Date.now();
-      socket.serializeAttachment({ ...attachment, lastSeenAt: now });
+      socket.serializeAttachment({ ...attachment, ready: true, lastSeenAt: now });
       if (organizationId) await this.computers.seen(organizationId, attachment.computerId, now, frame.capabilities, frame.daemonVersion);
       return;
     }
+    if (!attachment.ready) { socket.close(1008, "Introduce this computer first."); return; }
+    if (this.computerSocket(attachment.computerId) !== socket) return;
+    if (frame.kind === "thread.snapshot") {
+      if (frame.snapshot.access.organizationId !== organizationId) { socket.close(1008, "Invalid organization."); return; }
+      await this.threads.snapshot(attachment.computerId, frame.snapshot);
+      return;
+    }
+    if (frame.kind === "thread.manifest") { await this.threads.manifest(attachment.computerId, frame.ids); return; }
     if (frame.kind === "heartbeat") {
       const now = Date.now();
       socket.serializeAttachment({ ...attachment, lastSeenAt: now });
@@ -577,18 +624,142 @@ export class HubCoordinator {
     }
     if (frame.kind === "response") {
       const pending = this.pending.get(frame.id);
-      if (!pending) return;
+      if (!pending || pending.computerId !== attachment.computerId) return;
       clearTimeout(pending.timer);
       this.pending.delete(frame.id);
       const binary = decodeWireBody(frame.body);
-      pending.resolve(new Response(binary, { status: frame.status, headers: frame.headers }));
+      pending.resolve(new Response([204, 205, 304].includes(frame.status) ? null : binary, { status: frame.status, headers: frame.headers }));
     }
     if (frame.kind === "stream" || frame.kind === "stream.end") {
-      const subscriber = this.ctx.getWebSockets().find((candidate) => (candidate.deserializeAttachment() as { subscriptionId?: string } | null)?.subscriptionId === frame.id);
+      const subscriber = this.ctx.getWebSockets().find((candidate) => (() => { const meta = candidate.deserializeAttachment() as { subscriptionId?: string; computerId?: string } | null; return meta?.subscriptionId === frame.id && meta.computerId === attachment.computerId; })());
       if (!subscriber) return;
       if (frame.kind === "stream") subscriber.send(frame.payload);
       else subscriber.close(1000, frame.reason ?? "Stream ended.");
     }
+  }
+
+  private computerSocket(computerId: string): WebSocket | undefined {
+    return this.ctx.getWebSockets().find((socket) => {
+      const meta = socket.deserializeAttachment() as { kind?: string; computerId?: string; ready?: boolean; lastSeenAt?: number } | null;
+      return meta?.kind === "computer" && meta.ready && meta.computerId === computerId && Date.now() - (meta.lastSeenAt ?? 0) <= COMPUTER_HEARTBEAT_TIMEOUT_MS && socket.readyState === 1;
+    });
+  }
+
+  private async computerOffline(socket: WebSocket): Promise<void> {
+    const meta = socket.deserializeAttachment() as { kind?: string; computerId?: string } | null;
+    if (meta?.kind !== "computer" || !meta.computerId) return;
+    const newer = this.computerSocket(meta.computerId);
+    if (newer && newer !== socket) return;
+    const org = await this.ctx.storage.get<string>("organizationId");
+    if (org) await this.computers.seen(org, meta.computerId, 0);
+    await this.threads.offline(meta.computerId);
+    for (const [id, pending] of this.pending) if (pending.computerId === meta.computerId) {
+      clearTimeout(pending.timer); this.pending.delete(id); pending.resolve(jsonError("This computer is offline; try again when it reconnects.", 503));
+    }
+  }
+
+  private async sendThreadFrame(socket: WebSocket, frame: ThreadLiveFrame): Promise<void> {
+    const meta = socket.deserializeAttachment() as { kind?: string; userId?: string; computerId?: string; threadId?: string; subscriptionId?: string; sessionId?: string } | null;
+    if (meta?.kind !== "threads" || !meta.userId) return;
+    const organizationId = await this.ctx.storage.get<string>("organizationId");
+    if (!organizationId || !await new D1OrganizationStore(this.env.DB).membership(organizationId, meta.userId)) { socket.close(1008, "Sign in again."); return; }
+    const session = (await new D1AccountStore(this.env.DB).sessionsFor(meta.userId)).find((candidate) => candidate.id === meta.sessionId);
+    if (!session || session.revokedAt || session.accessExpiresAt <= Date.now()) { socket.close(1008, "Sign in again."); return; }
+    if (frame.kind === "snapshot" || frame.kind === "remove") {
+      const computerId = frame.kind === "snapshot" ? frame.thread.computerId : frame.computerId;
+      const threadId = frame.kind === "snapshot" ? frame.thread.id : frame.threadId;
+      if (meta.threadId && (meta.threadId !== threadId || meta.computerId !== computerId)) return;
+      const current = await this.threads.get(computerId, threadId);
+      const key = `threads:viewer:${meta.subscriptionId}:${computerId}:${threadId}`;
+      if (!current || !canReadThread(current.access, meta.userId)) {
+        if (await this.ctx.storage.get<boolean>(key)) {
+          socket.send(JSON.stringify({ kind: "remove", cursor: frame.cursor, computerId, threadId }));
+          await this.ctx.storage.delete(key);
+        }
+        return;
+      }
+      await this.ctx.storage.put(key, true);
+      // Replays use the current access decision, never the historical visibility.
+      if (frame.kind === "snapshot" && !canReadThread(frame.thread.access, meta.userId)) return;
+    }
+    socket.send(JSON.stringify(frame));
+  }
+
+  private async publishThreadFrame(frame: ThreadLiveFrame): Promise<void> {
+    for (const socket of this.ctx.getWebSockets()) {
+      try { await this.sendThreadFrame(socket, frame); } catch { socket.close(1011, "Reconnect to continue reading this thread."); }
+    }
+  }
+
+  private async threadRequest(request: Request): Promise<Response | undefined> {
+    const url = new URL(request.url);
+    const match = /^\/computers\/([^/]+)\/threads(?:\/([0-9a-f-]{36})(?:\/(join|message|approval|question|interrupt|stop|visibility|attachments)(?:\/([0-9a-f-]{36}))?)?)?$/.exec(url.pathname);
+    if (!match && url.pathname !== "/threads" && url.pathname !== "/threads/live") return undefined;
+    let actor: ThreadMember;
+    try { actor = threadMemberSchema.parse(JSON.parse(decodeURIComponent(request.headers.get("x-thread-member") ?? "null"))); } catch { return jsonError("Sign in again.", 401); }
+    const computerId = match ? decodeURIComponent(match[1]) : undefined;
+    const id = match?.[2]; const action = match?.[3]; const attachmentId = match?.[4];
+    if (url.pathname === "/threads" && request.method === "GET") {
+      const threads = await this.threads.list(actor.id);
+      return Response.json({ threads: threads.map((thread) => ({ ...thread, stale: thread.stale || !this.computerSocket(thread.computerId) })), cursor: (await this.threads.replay()).cursor, member: actor });
+    }
+    if (url.pathname === "/threads/live" && request.method === "GET") {
+      if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return jsonError("Open a WebSocket connection.", 426);
+      const rawCursor = url.searchParams.get("cursor"); const cursor = rawCursor === null ? undefined : Number(rawCursor);
+      if (cursor !== undefined && (!Number.isSafeInteger(cursor) || cursor < 0)) return jsonError("Reconnect to continue reading this thread.", 400);
+      const pair = new WebSocketPair(); const [client, server] = Object.values(pair);
+      this.ctx.acceptWebSocket(server);
+      const subscriptionId = crypto.randomUUID();
+      server.serializeAttachment({ kind: "threads", userId: actor.id, sessionId: request.headers.get("x-thread-session"), subscriptionId, computerId: url.searchParams.get("computerId"), threadId: url.searchParams.get("threadId") });
+      for (const thread of await this.threads.list(actor.id)) await this.ctx.storage.put(`threads:viewer:${subscriptionId}:${thread.computerId}:${thread.id}`, true);
+      const replay = await this.threads.replay(cursor);
+      for (const frame of replay.frames) await this.sendThreadFrame(server, frame);
+      server.send(JSON.stringify({ kind: "ready", cursor: replay.cursor }));
+      return new Response(null, { status: 101, webSocket: client });
+    }
+    if (!computerId) return jsonError("This action is not available.", 404);
+    const snapshot = id ? await this.threads.get(computerId, id) : undefined;
+    if (id && (!snapshot || !canReadThread(snapshot.access, actor.id))) return jsonError("This thread is no longer available.", 404);
+    if (id && !action && request.method === "GET" && !this.computerSocket(computerId)) return Response.json({ ...snapshot!, stale: true, member: actor });
+    if (id && action !== "join" && request.method !== "GET" && !canWriteThread(snapshot!.access, actor.id)) return jsonError("Join this thread before replying.", 403);
+    if (action === "attachments" && id) {
+      const org = request.headers.get("x-organization-id")!;
+      const prefix = `thread-attachments/${encodeURIComponent(org)}/${encodeURIComponent(computerId)}/${id}/`;
+      if (attachmentId && request.method === "GET") {
+        const object = await this.env.OBJECTS.get(prefix + attachmentId);
+        if (!object) return jsonError("This image is no longer available.", 404);
+        return new Response(object.body, { headers: { "content-type": object.httpMetadata?.contentType ?? "application/octet-stream", "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
+      }
+      if (!attachmentId && request.method === "POST") {
+        if (!this.computerSocket(computerId)) return jsonError("This computer is offline; try again when it reconnects.", 503);
+        const contentType = request.headers.get("content-type") ?? "";
+        if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(contentType)) return jsonError("Choose a PNG, JPEG, GIF, or WebP image.", 400);
+        const data = await limitedBody(request, 10 * 1024 * 1024);
+        if (!data || !data.byteLength) return jsonError("Choose an image smaller than 10 MB.", 413);
+        const attachment = crypto.randomUUID();
+        await this.env.OBJECTS.put(prefix + attachment, data, { httpMetadata: { contentType }, customMetadata: { name: (request.headers.get("x-filename") ?? "image").replace(/[\r\n]/g, "").slice(0, 120) } });
+        return Response.json({ id: attachment }, { status: 201 });
+      }
+      return jsonError("This action is not available.", 404);
+    }
+    const allowed = id ? ((request.method === "GET" || request.method === "PATCH") && !action) || (request.method === "POST" && !!action) : request.method === "POST";
+    if (!allowed) return jsonError("This action is not available.", 404);
+    const socket = this.computerSocket(computerId);
+    if (!socket) return jsonError("This computer is offline; try again when it reconnects.", 503);
+    const payload = await limitedBody(request, 96_000);
+    if (!payload) return jsonError("Send a shorter message.", 413);
+    const requestId = crypto.randomUUID();
+    const response = new Promise<Response>((resolve) => {
+      const timer = setTimeout(() => { this.pending.delete(requestId); resolve(jsonError("This computer did not answer; check the thread before retrying.", 504)); }, 30_000);
+      this.pending.set(requestId, { computerId, resolve, timer });
+    });
+    socket.send(JSON.stringify({ kind: "request", id: requestId, method: request.method, path: `/hub/threads${id ? `/${id}` : ""}${action ? `/${action}` : ""}`, headers: {}, actor, body: encodeWireBody(payload) }));
+    const answer = await response;
+    if (answer.ok) {
+      const updated = threadSnapshotSchema.safeParse(await answer.clone().json());
+      if (updated.success && updated.data.access.organizationId === request.headers.get("x-organization-id")) await this.threads.snapshot(computerId, updated.data);
+    }
+    return answer;
   }
 
   async alarm(): Promise<void> {
@@ -598,7 +769,7 @@ export class HubCoordinator {
       const attachment = socket.deserializeAttachment() as { kind?: string; lastSeenAt?: number } | null;
       if (attachment?.kind !== "computer" || !attachment.lastSeenAt) continue;
       const expiresAt = attachment.lastSeenAt + COMPUTER_HEARTBEAT_TIMEOUT_MS;
-      if (expiresAt <= now) socket.close(1001, "Heartbeat missed.");
+      if (expiresAt <= now) { await this.computerOffline(socket); socket.close(1001, "Heartbeat missed."); }
       else next = Math.min(next ?? expiresAt, expiresAt);
     }
     if (next) await this.ctx.storage.setAlarm(next);
@@ -606,14 +777,20 @@ export class HubCoordinator {
 
   async webSocketClose(socket: WebSocket, code: number, reason: string): Promise<void> {
     const attachment = socket.deserializeAttachment() as { kind?: string; computerId?: string; subscriptionId?: string } | null;
+    if (attachment?.kind === "threads" && attachment.subscriptionId) {
+      const keys = [...(await this.ctx.storage.list({ prefix: `threads:viewer:${attachment.subscriptionId}:` })).keys()];
+      if (keys.length) await this.ctx.storage.delete(keys);
+    }
     if (attachment?.kind === "proxy-stream" && attachment.computerId && attachment.subscriptionId) {
       const computer = this.ctx.getWebSockets().find((candidate) => (candidate.deserializeAttachment() as { computerId?: string } | null)?.computerId === attachment.computerId);
       computer?.send(JSON.stringify({ kind: "unsubscribe", id: attachment.subscriptionId }));
     }
+    await this.computerOffline(socket);
     socket.close(code, reason);
   }
 
   async webSocketError(socket: WebSocket): Promise<void> {
+    await this.computerOffline(socket);
     socket.close(1011, "Live updates stopped; reconnect to continue.");
   }
 }

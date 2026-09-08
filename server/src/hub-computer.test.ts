@@ -26,7 +26,9 @@ test("the daemon reconnects outbound with a fresh signed authorization and capab
     remote.on("connection", (socket, request) => {
       authorizations.push(String(request.headers.authorization ?? ""));
       socket.on("message", (message) => {
-        hellos.push(JSON.parse(message.toString()));
+        const frame = JSON.parse(message.toString());
+        if (frame.kind !== "hello") return;
+        hellos.push(frame);
         if (authorizations.length === 1) socket.close();
         else { clearTimeout(timeout); resolve(); }
       });

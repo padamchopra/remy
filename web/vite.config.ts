@@ -62,6 +62,7 @@ export default defineConfig({
     // you want to see a change.
     hmr: false,
     proxy: {
+      ...(process.env.VITE_REMY_HUB_URL ? { "/api/organizations": { target: process.env.VITE_REMY_HUB_URL, ws: true, changeOrigin: false } } : {}),
       "/api": {
         target: local.url,
         changeOrigin: true,

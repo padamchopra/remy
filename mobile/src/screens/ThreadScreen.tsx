@@ -448,7 +448,7 @@ function Entry({
   if (entry.kind === "user") {
     return (
       <View style={styles.you}>
-        <Text style={styles.speaker}>You</Text>
+        <Text style={styles.speaker}>{entry.member?.label ?? "You"}</Text>
         {entry.text ? (
           <View style={styles.bubbleYou}>
             <Text style={styles.youText}>{entry.text}</Text>

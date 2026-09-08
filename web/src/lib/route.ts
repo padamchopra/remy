@@ -16,7 +16,7 @@ export type Route =
   // `focus` names the thread in front when the one the URL opens on has more
   // than one in its collection. How that collection is laid out is the
   // workbench's, kept on this device rather than in the address.
-  | { name: "threads"; threadId?: string; focus?: string }
+  | { name: "threads"; threadId?: string; focus?: string; organizationId?: string; computerId?: string }
   | { name: "workspaces"; workspaceId?: string }
   | { name: "board"; scope?: string }
   | { name: "ticket"; key: string }
@@ -83,6 +83,7 @@ export function parseLocation(hash: string): AppLocation {
       name: "threads",
       threadId: head === "threads" ? rest : undefined,
       ...(focus ? { focus } : {}),
+      ...(params.get("organization") ? { organizationId: params.get("organization")!, computerId: params.get("computer") || undefined } : {}),
     },
   };
 }
@@ -91,7 +92,7 @@ export function formatLocation({ route }: AppLocation): string {
   const path =
     route.name === "threads"
       ? `/threads${route.threadId ? `/${encodeURIComponent(route.threadId)}` : ""}${
-          route.focus ? `?${new URLSearchParams({ focus: route.focus }).toString()}` : ""
+          route.organizationId ? `?${new URLSearchParams({ organization: route.organizationId, ...(route.computerId ? { computer: route.computerId } : {}) }).toString()}` : route.focus ? `?${new URLSearchParams({ focus: route.focus }).toString()}` : ""
         }`
       : route.name === "workspaces"
         ? `/workspaces${route.workspaceId ? `/${encodeURIComponent(route.workspaceId)}` : ""}`

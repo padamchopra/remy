@@ -8,6 +8,7 @@ import { takeArtifacts, type ConvArtifact } from "./remy-artifacts.js";
 export type { ConvArtifact };
 
 export interface ChatImageAttachment {
+  remoteId?: string;
   /// Opaque id minted by the device that owns the thread. A client never sends
   /// a filesystem path, because the browser may be on another machine.
   id: string;
@@ -33,6 +34,8 @@ export interface ChatCodeReference {
 // A single rendered item in the conversation feed. `kind` picks the renderer on
 // the client; the other fields are populated per kind.
 export interface ConvEntry {
+  member?: import("@remy/contract").ThreadMember;
+  response?: { kind: "approval" | "question"; requestId: string; value: unknown };
   activity?: import("./provider-adapters/activity.js").ThreadActivity;
   id: string;
   kind: "user" | "assistant" | "thinking" | "tool";

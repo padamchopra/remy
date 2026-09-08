@@ -151,6 +151,8 @@ export interface WorkspaceIconMatch {
 /// One rendered item in a chat's feed. `kind` picks the renderer; the rest are
 /// populated per kind. Mirrors `ConvEntry` in `server/src/transcript.ts`.
 export interface ConvEntry {
+  member?: { id: string; label: string };
+  response?: { kind: "approval" | "question"; requestId: string; value: unknown };
   activity?: ThreadActivity;
   id: string;
   kind: "user" | "assistant" | "thinking" | "tool";

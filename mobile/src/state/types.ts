@@ -126,6 +126,8 @@ export interface PathSuggestion {
 }
 
 export interface ConvEntry {
+  member?: { id: string; label: string };
+  response?: { kind: "approval" | "question"; requestId: string; value: unknown };
   /// Work the provider is running beside the turn — a subagent, or a shell
   /// command. Carried on its own entry so it survives a reconnect.
   activity?: ThreadActivity;
