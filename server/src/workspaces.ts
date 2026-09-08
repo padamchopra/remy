@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { config } from "./config.js";
 import { providerEffort, providerId, providerModel } from "./providers.js";
-import { db, runTransaction } from "./db.js";
+import { db, getKv, runTransaction } from "./db.js";
 import { findProjectFiles } from "./discovery.js";
 import { run as exec } from "./run.js";
 import { agentCommand, type AgentKind } from "./agent.js";
@@ -270,6 +270,8 @@ async function repositoryForPath(rawPath: string): Promise<{ mainPath: string; o
   } catch {
     origin = null;
   }
+  const hosted = getKv<{ path: string; origin: string }>("hostedWorkspaceRepository");
+  if (hosted?.path === mainPath && typeof hosted.origin === "string") origin = hosted.origin;
   return { mainPath, origin, worktrees };
 }
 
