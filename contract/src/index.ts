@@ -369,7 +369,7 @@ function compareEvents(left: BoardLogEvent, right: BoardLogEvent): number {
 const editable: Record<BoardLogEntity, readonly string[]> = {
   project: ["name", "keyPrefix", "defaultProvider", "defaultModel", "defaultEffort", "defaultPermissionMode"],
   ticket: ["number", "keyPrefix", "linearIssueId", "externalUrl", "assigneeMemberId", "assigneeName", "labels", "title", "body", "status", "priority", "assigneeAgentId", "parentId", "rank", "deviceId", "branch", "handoffs", "startedAt", "closedAt"],
-  agent: ["scope", "ownerId", "createdByUserId", "builtIn", "name", "handle", "role", "instructions", "provider", "model", "effort", "permissionMode", "avatar", "tint", "autoStart", "handoffTo", "gitIdentity", "gitName"],
+  agent: ["scope", "ownerId", "createdByUserId", "builtIn", "name", "handle", "role", "instructions", "provider", "model", "effort", "permissionMode", "avatar", "tint", "autoStart", "handoffTo", "delegable", "delegateDescription", "gitIdentity", "gitName"],
   memory: ["content"],
   recurrence: ["projectId", "runAsUserId", "timeZone", "name", "prompt", "cadence", "hour", "minute", "weekday", "day", "enabled", "schedulerDeviceId"],
 };
@@ -382,7 +382,7 @@ function applyFields(fields: Record<string, unknown>, payload: Record<string, un
 
 function createdFields(entity: BoardLogEntity, event: BoardLogEvent): Record<string, unknown> | undefined {
   if (entity === "ticket") return applyFields({ number: Number(event.payload.number ?? 0), projectId: String(event.payload.projectId ?? ""), title: "Untitled", body: "", status: "backlog", priority: 0, rank: "n", handoffs: 0 }, event.payload, editable.ticket);
-  if (entity === "agent") return applyFields({ scope: "org", ownerId: "", name: "Agent", handle: "agent", instructions: "", provider: "default", permissionMode: "default", autoStart: true, handoffTo: [], gitIdentity: "default" }, event.payload, editable.agent);
+  if (entity === "agent") return applyFields({ scope: "org", ownerId: "", name: "Agent", handle: "agent", instructions: "", provider: "default", permissionMode: "default", autoStart: true, handoffTo: [], delegable: false, gitIdentity: "default" }, event.payload, editable.agent);
   if (entity === "memory") {
     if (typeof event.payload.agentId !== "string" || !event.payload.agentId || typeof event.payload.content !== "string" || !event.payload.content.trim()) return undefined;
     const scope = event.payload.scope === "workspace" ? "workspace" : "global";

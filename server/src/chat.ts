@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { agentCommand } from "./agent.js";
-import { getAgent, gitIdentityEnv, resolvedAgentModel, type Agent } from "./agents.js";
+import { getAgent, gitIdentityEnv, listAgents, resolvedAgentModel, type Agent } from "./agents.js";
 import { memoryPrompt } from "./agent-memories.js";
 import { deviceId } from "./board-log.js";
 import {
@@ -20,6 +20,7 @@ import {
   providerAdapter,
   type ProviderApprovalDecision,
   type ProviderApprovalRequest,
+  type ProviderDelegate,
   type ProviderEvent,
   type ProviderQuestionRequest,
   type ProviderRun,
@@ -629,6 +630,7 @@ This is the agent's Inbox conversation. When the person signals that something s
             }),
             env: agentEnvironment(agent),
             entries: this.record.entries,
+            delegates: threadDelegates(this.record.provider, this.record.agentId),
           },
           {
             event: (event) => {
@@ -1391,6 +1393,33 @@ export function createChat(input: {
   broadcast({ type: "chat-list", operation: "upsert", chat: chat.summary() });
   broadcast({ type: "chats" });
   return chat.summary();
+}
+
+/// The agents a thread may delegate to, as its provider will read them.
+///
+/// The thread's own agent is left out: it is already the voice running the
+/// turn, so offering it as a delegate spends context on a loop. Remy's own
+/// agent is left out for the reason it is kept out of a handoff list — it is
+/// the app, not a step in the work — so a row that somehow says otherwise is
+/// not honoured here. The agent's permission mode is left out too: a subagent
+/// runs under the thread's mode, and see `ProviderDelegate` for why carrying
+/// it across would be wrong.
+export function threadDelegates(provider: ProviderId, ownAgentId?: string): ProviderDelegate[] {
+  return listAgents()
+    .filter((agent) => agent.delegable && !agent.builtIn && agent.id !== ownAgentId)
+    .map((agent) => {
+      // A model belongs to the provider that answers to it, so an agent on
+      // Codex lends this thread its instructions and not a model Claude would
+      // refuse. Empty means the thread's own model.
+      const resolved = resolvedAgentModel(agent);
+      const model = resolved.provider === provider ? providerModel(provider, resolved.model) : "";
+      return {
+        handle: agent.handle,
+        description: agent.delegateDescription ?? agent.role ?? agent.name,
+        prompt: agent.instructions.trim() || [`You are ${agent.name}.`, agent.role].filter(Boolean).join(" "),
+        ...(model ? { model } : {}),
+      };
+    });
 }
 
 function visibleParentContext(parent: ChatDetail): string {

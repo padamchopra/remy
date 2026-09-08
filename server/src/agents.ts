@@ -48,6 +48,13 @@ export interface Agent {
   autoStart: boolean;
   /// Handles this agent may pass a ticket to. Empty means it may not hand off.
   handoffTo: string[];
+  /// Offered to every thread as a subagent it may delegate to. Off by default:
+  /// the roster costs system-prompt context, and lending an agent's
+  /// instructions to work the person did not hand it is a choice worth making.
+  delegable: boolean;
+  /// When to delegate to this agent, in the words the calling model reads.
+  /// Falls back to the role and then the name.
+  delegateDescription?: string;
   gitIdentity: GitIdentityMode;
   gitName?: string;
   /// Read-only: `agentGitEmail` derives this from the handle and the GitHub
@@ -85,6 +92,8 @@ const EDITABLE = [
   "tint",
   "autoStart",
   "handoffTo",
+  "delegable",
+  "delegateDescription",
   "gitIdentity",
   "gitName",
 ] as const;
@@ -100,6 +109,8 @@ const LOCKED = [
   "avatar",
   "tint",
   "handoffTo",
+  "delegable",
+  "delegateDescription",
   "gitIdentity",
   "gitName",
 ] as const;
@@ -171,6 +182,7 @@ function fold(id: string): Agent | undefined {
         permissionMode: oneOf(PERMISSION_MODES, event.payload.permissionMode, "default"),
         autoStart: event.payload.autoStart !== false,
         handoffTo: Array.isArray(event.payload.handoffTo) ? (event.payload.handoffTo as string[]) : [],
+        delegable: event.payload.delegable === true,
         gitIdentity: gitIdentity(event.payload.gitIdentity, REMY_DEFAULT),
         // `preset` is not editable, so it is read from the create event rather
         // than folded — and without it `seedPresetAgents` would find nothing
@@ -199,15 +211,17 @@ function write(agent: Agent): void {
   db.prepare(
     `insert into agents (
        id, name, handle, role, instructions, provider, model, effort, permission_mode,
-       avatar, tint, auto_start, handoff_to, git_identity, git_name, git_email,
+       avatar, tint, auto_start, handoff_to, delegable, delegate_description,
+       git_identity, git_name, git_email,
        preset, created_at, updated_at, deleted
-     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
      on conflict(id) do update set
        name = excluded.name, handle = excluded.handle, role = excluded.role,
        instructions = excluded.instructions, provider = excluded.provider,
        model = excluded.model, effort = excluded.effort, permission_mode = excluded.permission_mode,
        avatar = excluded.avatar, tint = excluded.tint, auto_start = excluded.auto_start,
-       handoff_to = excluded.handoff_to, git_identity = excluded.git_identity,
+       handoff_to = excluded.handoff_to, delegable = excluded.delegable,
+       delegate_description = excluded.delegate_description, git_identity = excluded.git_identity,
        git_name = excluded.git_name, git_email = excluded.git_email,
        preset = excluded.preset, updated_at = excluded.updated_at, deleted = 0`,
   ).run(
@@ -224,6 +238,8 @@ function write(agent: Agent): void {
     agent.tint ?? null,
     agent.autoStart ? 1 : 0,
     JSON.stringify(agent.handoffTo),
+    agent.delegable ? 1 : 0,
+    agent.delegateDescription ?? null,
     agent.gitIdentity,
     agent.gitName ?? null,
     agent.gitEmail ?? null,
@@ -273,6 +289,8 @@ function toAgent(row: Record<string, unknown>): Agent {
     ...(row.tint ? { tint: String(row.tint) } : {}),
     autoStart: Number(row.auto_start) === 1,
     handoffTo,
+    delegable: Number(row.delegable) === 1,
+    ...(row.delegate_description ? { delegateDescription: String(row.delegate_description) } : {}),
     gitIdentity: gitIdentity(row.git_identity, REMY_DEFAULT),
     ...(row.git_name ? { gitName: String(row.git_name) } : {}),
     // Derived rather than read back, so an address stored before you signed in
@@ -337,6 +355,7 @@ export function workspaceAgent(): Agent {
     permissionMode: "auto",
     autoStart: true,
     handoffTo: [],
+    delegable: false,
     // Its commits are yours: there is no persona here to credit.
     gitIdentity: "off",
     createdAt: 0,
@@ -435,6 +454,8 @@ function validate(input: Record<string, unknown>, existing?: Agent): Record<stri
       // Remy is not a step in a chain of work; it is the app.
       .filter((handle) => handle !== REMY_AGENT_HANDLE);
   }
+  if (input.delegable !== undefined) patch.delegable = input.delegable === true;
+  if (input.delegateDescription !== undefined) patch.delegateDescription = text(input.delegateDescription, 200) ?? "";
   if (input.gitIdentity !== undefined) {
     patch.gitIdentity = gitIdentity(input.gitIdentity, existing?.gitIdentity ?? REMY_DEFAULT);
   }

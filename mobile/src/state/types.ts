@@ -565,6 +565,10 @@ export interface Agent {
   tint?: string;
   autoStart: boolean;
   handoffTo: string[];
+  /// Offered to every thread as a subagent it may delegate to.
+  delegable: boolean;
+  /// When to delegate to it, in the words the calling model reads.
+  delegateDescription?: string;
   gitIdentity: "default" | "off" | "author";
   gitName?: string;
   gitEmail?: string;
