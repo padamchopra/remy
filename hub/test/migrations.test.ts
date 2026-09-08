@@ -15,6 +15,7 @@ const identityMigration = readFileSync(new URL("../migrations/0001_identity.sql"
 const accountsMigration = readFileSync(new URL("../migrations/0002_accounts.sql", import.meta.url), "utf8");
 const organizationsMigration = readFileSync(new URL("../migrations/0003_organizations.sql", import.meta.url), "utf8");
 const workspacesMigration = readFileSync(new URL("../migrations/0004_workspaces.sql", import.meta.url), "utf8");
+const computersMigration = readFileSync(new URL("../migrations/0005_computers.sql", import.meta.url), "utf8");
 const hubRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
 function migratedDatabase(): DatabaseSync {
@@ -24,6 +25,7 @@ function migratedDatabase(): DatabaseSync {
   database.exec(accountsMigration);
   database.exec(organizationsMigration);
   database.exec(workspacesMigration);
+  database.exec(computersMigration);
   return database;
 }
 
@@ -136,6 +138,7 @@ test("Wrangler records the migration and makes a second apply a no-op", (context
   copyFileSync(new URL("../migrations/0002_accounts.sql", import.meta.url), join(migrations, "0002_accounts.sql"));
   copyFileSync(new URL("../migrations/0003_organizations.sql", import.meta.url), join(migrations, "0003_organizations.sql"));
   copyFileSync(new URL("../migrations/0004_workspaces.sql", import.meta.url), join(migrations, "0004_workspaces.sql"));
+  copyFileSync(new URL("../migrations/0005_computers.sql", import.meta.url), join(migrations, "0005_computers.sql"));
   const config = join(fixture, "wrangler.jsonc");
   writeFileSync(
     config,
@@ -166,5 +169,6 @@ test("Wrangler records the migration and makes a second apply a no-op", (context
   assert.match(firstApply, /0002_accounts\.sql/);
   assert.match(firstApply, /0003_organizations\.sql/);
   assert.match(firstApply, /0004_workspaces\.sql/);
+  assert.match(firstApply, /0005_computers\.sql/);
   assert.match(apply(), /No migrations to apply/);
 });

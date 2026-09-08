@@ -1,5 +1,10 @@
 import {
   CONTRACT_VERSION,
+  COMPUTER_HEARTBEAT_INTERVAL_MS,
+  COMPUTER_HEARTBEAT_TIMEOUT_MS,
+  COMPUTER_PROTOCOL_VERSION,
+  computerRegistrationInputSchema,
+  computerToHubFrameSchema,
   boardActorSchema,
   boardAppendInputSchema,
   boardProjectionEntitySchema,
@@ -18,6 +23,9 @@ import {
 import { D1AccountStore, type AccountStore } from "./account-store.js";
 import { AccountService, bearerToken, webSessionCookie } from "./accounts.js";
 import { authFor } from "./auth.js";
+import { authenticateComputer } from "./computer-auth.js";
+import { D1ComputerStore, type ComputerStore } from "./computer-store.js";
+import { ComputerService, versionBefore } from "./computers.js";
 import { D1OrganizationStore, type OrganizationStore } from "./organization-store.js";
 import { DurableBoardStorage, OrganizationBoard } from "./organization-board.js";
 import { OrganizationError, OrganizationService } from "./organizations.js";
@@ -36,6 +44,7 @@ export interface Env {
   GITHUB_CLIENT_SECRET?: SecretsStoreSecret;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: SecretsStoreSecret;
+  MINIMUM_DAEMON_VERSION?: string;
 }
 
 type LogEvent = RequestOutcome | HubErrorEvent;
@@ -51,6 +60,7 @@ type AccountRouteDependencies = {
   accountService?: (store: AccountStore) => AccountService;
   organizationStore?: (env: Env) => OrganizationStore;
   organizationService?: (store: OrganizationStore) => OrganizationService;
+  computerStore?: (env: Env) => ComputerStore;
   betterAuth?: typeof authFor;
 };
 
@@ -89,6 +99,19 @@ function jsonError(error: string, status: number): Response {
   return Response.json({ error }, { status });
 }
 
+function encodeWireBody(value: ArrayBuffer): string {
+  const bytes = new Uint8Array(value); let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 8192) binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+}
+
+function decodeWireBody(value: string): Uint8Array<ArrayBuffer> {
+  const normalized = value.replaceAll("-", "+").replaceAll("_", "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
+  const binary = atob(normalized); const bytes = new Uint8Array(new ArrayBuffer(binary.length));
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
 async function body<T>(request: { json(): Promise<unknown> }): Promise<T | undefined> {
   try { return await request.json() as T; } catch { return undefined; }
 }
@@ -114,6 +137,8 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
   const service = (dependencies.accountService ?? ((current) => new AccountService(current)))(store);
   const organizationStore = (dependencies.organizationStore ?? ((current) => new D1OrganizationStore(current.DB)))(env);
   const organizations = (dependencies.organizationService ?? ((current) => new OrganizationService(current)))(organizationStore);
+  const computerStore = (dependencies.computerStore ?? ((current) => new D1ComputerStore(current.DB)))(env);
+  const computers = new ComputerService(computerStore, Date.now, env.MINIMUM_DAEMON_VERSION ?? "0.1.0");
 
   if (url.pathname === "/api/auth/sign-in/magic-link" && request.method === "POST") {
     const cloned = request.clone();
@@ -164,6 +189,19 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     || url.pathname.startsWith("/api/organizations/");
   if (!protectedRoute) return Response.json(hubErrorSchema.parse({ error: "Not found" }), { status: 404 });
 
+  const computerConnectMatch = /^\/api\/organizations\/([^/]+)\/computers\/connect$/.exec(url.pathname);
+  if (computerConnectMatch && request.method === "GET") {
+    if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return jsonError("Open a WebSocket connection.", 426);
+    const organizationId = decodeURIComponent(computerConnectMatch[1]);
+    const computer = await authenticateComputer(request, organizationId, computerStore);
+    if (!computer) return jsonError("This computer could not be authenticated.", 401);
+    const coordinator = env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${organizationId}`));
+    const internal = new Request("https://internal/computers/connect", {
+      headers: { upgrade: "websocket", "x-computer-id": computer.computerId, "x-organization-id": organizationId, "x-minimum-daemon-version": env.MINIMUM_DAEMON_VERSION ?? "0.1.0" },
+    });
+    return coordinator.fetch(internal);
+  }
+
   const identity = await identityFor(request, service);
   if (!identity) return jsonError("Sign in again.", 401);
   try {
@@ -183,6 +221,32 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     if (organizationMatch) {
       const organizationId = decodeURIComponent(organizationMatch[1]); const tail = organizationMatch[2] ?? "";
       const board = () => env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${organizationId}`));
+      if (tail === "computers" && request.method === "POST") {
+        await organizations.member(organizationId, identity.userId);
+        if (identity.clientKind !== "computer") return jsonError("Use a computer authorization.", 403);
+        const input = computerRegistrationInputSchema.safeParse(await body(request));
+        if (!input.success) return jsonError("Choose valid computer details.", 400);
+        return Response.json(await computers.register(organizationId, identity.userId, input.data), { status: 201 });
+      }
+      if (tail === "computers" && request.method === "GET") {
+        await organizations.member(organizationId, identity.userId);
+        return Response.json({ computers: await computers.list(organizationId) });
+      }
+      const computerProxyMatch = /^computers\/([^/]+)\/proxy(\/.*)$/.exec(tail);
+      if (computerProxyMatch) {
+        await organizations.member(organizationId, identity.userId);
+        const internal = new URL(`https://internal/computers/${encodeURIComponent(decodeURIComponent(computerProxyMatch[1]))}/proxy${computerProxyMatch[2]}`);
+        internal.search = url.search;
+        return board().fetch(new Request(internal, { method: request.method, headers: request.headers, body: request.body, redirect: "manual" }));
+      }
+      const computerStreamMatch = /^computers\/([^/]+)\/stream(\/.*)$/.exec(tail);
+      if (computerStreamMatch && request.method === "GET") {
+        await organizations.member(organizationId, identity.userId);
+        if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return jsonError("Open a WebSocket connection.", 426);
+        const internal = new URL(`https://internal/computers/${encodeURIComponent(decodeURIComponent(computerStreamMatch[1]))}/stream${computerStreamMatch[2]}`);
+        internal.search = url.search;
+        return board().fetch(new Request(internal, { headers: { upgrade: "websocket" } }));
+      }
       if (tail === "board/events" && request.method === "POST") {
         await organizations.member(organizationId, identity.userId);
         const input = boardAppendInputSchema.safeParse(await body(request));
@@ -359,15 +423,19 @@ export function createHandler(overrides: Partial<HandlerDependencies> = {}) {
 
 export class HubCoordinator {
   private readonly board: OrganizationBoard;
+  private readonly computers: D1ComputerStore;
+  private readonly pending = new Map<string, { resolve: (response: Response) => void; timer: ReturnType<typeof setTimeout> }>();
 
   constructor(private readonly ctx: DurableObjectState, readonly env: Env) {
+    this.computers = new D1ComputerStore(env.DB);
     this.board = new OrganizationBoard(new DurableBoardStorage(ctx.storage), {
       publish: (frames) => {
         for (const socket of this.ctx.getWebSockets()) {
+          if ((socket.deserializeAttachment() as { kind?: string } | null)?.kind !== "board") continue;
           try {
             for (const frame of frames) socket.send(JSON.stringify(frame));
             const cursor = frames.at(-1)?.cursor;
-            if (cursor !== undefined) socket.serializeAttachment({ cursor });
+            if (cursor !== undefined) socket.serializeAttachment({ kind: "board", cursor });
           } catch {
             socket.close(1011, "Live updates stopped; reconnect to continue.");
           }
@@ -379,6 +447,55 @@ export class HubCoordinator {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") return Response.json({ status: "ok" });
+    if (request.method === "GET" && url.pathname === "/computers/connect") {
+      if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return jsonError("Expected WebSocket", 426);
+      const computerId = request.headers.get("x-computer-id");
+      if (!computerId) return jsonError("Computer not found", 404);
+      for (const socket of this.ctx.getWebSockets()) {
+        const attachment = socket.deserializeAttachment() as { kind?: string; computerId?: string } | null;
+        if (attachment?.kind === "computer" && attachment.computerId === computerId) socket.close(1000, "A newer connection replaced this one.");
+      }
+      const pair = new WebSocketPair();
+      const [client, server] = Object.values(pair);
+      this.ctx.acceptWebSocket(server);
+      await this.ctx.storage.put("organizationId", request.headers.get("x-organization-id") ?? "");
+      server.serializeAttachment({ kind: "computer", computerId, lastSeenAt: Date.now(), minimumDaemonVersion: request.headers.get("x-minimum-daemon-version") ?? "0.1.0" });
+      server.send(JSON.stringify({ kind: "welcome", protocolVersion: COMPUTER_PROTOCOL_VERSION, heartbeatIntervalMs: COMPUTER_HEARTBEAT_INTERVAL_MS }));
+      await this.ctx.storage.setAlarm(Date.now() + COMPUTER_HEARTBEAT_TIMEOUT_MS);
+      return new Response(null, { status: 101, webSocket: client });
+    }
+    const proxyMatch = /^\/computers\/([^/]+)\/proxy(\/.*)$/.exec(url.pathname);
+    if (proxyMatch) {
+      const computerId = decodeURIComponent(proxyMatch[1]);
+      const socket = this.ctx.getWebSockets().find((candidate) => {
+        const attachment = candidate.deserializeAttachment() as { kind?: string; computerId?: string } | null;
+        return attachment?.kind === "computer" && attachment.computerId === computerId;
+      });
+      if (!socket) return jsonError("Computer unavailable", 503);
+      const id = crypto.randomUUID();
+      const response = new Promise<Response>((resolve) => {
+        const timer = setTimeout(() => { this.pending.delete(id); resolve(jsonError("Computer did not answer", 504)); }, 30_000);
+        this.pending.set(id, { resolve, timer });
+      });
+      const headers: Record<string, string> = {};
+      request.headers.forEach((value, key) => { if (!["authorization", "cookie", "host"].includes(key)) headers[key] = value; });
+      socket.send(JSON.stringify({ kind: "request", id, method: request.method, path: proxyMatch[2] + url.search, headers, body: request.body ? encodeWireBody(await request.arrayBuffer()) : "" }));
+      return response;
+    }
+    const streamMatch = /^\/computers\/([^/]+)\/stream(\/.*)$/.exec(url.pathname);
+    if (streamMatch && request.method === "GET") {
+      if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return jsonError("Expected WebSocket", 426);
+      const computerId = decodeURIComponent(streamMatch[1]);
+      const computerSocket = this.ctx.getWebSockets().find((candidate) => {
+        const attachment = candidate.deserializeAttachment() as { kind?: string; computerId?: string } | null;
+        return attachment?.kind === "computer" && attachment.computerId === computerId;
+      });
+      if (!computerSocket) return jsonError("Computer unavailable", 503);
+      const pair = new WebSocketPair(); const [client, server] = Object.values(pair); const subscriptionId = crypto.randomUUID();
+      this.ctx.acceptWebSocket(server); server.serializeAttachment({ kind: "proxy-stream", computerId, subscriptionId });
+      computerSocket.send(JSON.stringify({ kind: "subscribe", id: subscriptionId, path: streamMatch[2] + url.search }));
+      return new Response(null, { status: 101, webSocket: client });
+    }
     if (request.method === "POST" && url.pathname === "/uptime") {
       const frame = uptimeCheckFrameSchema.parse(await request.json());
       await this.ctx.storage.put("uptime.latest", frame);
@@ -426,7 +543,7 @@ export class HubCoordinator {
       const pair = new WebSocketPair();
       const [client, server] = Object.values(pair);
       this.ctx.acceptWebSocket(server);
-      server.serializeAttachment({ cursor: replay.cursor });
+      server.serializeAttachment({ kind: "board", cursor: replay.cursor });
       for (const frame of replay.frames) server.send(JSON.stringify(frame));
       return new Response(null, { status: 101, webSocket: client });
     }
@@ -434,10 +551,65 @@ export class HubCoordinator {
   }
 
   async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    if (message === "ping") socket.send("pong");
+    if (message === "ping") { socket.send("pong"); return; }
+    const attachment = socket.deserializeAttachment() as { kind?: string; computerId?: string; minimumDaemonVersion?: string } | null;
+    if (attachment?.kind !== "computer" || !attachment.computerId || typeof message !== "string") return;
+    let frame: ReturnType<typeof computerToHubFrameSchema.parse>;
+    try { frame = computerToHubFrameSchema.parse(JSON.parse(message)); } catch { socket.close(1003, "Invalid computer frame."); return; }
+    const organizationId = String((await this.ctx.storage.get<string>("organizationId")) ?? "");
+    if (frame.kind === "hello") {
+      if (frame.protocolVersion !== COMPUTER_PROTOCOL_VERSION || versionBefore(frame.daemonVersion, attachment.minimumDaemonVersion ?? "0.1.0")) {
+        socket.send(JSON.stringify({ kind: "update_required", minimumDaemonVersion: attachment.minimumDaemonVersion ?? "0.1.0" }));
+        socket.close(1008, "Update Remy to reconnect.");
+        return;
+      }
+      const now = Date.now();
+      socket.serializeAttachment({ ...attachment, lastSeenAt: now });
+      if (organizationId) await this.computers.seen(organizationId, attachment.computerId, now, frame.capabilities, frame.daemonVersion);
+      return;
+    }
+    if (frame.kind === "heartbeat") {
+      const now = Date.now();
+      socket.serializeAttachment({ ...attachment, lastSeenAt: now });
+      if (organizationId) await this.computers.seen(organizationId, attachment.computerId, now);
+      await this.ctx.storage.setAlarm(now + COMPUTER_HEARTBEAT_TIMEOUT_MS);
+      return;
+    }
+    if (frame.kind === "response") {
+      const pending = this.pending.get(frame.id);
+      if (!pending) return;
+      clearTimeout(pending.timer);
+      this.pending.delete(frame.id);
+      const binary = decodeWireBody(frame.body);
+      pending.resolve(new Response(binary, { status: frame.status, headers: frame.headers }));
+    }
+    if (frame.kind === "stream" || frame.kind === "stream.end") {
+      const subscriber = this.ctx.getWebSockets().find((candidate) => (candidate.deserializeAttachment() as { subscriptionId?: string } | null)?.subscriptionId === frame.id);
+      if (!subscriber) return;
+      if (frame.kind === "stream") subscriber.send(frame.payload);
+      else subscriber.close(1000, frame.reason ?? "Stream ended.");
+    }
+  }
+
+  async alarm(): Promise<void> {
+    const now = Date.now();
+    let next: number | undefined;
+    for (const socket of this.ctx.getWebSockets()) {
+      const attachment = socket.deserializeAttachment() as { kind?: string; lastSeenAt?: number } | null;
+      if (attachment?.kind !== "computer" || !attachment.lastSeenAt) continue;
+      const expiresAt = attachment.lastSeenAt + COMPUTER_HEARTBEAT_TIMEOUT_MS;
+      if (expiresAt <= now) socket.close(1001, "Heartbeat missed.");
+      else next = Math.min(next ?? expiresAt, expiresAt);
+    }
+    if (next) await this.ctx.storage.setAlarm(next);
   }
 
   async webSocketClose(socket: WebSocket, code: number, reason: string): Promise<void> {
+    const attachment = socket.deserializeAttachment() as { kind?: string; computerId?: string; subscriptionId?: string } | null;
+    if (attachment?.kind === "proxy-stream" && attachment.computerId && attachment.subscriptionId) {
+      const computer = this.ctx.getWebSockets().find((candidate) => (candidate.deserializeAttachment() as { computerId?: string } | null)?.computerId === attachment.computerId);
+      computer?.send(JSON.stringify({ kind: "unsubscribe", id: attachment.subscriptionId }));
+    }
     socket.close(code, reason);
   }
 
@@ -445,6 +617,7 @@ export class HubCoordinator {
     socket.close(1011, "Live updates stopped; reconnect to continue.");
   }
 }
+
 
 export const handleRequest = createHandler();
 

@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { WebSocketServer } from "ws";
+import { hubComputerRegistration, registerHubComputerWithDeviceCode, startHubComputerConnection } from "./hub-computer.js";
 import { answerMentions } from "./mentions.js";
 import { config, patchSettings, publicSettings } from "./config.js";
 import { AgentStartupError, AgentUnavailableError, agentKind, inferAgent, type AgentKind } from "./agent.js";
@@ -411,6 +412,21 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "GET" && url.pathname === "/health") {
       return json(res, 200, { ok: true });
+    }
+    if (req.method === "POST" && url.pathname === "/server/hub/computer") {
+      const input = await readJson(req);
+      if (typeof input.hubUrl !== "string" || typeof input.organizationId !== "string" || typeof input.deviceCode !== "string") {
+        return json(res, 400, { error: "Choose a valid organization." });
+      }
+      try {
+        await registerHubComputerWithDeviceCode(input.hubUrl, input.organizationId, input.deviceCode);
+        return json(res, 201, { registration: hubComputerRegistration() });
+      } catch (error) {
+        return json(res, 409, { error: (error as Error).message || "This computer could not be registered." });
+      }
+    }
+    if (req.method === "GET" && url.pathname === "/server/hub/computer") {
+      return json(res, 200, { registration: hubComputerRegistration() ?? null });
     }
 
     // Claude's interactive PreToolUse hook waits on this response. The request
@@ -2672,6 +2688,7 @@ server.on("upgrade", (req, socket, head) => {
 server.listen(config.port, "127.0.0.1", () => {
   console.log(`remy server listening on 127.0.0.1:${config.port}`);
   startTailnetExposureReconciler();
+  startHubComputerConnection();
 });
 setSleepBusyCheck(() =>
   listAllChats().some((chat) => chat.state === "working" || chat.state === "needs_input"),
