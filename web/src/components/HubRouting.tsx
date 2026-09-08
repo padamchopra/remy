@@ -4,10 +4,246 @@ import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field, FieldLabel } from "@/components/ui/field";
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
-export function HubRouting({organizationId}:{organizationId:string}) {
- const base=hubThreadBase(organizationId),[rules,setRules]=useState<RoutingRule[]>([]),[computers,setComputers]=useState<ComputerSummary[]>([]),[workspaces,setWorkspaces]=useState<{id:string;name:string}[]>([]),[teams,setTeams]=useState<{id:string;name:string}[]>([]),[canEdit,setCanEdit]=useState(false),[testWorkspace,setTestWorkspace]=useState(""),[message,setMessage]=useState("");
- useEffect(()=>{void Promise.all([hubRequest<{rules:RoutingRule[];canEdit:boolean}>(`${base}/routing`),hubRequest<{computers:ComputerSummary[]}>(`${base}/computers`),hubRequest<{workspaces:{id:string;name:string}[]}>(`${base}/workspaces`),hubRequest<{teams:{id:string;name:string}[]}>(`${base}/teams`)]).then(([r,c,w,t])=>{setRules(r.rules);setCanEdit(r.canEdit);setComputers(c.computers);setWorkspaces(w.workspaces);setTeams(t.teams);}).catch(e=>setMessage(e.message));},[base]);
- const update=(i:number,patch:Partial<RoutingRule>)=>setRules(old=>old.map((r,n)=>n===i?{...r,...patch}:r));
- return <section className="flex max-w-3xl flex-col gap-4 p-6" aria-label="Routing"><h1>Routing</h1><p>Rules run from top to bottom; your hosted computer is the fallback.</p>{rules.map((r,i)=><fieldset className="flex flex-col gap-3 rounded-lg border p-4" key={r.id} disabled={!canEdit}><Field><FieldLabel htmlFor={`rule-${r.id}`}>Rule name</FieldLabel><Input id={`rule-${r.id}`} value={r.name} onChange={e=>update(i,{name:e.target.value})}/></Field><Field><FieldLabel>Workspace</FieldLabel><Select value={r.workspaceId??"any"} onValueChange={v=>update(i,{workspaceId:v==="any"?undefined:v})}><SelectTrigger aria-label={`Workspace for ${r.name}`}><SelectValue/></SelectTrigger><SelectContent><SelectItem value="any">Any workspace</SelectItem>{workspaces.map(w=><SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}</SelectContent></Select></Field><Field><FieldLabel>Team</FieldLabel><Select value={r.teamId??"any"} onValueChange={v=>update(i,{teamId:v==="any"?undefined:v})}><SelectTrigger aria-label={`Team for ${r.name}`}><SelectValue/></SelectTrigger><SelectContent><SelectItem value="any">Any team</SelectItem>{teams.map(t=><SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent></Select></Field><Field><FieldLabel>Starts from</FieldLabel><Select value={r.trigger??"any"} onValueChange={v=>update(i,{trigger:v==="any"?undefined:v as RoutingRule["trigger"]})}><SelectTrigger aria-label={`Start for ${r.name}`}><SelectValue/></SelectTrigger><SelectContent>{[["any","Anywhere"],["manual","You"],["ticket","A ticket"],["routine","A routine"],["agent","An agent"]].map(([v,l])=><SelectItem key={v} value={v!}>{l}</SelectItem>)}</SelectContent></Select></Field><Field><FieldLabel>Computer</FieldLabel><Select value={r.target.computerId??r.target.class??"hosted"} onValueChange={v=>update(i,{target:["hosted","darwin","linux"].includes(v)?{class:v as "hosted"|"darwin"|"linux"}:{computerId:v}})}><SelectTrigger aria-label={`Computer for ${r.name}`}><SelectValue/></SelectTrigger><SelectContent><SelectItem value="hosted">Hosted computer</SelectItem><SelectItem value="darwin">Any Mac</SelectItem><SelectItem value="linux">Any Linux computer</SelectItem>{computers.map(c=><SelectItem key={c.computerId} value={c.computerId}>{c.name}</SelectItem>)}</SelectContent></Select></Field><div className="flex gap-2"><Button variant="outline" disabled={i===0} onClick={()=>setRules(old=>{const next=[...old];[next[i-1],next[i]]=[next[i]!,next[i-1]!];return next;})}>Move up</Button><Button variant="outline" onClick={()=>setRules(old=>old.filter(x=>x.id!==r.id))}>Remove rule</Button></div></fieldset>)}{canEdit&&<div className="flex gap-2"><Button variant="outline" onClick={()=>setRules(old=>[...old,{id:crypto.randomUUID(),name:"New rule",target:{class:"hosted"}}])}>Add rule</Button><Button onClick={()=>{void hubRequest(`${base}/routing`,"PUT",{rules}).then(()=>setMessage("Your routing rules are saved.")).catch(e=>setMessage(e.message));}}>Save routing</Button></div>}<Field><FieldLabel>Try a workspace</FieldLabel><Select value={testWorkspace} onValueChange={setTestWorkspace}><SelectTrigger aria-label="Try a workspace"><SelectValue placeholder="Choose a workspace"/></SelectTrigger><SelectContent>{workspaces.map(w=><SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}</SelectContent></Select></Field><Button variant="outline" disabled={!testWorkspace} onClick={()=>{void hubRequest<{computerId?:string;reason:string}>(`${base}/routing/resolve`,"POST",{workspaceId:testWorkspace}).then(r=>setMessage(`${computers.find(c=>c.computerId===r.computerId)?.name??"Hosted computer"}: ${r.reason}`)).catch(e=>setMessage(e.message));}}>Test saved rules</Button>{message&&<p role="status">{message}</p>}</section>;
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
+export function HubRouting({ organizationId }: { organizationId: string }) {
+  const base = hubThreadBase(organizationId),
+    [rules, setRules] = useState<RoutingRule[]>([]),
+    [computers, setComputers] = useState<ComputerSummary[]>([]),
+    [workspaces, setWorkspaces] = useState<{ id: string; name: string }[]>([]),
+    [teams, setTeams] = useState<{ id: string; name: string }[]>([]),
+    [canEdit, setCanEdit] = useState(false),
+    [testWorkspace, setTestWorkspace] = useState(""),
+    [message, setMessage] = useState("");
+  useEffect(() => {
+    void Promise.all([
+      hubRequest<{ rules: RoutingRule[]; canEdit: boolean }>(`${base}/routing`),
+      hubRequest<{ computers: ComputerSummary[] }>(`${base}/computers`),
+      hubRequest<{ workspaces: { id: string; name: string }[] }>(
+        `${base}/workspaces`,
+      ),
+      hubRequest<{ teams: { id: string; name: string }[] }>(`${base}/teams`),
+    ])
+      .then(([r, c, w, t]) => {
+        setRules(r.rules);
+        setCanEdit(r.canEdit);
+        setComputers(c.computers);
+        setWorkspaces(w.workspaces);
+        setTeams(t.teams);
+      })
+      .catch((e) => setMessage(e.message));
+  }, [base]);
+  const update = (i: number, patch: Partial<RoutingRule>) =>
+    setRules((old) => old.map((r, n) => (n === i ? { ...r, ...patch } : r)));
+  return (
+    <section className="flex max-w-3xl flex-col gap-4 p-6" aria-label="Routing">
+      <h1>Routing</h1>
+      <p>Rules run from top to bottom; your hosted computer is the fallback.</p>
+      {rules.map((r, i) => (
+        <fieldset
+          className="flex flex-col gap-3 rounded-lg border p-4"
+          key={r.id}
+          disabled={!canEdit}
+        >
+          <Field>
+            <FieldLabel htmlFor={`rule-${r.id}`}>Rule name</FieldLabel>
+            <Input
+              id={`rule-${r.id}`}
+              value={r.name}
+              onChange={(e) => update(i, { name: e.target.value })}
+            />
+          </Field>
+          <Field>
+            <FieldLabel>Workspace</FieldLabel>
+            <Select
+              value={r.workspaceId ?? "any"}
+              onValueChange={(v) =>
+                update(i, { workspaceId: v === "any" ? undefined : v })
+              }
+            >
+              <SelectTrigger aria-label={`Workspace for ${r.name}`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="any">Any workspace</SelectItem>
+                {workspaces.map((w) => (
+                  <SelectItem key={w.id} value={w.id}>
+                    {w.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field>
+            <FieldLabel>Team</FieldLabel>
+            <Select
+              value={r.teamId ?? "any"}
+              onValueChange={(v) =>
+                update(i, { teamId: v === "any" ? undefined : v })
+              }
+            >
+              <SelectTrigger aria-label={`Team for ${r.name}`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="any">Any team</SelectItem>
+                {teams.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field>
+            <FieldLabel>Starts from</FieldLabel>
+            <Select
+              value={r.trigger ?? "any"}
+              onValueChange={(v) =>
+                update(i, {
+                  trigger:
+                    v === "any" ? undefined : (v as RoutingRule["trigger"]),
+                })
+              }
+            >
+              <SelectTrigger aria-label={`Start for ${r.name}`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[
+                  ["any", "Anywhere"],
+                  ["manual", "You"],
+                  ["ticket", "A ticket"],
+                  ["routine", "A routine"],
+                  ["agent", "An agent"],
+                ].map(([v, l]) => (
+                  <SelectItem key={v} value={v!}>
+                    {l}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field>
+            <FieldLabel>Computer</FieldLabel>
+            <Select
+              value={r.target.computerId ?? r.target.class ?? "hosted"}
+              onValueChange={(v) =>
+                update(i, {
+                  target: ["hosted", "darwin", "linux"].includes(v)
+                    ? { class: v as "hosted" | "darwin" | "linux" }
+                    : { computerId: v },
+                })
+              }
+            >
+              <SelectTrigger aria-label={`Computer for ${r.name}`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="hosted">Hosted computer</SelectItem>
+                <SelectItem value="darwin">Any Mac</SelectItem>
+                <SelectItem value="linux">Any Linux computer</SelectItem>
+                {computers.map((c) => (
+                  <SelectItem key={c.computerId} value={c.computerId}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              disabled={i === 0}
+              onClick={() =>
+                setRules((old) => {
+                  const next = [...old];
+                  [next[i - 1], next[i]] = [next[i]!, next[i - 1]!];
+                  return next;
+                })
+              }
+            >
+              Move up
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() =>
+                setRules((old) => old.filter((x) => x.id !== r.id))
+              }
+            >
+              Remove rule
+            </Button>
+          </div>
+        </fieldset>
+      ))}
+      {canEdit && (
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={() =>
+              setRules((old) => [
+                ...old,
+                {
+                  id: crypto.randomUUID(),
+                  name: "New rule",
+                  target: { class: "hosted" },
+                },
+              ])
+            }
+          >
+            Add rule
+          </Button>
+          <Button
+            onClick={() => {
+              void hubRequest(`${base}/routing`, "PUT", { rules })
+                .then(() => setMessage("Your routing rules are saved."))
+                .catch((e) => setMessage(e.message));
+            }}
+          >
+            Save routing
+          </Button>
+        </div>
+      )}
+      <Field>
+        <FieldLabel>Try a workspace</FieldLabel>
+        <Select value={testWorkspace} onValueChange={setTestWorkspace}>
+          <SelectTrigger aria-label="Try a workspace">
+            <SelectValue placeholder="Choose a workspace" />
+          </SelectTrigger>
+          <SelectContent>
+            {workspaces.map((w) => (
+              <SelectItem key={w.id} value={w.id}>
+                {w.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Field>
+      <Button
+        variant="outline"
+        disabled={!testWorkspace}
+        onClick={() => {
+          void hubRequest<{ computerId?: string; reason: string }>(
+            `${base}/routing/resolve`,
+            "POST",
+            { workspaceId: testWorkspace },
+          )
+            .then((r) =>
+              setMessage(
+                `${computers.find((c) => c.computerId === r.computerId)?.name ?? "Hosted computer"}: ${r.reason}`,
+              ),
+            )
+            .catch((e) => setMessage(e.message));
+        }}
+      >
+        Test saved rules
+      </Button>
+      {message && <p role="status">{message}</p>}
+    </section>
+  );
 }
