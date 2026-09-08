@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CONTRACT_VERSION, accountProfileSchema, boardAppendInputSchema, boardLiveFrameSchema, boardLogEventSchema, computerHeartbeatSchema, deviceAuthorizationSchema, organizationDeletionImpactSchema, organizationSchema, organizationWorkspaceSchema, parseHubHealth, tokenPairSchema, uptimeCheckFrameSchema } from "./index.js";
+import { CONTRACT_VERSION, accountProfileSchema, boardAppendInputSchema, boardLiveFrameSchema, boardLogEventSchema, computerHeartbeatSchema, computerRegistrationInputSchema, computerToHubFrameSchema, deviceAuthorizationSchema, hubToComputerFrameSchema, organizationDeletionImpactSchema, organizationSchema, organizationWorkspaceSchema, parseHubHealth, tokenPairSchema, uptimeCheckFrameSchema } from "./index.js";
 
 test("accepts a compatible hub health response", () => {
   const health = parseHubHealth({
@@ -36,6 +36,14 @@ test("validates shared computer and uptime frames", () => {
     status: "ok",
     statusCode: 200,
   }).status, "ok");
+});
+
+test("validates computer capabilities and multiplexed protocol frames", () => {
+  const capabilities = { providers: [{ id: "codex", models: ["gpt-5.6-sol"] }], workspaces: [{ id: "w1", name: "Remy", path: "/src/remy", origin: "github.com/remy/remy" }], worktrees: true, terminals: true, emulator: false };
+  assert.equal(computerRegistrationInputSchema.parse({ computerId: "b7ebfcbe-f2f4-4a1b-8707-3029fa65d14b", name: "Studio", platform: "darwin", daemonVersion: "1.2.3", protocol: { minimum: 1, maximum: 1 }, publicKey: "k".repeat(44), capabilities }).capabilities.workspaces[0]?.name, "Remy");
+  assert.equal(computerToHubFrameSchema.parse({ kind: "heartbeat", availability: "available", observedAt: 1 }).kind, "heartbeat");
+  assert.equal(hubToComputerFrameSchema.parse({ kind: "request", id: "r1", method: "GET", path: "/api/chats", headers: {}, body: "" }).kind, "request");
+  assert.throws(() => hubToComputerFrameSchema.parse({ kind: "request", id: "r1", method: "GET", path: "https://other.example", headers: {}, body: "" }));
 });
 
 test("rejects incompatible hub health responses", () => {

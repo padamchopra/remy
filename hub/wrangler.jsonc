@@ -22,7 +22,8 @@
     "staging": {
       "name": "remy-hub-staging",
       "vars": {
-        "ENVIRONMENT": "staging"
+        "ENVIRONMENT": "staging",
+        "MINIMUM_DAEMON_VERSION": "0.1.0"
       },
       "d1_databases": [
         {
@@ -43,7 +44,8 @@
         }
       ],
       "vars": {
-        "ENVIRONMENT": "production"
+        "ENVIRONMENT": "production",
+        "MINIMUM_DAEMON_VERSION": "0.1.0"
       },
       "d1_databases": [
         {

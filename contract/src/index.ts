@@ -68,11 +68,52 @@ export const uptimeCheckFrameSchema = z.object({
 });
 export type UptimeCheckFrame = z.infer<typeof uptimeCheckFrameSchema>;
 
-export const computerRegistrationSchema = z.object({
-  contractVersion: contractVersionSchema,
-  computerId: z.string().min(1),
+export const COMPUTER_PROTOCOL_VERSION = 1 as const;
+export const MINIMUM_COMPUTER_PROTOCOL_VERSION = 1 as const;
+export const COMPUTER_HEARTBEAT_INTERVAL_MS = 15_000 as const;
+export const COMPUTER_HEARTBEAT_TIMEOUT_MS = 45_000 as const;
+
+export const computerProtocolRangeSchema = z.object({
+  minimum: z.number().int().positive(),
+  maximum: z.number().int().positive(),
+}).refine((range) => range.minimum <= range.maximum, "The protocol range is invalid");
+export type ComputerProtocolRange = z.infer<typeof computerProtocolRangeSchema>;
+
+export const computerProviderCapabilitySchema = z.object({
+  id: z.enum(["claude", "codex", "cursor"]),
+  models: z.array(z.string()),
+});
+export const computerWorkspaceCapabilitySchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  path: z.string().min(1),
+  origin: z.string().nullable(),
+});
+export const computerCapabilitiesSchema = z.object({
+  providers: z.array(computerProviderCapabilitySchema),
+  workspaces: z.array(computerWorkspaceCapabilitySchema),
+  worktrees: z.boolean(),
+  terminals: z.boolean(),
+  emulator: z.boolean(),
+});
+export type ComputerCapabilities = z.infer<typeof computerCapabilitiesSchema>;
+
+export const computerRegistrationInputSchema = z.object({
+  computerId: z.string().uuid(),
   name: z.string().min(1),
   platform: z.enum(["darwin", "linux"]),
+  daemonVersion: z.string().min(1),
+  protocol: computerProtocolRangeSchema,
+  publicKey: z.string().min(32),
+  capabilities: computerCapabilitiesSchema,
+});
+export type ComputerRegistrationInput = z.infer<typeof computerRegistrationInputSchema>;
+
+export const computerRegistrationSchema = computerRegistrationInputSchema.extend({
+  organizationId: z.string().min(1),
+  ownerUserId: z.string().min(1),
+  registeredAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
 });
 export type ComputerRegistration = z.infer<typeof computerRegistrationSchema>;
 export type ComputerId = ComputerRegistration["computerId"];
@@ -86,6 +127,43 @@ export const computerHeartbeatSchema = z.object({
   observedAt: z.string().datetime(),
 });
 export type ComputerHeartbeat = z.infer<typeof computerHeartbeatSchema>;
+
+export const computerSummarySchema = computerRegistrationSchema.omit({ publicKey: true }).extend({
+  availability: computerAvailabilitySchema,
+  lastSeenAt: z.number().int().nonnegative().nullable(),
+  updateRequired: z.boolean(),
+});
+export type ComputerSummary = z.infer<typeof computerSummarySchema>;
+
+const proxyHeadersSchema = z.record(z.string(), z.string());
+export const computerToHubFrameSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("hello"), protocolVersion: z.number().int().positive(), daemonVersion: z.string().min(1), capabilities: computerCapabilitiesSchema }),
+  z.object({ kind: z.literal("heartbeat"), availability: z.enum(["available", "busy"]), observedAt: z.number().int().nonnegative() }),
+  z.object({ kind: z.literal("response"), id: z.string().min(1), status: z.number().int().min(100).max(599), headers: proxyHeadersSchema, body: z.string() }),
+  z.object({ kind: z.literal("stream"), id: z.string().min(1), payload: z.string() }),
+  z.object({ kind: z.literal("stream.end"), id: z.string().min(1), reason: z.string().optional() }),
+]);
+export type ComputerToHubFrame = z.infer<typeof computerToHubFrameSchema>;
+export const hubToComputerFrameSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("welcome"), protocolVersion: z.number().int().positive(), heartbeatIntervalMs: z.number().int().positive() }),
+  z.object({ kind: z.literal("update_required"), minimumDaemonVersion: z.string().min(1) }),
+  z.object({ kind: z.literal("request"), id: z.string().min(1), method: z.string().min(1), path: z.string().startsWith("/"), headers: proxyHeadersSchema, body: z.string() }),
+  z.object({ kind: z.literal("subscribe"), id: z.string().min(1), path: z.string().startsWith("/") }),
+  z.object({ kind: z.literal("unsubscribe"), id: z.string().min(1) }),
+]);
+export type HubToComputerFrame = z.infer<typeof hubToComputerFrameSchema>;
+
+export const computerConnectionAuthorizationSchema = z.object({
+  computerId: z.string().uuid(),
+  timestamp: z.number().int().nonnegative(),
+  nonce: z.string().min(16).max(128),
+  signature: z.string().min(32),
+});
+export type ComputerConnectionAuthorization = z.infer<typeof computerConnectionAuthorizationSchema>;
+
+export function computerConnectionMessage(organizationId: string, authorization: Pick<ComputerConnectionAuthorization, "computerId" | "timestamp" | "nonce">): string {
+  return ["remy-computer-connect-v1", organizationId, authorization.computerId, String(authorization.timestamp), authorization.nonce].join("\n");
+}
 
 export const accountClientKindSchema = z.enum(["web", "phone", "computer", "cli"]);
 export type AccountClientKind = z.infer<typeof accountClientKindSchema>;
@@ -215,6 +293,9 @@ export const hubRoutes = {
   organizationMembers: { method: "GET", path: "/api/organizations/:organizationId/members", response: z.object({ members: z.array(organizationMemberSchema) }) },
   organizationTeams: { method: "GET", path: "/api/organizations/:organizationId/teams", response: z.object({ teams: z.array(organizationTeamSchema) }) },
   organizationWorkspaces: { method: "GET", path: "/api/organizations/:organizationId/workspaces", response: z.object({ workspaces: z.array(organizationWorkspaceSchema) }) },
+  registerComputer: { method: "POST", path: "/api/organizations/:organizationId/computers", response: computerRegistrationSchema },
+  organizationComputers: { method: "GET", path: "/api/organizations/:organizationId/computers", response: z.object({ computers: z.array(computerSummarySchema) }) },
+  connectComputer: { method: "GET", path: "/api/organizations/:organizationId/computers/connect", response: hubToComputerFrameSchema },
   organizationWorkspace: { method: "GET", path: "/api/organizations/:organizationId/workspaces/:workspaceId", response: organizationWorkspaceSchema },
   organizationDeletionImpact: { method: "GET", path: "/api/organizations/:organizationId/deletion-impact", response: organizationDeletionImpactSchema },
   organizationBoard: { method: "GET", path: "/api/organizations/:organizationId/board/:entity", response: z.object({ items: z.array(boardProjectionSchema), version: boardVersionVectorSchema }) },
