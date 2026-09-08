@@ -1,3 +1,4 @@
+import { githubFor, githubRoute } from "./github-routes.js";
 import { connectionRoute, connectionWebhook } from "./connection-routes.js";
 import { connectionProviders } from "./connection-providers.js";
 import type { ConnectionDelivery, ConnectionJob } from "./connections.js";
@@ -260,6 +261,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     const repository=workspace && githubRepository(workspace.origin);
     const installation=await env.DB.prepare("SELECT installation_id,account FROM organization_git_installations WHERE organization_id=?").bind(org).first<{installation_id:number;account:string}>();
     if(!repository || !installation || repository.split("/")[0]!==installation.account.toLowerCase())return jsonError("Connect this workspace to GitHub first.",404);
+    if(!await env.DB.prepare("SELECT 1 FROM github_repositories WHERE organization_id=? AND workspace_id=? AND installation_id=?").bind(org,workspaceId,installation.installation_id).first())return jsonError("Select this repository in your GitHub connection.",403);
     const capabilities=new GitCapabilities(()=>env.AUTH_SECRET.get());
     const policy=await env.DB.prepare("SELECT branches FROM workspace_git_policies WHERE organization_id=? AND workspace_id=?").bind(org,workspaceId).first<{branches:string}>();
     const branches=JSON.parse(policy?.branches??"[]") as string[];
@@ -340,6 +342,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
   if (!identity) return jsonError("Sign in again.", 401);
   const connectionResponse = await connectionRoute(request, env, identity.userId);
   if (connectionResponse) return connectionResponse;
+  const githubResponse=await githubRoute(request,env,identity.userId);if(githubResponse)return githubResponse;
   try {
     if (url.pathname === "/api/organizations" && request.method === "GET") return Response.json({ organizations: await organizations.list(identity.userId) });
     if (url.pathname === "/api/organizations" && request.method === "POST") {
@@ -883,6 +886,21 @@ export class HubCoordinator {
       await this.scheduleAlarm(Date.now() + COMPUTER_HEARTBEAT_TIMEOUT_MS);
       return new Response(null, { status: 101, webSocket: client });
     }
+    if(url.pathname.startsWith("/github/") && org && user && request.method==="POST") {
+      try {
+        const input=await request.json() as Record<string,unknown>;
+        if(url.pathname==="/github/monitoring") {
+          if(input.inherit===true){await githubFor(this.env).inherit(org,user,String(input.workspaceId),Number(input.pullNumber));return Response.json({ok:true});}
+          if(typeof input.enabled!=="boolean")return jsonError("Choose a monitoring preference.",400);
+          if(input.enabled){const agent=await this.scopedAgents(org).get(String(input.agentId),user);if(agent.fields.scope==="personal")return jsonError("Choose a shared agent.",400);}
+          await githubFor(this.env).configure(org,user,String(input.workspaceId),Number(input.pullNumber??0),input.enabled,input.enabled?String(input.agentId):null);return Response.json({ok:true});
+        }
+        if(url.pathname==="/github/start") {
+          const agent=await this.scopedAgents(org).get(String(input.agent),user);if(agent.fields.scope==="personal")return jsonError("Choose a shared agent.",400);
+          const run=await this.startAgentThread(String(input.agent),user,String(input.workspace),String(input.prompt),"agent","github");await this.scheduleAlarm(Date.now()+60_000);return Response.json(run);
+        }
+      }catch{return jsonError("This GitHub action is unavailable.",400);}
+    }
     const agentRoute=/^\/agents(?:\/([^/]+)(?:\/(conversation|message|runs))?)?$/.exec(url.pathname);
     if(agentRoute && org && user) {
       const agents=this.scopedAgents(org);
@@ -908,6 +926,10 @@ export class HubCoordinator {
       try { await this.scopedAgents(org).get(binding.agentId,binding.userId); } catch {return jsonError("This agent is unavailable.",403);}
       const input=await body<{action?:string;input?:{rules?:unknown;workspaceId?:string;prompt?:string;title?:string;ticketId?:string;agentId?:string;threadId?:string;computerId?:string}}>(request);
       const action=input?.action,asked=input?.input??{},store=new D1OrganizationStore(this.env.DB);
+      if(action==="github_action") {
+        const githubInput=asked as Record<string,unknown>;
+        try{return Response.json(await githubFor(this.env).action(org,binding.userId,String(githubInput.workspaceId),String(githubInput.action),githubInput));}catch{return jsonError("Your GitHub action could not complete.",400);}
+      }
       if(action==="create_organization_routine") {
         if(binding.kind!=="inbox")return jsonError("Ask for a routine in your agent's conversation.",403);
         const parsed=hubRoutineSchema.safeParse({...asked,agentId:binding.agentId,runAsUserId:binding.userId});if(!parsed.success)return jsonError("Choose a valid routine and time zone.",400);
@@ -1027,7 +1049,7 @@ export class HubCoordinator {
       try {
         const parsed = boardAppendInputSchema.parse(input?.input);
         if (org && user && !await new BoardAccess(new D1OrganizationStore(this.env.DB), this.board, org, user).canWrite(parsed)) return jsonError("Ticket not found.", 404);
-        if(parsed.entity==="agent" && parsed.kind==="tombstone" && org) {await this.scopedAgents(org).remove(parsed.entityId,actor.data);return Response.json({ok:true},{status:201});}
+        if(parsed.entity==="agent" && parsed.kind==="tombstone" && org) {await this.scopedAgents(org).remove(parsed.entityId,actor.data);await this.env.DB.prepare("UPDATE github_monitoring SET enabled=0,agent_id=NULL WHERE organization_id=? AND agent_id=?").bind(org,parsed.entityId).run();return Response.json({ok:true},{status:201});}
         if(parsed.entity==="agent" && parsed.kind==="create" && user)parsed.payload.createdByUserId=user;
         if(parsed.entity==="recurrence" && user && parsed.kind!=="tombstone")parsed.payload.runAsUserId=user;
         const event=await this.board.append(parsed, actor.data);
@@ -1135,6 +1157,10 @@ export class HubCoordinator {
       const run=await this.ctx.storage.get<{agentId:string}>(`agent-run:${frame.snapshot.id}`);
       if(run && !running){const text=frame.snapshot.detail.entries.filter(e=>e.kind==="assistant" && e.text).map(e=>e.text).join("\n\n");if(text)await this.appendAgentReply(run.agentId,`reply:${frame.snapshot.id}`,text);}
 
+      if(!["working","running","busy","needs_input"].includes(String(frame.snapshot.detail.state))) {
+        const text=frame.snapshot.detail.entries.filter(e=>e.kind==="assistant"&&e.text).map(e=>e.text).join("\n\n");
+        this.ctx.waitUntil(this.replyOnGitHub(organizationId,attachment.computerId,frame.snapshot.id,text));
+      }
       return;
     }
     if (frame.kind === "thread.manifest") { await this.threads.manifest(attachment.computerId, frame.ids); return; }
@@ -1449,6 +1475,15 @@ export class HubCoordinator {
     if (current === null || at < current) await this.ctx.storage.setAlarm(at);
   }
 
+  private readonly githubReplies=new Map<string,Promise<void>>();
+  private async replyOnGitHub(org:string,computer:string,thread:string,text:string) {
+    if(this.githubReplies.has(thread))return this.githubReplies.get(thread);
+    const work=(async()=>{
+      const activity=await this.env.DB.prepare("SELECT computer_id FROM github_activity WHERE organization_id=? AND thread_id=? AND phase='running'").bind(org,thread).first<{computer_id:string}>();if(activity?.computer_id!==computer)return;
+      try{await githubFor(this.env).reply(org,thread,text);}catch{await this.scheduleAlarm(Date.now()+60_000);}
+    })();this.githubReplies.set(thread,work);try{await work;}finally{this.githubReplies.delete(thread);}
+  }
+
   async alarm(): Promise<void> {
     const routineDue=await this.routineService().tick();
     await this.hostedService().idle();
@@ -1456,6 +1491,10 @@ export class HubCoordinator {
 
     const notificationOrg = await this.ctx.storage.get<string>("organizationId");
     if (notificationOrg) await this.notifications.deliver(notificationOrg, this.env);
+    if(notificationOrg) {
+      const pending=(await this.env.DB.prepare("SELECT thread_id,computer_id FROM github_activity WHERE organization_id=? AND phase='running' LIMIT 100").bind(notificationOrg).all<{thread_id:string;computer_id:string}>()).results;
+      for(const run of pending){const thread=await this.threads.get(run.computer_id,run.thread_id);if(thread && !["working","running","busy","needs_input"].includes(String(thread.detail.state)))await this.replyOnGitHub(notificationOrg,run.computer_id,run.thread_id,thread.detail.entries.filter(e=>e.kind==="assistant"&&e.text).map(e=>e.text).join("\n\n"));}
+    }
     const now = Date.now();
     const pushDue = notificationOrg ? await this.env.DB.prepare("SELECT MIN(next_attempt_at) AS due FROM notification_pushes WHERE organization_id=?").bind(notificationOrg).first<{ due: number | null }>() : null;
     let next: number | undefined = pushDue?.due ? Math.max(Date.now() + 1000, pushDue.due) : undefined;

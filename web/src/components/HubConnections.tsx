@@ -1,3 +1,4 @@
+import { HubGitHub } from "./HubGitHub";
 import { useState } from "react";
 import { useHubResource } from "@/lib/hub-organization";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
@@ -144,6 +145,7 @@ export function HubConnections({ organizationId }: { organizationId: string }) {
           </CardContent>
         </Card>
       ))}
+      {value && <HubGitHub organizationId={organizationId} canManage={value.canManage} />}
       <AlertDialog
         open={!!remove}
         onOpenChange={(open) => {

@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { createHash, randomUUID } from "node:crypto";
 
 export async function startConnectionProvider() {
-  const codes=new Map();
+  const codes=new Map(), comments=[], actions=[];
   const server=createServer(async(req,res)=>{
     const url=new URL(req.url,"http://fixture.invalid");
     res.setHeader("content-type","application/json");
@@ -18,9 +18,17 @@ export async function startConnectionProvider() {
       codes.delete(code);res.end(JSON.stringify({access_token:"disposable-connection-token",refresh_token:"disposable-refresh-token",expires_in:3600}));return;
     }
     if(url.pathname==="/graphql") {res.end(JSON.stringify({data:{organization:{id:"linear-release",name:"Release team"},viewer:{id:"linear-ada"}}}));return;}
+    if(url.pathname==="/user/installations") {res.end(JSON.stringify({installations:[{id:20,app_id:12,account:{login:"release"}}]}));return;}
+    if(url.pathname==="/user/installations/20/repositories") {res.end(JSON.stringify({repositories:[{id:101,full_name:"release/remy",name:"Remy",html_url:"https://github.com/release/remy"}]}));return;}
+    if(url.pathname.startsWith("/repos/release/remy/")) {
+      let raw="";for await(const part of req)raw+=part;const input=raw?JSON.parse(raw):{};
+      if(req.method==="POST")actions.push({path:url.pathname,body:input,actor:req.headers.authorization});
+      if(url.pathname.endsWith("/comments")){if(req.method==="POST"){const comment={id:comments.length+1,body:input.body};comments.push(comment);res.end(JSON.stringify(comment));}else res.end(JSON.stringify(comments));return;}
+      res.end(JSON.stringify({id:7,number:7,html_url:"https://github.com/release/remy/pull/7"}));return;
+    }
     if(url.pathname==="/user") {res.end(JSON.stringify({id:101,login:"ada-release"}));return;}
     res.writeHead(404);res.end('{}');
   });
   await new Promise(resolve=>server.listen(0,"127.0.0.1",resolve));
-  return {url:`http://127.0.0.1:${server.address().port}`,close:()=>server.close()};
+  return {url:`http://127.0.0.1:${server.address().port}`,actions,comments,close:()=>server.close()};
 }

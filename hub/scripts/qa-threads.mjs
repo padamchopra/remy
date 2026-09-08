@@ -25,7 +25,7 @@ process.env.MC_CONFIG_DIR = join(temp, "computer");
 const workspacePath = join(temp, "release-workspace");
 mkdirSync(workspacePath);
 execFileSync("git", ["init", "-q", workspacePath]);
-execFileSync("git", ["-C", workspacePath, "remote", "add", "origin", "https://example.test/studio/release.git"]);
+execFileSync("git", ["-C", workspacePath, "remote", "add", "origin", process.env.QA_GITHUB ? "https://github.com/release/remy.git" : "https://example.test/studio/release.git"]);
 const oauth = process.env.QA_CONNECTIONS ? await startConnectionProvider() : undefined;
 const bundle = join(temp, "worker.mjs");
 await build({
@@ -33,7 +33,7 @@ await build({
     contents: process.env.QA_HUB_WEB === "1" ? `
       import worker from "./hub/src/worker.ts";
       import { HubCoordinator as Coordinator } from "./hub/src/worker.ts";
-      const secrets = env => ({ ...env, ...(env.QA_CONNECTIONS ? {LINEAR_CLIENT_SECRET:{get:async()=>"disposable-secret"},GITHUB_CONNECTION_CLIENT_SECRET:{get:async()=>"disposable-secret"}} : {}), AUTH_SECRET: { get: async () => "disposable-qa-secret-with-more-than-thirty-two-characters" }, HOSTED_CONTROL_TOKEN: { get: async () => env.QA_HOSTED_TOKEN || "disposable-runtime-credential-for-failure-check" } });
+      const secrets = env => ({ ...env, ...(env.QA_CONNECTIONS ? {LINEAR_CLIENT_SECRET:{get:async()=>"disposable-secret"},GITHUB_CONNECTION_CLIENT_SECRET:{get:async()=>"disposable-secret"},GITHUB_WEBHOOK_SECRET:{get:async()=>"disposable-webhook"}} : {}), AUTH_SECRET: { get: async () => "disposable-qa-secret-with-more-than-thirty-two-characters" }, HOSTED_CONTROL_TOKEN: { get: async () => env.QA_HOSTED_TOKEN || "disposable-runtime-credential-for-failure-check" } });
       export class HubCoordinator extends Coordinator { constructor(ctx,env) { super(ctx,secrets(env)); } }
       export default { ...worker, fetch(request, env, ctx) {
         return worker.fetch(request, { ...secrets(env), BETTER_AUTH_URL: new URL(request.url).origin,
@@ -54,13 +54,13 @@ await build({
   external: ["node:*", "cloudflare:*"],
   plugins: [
     ...(oauth ? [{name:"disposable-oauth-provider",setup(build) {
-      build.onLoad({filter:/connection-providers\.ts$/},async ({path})=>({loader:"ts",contents:readFileSync(path,"utf8")
+      build.onLoad({filter:/(connection-providers|github-connection)\.ts$/},async ({path})=>({loader:"ts",contents:readFileSync(path,"utf8")
         .replaceAll("https://github.com/login/oauth/authorize",oauth.url+"/authorize")
         .replaceAll("https://linear.app/oauth/authorize",oauth.url+"/authorize")
         .replaceAll("https://github.com/login/oauth/access_token",oauth.url+"/token")
         .replaceAll("https://api.linear.app/oauth/token",oauth.url+"/token")
         .replaceAll("https://api.linear.app/graphql",oauth.url+"/graphql")
-        .replaceAll("https://api.github.com/user",oauth.url+"/user")}));
+        .replaceAll("https://api.github.com",oauth.url)}));
     }}] : []),
     {
       name: "node-builtins",
@@ -92,11 +92,12 @@ const mf = new Miniflare(
         compatibilityFlags: ["nodejs_compat"],
         d1Databases: ["DB"],
         r2Buckets: ["OBJECTS"],
+        ...(oauth?{queueProducers:{JOBS:"qa-connections"},queueConsumers:{"qa-connections":{maxBatchSize:1,maxBatchTimeout:0}}}:{}),
         durableObjects: {
           COORDINATOR: { className: "HubCoordinator", useSQLite: true },
         },
         bindings: {
-          ...(oauth?{QA_CONNECTIONS:true,LINEAR_CLIENT_ID:"disposable-linear",GITHUB_CONNECTION_CLIENT_ID:"disposable-github"}:{}),
+          ...(oauth?{QA_CONNECTIONS:true,GITHUB_APP_ID:"12",LINEAR_CLIENT_ID:"disposable-linear",GITHUB_CONNECTION_CLIENT_ID:"disposable-github"}:{}),
           ENVIRONMENT: "staging",
           RELEASE: "qa",
           BETTER_AUTH_URL: process.env.QA_PUBLIC_HUB_URL ?? "http://localhost",
@@ -323,6 +324,7 @@ const control = createServer(async (req, res) => {
   }
   const controlPath = new URL(req.url, "http://127.0.0.1");
   const askedThread = controlPath.searchParams.get("threadId") ?? thread.id;
+  if(controlPath.pathname === "/github") {res.setHeader("content-type","application/json");res.end(JSON.stringify({actions:oauth?.actions,comments:oauth?.comments}));return;}
   if (controlPath.pathname === "/mail") {
     const value = await db.prepare("SELECT url FROM qa_emails WHERE recipient=? ORDER BY rowid DESC LIMIT 1").bind(controlPath.searchParams.get("email") ?? "").first();
     res.setHeader("content-type", "application/json"); res.end(JSON.stringify(value ?? {})); return;
