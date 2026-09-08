@@ -14,6 +14,7 @@ export function remyMcpProcess(input: {
   token?: string;
   provider?: string;
   chatId?: string;
+  hubInbox?: boolean;
   deviceId?: string;
   agentId?: string;
   dm?: boolean;
@@ -31,6 +32,7 @@ export function remyMcpProcess(input: {
       REMY_API_URL: input.apiUrl,
       ...(input.token ? { REMY_API_TOKEN: input.token } : {}),
       ...(input.provider ? { REMY_MCP_PROVIDER: input.provider } : {}),
+      ...(input.hubInbox ? {REMY_HUB_INBOX:"1"} : {}),
       ...(input.chatId ? { REMY_CHAT_ID: input.chatId } : {}),
       ...(input.deviceId ? { REMY_DEVICE_ID: input.deviceId } : {}),
       ...(input.agentId ? { REMY_AGENT_ID: input.agentId } : {}),

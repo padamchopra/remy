@@ -1,3 +1,4 @@
+import {hubRoutineSchema} from "@remy/contract";
 import type { BoardAppendInput, BoardProjection } from "@remy/contract";
 import type { OrganizationBoard } from "./organization-board.js";
 import { OrganizationService } from "./organizations.js";
@@ -141,6 +142,11 @@ export class BoardAccess {
           (current.fields.scope === "team" && scope === "org");
         if (!outward) return false;
       }
+    }
+    if(input.entity === "recurrence" && input.kind!=="tombstone") {
+      const parsed=hubRoutineSchema.safeParse({...current?.fields,...input.payload,runAsUserId:this.userId});if(!parsed.success)return false;
+      try{await new OrganizationService(this.store).workspace(this.organizationId,this.userId,parsed.data.projectId);}catch{return false;}
+      if(input.payload.runAsUserId && input.payload.runAsUserId!==this.userId)return false;
     }
     if (input.entity === "ticket") {
       const assigned = input.payload.assigneeAgentId ?? input.payload.toAgentId;

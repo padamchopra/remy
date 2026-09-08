@@ -1,3 +1,5 @@
+import { HubRoutines } from "./hub-routines.js";
+import { hubRoutineSchema } from "@remy/contract";
 import { seedHubAgents } from "./remy-agent.js";
 import { ScopedAgents } from "./scoped-agents.js";
 import { resolveComputer } from "./routing.js";
@@ -465,7 +467,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         const internal = new URL(`https://internal/${tail}`); internal.search = url.search;
         return board().fetch(new Request(internal, { method: request.method, headers, body: request.body, ...(request.body ? { duplex: "half" } : {}) }));
       }
-      if(/^agents(?:\/[^/]+(?:\/(?:conversation|message))?)?$/.test(tail)) {
+      if(/^agents(?:\/[^/]+(?:\/(?:conversation|message|runs))?)?$/.test(tail)) {
         await organizations.member(organizationId,identity.userId);
         return board().fetch(new Request(`https://internal/${tail}`,{method:request.method,headers:{"x-organization-id":organizationId,"x-user-id":identity.userId,"content-type":"application/json"},body:request.body}));
       }
@@ -742,6 +744,7 @@ export class HubCoordinator {
   private readonly threads: ThreadStore;
   private threadPublishing = Promise.resolve();
   private hosted?: HostedLifecycle;
+  private routines?: HubRoutines;
   private readonly computers: D1ComputerStore;
   private readonly notifications: HubNotifications;
   private readonly pending = new Map<string, { computerId: string; resolve: (response: Response) => void; timer: ReturnType<typeof setTimeout> }>();
@@ -843,12 +846,17 @@ export class HubCoordinator {
       await this.scheduleAlarm(Date.now() + COMPUTER_HEARTBEAT_TIMEOUT_MS);
       return new Response(null, { status: 101, webSocket: client });
     }
-    const agentRoute=/^\/agents(?:\/([^/]+)(?:\/(conversation|message))?)?$/.exec(url.pathname);
+    const agentRoute=/^\/agents(?:\/([^/]+)(?:\/(conversation|message|runs))?)?$/.exec(url.pathname);
     if(agentRoute && org && user) {
       const agents=this.scopedAgents(org);
       try {
         if(!agentRoute[1] && request.method==="GET")return Response.json({agents:await agents.visible(user)});
         const id=decodeURIComponent(agentRoute[1]??"");
+        if(agentRoute[2]==="runs" && request.method==="GET") {
+          await agents.get(id,user);const visible=new Set((await this.visibleThreads(user)).map(t=>t.id)),computers=await this.computerService().list(org,user),runs=[];
+          for(const [key,run] of await this.ctx.storage.list<{agentId:string;computerId:string;createdAt:number;kind?:string}>({prefix:"agent-run:"}))if(run.agentId===id){const threadId=key.slice("agent-run:".length),thread=await this.threads.get(run.computerId,threadId);runs.push({threadId,computerId:run.computerId,createdAt:run.createdAt,kind:run.kind,available:visible.has(threadId),state:thread?.detail.state??"unavailable",computerName:computers.find(c=>c.computerId===run.computerId&&c.canUse)?.name??"Unavailable computer"});}
+          return Response.json({runs:runs.sort((a,b)=>b.createdAt-a.createdAt)});
+        }
         if(agentRoute[2]==="conversation" && request.method==="GET")return Response.json({messages:await agents.conversation(id,user)});
         if(agentRoute[2]==="message" && request.method==="POST") {const input=await body<{text?:string;messageId?:string}>(request);if(typeof input?.text!=="string" || typeof input.messageId!=="string")return jsonError("Enter a message.",400);await agents.message(id,user,input.text,input.messageId);this.ctx.waitUntil(this.runAgent(id,user,input.text,input.messageId).catch(()=>undefined));return Response.json({messages:await agents.conversation(id,user)},{status:202});}
       }catch{return jsonError("Agent not found.",404);}
@@ -856,13 +864,21 @@ export class HubCoordinator {
     }
     const agentTool=/^\/agent-tools\/([^/]+)$/.exec(url.pathname);
     if(agentTool && request.method==="POST" && org) {
-      const binding=await this.ctx.storage.get<{computerId:string;userId:string;agentId:string;orchestrator:boolean}>(`agent-run:${decodeURIComponent(agentTool[1])}`);
+      const binding=await this.ctx.storage.get<{computerId:string;userId:string;agentId:string;orchestrator:boolean;kind?:string}>(`agent-run:${decodeURIComponent(agentTool[1])}`);
       if(!binding || binding.computerId!==request.headers.get("x-computer-id"))return jsonError("This agent cannot use organization tools.",403);
       const member=await new D1OrganizationStore(this.env.DB).membership(org,binding.userId);
       if(!member)return jsonError("This agent is unavailable.",403);
       try { await this.scopedAgents(org).get(binding.agentId,binding.userId); } catch {return jsonError("This agent is unavailable.",403);}
       const input=await body<{action?:string;input?:{rules?:unknown;workspaceId?:string;prompt?:string;title?:string;ticketId?:string;agentId?:string;threadId?:string;computerId?:string}}>(request);
       const action=input?.action,asked=input?.input??{},store=new D1OrganizationStore(this.env.DB);
+      if(action==="create_organization_routine") {
+        if(binding.kind!=="inbox")return jsonError("Ask for a routine in your agent's conversation.",403);
+        const parsed=hubRoutineSchema.safeParse({...asked,agentId:binding.agentId,runAsUserId:binding.userId});if(!parsed.success)return jsonError("Choose a valid routine and time zone.",400);
+        const change={entity:"recurrence" as const,entityId:crypto.randomUUID(),kind:"create" as const,payload:{...parsed.data,type:"routine"}};
+        if(!await new BoardAccess(store,this.board,org,binding.userId).canWrite(change))return jsonError("This workspace is unavailable.",404);
+        const result=await this.board.append(change,{kind:"member",id:binding.userId,label:"Member"});const next=await this.routineService().tick();if(next)await this.scheduleAlarm(next);
+        return Response.json({...result,artifact:{kind:"routine",id:change.entityId,title:parsed.data.name}});
+      }
       if(action==="list_organization_workspaces")return Response.json({workspaces:await new OrganizationService(store).workspaces(org,binding.userId)});
       if(action==="list_organization_computers") {const threads=await this.visibleThreads(binding.userId);return Response.json({computers:(await this.computerService().list(org,binding.userId)).map(c=>({...c,activeThreads:threads.filter(t=>t.computerId===c.computerId && ["working","running","busy"].includes(String(t.detail.state))).length}))});}
       if(["explain_routing","start_organization_thread","create_organization_ticket","handoff_organization_ticket","move_organization_thread"].includes(action??"")) {
@@ -871,6 +887,7 @@ export class HubCoordinator {
         if(action==="explain_routing")return Response.json(await this.routeFor(binding.userId,workspace.id,"agent"));
         const actor={id:binding.userId,label:(await new D1AccountStore(this.env.DB).profile(binding.userId))?.name??"Member"};
         if(action==="create_organization_ticket" || action==="handoff_organization_ticket") {
+          if(action==="handoff_organization_ticket" && !asked.agentId)return jsonError("Choose an agent for this ticket.",400);
           const change={entity:"ticket" as const,entityId:asked.ticketId??crypto.randomUUID(),kind:action==="create_organization_ticket"?"create" as const:"handoff" as const,payload:action==="create_organization_ticket"?{projectId:workspace.id,title:asked.title??"New ticket",body:asked.prompt??""}:{toAgentId:asked.agentId}};
           if(!await new BoardAccess(store,this.board,org,binding.userId).canWrite(change))return jsonError("This ticket or agent is unavailable.",404);
           const current=await this.board.detail("tickets",change.entityId);if(current && current.fields.projectId!==workspace.id)return jsonError("Choose the ticket's workspace.",403);
@@ -975,7 +992,9 @@ export class HubCoordinator {
         if (org && user && !await new BoardAccess(new D1OrganizationStore(this.env.DB), this.board, org, user).canWrite(parsed)) return jsonError("Ticket not found.", 404);
         if(parsed.entity==="agent" && parsed.kind==="tombstone" && org) {await this.scopedAgents(org).remove(parsed.entityId,actor.data);return Response.json({ok:true},{status:201});}
         if(parsed.entity==="agent" && parsed.kind==="create" && user)parsed.payload.createdByUserId=user;
+        if(parsed.entity==="recurrence" && user && parsed.kind!=="tombstone")parsed.payload.runAsUserId=user;
         const event=await this.board.append(parsed, actor.data);
+        if(parsed.entity==="recurrence"){const next=await this.routineService().tick();if(next)await this.scheduleAlarm(next);}
         if(parsed.entity==="ticket" && parsed.payload.assigneeAgentId) {
           const ticket=await this.board.detail("tickets",parsed.entityId);
           if(typeof ticket?.fields.projectId==="string") this.ctx.waitUntil(this.prewarmWorkspace(ticket.fields.projectId));
@@ -1158,18 +1177,19 @@ export class HubCoordinator {
     const row=await this.env.DB.prepare("SELECT rules FROM organization_routing WHERE organization_id=?").bind(org).first<{rules:string}>();
     return resolveComputer(routingRuleSchema.array().parse(JSON.parse(row?.rules??"[]")),await this.computerService().list(org,userId),{workspaceId,origin:workspace.origin,teamIds,trigger});
   }
-  private async startAgentThread(agentId:string,userId:string,workspaceId:string,prompt:string,trigger="agent") {
+  private async startAgentThread(agentId:string,userId:string,workspaceId:string,prompt:string,trigger="agent",kind="thread") {
     const org=(await this.ctx.storage.get<string>("organizationId"))!,agent=await this.scopedAgents(org).get(agentId,userId);
     let choice=await this.routeFor(userId,workspaceId,trigger);
     if(!choice.computerId && choice.hostedWorkspaceId){const settings=await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).settings(org,workspaceId);await this.hostedService().ensure(workspaceId,settings);choice=await this.routeFor(userId,workspaceId,trigger);}
     if(!choice.computerId || !choice.workspaceId)throw Error("No eligible computer is available.");
     const profile=await new D1AccountStore(this.env.DB).profile(userId),actor={id:userId,label:profile?.name??"Member"};
     const memories=(await this.board.list("memories")).items.filter(m=>m.fields.agentId===agentId).map(m=>m.fields.content).join("\n");
-    const made=await this.dispatchComputer(choice.computerId,actor,"POST","/hub/threads",{workspaceId:choice.workspaceId,title:String(agent.fields.name),visibility:"private",hubInstructions:`${String(agent.fields.instructions??"")}\nAgent memories:\n${memories}`, ...(agent.fields.provider && agent.fields.provider!=="default"?{provider:agent.fields.provider,model:agent.fields.model}:{})});
+    const made=await this.dispatchComputer(choice.computerId,actor,"POST","/hub/threads",{workspaceId:choice.workspaceId,title:String(agent.fields.name),visibility:"private",hubInbox:kind==="inbox",hubInstructions:`${String(agent.fields.instructions??"")}\nAgent memories:\n${memories}`, ...(agent.fields.provider && agent.fields.provider!=="default"?{provider:agent.fields.provider,model:agent.fields.model}:{})});
     if(!made.ok)throw Error("This agent's thread could not start.");const thread=threadSnapshotSchema.parse(await made.json());
-    await this.ctx.storage.put(`agent-run:${thread.id}`,{computerId:choice.computerId,userId,agentId,workspaceId,orchestrator:agent.fields.builtIn==="orchestrator",createdAt:Date.now()});
+    await this.ctx.storage.put(`agent-run:${thread.id}`,{computerId:choice.computerId,userId,agentId,workspaceId,orchestrator:agent.fields.builtIn==="orchestrator",kind,createdAt:Date.now()});
     await this.threads.snapshot(choice.computerId,thread);
-    if(agent.fields.scope!=="personal")await this.dispatchComputer(choice.computerId,actor,"POST",`/hub/threads/${thread.id}/visibility`,{visibility:"open"});
+    for(const socket of this.ctx.getWebSockets())void this.sendOrganizationReset(socket);
+    if(agent.fields.scope!=="personal" || kind==="routine")await this.dispatchComputer(choice.computerId,actor,"POST",`/hub/threads/${thread.id}/visibility`,{visibility:"open"});
     const sent=await this.dispatchComputer(choice.computerId,actor,"POST",`/hub/threads/${thread.id}/message`,{text:prompt,messageId:`u-${crypto.randomUUID()}`});
     if(!sent.ok)throw Error("This agent's message could not be sent.");
     return {computerId:choice.computerId,threadId:thread.id,reason:choice.reason};
@@ -1181,7 +1201,7 @@ export class HubCoordinator {
       const org=(await this.ctx.storage.get<string>("organizationId"))!;
       try{const agent=await this.scopedAgents(org).get(agentId,userId),visible=await new OrganizationService(new D1OrganizationStore(this.env.DB)).workspaces(org,userId);const workspace=agent.fields.scope==="workspace"?visible.find(w=>w.id===agent.fields.ownerId):visible[0];if(!workspace)throw Error("Add a workspace before starting this agent.");
         const history=(await this.scopedAgents(org).conversation(agentId,userId)).slice(-30).map(m=>`${m.role}: ${m.text}`).join("\n");
-        const result=await this.startAgentThread(agentId,userId,workspace.id,history||prompt);await this.ctx.storage.put(key,{phase:"started",...result});
+        const result=await this.startAgentThread(agentId,userId,workspace.id,history||prompt,"agent","inbox");await this.ctx.storage.put(key,{phase:"started",...result});
       }catch{await this.appendAgentReply(agentId,`failure:${messageId}`,"This agent could not start; check your workspace and computer settings.","system");await this.ctx.storage.put(key,{phase:"failed"});}
     })();this.agentStarts.set(key,task);try{return await task;}finally{this.agentStarts.delete(key);}
   }
@@ -1189,6 +1209,12 @@ export class HubCoordinator {
     if(!await this.board.detail("agents",agentId))return;
     await this.ctx.storage.transaction(async storage=>{const key=`agent-conversation:${agentId}`,messages=await storage.get<{id:string;role:string;text:string;at:number;actorId:string}[]>(key)??[];const next={id,role,text:text.slice(0,64000),at:Date.now(),actorId:agentId},index=messages.findIndex(m=>m.id===id);if(index<0)messages.push(next);else messages[index]=next;await storage.put(key,messages);});
     for(const socket of this.ctx.getWebSockets())void this.sendOrganizationReset(socket);
+  }
+  private routineService() {
+    return this.routines??=new HubRoutines(this.board,new DurableBoardStorage(this.ctx.storage),async(routine,slot)=>{
+      const key=`routine-start:${slot}`;if(await this.ctx.storage.get(key))throw Error("Check the existing routine thread.");await this.ctx.storage.put(key,{phase:"starting"});
+      const result=await this.startAgentThread(routine.agentId,routine.runAsUserId,routine.projectId,routine.prompt,"routine","routine");await this.ctx.storage.put(key,{phase:"started",...result});return result;
+    },(agent,id,text)=>this.appendAgentReply(agent,id,text,"system"),async routine=>{const choice=await this.routeFor(routine.runAsUserId,routine.projectId,"routine");if(choice.hostedWorkspaceId)await this.prewarmWorkspace(routine.projectId);});
   }
   private scopedAgents(org:string) {return new ScopedAgents(this.board,new DurableBoardStorage(this.ctx.storage),new D1OrganizationStore(this.env.DB),org);}
 
@@ -1364,7 +1390,7 @@ export class HubCoordinator {
     if (!id) {
       let input;
       try { input = JSON.parse(new TextDecoder().decode(payload)); } catch { return jsonError("Choose a workspace.", 400); }
-      if(input.hubInstructions!==undefined)return jsonError("This thread configuration is unavailable.",403);
+      if(input.hubInstructions!==undefined || input.hubInbox!==undefined)return jsonError("This thread configuration is unavailable.",403);
       if (typeof input.workspaceId !== "string" || !await this.computerService().canUseWorkspace(target, actor.id, input.workspaceId)) return jsonError("This workspace is not available to you.", 404);
     }
     const requestId = crypto.randomUUID();
@@ -1387,6 +1413,7 @@ export class HubCoordinator {
   }
 
   async alarm(): Promise<void> {
+    const routineDue=await this.routineService().tick();
     await this.hostedService().idle();
     const hostedDue=(await this.hostedService().list()).length ? Date.now()+60_000 : undefined;
 
@@ -1396,6 +1423,7 @@ export class HubCoordinator {
     const pushDue = notificationOrg ? await this.env.DB.prepare("SELECT MIN(next_attempt_at) AS due FROM notification_pushes WHERE organization_id=?").bind(notificationOrg).first<{ due: number | null }>() : null;
     let next: number | undefined = pushDue?.due ? Math.max(Date.now() + 1000, pushDue.due) : undefined;
     if(hostedDue) next=Math.min(next ?? hostedDue,hostedDue);
+    if(routineDue) next=Math.min(next ?? routineDue,routineDue);
     for (const socket of this.ctx.getWebSockets()) {
       const attachment = socket.deserializeAttachment() as { kind?: string; lastSeenAt?: number } | null;
       if (attachment?.kind !== "computer" || !attachment.lastSeenAt) continue;

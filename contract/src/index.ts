@@ -371,7 +371,7 @@ const editable: Record<BoardLogEntity, readonly string[]> = {
   ticket: ["title", "body", "status", "priority", "assigneeAgentId", "parentId", "rank", "deviceId", "branch", "handoffs", "startedAt", "closedAt"],
   agent: ["scope", "ownerId", "createdByUserId", "builtIn", "name", "handle", "role", "instructions", "provider", "model", "effort", "permissionMode", "avatar", "tint", "autoStart", "handoffTo", "gitIdentity", "gitName"],
   memory: ["content"],
-  recurrence: ["name", "prompt", "cadence", "hour", "minute", "weekday", "day", "enabled", "schedulerDeviceId"],
+  recurrence: ["projectId", "runAsUserId", "timeZone", "name", "prompt", "cadence", "hour", "minute", "weekday", "day", "enabled", "schedulerDeviceId"],
 };
 
 function applyFields(fields: Record<string, unknown>, payload: Record<string, unknown>, allowed: readonly string[]): Record<string, unknown> {
@@ -466,3 +466,12 @@ export const routingRuleSchema = z.object({
   target: z.object({computerId:z.string().optional(),class:z.enum(["hosted","darwin","linux"]).optional(),emulator:z.boolean().optional()}),
 });
 export type RoutingRule = z.infer<typeof routingRuleSchema>;
+
+export const hubRoutineSchema = z.object({
+ name:z.string().trim().min(1).max(120),prompt:z.string().trim().min(1).max(16000),
+ projectId:z.string().min(1),agentId:z.string().min(1),runAsUserId:z.string().min(1),
+ cadence:z.enum(["daily","weekdays","weekly","monthly"]),hour:z.number().int().min(0).max(23),minute:z.number().int().min(0).max(59),
+ weekday:z.number().int().min(0).max(6).default(1),day:z.number().int().min(1).max(31).default(1),
+ timeZone:z.string().max(100).default("UTC").refine(value=>{try{new Intl.DateTimeFormat("en",{timeZone:value});return true;}catch{return false;}}),enabled:z.boolean().default(true),
+});
+export type HubRoutine = z.infer<typeof hubRoutineSchema>;
