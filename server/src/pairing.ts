@@ -5,28 +5,15 @@ import { peerAddress, thisMachineIcon, thisMachineName, thisMachineTint } from "
 
 /// Pairing two machines without carrying a token between them.
 ///
-/// One machine asks, the other says yes. The asking machine shows a six-digit
-/// code and so does the answering one; you approve only if they match, which is
-/// what stops a request you did not make from being waved through.
-///
-/// The two routes the asking machine uses are the only unauthenticated ones in
-/// the daemon, because a machine that has never paired has nothing to
-/// authenticate with. What keeps that safe is not secrecy but shape:
-///
-///   - they are reachable only over your own tailnet, since the daemon binds
-///     loopback and `tailscale serve` is the sole way in;
-///   - asking discloses nothing — not this machine's name, not its token, not
-///     whether anything was already paired — only an opaque request id;
-///   - nothing happens without a person approving it here;
-///   - the request id is the capability, minted here and handed back only to
-///     the caller that opened the connection, so nobody else can claim it;
-///   - requests expire, are capped, and are single-use.
+/// Verified same-owner Tailscale Serve requests need only the initiating action.
+/// Other requests require matching the code on the receiving machine.
+/// Claims remain opaque, rate-limited, expiring, and single-use on both paths.
 
 export type PairState = "pending" | "approved" | "denied" | "expired";
 
 export interface PairRequest {
   id: string;
-  /// Shown on both machines. A person compares them; that is the whole check.
+  /// Compared on both machines when Tailscale ownership cannot be verified.
   code: string;
   fromDeviceId: string;
   fromName: string;
@@ -122,8 +109,7 @@ export function askToPair(body: Record<string, unknown>): { requestId: string } 
   return { requestId: request.id };
 }
 
-/// What the asking machine polls. The token crosses only once a person here has
-/// approved, and only to whoever holds the id we minted for them.
+/// The token crosses only after approval, to the holder of the single-use claim.
 export function pairStatus(id: string): {
   state: PairState;
   token?: string;

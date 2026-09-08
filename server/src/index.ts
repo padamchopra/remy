@@ -124,7 +124,7 @@ import {
 } from "./browser.js";
 import { closeTerminal, openTerminal, resizeTerminal, writeTerminal } from "./terminal.js";
 import { forgetPushDevice, pushStatus, registerPushDevice } from "./push.js";
-import { discover, sameTailnetHost } from "./tailnet.js";
+import { canPairWithoutConfirmation, discover, sameTailnetHost } from "./tailnet.js";
 import {
   approvePair,
   askToPair,
@@ -376,16 +376,16 @@ const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const parts = url.pathname.split("/").filter(Boolean);
 
-    // The only two routes that answer without a token, because a machine that
-    // has never paired holds no token to offer. Neither one changes anything a
-    // person here has not approved, and neither discloses anything: asking gets
-    // back an opaque id, and the id is the only way to collect the answer.
-    // Reachable over your own tailnet alone — the daemon binds loopback.
+    // These bootstrap routes keep their opaque, expiring, single-use claims.
+    // Same-owner Serve identity can replace the target-side confirmation.
     if (url.pathname === "/pair/request" && req.method === "POST") {
       const body = await readJson(req);
       try {
         const asked = askToPair(body);
-        // Every window on this machine should raise the prompt at once.
+        if (await canPairWithoutConfirmation(req.headers, req.socket.remoteAddress, body.url)) {
+          const self = await identity();
+          approvePair(asked.requestId, self.url);
+        }
         broadcast({ type: "pair-requests" });
         return json(res, 201, asked);
       } catch (error) {
@@ -811,11 +811,14 @@ const server = createServer(async (req, res) => {
       const body = await readJson(req);
       try {
         const self = await identity();
-        return json(res, 201, await startPairing({
+        const attempt = await startPairing({
           url: body.url,
           name: body.name,
           self: { url: self.url, name: self.name, icon: self.icon, tint: self.tint },
-        }));
+        });
+        const result = await checkPairing(attempt.id, completePair);
+        if (result.state === "approved") broadcast({ type: "peers" });
+        return json(res, 201, result);
       } catch (error) {
         return json(res, 400, { error: (error as Error).message });
       }

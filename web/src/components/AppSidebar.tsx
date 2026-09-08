@@ -4,7 +4,6 @@ import {
   ArrowUpCircle,
   ChevronDown,
   ChevronLeft,
-  Clock,
   GitBranch,
   Pin,
   Settings2,
@@ -26,6 +25,8 @@ import {
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { SETTINGS_SECTIONS, type SettingsTab } from "@/lib/settings-sections";
+import { Button } from "@/components/ui/button";
+import { ThreadStatus } from "@/components/ThreadStatus";
 import { ProviderMark } from "@/components/ProviderMark";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { deviceIcon } from "@/lib/devices";
@@ -125,7 +126,7 @@ export function AppSidebar({
   const hiddenArchived = archived.length - visibleArchived.length;
 
   return (
-    <Sidebar collapsible="none">
+    <Sidebar collapsible="none" className="remy-sidebar">
       {view === "settings" ? (
         <>
           <SidebarHeader>
@@ -158,12 +159,16 @@ export function AppSidebar({
         </>
       ) : (
         <>
-          <SidebarGroup>
+          <SidebarHeader className="sidebar-heading">
+            <span className="sidebar-identity">Remy</span>
+            <Button variant="ghost" size="sm" data-link onClick={onNewThread}>
+              <SquarePen data-icon="inline-start" />
+              New thread
+            </Button>
+          </SidebarHeader>
+          <SidebarGroup className="sidebar-navigation px-3 py-0">
             <SidebarGroupContent>
               <SidebarMenu>
-                {/* The one you are in is the bright one; the rest step back a
-                    shade, so the sidebar has a hierarchy before it has colour.
-                    Counts are quiet numbers, not badges. */}
                 {sections.map(({ id, label, icon: Icon }) => (
                   <SidebarMenuItem key={id}>
                     <SidebarMenuButton
@@ -187,22 +192,7 @@ export function AppSidebar({
             </SidebarGroupContent>
           </SidebarGroup>
 
-          {/* The one action the list has, as a row like the reference apps
-              rather than an icon hiding in a label. */}
-          <SidebarGroup className="pt-0">
-            <SidebarGroupContent>
-              <SidebarMenu>
-                <SidebarMenuItem>
-                  <SidebarMenuButton data-link className="h-9 gap-2.5 px-2.5 text-sidebar-foreground/80" onClick={onNewThread}>
-                    <SquarePen />
-                    <span>New thread</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-
-          <SidebarContent>
+          <SidebarContent className="sidebar-thread-list mt-4">
             {/* Threads, in every section. They are the work; whatever else you
                 are looking at, one is always a click away. */}
             {groups.length === 0 ? (
@@ -219,10 +209,11 @@ export function AppSidebar({
                 const { visible, hidden } = visibleSidebarThreads(group.threads, selected, limit);
                 const revealCount = Math.min(hidden, SETTLED_THREAD_BATCH);
                 return (
-                  <SidebarGroup key={group.key} className="shrink-0 py-1">
-                    {group.key === "pinned" && (
-                      <SidebarGroupLabel className="h-7 px-2.5 text-[11px] text-muted-foreground">Pinned</SidebarGroupLabel>
-                    )}
+                  <SidebarGroup key={group.key} className="shrink-0 px-3 py-1">
+                    <SidebarGroupLabel className="sidebar-section-label">
+                      <span>{group.key === "pinned" ? "Pinned" : "Recent threads"}</span>
+                      <span className="ml-auto tabular-nums">{group.threads.length}</span>
+                    </SidebarGroupLabel>
                     <SidebarGroupContent>
                       <SidebarMenu className="gap-0">
                         {visible.map((thread) => (
@@ -259,8 +250,8 @@ export function AppSidebar({
               })
             )}
             {archived.length > 0 && (
-              <SidebarGroup className="shrink-0 py-1">
-                <SidebarGroupLabel className="h-7 px-2.5 text-[11px] text-muted-foreground">Archived</SidebarGroupLabel>
+              <SidebarGroup className="shrink-0 px-3 py-1">
+                <SidebarGroupLabel className="sidebar-section-label"><span>Archived</span><span className="ml-auto tabular-nums">{archived.length}</span></SidebarGroupLabel>
                 <SidebarGroupContent>
                   <SidebarMenu className="gap-0">
                     {visibleArchived.map((thread) => (
@@ -294,7 +285,7 @@ export function AppSidebar({
         </>
       )}
 
-      <SidebarFooter>
+      <SidebarFooter className="sidebar-utilities mx-3 px-0 py-3">
         <SidebarMenu>
           {view !== "settings" && updateAvailable && (
             <SidebarMenuItem>
@@ -449,47 +440,17 @@ const ChildThreadRow = memo(function ChildThreadRow({
         onClick={() => onSelectChat(chat.id)}
       >
         <span className="min-w-0 flex-1 truncate">{chat.title}</span>
-        <ThreadStateDot state={chat.state} />
+        <ThreadStatus state={chat.state} />
         <span className={cn("shrink-0 text-[11px] font-normal tabular-nums text-muted-foreground", threadRowTimeClass)}>{time}</span>
       </SidebarMenuButton>
     </ThreadMenu>
   );
 });
 
-/// What the thread is doing, as a dot: colour is the state, and the word is
-/// there on hover and for a screen reader. A pill on every row made the list
-/// read as a status board; most rows are done, and done is not news.
-function ThreadStateDot({ state }: { state: ChatState }) {
-  const label = state === "idle"
-    ? "Done"
-    : state === "needs_input"
-      ? "Needs you"
-      : state === "working"
-        ? "Working"
-        : "Error";
-  const tone = state === "idle"
-    ? "bg-muted-foreground/35"
-    : state === "needs_input"
-      ? "bg-warning"
-      : state === "working"
-        ? "bg-info animate-pulse motion-reduce:animate-none"
-        : "bg-destructive";
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span role="img" aria-label={label} className={cn("size-2 shrink-0 rounded-full", tone)} />
-      </TooltipTrigger>
-      <TooltipContent side="right">{label}</TooltipContent>
-    </Tooltip>
-  );
-}
-
-
 // The primitive pads a row for its menu action whenever one is present; the
 // time takes that spot and gives way to the action instead.
 const threadRowHoverClass = "group-focus-within/menu-item:!bg-sidebar-row-hover group-hover/menu-item:!bg-sidebar-row-hover group-has-data-[sidebar=menu-action]/menu-item:pr-2.5";
-const threadContainmentClass = "[content-visibility:auto] [contain-intrinsic-size:auto_48px]";
+const threadContainmentClass = "[content-visibility:auto] [contain-intrinsic-size:auto_64px]";
 const childThreadContainmentClass = "[content-visibility:auto] [contain-intrinsic-size:auto_28px]";
 /// The time sits where the row's menu button appears, and gives way to it, so
 /// no row keeps an empty margin for a control that is not there.
@@ -531,22 +492,20 @@ function ThreadRow({
     <SidebarMenuButton
       data-link
       isActive={active}
-      className={cn("h-auto flex-col items-stretch gap-0.5 px-2.5 py-1.5", threadRowHoverClass)}
+      className={cn("sidebar-thread h-auto flex-col items-stretch gap-1 px-2.5 py-2.5", threadRowHoverClass)}
       onClick={onSelect}
     >
       <span className="flex min-w-0 items-center gap-1.5">
-        <span className="min-w-0 flex-1 truncate">{chat.title}</span>
+        <span className="sidebar-thread-title min-w-0 flex-1 whitespace-normal break-words line-clamp-2">{chat.title}</span>
         {chat.pinned && <Pin className="size-3 shrink-0 text-muted-foreground" aria-label="Pinned" />}
-        <ThreadStateDot state={chat.state} />
         <span className={cn("flex shrink-0 items-center gap-1 text-[11px] font-normal tabular-nums text-muted-foreground", threadRowTimeClass)}>
-          {chat.workingSince && <Clock className="size-3" />}
           {time}
         </span>
       </span>
 
-      {/* What was last said, led by the ticket it works when it has one, and
-          closed by marks for what it thinks with and where it runs. */}
-      <span className="flex min-w-0 items-center gap-1.5 text-xs font-normal text-muted-foreground">
+      {/* Status is readable without learning a colour legend. */}
+      <span className="sidebar-thread-context flex min-w-0 items-center gap-1.5 text-xs font-normal text-muted-foreground">
+        <ThreadStatus state={chat.state} />
         {ticket && (
           // A key, not a button: this row is already a button, and one inside
           // another is not markup a browser will honour. The click is stopped
@@ -570,8 +529,8 @@ function ThreadRow({
           </span>
         )}
         <span className="min-w-0 flex-1 truncate">{chat.preview ? plainText(chat.preview) : ""}</span>
-        <ThreadModel provider={chat.provider} model={chat.model} label={false} className="shrink-0" />
         {workspace && <WorkspaceMark home={false} workspace={workspace} server={server} size="sm" />}
+        <ThreadModel provider={chat.provider} model={chat.model} label={false} className="shrink-0" />
         {server && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -625,6 +584,7 @@ function ThreadContext({
   return (
     <div className="flex flex-col gap-2.5">
       <p className="text-sm leading-snug font-medium">{chat.title}</p>
+      {chat.preview && <p className="text-xs leading-relaxed text-muted-foreground">{plainText(chat.preview)}</p>}
       <div className="flex flex-col gap-1.5 text-xs text-muted-foreground">
         {server && (
           <span className="flex items-center gap-1.5">

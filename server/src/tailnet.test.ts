@@ -132,3 +132,45 @@ test("matches a paired URL to its tailnet machine while Remy is down", () => {
     false,
   );
 });
+
+const pairingStatus: import("./tailnet.js").Status = {
+  BackendState: "Running",
+  Self: { UserID: 1 },
+  User: { "1": { LoginName: "owner@example.com" } },
+  Peer: {
+    mine: { UserID: 1, DNSName: "studio.tail.ts.net.", TailscaleIPs: ["100.1.2.3", "fd7a:115c:a1e0::3"] },
+    theirs: { UserID: 2, DNSName: "other.tail.ts.net.", TailscaleIPs: ["100.1.2.4"] },
+    tagged: { UserID: 1, DNSName: "tagged.tail.ts.net.", TailscaleIPs: ["100.1.2.5"], Tags: ["tag:server"] },
+  },
+};
+const pairingHeaders = { "x-forwarded-for": "100.1.2.3", "tailscale-user-login": "owner@example.com" };
+
+test("same-owner Serve identity authorizes only its own callback host", () => {
+  const allows = (url: string) => tailnet.ownsPairingRequest(pairingStatus, pairingHeaders, "127.0.0.1", url, true);
+  assert.equal(allows("https://studio.tail.ts.net"), true);
+  assert.equal(allows("http://100.1.2.3:8420"), true);
+  assert.equal(allows("https://other.tail.ts.net"), false);
+  assert.equal(allows("https://studio.tail.ts.net.attacker.example"), false);
+  assert.equal(allows("https://studio.tail.ts.net@attacker.example"), false);
+  assert.equal(allows("invalid"), false);
+  assert.equal(tailnet.ownsPairingRequest(pairingStatus, { ...pairingHeaders, "x-forwarded-for": "fd7a:115c:a1e0::3" }, "::1", "http://[fd7a:115c:a1e0::3]:8420", true), true);
+});
+
+test("missing, conflicting, browser, shared and tagged identities keep confirmation", () => {
+  for (const headers of [
+    {},
+    { ...pairingHeaders, "tailscale-user-login": "other@example.com" },
+    { ...pairingHeaders, "x-forwarded-for": "100.1.2.4" },
+    { ...pairingHeaders, "x-forwarded-for": "100.1.2.5" },
+    { ...pairingHeaders, "x-forwarded-for": "100.1.2.3, 100.1.2.4" },
+    { ...pairingHeaders, "x-forwarded-for": ["100.1.2.3"] },
+    { ...pairingHeaders, origin: "https://untrusted.example" },
+  ]) {
+    assert.equal(tailnet.ownsPairingRequest(pairingStatus, headers, "127.0.0.1", "https://studio.tail.ts.net", true), false);
+  }
+  for (const status of [undefined, { ...pairingStatus, BackendState: "Stopped" }, { ...pairingStatus, User: {} }, { ...pairingStatus, Self: { UserID: 1, Tags: ["tag:server"] } }]) {
+    assert.equal(tailnet.ownsPairingRequest(status, pairingHeaders, "127.0.0.1", "https://studio.tail.ts.net", true), false);
+  }
+  assert.equal(tailnet.ownsPairingRequest(pairingStatus, pairingHeaders, "100.1.2.3", "https://studio.tail.ts.net", true), false);
+  assert.equal(tailnet.ownsPairingRequest(pairingStatus, pairingHeaders, "127.0.0.1", "https://studio.tail.ts.net", false), false);
+});

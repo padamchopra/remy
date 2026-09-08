@@ -1,3 +1,4 @@
+import type { IncomingHttpHeaders } from "node:http";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { config } from "./config.js";
@@ -80,6 +81,7 @@ export interface StatusPeer {
   OS?: string;
   Online?: boolean;
   UserID?: number;
+  Tags?: string[];
   TailscaleIPs?: string[];
 }
 
@@ -90,6 +92,7 @@ export interface Status {
   TailscaleIPs?: string[];
   Self?: StatusPeer;
   Peer?: Record<string, StatusPeer>;
+  User?: Record<string, { LoginName?: string }>;
 }
 
 async function status(): Promise<Status | undefined> {
@@ -266,4 +269,40 @@ export async function discover(force = false): Promise<Found[]> {
   const found = await Promise.all(devices.map((device) => probe(device)));
   cached = { found, at: Date.now() };
   return found;
+}
+
+/// Serve overwrites identity headers; direct browser requests never authorize pairing.
+/// The callback must name the same untagged, same-owner node as the connection.
+export function ownsPairingRequest(
+  parsed: Status | undefined,
+  headers: IncomingHttpHeaders,
+  remoteAddress: string | undefined,
+  callback: unknown,
+  serving: boolean,
+): boolean {
+  if (!serving || !["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(remoteAddress ?? "")) return false;
+  if (headers.origin || parsed?.BackendState !== "Running") return false;
+  const ip = headers["x-forwarded-for"];
+  const login = headers["tailscale-user-login"];
+  const owner = parsed.Self?.UserID;
+  if (typeof ip !== "string" || typeof login !== "string" || owner === undefined || parsed.Self?.Tags?.length) return false;
+  if (!login || parsed.User?.[String(owner)]?.LoginName !== login) return false;
+  const peer = Object.values(parsed.Peer ?? {}).find((node) => node.TailscaleIPs?.includes(ip));
+  if (!peer || peer.UserID !== owner || peer.Tags?.length || typeof callback !== "string") return false;
+  try {
+    const host = new URL(callback).hostname.toLowerCase().replace(/\.$/, "").replace(/^\[|\]$/g, "");
+    return host === peer.DNSName?.toLowerCase().replace(/\.$/, "") || Boolean(peer.TailscaleIPs?.includes(host));
+  } catch {
+    return false;
+  }
+}
+
+export async function canPairWithoutConfirmation(
+  headers: IncomingHttpHeaders,
+  remoteAddress: string | undefined,
+  callback: unknown,
+): Promise<boolean> {
+  if (!headers["tailscale-user-login"] || !headers["x-forwarded-for"] || headers.origin) return false;
+  const [current, serving] = await Promise.all([status(), serveTarget()]);
+  return ownsPairingRequest(current, headers, remoteAddress, callback, Boolean(serving));
 }

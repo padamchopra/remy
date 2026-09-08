@@ -209,3 +209,32 @@ test("checking a pairing nobody started is refused", async () => {
     /no longer waiting/,
   );
 });
+
+test("an immediately approved request completes once without exposing credentials to the client", async (t) => {
+  reset();
+  let collected = false;
+  t.mock.method(globalThis, "fetch", async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.endsWith("/pair/request")) return new Response(JSON.stringify({ requestId: "private-claim" }));
+    assert.ok(url.endsWith("/pair/status?id=private-claim"));
+    assert.equal(collected, false);
+    collected = true;
+    return new Response(JSON.stringify({ state: "approved", token: "temporary-peer-token", deviceId: THEM, name: "Studio Mac" }));
+  });
+  const started = await pairing.startPairing({ url: "https://studio.example.ts.net", self: { url: "https://mine.example.ts.net", name: "Mine" } });
+  let completions = 0;
+  const complete = async (claim: { token: string; deviceId: string; url: string }) => {
+    completions++;
+    assert.equal(claim.token, "temporary-peer-token");
+    assert.equal(claim.deviceId, THEM);
+    assert.equal(claim.url, "https://studio.example.ts.net");
+    return { id: THEM };
+  };
+  const finished = await pairing.checkPairing(started.id, complete);
+  assert.equal(finished.state, "approved");
+  assert.equal(finished.peerId, THEM);
+  assert.equal(JSON.stringify(finished).includes("temporary-peer-token"), false);
+  assert.equal(JSON.stringify(finished).includes("private-claim"), false);
+  assert.deepEqual(await pairing.checkPairing(started.id, complete), finished);
+  assert.equal(completions, 1);
+});

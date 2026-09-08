@@ -83,12 +83,15 @@ export function DevicesScreen({
 
   const ask = (device: TailnetDevice) => {
     if (!home || !device.url) return;
-    Alert.alert(`Pair ${device.name}?`, `Remy on ${home.name} will ask ${device.name}. Nothing is shared until you confirm the same code there.`, [
+    Alert.alert(`Pair ${device.name}?`, "Your computers can pair without another confirmation when Tailscale verifies they belong to you.", [
       { text: "Cancel", style: "cancel" },
       {
-        text: "Ask to pair",
+        text: "Pair",
         onPress: () => void startPairing(home.id, device)
-          .then(setAttempt)
+          .then((next) => {
+            setAttempt(next);
+            if (next.state === "approved") { void refresh(); void load(true); }
+          })
           .catch((caught) => setError(isMissingRoute(caught)
             ? `${device.name} needs a newer Remy before it can pair this way.`
             : `Couldn't ask ${device.name} to pair: ${apiError(caught)}`)),
