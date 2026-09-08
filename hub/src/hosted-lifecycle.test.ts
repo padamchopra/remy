@@ -23,7 +23,7 @@ function fixture() {
           .filter(([k]) => k.startsWith(prefix))
           .map(([k, v]) => [k, structuredClone(v)]),
       ),
-  } as BoardStorage;
+  } as unknown as BoardStorage;
   const provider: ComputerRuntimeProvider = {
     id: "modal",
     capabilities: { checkpoints: true, persistentFilesystem: true },
