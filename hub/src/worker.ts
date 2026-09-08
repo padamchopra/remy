@@ -1,3 +1,4 @@
+import {linearRoute} from "./linear-routes.js";
 import { githubFor, githubRoute } from "./github-routes.js";
 import { connectionRoute, connectionWebhook } from "./connection-routes.js";
 import { connectionProviders } from "./connection-providers.js";
@@ -343,6 +344,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
   const connectionResponse = await connectionRoute(request, env, identity.userId);
   if (connectionResponse) return connectionResponse;
   const githubResponse=await githubRoute(request,env,identity.userId);if(githubResponse)return githubResponse;
+  const linearResponse=await linearRoute(request,env,identity.userId);if(linearResponse)return linearResponse;
   try {
     if (url.pathname === "/api/organizations" && request.method === "GET") return Response.json({ organizations: await organizations.list(identity.userId) });
     if (url.pathname === "/api/organizations" && request.method === "POST") {

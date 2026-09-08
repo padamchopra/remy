@@ -17,7 +17,16 @@ export async function startConnectionProvider() {
       if(form.get("grant_type")!=="refresh_token" && (!saved || saved.redirect!==form.get("redirect_uri") || saved.challenge!==createHash("sha256").update(form.get("code_verifier")??"").digest("base64url"))) {res.writeHead(400);res.end('{}');return;}
       codes.delete(code);res.end(JSON.stringify({access_token:"disposable-connection-token",refresh_token:"disposable-refresh-token",expires_in:3600}));return;
     }
-    if(url.pathname==="/graphql") {res.end(JSON.stringify({data:{organization:{id:"linear-release",name:"Release team"},viewer:{id:"linear-ada"}}}));return;}
+    if(url.pathname==="/graphql") {
+      let raw="";for await(const part of req)raw+=part;const {query}=JSON.parse(raw||"{}");
+      const list=nodes=>({nodes,pageInfo:{hasNextPage:false,endCursor:null}});
+      let data={organization:{id:"linear-release",name:"Release team"},viewer:{id:"linear-ada"}};
+      if(query?.includes("workflowStates("))data={workflowStates:list([{id:"linear-todo",name:"Ready",type:"unstarted"},{id:"linear-working",name:"In progress",type:"started"},{id:"linear-done",name:"Done",type:"completed"}])};
+      else if(query?.includes("projects("))data={projects:list([{id:"linear-release-plan",name:"September release",teams:{nodes:[{id:"linear-eng"}]}}])};
+      else if(query?.includes("teams("))data={teams:list([{id:"linear-eng",name:"Engineering",key:"ENG"},{id:"linear-design",name:"Design",key:"DSN"}])};
+      else if(query?.includes("users("))data={users:list([{id:"linear-ada",name:"Ada",email:"ada@example.test"},{id:"linear-guest",name:"Morgan",email:"morgan@example.test"}])};
+      res.end(JSON.stringify({data}));return;
+    }
     if(url.pathname==="/user/installations") {res.end(JSON.stringify({installations:[{id:20,app_id:12,account:{login:"release"}}]}));return;}
     if(url.pathname==="/user/installations/20/repositories") {res.end(JSON.stringify({repositories:[{id:101,full_name:"release/remy",name:"Remy",html_url:"https://github.com/release/remy"}]}));return;}
     if(url.pathname.startsWith("/repos/release/remy/")) {

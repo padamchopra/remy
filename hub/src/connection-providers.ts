@@ -1,3 +1,4 @@
+import {linearFor} from "./linear-routes.js";
 import { githubFor } from "./github-routes.js";
 import {
   ConnectionError,
@@ -66,6 +67,7 @@ export function connectionProviders(env: Env): ConnectionProvider[] {
     },
     {
       id: "linear",
+      receive: delivery=>linearFor(env).receive(delivery),
       name: "Linear",
       subjects: ["organization"],
       clientId: env.LINEAR_CLIENT_ID,

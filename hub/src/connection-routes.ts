@@ -37,12 +37,13 @@ export async function connectionWebhook(
   );
   if (!match || request.method !== "POST") return;
   try {
-    return await ingestConnectionWebhook(
+    const accepted = await ingestConnectionWebhook(
       request,
       connectionsFor(env).provider(match[1]),
       env.DB,
       env.JOBS as Queue<ConnectionJob>,
     );
+    return match[1]==="linear" ? Response.json({accepted:true}) : accepted;
   } catch (error) {
     return Response.json(
       {
