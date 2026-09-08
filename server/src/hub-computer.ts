@@ -1,3 +1,4 @@
+import { HubBoardSync } from "./hub-board.js";
 import { handleHubThreadRequest, hubThreadIds, hubThreadSnapshot } from "./hub-threads.js";
 import { onLocalBroadcast, onAddressedNotification } from "./notify.js";
 import { saveChatImage } from "./chat-attachments.js";
@@ -112,6 +113,7 @@ export async function registerHubComputerWithDeviceCode(hubUrl: string, organiza
 
 export class HubComputerConnection {
   private socket?: WebSocket;
+  private boardSync?: HubBoardSync;
   private stopped = false;
   private retry?: ReturnType<typeof setTimeout>;
   private heartbeat?: ReturnType<typeof setInterval>;
@@ -137,8 +139,18 @@ export class HubComputerConnection {
       this.flushNotifications();
       return true;
     });
+    this.boardSync?.stop();
+    this.boardSync = new HubBoardSync(this.registration.organizationId, async (input) => {
+      const url = new URL(`/api/organizations/${encodeURIComponent(this.registration.organizationId)}/computers/board-sync`, this.registration.hubUrl);
+      const response = await fetch(url, { method: "POST", headers: { authorization: connectionAuthorization(this.registration.organizationId, this.registration.computerId, privateKey().privateKey), "content-type": "application/json" }, body: JSON.stringify(input), signal: AbortSignal.timeout(15000), redirect: "error" });
+      if (!response.ok) throw new Error("Tasks could not synchronize.");
+      return response.json() as Promise<{ version: Record<string, number>; events: import("@remy/contract").BoardLogEvent[] }>;
+    });
+    this.boardSync.start();
     this.connect(); }
-  stop(): void { this.offNotifications?.(); this.offBroadcast?.(); for (const timer of this.snapshots.values()) clearTimeout(timer); this.snapshots.clear(); this.stopped = true; clearTimeout(this.retry); clearInterval(this.heartbeat); const socket = this.socket; this.socket = undefined; socket?.close(); for (const stream of this.subscriptions.values()) stream.close(); this.subscriptions.clear(); }
+  stop(): void { this.boardSync?.stop(); this.offNotifications?.(); this.offBroadcast?.(); for (const timer of this.snapshots.values()) clearTimeout(timer); this.snapshots.clear(); this.stopped = true; clearTimeout(this.retry); clearInterval(this.heartbeat); const socket = this.socket; this.socket = undefined; socket?.close(); for (const stream of this.subscriptions.values()) stream.close(); this.subscriptions.clear(); }
+
+  syncBoard(): void { void this.boardSync?.sync(); }
 
   private connect(): void {
     if (this.stopped) return;
@@ -152,7 +164,7 @@ export class HubComputerConnection {
       if (this.socket !== socket || this.stopped) { socket.close(); return; }
       this.attempts = 0;
       void this.hello(socket).catch(() => socket.close(1011, "Reconnect to update this computer."));
-      this.heartbeat = setInterval(() => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ kind: "heartbeat", availability: "available", observedAt: Date.now() })); this.flushNotifications(); }, COMPUTER_HEARTBEAT_INTERVAL_MS);
+      this.heartbeat = setInterval(() => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ kind: "heartbeat", availability: "available", observedAt: Date.now() })); this.flushNotifications(); this.boardSync?.retry(); }, COMPUTER_HEARTBEAT_INTERVAL_MS);
     });
     socket.on("message", (data) => { if (this.socket === socket) void this.message(socket, data.toString()).catch(() => socket.close(1011, "Reconnect to continue.")); });
     socket.on("close", (code, reason) => { if (this.socket !== socket) return; if (code === 1008 && reason.toString() === "This computer was removed.") { this.stopped = true; this.offNotifications?.(); } this.socket = undefined; this.offBroadcast?.(); for (const stream of this.subscriptions.values()) stream.close(); this.subscriptions.clear(); clearInterval(this.heartbeat); if (!this.stopped) this.scheduleReconnect(); });
@@ -162,8 +174,9 @@ export class HubComputerConnection {
   private async hello(socket: WebSocket): Promise<void> {
     const capabilities = await this.makeCapabilities();
     if (this.socket !== socket || socket.readyState !== WebSocket.OPEN) return;
-    socket.send(JSON.stringify({ kind: "hello", protocolVersion: COMPUTER_PROTOCOL_VERSION, daemonVersion: DAEMON_VERSION, capabilities }));
+    socket.send(JSON.stringify({ kind: "hello", boardSync: true, protocolVersion: COMPUTER_PROTOCOL_VERSION, daemonVersion: DAEMON_VERSION, capabilities }));
     this.introduced = true;
+    void this.boardSync?.sync();
     this.syncThreads(socket);
     this.flushNotifications();
   }
@@ -213,6 +226,7 @@ export class HubComputerConnection {
     const parsed = hubToComputerFrameSchema.safeParse(value);
     if (!parsed.success) { socket.close(1003, "Invalid hub frame."); return; }
     if (parsed.data.kind === "welcome") { this.threadRelay = parsed.data.threadRelay === true; this.notificationRelay = parsed.data.notifications === true; this.syncThreads(socket); this.flushNotifications(); }
+    if (parsed.data.kind === "board.changed") void this.boardSync?.sync();
     if (parsed.data.kind === "notification.ack") { const id = parsed.data.id; setKv(NOTIFICATION_OUTBOX, (getKv<HubNotificationInput[]>(NOTIFICATION_OUTBOX) ?? []).filter((n) => n.id !== id)); }
     if (parsed.data.kind === "update_required") { this.stopped = true; socket.close(1008, "Update Remy to reconnect."); return; }
     if (parsed.data.kind === "request") await this.proxy(socket, parsed.data);
@@ -309,3 +323,5 @@ export async function finishHubComputerAuthorization() {
   setKv("hubPendingAuthorization", null);
   return hubComputerRegistration();
 }
+
+export function syncHubBoard(): void { connection?.syncBoard(); }

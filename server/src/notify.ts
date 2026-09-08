@@ -107,6 +107,7 @@ function topicsFor(payload: unknown): string[] {
   if (type === "pull-request-guide" || type === "pull-request-question" || type === "pull-requests") {
     return ["pull-requests"];
   }
+  if (type === "hub-board") return ["board", "settings"];
   if (type === "board") return ["board", "sidebar", "settings"];
   if (type === "quick-replies" || type === "environments") return ["settings"];
   return ["sidebar"];

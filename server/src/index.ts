@@ -1,7 +1,8 @@
+import { appendHubBoard, configureHubBoard, hubBoardList, hubBoardState, importHubBoard } from "./hub-board.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { WebSocketServer } from "ws";
-import { beginHubComputerAuthorization, finishHubComputerAuthorization, detachHubComputer, hubComputerRegistration, registerHubComputerWithDeviceCode, startHubComputerConnection } from "./hub-computer.js";
+import { syncHubBoard, beginHubComputerAuthorization, finishHubComputerAuthorization, detachHubComputer, hubComputerRegistration, registerHubComputerWithDeviceCode, startHubComputerConnection } from "./hub-computer.js";
 import { answerMentions } from "./mentions.js";
 import { config, patchSettings, publicSettings } from "./config.js";
 import { AgentStartupError, AgentUnavailableError, agentKind, inferAgent, type AgentKind } from "./agent.js";
@@ -412,6 +413,24 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "GET" && url.pathname === "/health") {
       return json(res, 200, { ok: true });
+    }
+    if (url.pathname.startsWith("/server/hub/board")) {
+      const registration = hubComputerRegistration();
+      if (!registration) return json(res, 409, { error: "Attach this computer first." });
+      const org = registration.organizationId;
+      if (req.method === "GET" && url.pathname === "/server/hub/board") return json(res, 200, hubBoardState(org));
+      if (req.method === "PUT" && url.pathname === "/server/hub/board") {
+        const input = await readJson(req);
+        if (typeof input.enabled !== "boolean" || (input.importExisting !== undefined && typeof input.importExisting !== "boolean")) return json(res, 400, { error: "Choose whether to synchronize your Tasks." });
+        if (input.importExisting === true) importHubBoard(org);
+        configureHubBoard(org, input.enabled);
+        startHubComputerConnection();
+        return json(res, 200, hubBoardState(org));
+      }
+      if (req.method === "POST" && url.pathname === "/server/hub/board/events") { const event = appendHubBoard(org, await readJson(req)); syncHubBoard(); return json(res, 201, event); }
+      const match = /^\/server\/hub\/board\/(tickets|agents|memories|routines)$/.exec(url.pathname);
+      if (req.method === "GET" && match) return json(res, 200, hubBoardList(org, match[1] as "tickets" | "agents" | "memories" | "routines"));
+      return json(res, 404, { error: "Tasks not found." });
     }
     if (req.method === "POST" && url.pathname === "/server/hub/authorize") {
       const input = await readJson(req);

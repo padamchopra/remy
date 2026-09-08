@@ -1,5 +1,6 @@
 import {
   boardAppendInputSchema,
+  foldBoardEvents,
   boardLogEventSchema,
   type BoardActor,
   type BoardAppendInput,
@@ -11,6 +12,8 @@ import {
   type BoardProjectionEntity,
   type BoardVersionVector,
 } from "@remy/contract";
+
+function compareEvents(left: BoardLogEvent, right: BoardLogEvent): number { return left.lamport - right.lamport || left.deviceId.localeCompare(right.deviceId) || left.id.localeCompare(right.id); }
 
 const FRAME_HISTORY = 512;
 const EVENT_PREFIX = "board:event:";
@@ -47,90 +50,12 @@ const frameKey = (cursor: number) => `${FRAME_PREFIX}${String(cursor).padStart(1
 const entityEventPrefix = (entity: BoardLogEntity, id: string) => `${ENTITY_EVENT_PREFIX}${entity}:${encodeURIComponent(id)}:`;
 const entityEventKey = (event: BoardLogEvent) => `${entityEventPrefix(event.entity, event.entityId)}${String(event.lamport).padStart(16, "0")}:${encodeURIComponent(event.deviceId)}:${encodeURIComponent(event.id)}`;
 
-function compareEvents(left: BoardLogEvent, right: BoardLogEvent): number {
-  return left.lamport - right.lamport || left.deviceId.localeCompare(right.deviceId) || left.id.localeCompare(right.id);
-}
-
-const editable: Record<BoardLogEntity, readonly string[]> = {
-  project: ["name", "keyPrefix", "defaultProvider", "defaultModel", "defaultEffort", "defaultPermissionMode"],
-  ticket: ["title", "body", "status", "priority", "assigneeAgentId", "parentId", "rank", "deviceId", "branch", "handoffs", "startedAt", "closedAt"],
-  agent: ["name", "handle", "role", "instructions", "provider", "model", "effort", "permissionMode", "avatar", "tint", "autoStart", "handoffTo", "gitIdentity", "gitName"],
-  memory: ["content"],
-  recurrence: ["name", "prompt", "cadence", "hour", "minute", "weekday", "day", "enabled", "schedulerDeviceId"],
-};
-
-function applyFields(fields: Record<string, unknown>, payload: Record<string, unknown>, allowed: readonly string[]): Record<string, unknown> {
-  const next = { ...fields };
-  for (const key of allowed) if (payload[key] !== undefined) next[key] = payload[key];
-  return next;
-}
-
-function createdFields(entity: BoardLogEntity, event: BoardLogEvent): Record<string, unknown> | undefined {
-  if (entity === "ticket") return applyFields({ number: Number(event.payload.number ?? 0), projectId: String(event.payload.projectId ?? ""), title: "Untitled", body: "", status: "backlog", priority: 0, rank: "n", handoffs: 0 }, event.payload, editable.ticket);
-  if (entity === "agent") return applyFields({ name: "Agent", handle: "agent", instructions: "", provider: "default", permissionMode: "default", autoStart: true, handoffTo: [], gitIdentity: "default" }, event.payload, editable.agent);
-  if (entity === "memory") {
-    if (typeof event.payload.agentId !== "string" || !event.payload.agentId || typeof event.payload.content !== "string" || !event.payload.content.trim()) return undefined;
-    const scope = event.payload.scope === "workspace" ? "workspace" : "global";
-    if (scope === "workspace" && (typeof event.payload.projectId !== "string" || !event.payload.projectId)) return undefined;
-    return { agentId: event.payload.agentId, scope, ...(scope === "workspace" ? { projectId: event.payload.projectId } : {}), content: event.payload.content.trim() };
-  }
-  if (entity === "recurrence") {
-    if (event.payload.type !== "routine") return undefined;
-    return applyFields({ type: "routine", agentId: String(event.payload.agentId ?? ""), name: "Routine", prompt: "", cadence: "weekly", hour: 9, minute: 0, enabled: true, schedulerDeviceId: String(event.payload.schedulerDeviceId ?? event.deviceId), runs: 0 }, event.payload, editable.recurrence);
-  }
-  return { ...event.payload };
-}
-
-function fold(entity: BoardLogEntity, id: string, events: BoardLogEvent[]): BoardProjection | undefined {
-  let fields: Record<string, unknown> | undefined;
-  let createdAt = 0;
-  let updatedAt = 0;
-  let lastActor: BoardActor | undefined;
-  const activity: BoardProjection["activity"] = [];
-  const links = new Map<string, Record<string, unknown>>();
-
-  for (const event of events.sort(compareEvents)) {
-    if (event.kind === "tombstone") return undefined;
-    if (entity === "recurrence" && event.kind === "create" && event.payload.type !== "routine") return undefined;
-    if (event.kind === "create") {
-      fields = createdFields(entity, event);
-      createdAt = event.at;
-    } else if (fields && (event.kind === "field" || event.kind === "status")) {
-      fields = applyFields(fields, event.payload, editable[entity]);
-      if (event.kind === "status" && event.payload.status === "in_progress" && fields.startedAt === undefined) fields.startedAt = event.at;
-      if (event.kind === "status") {
-        if (event.payload.status === "done" || event.payload.status === "cancelled") fields.closedAt = event.at;
-        else delete fields.closedAt;
-      }
-    } else if (fields && event.kind === "handoff") {
-      fields = { ...fields, handoffs: Number(fields.handoffs ?? 0) + 1, assigneeAgentId: event.payload.toAgentId ?? fields.assigneeAgentId };
-    } else if (fields && event.kind === "ran") {
-      const failed = typeof event.payload.error === "string";
-      fields = { ...fields, runs: Number(fields.runs ?? 0) + (failed ? 0 : 1), lastRunAt: event.at };
-      if (failed) fields.lastError = event.payload.error;
-      else delete fields.lastError;
-    } else if (fields && (event.kind === "link" || event.kind === "unlink")) {
-      const key = `${String(event.payload.deviceId ?? event.deviceId)}:${String(event.payload.chatId ?? "")}`;
-      if (event.kind === "link") links.set(key, { ...event.payload, deviceId: event.payload.deviceId ?? event.deviceId, createdAt: event.at });
-      else links.delete(key);
-    }
-    if (!fields) continue;
-    updatedAt = event.at;
-    lastActor = event.actor;
-    activity.push({ eventId: event.id, at: event.at, kind: event.kind, actor: event.actor, payload: event.payload });
-  }
-
-  if (!fields || !lastActor) return undefined;
-  if (entity === "ticket" && links.size > 0) fields = { ...fields, threads: [...links.values()] };
-  return { entity, id, fields, activity, createdAt, updatedAt, lastActor };
-}
-
 async function eventsIn(storage: BoardStorage): Promise<BoardLogEvent[]> {
   return [...(await storage.list<BoardLogEvent>({ prefix: EVENT_PREFIX })).values()].sort(compareEvents);
 }
 
 async function reproject(storage: BoardStorage, entity: BoardLogEntity, id: string): Promise<BoardProjection | undefined> {
-  const projection = fold(entity, id, [...(await storage.list<BoardLogEvent>({ prefix: entityEventPrefix(entity, id) })).values()]);
+  const projection = foldBoardEvents(entity, id, [...(await storage.list<BoardLogEvent>({ prefix: entityEventPrefix(entity, id) })).values()]);
   const key = projectionKey(entity, id);
   if (projection) await storage.put(key, projection);
   else await storage.delete(key);

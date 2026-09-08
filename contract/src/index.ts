@@ -192,7 +192,7 @@ export const computerToHubFrameSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("notification"), notification: hubNotificationInputSchema }),
   z.object({ kind: z.literal("thread.snapshot"), snapshot: threadSnapshotSchema }),
   z.object({ kind: z.literal("thread.manifest"), ids: z.array(z.string().uuid()) }),
-  z.object({ kind: z.literal("hello"), protocolVersion: z.number().int().positive(), daemonVersion: z.string().min(1), capabilities: computerCapabilitiesSchema }),
+  z.object({ kind: z.literal("hello"), boardSync: z.boolean().optional(), protocolVersion: z.number().int().positive(), daemonVersion: z.string().min(1), capabilities: computerCapabilitiesSchema }),
   z.object({ kind: z.literal("heartbeat"), availability: z.enum(["available", "busy"]), observedAt: z.number().int().nonnegative() }),
   z.object({ kind: z.literal("response"), id: z.string().min(1), status: z.number().int().min(100).max(599), headers: proxyHeadersSchema, body: z.string() }),
   z.object({ kind: z.literal("stream"), id: z.string().min(1), payload: z.string() }),
@@ -200,6 +200,7 @@ export const computerToHubFrameSchema = z.discriminatedUnion("kind", [
 ]);
 export type ComputerToHubFrame = z.infer<typeof computerToHubFrameSchema>;
 export const hubToComputerFrameSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("board.changed") }),
   z.object({ kind: z.literal("welcome"), protocolVersion: z.number().int().positive(), heartbeatIntervalMs: z.number().int().positive(), threadRelay: z.boolean().optional(), notifications: z.boolean().optional() }),
   z.object({ kind: z.literal("notification.ack"), id: z.string().uuid() }),
   z.object({ kind: z.literal("update_required"), minimumDaemonVersion: z.string().min(1) }),
@@ -359,3 +360,81 @@ export const hubRoutes = {
   appendOrganizationBoardEvent: { method: "POST", path: "/api/organizations/:organizationId/board/events", response: boardAppendResultSchema },
   organizationBoardLive: { method: "GET", path: "/api/organizations/:organizationId/board/live", response: boardLiveFrameSchema },
 } as const;
+
+function compareEvents(left: BoardLogEvent, right: BoardLogEvent): number {
+  return left.lamport - right.lamport || left.deviceId.localeCompare(right.deviceId) || left.id.localeCompare(right.id);
+}
+
+const editable: Record<BoardLogEntity, readonly string[]> = {
+  project: ["name", "keyPrefix", "defaultProvider", "defaultModel", "defaultEffort", "defaultPermissionMode"],
+  ticket: ["title", "body", "status", "priority", "assigneeAgentId", "parentId", "rank", "deviceId", "branch", "handoffs", "startedAt", "closedAt"],
+  agent: ["name", "handle", "role", "instructions", "provider", "model", "effort", "permissionMode", "avatar", "tint", "autoStart", "handoffTo", "gitIdentity", "gitName"],
+  memory: ["content"],
+  recurrence: ["name", "prompt", "cadence", "hour", "minute", "weekday", "day", "enabled", "schedulerDeviceId"],
+};
+
+function applyFields(fields: Record<string, unknown>, payload: Record<string, unknown>, allowed: readonly string[]): Record<string, unknown> {
+  const next = { ...fields };
+  for (const key of allowed) if (payload[key] !== undefined) next[key] = payload[key];
+  return next;
+}
+
+function createdFields(entity: BoardLogEntity, event: BoardLogEvent): Record<string, unknown> | undefined {
+  if (entity === "ticket") return applyFields({ number: Number(event.payload.number ?? 0), projectId: String(event.payload.projectId ?? ""), title: "Untitled", body: "", status: "backlog", priority: 0, rank: "n", handoffs: 0 }, event.payload, editable.ticket);
+  if (entity === "agent") return applyFields({ name: "Agent", handle: "agent", instructions: "", provider: "default", permissionMode: "default", autoStart: true, handoffTo: [], gitIdentity: "default" }, event.payload, editable.agent);
+  if (entity === "memory") {
+    if (typeof event.payload.agentId !== "string" || !event.payload.agentId || typeof event.payload.content !== "string" || !event.payload.content.trim()) return undefined;
+    const scope = event.payload.scope === "workspace" ? "workspace" : "global";
+    if (scope === "workspace" && (typeof event.payload.projectId !== "string" || !event.payload.projectId)) return undefined;
+    return { agentId: event.payload.agentId, scope, ...(scope === "workspace" ? { projectId: event.payload.projectId } : {}), content: event.payload.content.trim() };
+  }
+  if (entity === "recurrence") {
+    if (event.payload.type !== "routine") return undefined;
+    return applyFields({ type: "routine", agentId: String(event.payload.agentId ?? ""), name: "Routine", prompt: "", cadence: "weekly", hour: 9, minute: 0, enabled: true, schedulerDeviceId: String(event.payload.schedulerDeviceId ?? event.deviceId), runs: 0 }, event.payload, editable.recurrence);
+  }
+  return { ...event.payload };
+}
+
+export function foldBoardEvents(entity: BoardLogEntity, id: string, events: BoardLogEvent[]): BoardProjection | undefined {
+  let fields: Record<string, unknown> | undefined;
+  let createdAt = 0;
+  let updatedAt = 0;
+  let lastActor: BoardActor | undefined;
+  const activity: BoardProjection["activity"] = [];
+  const links = new Map<string, Record<string, unknown>>();
+
+  for (const event of events.sort(compareEvents)) {
+    if (event.kind === "tombstone") return undefined;
+    if (entity === "recurrence" && event.kind === "create" && event.payload.type !== "routine") return undefined;
+    if (event.kind === "create") {
+      fields = createdFields(entity, event);
+      createdAt = event.at;
+    } else if (fields && (event.kind === "field" || event.kind === "status")) {
+      fields = applyFields(fields, event.payload, editable[entity]);
+      if (event.kind === "status" && event.payload.status === "in_progress" && fields.startedAt === undefined) fields.startedAt = event.at;
+      if (event.kind === "status") {
+        if (event.payload.status === "done" || event.payload.status === "cancelled") fields.closedAt = event.at;
+        else delete fields.closedAt;
+      }
+    } else if (fields && event.kind === "handoff") {
+      fields = { ...fields, handoffs: Number(fields.handoffs ?? 0) + 1, assigneeAgentId: event.payload.toAgentId ?? fields.assigneeAgentId };
+    } else if (fields && event.kind === "ran") {
+      const failed = typeof event.payload.error === "string";
+      fields = { ...fields, runs: Number(fields.runs ?? 0) + (failed ? 0 : 1), lastRunAt: event.at };
+      if (failed) fields.lastError = event.payload.error;
+      else delete fields.lastError;
+    } else if (fields && (event.kind === "link" || event.kind === "unlink")) {
+      const key = `${String(event.payload.computerId ?? event.payload.deviceId ?? event.deviceId)}:${String(event.payload.chatId ?? "")}`;
+      if (event.kind === "link") links.set(key, { ...event.payload, computerId: event.payload.computerId ?? event.payload.deviceId ?? event.deviceId, deviceId: event.payload.deviceId ?? event.deviceId, createdAt: event.at });
+      else links.delete(key);
+    }
+    if (!fields) continue;
+    updatedAt = event.at;
+    lastActor = event.actor;
+    activity.push({ eventId: event.id, at: event.at, kind: event.kind, actor: event.actor, payload: event.payload });
+  }
+
+  if (!fields || !lastActor) return undefined;
+  if (entity === "ticket" && links.size > 0) fields = { ...fields, threads: [...links.values()] };
+  return { entity, id, fields, activity, createdAt, updatedAt, lastActor };
+}

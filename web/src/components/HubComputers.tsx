@@ -1,3 +1,4 @@
+import { HubBoardSync } from "./HubBoardSync";
 import { apiError } from "@/lib/api-error";
 import { useEffect, useState } from "react";
 import type {
@@ -221,6 +222,7 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
           </Button>
         )}
       </div>
+      {local && registration?.organizationId === org && options.role !== "member" && <HubBoardSync organizationId={org} computerId={registration.computerId} localId={local.id} />}
       {error && (
         <p role="alert" className="text-sm text-destructive">
           {error}
