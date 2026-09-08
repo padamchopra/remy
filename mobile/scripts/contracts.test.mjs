@@ -22,6 +22,7 @@ test("pairing failures tell the phone how to recover", options, async () => {
     pairingError(Object.assign(new Error("unauthorized"), { status: 401 })),
     "Scan a new pairing QR and try again.",
   );
+  assert.equal(pairingError(Object.assign(new Error("aborted"), { name: "AbortError" })), "Your computer did not answer; check Tailscale on both devices and try again.");
   assert.equal(pairingError(new Error("That Mac isn't running Remy.")), "That Mac isn't running Remy.");
 });
 

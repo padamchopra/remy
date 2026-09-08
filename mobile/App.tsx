@@ -40,12 +40,10 @@ const NAV_THEME = {
 
 function PairedApp({
   onCommit,
-  onPairError,
   onUnpair,
   initialDestination,
 }: {
   onCommit: (pairing: Pairing) => Promise<void>;
-  onPairError: (error: unknown) => void;
   onUnpair: (url: string) => void;
   initialDestination?: NavigationDestination;
 }) {
@@ -125,28 +123,13 @@ function PairedApp({
           {({ navigation }) => (
             <ScanScreen
               onCancel={() => navigation.goBack()}
-              onCode={(raw) => {
-                void (async () => {
-                  const parsed = parsePairingLink(raw);
-                  if (!parsed) return;
-                  try {
-                    const pairing: Pairing = {
-                      url: originOf(parsed.url),
-                      token: parsed.token,
-                      name: hostLabel(parsed.url),
-                    };
-                    const probed = await transport.probe(pairing);
-                    await onCommit({
-                      ...pairing,
-                      name: probed.name,
-                      ...(probed.deviceId ? { deviceId: probed.deviceId } : {}),
-                    });
-                    navigation.navigate("Home");
-                  } catch (error) {
-                    navigation.goBack();
-                    onPairError(error);
-                  }
-                })();
+              onCode={async (raw) => {
+                const parsed = parsePairingLink(raw);
+                if (!parsed) throw new Error("That is not a Remy pairing link.");
+                const pairing: Pairing = { url: originOf(parsed.url), token: parsed.token, name: hostLabel(parsed.url) };
+                const probed = await transport.probe(pairing);
+                await onCommit({ ...pairing, name: probed.name, ...(probed.deviceId ? { deviceId: probed.deviceId } : {}) });
+                navigation.navigate("Home");
               }}
             />
           )}
@@ -245,15 +228,22 @@ export default function App() {
         <SafeAreaView style={styles.root} edges={pairings.length > 0 ? ["left", "right"] : ["top", "left", "right"]}>
           {pairings.length > 0 ? (
             <NavigationContainer ref={navRef} theme={NAV_THEME}>
-              <PairedApp onCommit={commit} onPairError={showPairError} onUnpair={forget} initialDestination={initialDestination} />
+              <PairedApp onCommit={commit} onUnpair={forget} initialDestination={initialDestination} />
             </NavigationContainer>
           ) : scan ? (
             <ScanScreen
               onCancel={() => setScan(false)}
-              onCode={(raw) => void applyLink(raw)}
+              onCode={async (raw) => {
+                const parsed = parsePairingLink(raw);
+                if (!parsed) throw new Error("That is not a Remy pairing link.");
+                const pairing: Pairing = { url: originOf(parsed.url), token: parsed.token, name: hostLabel(parsed.url) };
+                const probed = await transport.probe(pairing);
+                await commit({ ...pairing, name: probed.name, ...(probed.deviceId ? { deviceId: probed.deviceId } : {}) });
+                setScan(false);
+              }}
             />
           ) : (
-            <PairScreen onPaired={(pairing) => void commit(pairing)} onScan={() => setScan(true)} />
+            <PairScreen onPaired={commit} onScan={() => setScan(true)} />
           )}
           <Toast message={toast} onDismiss={dismissToast} />
         </SafeAreaView>
