@@ -549,3 +549,12 @@ export const transport: Transport = withPeers(
     ? electronTransport(desktopBridge)
       : proxyTransport(),
 );
+
+/// Hosted reads carry the organization in the path and use the same-origin session cookie.
+export const hubTransport = {
+  kind: "hub" as const,
+  async request(path: string, method = "GET", body?: unknown): Promise<Response> {
+    if (!/^\/api\/(organizations(?:\/[^/]+(?:\/.*)?)?|auth\/.*|sessions(?:\/.*)?|profile|device\/.*|invitations\/accept)$/.test(path) || path.includes("..")) throw new Error("Choose an organization before continuing.");
+    return fetch(path, { method, credentials: "same-origin", headers: body === undefined ? {} : { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  },
+};

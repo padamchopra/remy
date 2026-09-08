@@ -243,6 +243,7 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
           </EmptyHeader>
         </Empty>
       )}
+      {org && !computers.length && !stale && <Empty><EmptyHeader><EmptyTitle>No computers yet</EmptyTitle><EmptyDescription>Open Remy on your Mac, then attach it to your organization in Computers settings.</EmptyDescription></EmptyHeader></Empty>}
       <ItemGroup className="gap-3">
         {computers.map((computer) => {
           const Icon = deviceIcon(computer.icon as DeviceIconId);

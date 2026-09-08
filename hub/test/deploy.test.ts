@@ -9,7 +9,7 @@ test("production smoke checks the URL owned by its Worker configuration", () => 
   assert.equal(deploymentHubUrl("production"), "https://tryremy.dev");
 });
 
-test("migration failure prevents deployment and smoke check", async () => {
+test("web build failure prevents migration, deployment and smoke check", async () => {
   const commands: string[][] = [];
   let fetched = false;
 
@@ -20,17 +20,17 @@ test("migration failure prevents deployment and smoke check", async () => {
       release: "abc123",
       run: async (_file, args) => {
         commands.push(args);
-        throw new Error("migration rejected");
+        throw new Error("build rejected");
       },
       fetchHealth: async () => {
         fetched = true;
         return Response.json({});
       },
     }),
-    /migration rejected/,
+    /build rejected/,
   );
 
-  assert.deepEqual(commands, [["d1", "migrations", "apply", "DB", "--remote", "--env", "staging"]]);
+  assert.deepEqual(commands, [["--prefix", "../web", "run", "build"]]);
   assert.equal(fetched, false);
 });
 
@@ -57,9 +57,10 @@ test("deployment migrates, deploys, then validates health", async () => {
     },
   });
 
-  assert.equal(commands[0]?.[0], "d1");
-  assert.equal(commands[1]?.[0], "deploy");
-  assert.ok(commands[1]?.includes("RELEASE:abc123"));
+  assert.equal(commands[0]?.[0], "--prefix");
+  assert.equal(commands[1]?.[0], "d1");
+  assert.equal(commands[2]?.[0], "deploy");
+  assert.ok(commands[2]?.includes("RELEASE:abc123"));
 });
 
 test("deployment command failure prevents the smoke check", async () => {
@@ -72,7 +73,7 @@ test("deployment command failure prevents the smoke check", async () => {
       release: "abc123",
       run: async () => {
         command++;
-        if (command === 2) throw new Error("deploy rejected");
+        if (command === 3) throw new Error("deploy rejected");
       },
       fetchHealth: async () => {
         fetched = true;

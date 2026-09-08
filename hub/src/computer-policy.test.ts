@@ -339,3 +339,29 @@ test("a list cursor cannot skip an update that arrives while its snapshot is bei
     assert.ok(replay.frames.some((frame) => frame.kind === "snapshot" && frame.thread.revision === 2));
   } finally { sqlite.close(); }
 });
+
+test("board access follows current workspace restrictions on reads and every write", async () => {
+  const { sqlite, organizations } = database();
+  const { BoardAccess } = await import("./board-access.js");
+  const { OrganizationService } = await import("./organizations.js");
+  const service = new OrganizationService(organizations);
+  const workspace = await service.createWorkspace("org", "ada", { name: "Release", origin: "https://example.test/release.git", access: { userIds: [], teamIds: ["release"] } });
+  const ticket = { id: "ticket", entity: "ticket" as const, fields: { projectId: workspace.id }, activity: [], createdAt: 1, updatedAt: 1, lastActor: { kind: "member" as const, id: "ada", label: "Ada" } };
+  const board = { detail: async (_entity: string, id: string) => id === "ticket" ? ticket : undefined, project: async () => undefined } as unknown as import("./organization-board.js").OrganizationBoard;
+  const access = new BoardAccess(organizations, board, "org", "grace");
+  try {
+    assert.equal(await access.canRead(ticket), false);
+    assert.equal(await access.canWrite({ entity: "ticket", entityId: "ticket", kind: "field", payload: { projectId: "", title: "Escape restriction" } }), false);
+    assert.equal(await access.canWrite({ entity: "ticket", entityId: "new", kind: "create", payload: { projectId: workspace.id } }), false);
+    await service.changeTeamMember("org", "ada", "release", "grace", true);
+    assert.equal(await access.canRead(ticket), true);
+    assert.equal(await access.canWrite({ entity: "ticket", entityId: "ticket", kind: "status", payload: { status: "done" } }), true);
+    assert.equal(await access.canWrite({ entity: "ticket", entityId: "new", kind: "create", payload: { projectId: {} } }), false);
+    assert.equal(await access.canWrite({ entity: "ticket", entityId: "ticket", kind: "create", payload: {} }), false);
+    assert.equal(await new BoardAccess(organizations, board, "org", "outsider").canRead(ticket), false);
+    await service.changeTeamMember("org", "ada", "release", "grace", false);
+    assert.equal(await access.canRead(ticket), false);
+    await service.removeMember("org", "ada", "grace");
+    assert.equal(await access.canRead({ ...ticket, fields: {} }), false);
+  } finally { sqlite.close(); }
+});

@@ -29,6 +29,8 @@ test("hub workflow validates pull requests without repeating checks on main", ()
   assert.deepEqual(validateCommands, [
     "npm ci --prefix contract --no-audit --no-fund",
     "npm ci --prefix hub --no-audit --no-fund",
+    "npm ci --prefix web --no-audit --no-fund",
+    "npm run build --prefix web",
     "npm test --prefix contract",
     "npm run typecheck --prefix contract",
     "npm test --prefix hub",

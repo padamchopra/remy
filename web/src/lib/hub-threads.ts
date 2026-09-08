@@ -1,3 +1,4 @@
+import { hubTransport } from "./transport";
 import type { HubThread, ThreadLiveFrame, ThreadMember } from "@remy/contract";
 
 export const hubThreadBase = (organizationId: string) =>
@@ -18,13 +19,8 @@ export async function hubRequest<T>(
   method = "GET",
   body?: unknown,
 ): Promise<T> {
-  const response = await fetch(path, {
-    method,
-    credentials: "same-origin",
-    headers: body === undefined ? {} : { "content-type": "application/json" },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  const result = await response.json();
+  const response = await hubTransport.request(path, method, body);
+  const result = response.status === 204 ? {} : await response.json();
   if (!response.ok)
     throw new HubRequestError(
       typeof result.error === "string"

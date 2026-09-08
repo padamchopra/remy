@@ -5,6 +5,7 @@ export function watchHubResource<T>(
   path: string,
   changed: (value: T | undefined, stale: boolean) => void,
   failed: (message: string) => void,
+  livePath = `${path}/live`,
 ): () => void {
   let socket: WebSocket | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -42,12 +43,13 @@ export function watchHubResource<T>(
   };
   const connect = () => {
     if (stopped) return;
-    const url = new URL(`${path}/live`, window.location.origin);
+    const url = new URL(livePath, window.location.origin);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     const ws = new WebSocket(url);
     socket = ws;
     ws.onopen = () => {
       attempt = 0;
+      void refresh();
     };
     ws.onmessage = () => {
       if (socket === ws) void refresh();
@@ -57,6 +59,9 @@ export function watchHubResource<T>(
       if (stopped || socket !== ws) return;
       if (value !== undefined) changed(value, true);
       if (event.code === 1008) {
+        stopped = true;
+        value = undefined;
+        changed(undefined, true);
         failed("Sign in again.");
         return;
       }

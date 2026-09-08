@@ -88,6 +88,10 @@ export class OrganizationBoard {
     const result = await this.storage.transaction(async (storage) => {
       const deviceId = await this.deviceId(storage);
       const version = await this.versionVector(storage);
+      if (input.entity === "ticket" && input.kind === "create" && input.payload.number === undefined) {
+        const tickets = await storage.list<BoardProjection>({ prefix: `${PROJECTION_PREFIX}ticket:` });
+        input.payload.number = Math.max(0, ...[...tickets.values()].map((p) => Number(p.fields.number) || 0)) + 1;
+      }
       const event = boardLogEventSchema.parse({
         ...input,
         id: this.dependencies.id(),
@@ -154,6 +158,8 @@ export class OrganizationBoard {
       .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
     return { items, version: await this.versionVector() };
   }
+
+  async project(id: string) { return this.storage.get<BoardProjection>(projectionKey("project", id)); }
 
   async detail(entity: BoardProjectionEntity, id: string): Promise<BoardProjection | undefined> {
     return this.storage.get<BoardProjection>(projectionKey(entityFor(entity), id));

@@ -1,3 +1,4 @@
+import { BoardAccess } from "./board-access.js";
 import { HubNotifications, type ApplePushConfig } from "./notifications.js";
 import { canReadThread, canWriteThread, threadMemberSchema, threadSnapshotSchema, type ThreadLiveFrame, type ThreadMember } from "@remy/contract";
 import { ThreadStore } from "./thread-store.js";
@@ -36,6 +37,7 @@ import { DurableBoardStorage, OrganizationBoard } from "./organization-board.js"
 import { OrganizationError, OrganizationService } from "./organizations.js";
 
 export interface Env extends ApplePushConfig {
+  ASSETS?: Fetcher;
   AUTH_SECRET: SecretsStoreSecret;
   BETTER_AUTH_URL: string;
   COORDINATOR: DurableObjectNamespace;
@@ -145,6 +147,8 @@ function domainOf(email: string): string | undefined {
 }
 
 async function identityFor(request: Request, service: AccountService) {
+  const origin = request.headers.get("origin");
+  if (!request.headers.get("authorization") && request.headers.has("cookie") && origin && origin !== new URL(request.url).origin) return undefined;
   return service.authenticate(bearerToken(request) ?? "");
 }
 
@@ -201,6 +205,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     return Response.json(result, { status });
   }
 
+  if (url.pathname === "/api/runtime" && request.method === "GET") return Response.json({ mode: "hub", auth: { magicLink: !!env.EMAILS, google: !!env.GOOGLE_CLIENT_ID && !!env.GOOGLE_CLIENT_SECRET, github: !!env.GITHUB_CLIENT_ID && !!env.GITHUB_CLIENT_SECRET, sso: true } }, { headers: { "cache-control": "no-store" } });
   const protectedRoute = url.pathname === "/api/device/approve"
     || url.pathname === "/api/sessions"
     || url.pathname === "/api/sessions/revoke-all"
@@ -209,7 +214,11 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     || url.pathname === "/api/invitations/accept"
     || url.pathname === "/api/organizations"
     || url.pathname.startsWith("/api/organizations/");
-  if (!protectedRoute) return Response.json(hubErrorSchema.parse({ error: "Not found" }), { status: 404 });
+  if (!protectedRoute) {
+    if (request.method === "GET" && /^\/invite\/[^/]+$/.test(url.pathname)) return Response.redirect(new URL(`/?invite=${encodeURIComponent(decodeURIComponent(url.pathname.slice(8)))}`, url.origin), 302);
+    if (env.ASSETS && request.method === "GET" && !url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
+    return Response.json(hubErrorSchema.parse({ error: "Not found" }), { status: 404 });
+  }
 
   const boardSyncMatch = /^\/api\/organizations\/([^/]+)\/computers\/board-sync$/.exec(url.pathname);
   if (boardSyncMatch && request.method === "POST") {
@@ -379,13 +388,22 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         if (request.method === "DELETE") await env.DB.prepare("DELETE FROM organization_board_computers WHERE organization_id=? AND computer_id=?").bind(organizationId, computerId).run();
         return Response.json({ enabled: !!await env.DB.prepare("SELECT 1 FROM organization_board_computers WHERE organization_id=? AND computer_id=?").bind(organizationId, computerId).first() });
       }
+      if (!tail && request.method === "GET") {
+        const member = await organizations.member(organizationId, identity.userId);
+        const organization = await organizationStore.organization(organizationId);
+        return Response.json({ organization: { ...organization, role: member.role } });
+      }
+      if (tail === "live" && request.method === "GET") {
+        await organizations.member(organizationId, identity.userId);
+        return board().fetch(new Request("https://internal/organization/live", { headers: { upgrade: request.headers.get("upgrade") ?? "", "x-organization-id": organizationId, "x-user-id": identity.userId, "x-session-id": identity.sessionId } }));
+      }
       if (tail === "board/events" && request.method === "POST") {
         await organizations.member(organizationId, identity.userId);
         const input = boardAppendInputSchema.safeParse(await body(request));
         if (!input.success) return jsonError("Choose a valid change.", 400);
         const profile = await store.profile(identity.userId);
         const actor = boardActorSchema.parse({ kind: "member", id: identity.userId, label: profile?.name ?? "Member" });
-        return board().fetch("https://internal/board/append", { method: "POST", body: JSON.stringify({ input: input.data, actor }) });
+        return board().fetch("https://internal/board/append", { method: "POST", headers: { "x-organization-id": organizationId, "x-user-id": identity.userId }, body: JSON.stringify({ input: input.data, actor }) });
       }
       if (tail === "board/live" && request.method === "GET") {
         await organizations.member(organizationId, identity.userId);
@@ -393,23 +411,26 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         const cursor = url.searchParams.get("cursor");
         const live = new URL("https://internal/board/live");
         if (cursor !== null) live.searchParams.set("cursor", cursor);
-        return board().fetch(new Request(live, { headers: { upgrade: "websocket" } }));
+        return board().fetch(new Request(live, { headers: { upgrade: "websocket", "x-organization-id": organizationId, "x-user-id": identity.userId, "x-session-id": identity.sessionId } }));
       }
       const boardMatch = /^board\/(tickets|agents|memories|routines)(?:\/([^/]+))?$/.exec(tail);
       if (boardMatch && request.method === "GET") {
         await organizations.member(organizationId, identity.userId);
         const entity = boardProjectionEntitySchema.parse(boardMatch[1]);
         const entityId = boardMatch[2] ? decodeURIComponent(boardMatch[2]) : undefined;
-        return board().fetch(`https://internal/board/projections/${entity}${entityId ? `/${encodeURIComponent(entityId)}` : ""}`);
+        return board().fetch(new Request(`https://internal/board/projections/${entity}${entityId ? `/${encodeURIComponent(entityId)}` : ""}`, { headers: { "x-organization-id": organizationId, "x-user-id": identity.userId } }));
       }
-      if (tail === "members" && request.method === "GET") return Response.json({ members: await organizations.members(organizationId, identity.userId) });
+      if (tail === "members" && request.method === "GET") {
+        const members = await organizations.members(organizationId, identity.userId);
+        return Response.json({ members: await Promise.all(members.map(async (m) => ({ ...m, name: (await store.profile(m.userId))?.name ?? "Member" }))) });
+      }
       if (tail === "invites" && request.method === "POST") {
         const input = await body<{ email?: string; role?: "admin" | "member" }>(request);
         if (input?.role !== "admin" && input?.role !== "member") return jsonError("Choose admin or member access.", 400);
         if (input.email !== undefined && (!/^\S+@\S+\.\S+$/.test(input.email) || input.email.length > 254)) return jsonError("Enter a valid email address.", 400);
         if (input.email && !env.EMAILS) return jsonError("Email invitations are unavailable.", 503);
         const invite = await organizations.createInvite(organizationId, identity.userId, { ...(input.email ? { email: input.email } : {}), role: input.role });
-        if (input.email) { await env.EMAILS!.send({ kind: "organization.invite", recipient: input.email, url: `${url.origin}/invite/${encodeURIComponent(invite.token)}` }); const { token: _, ...delivered } = invite; return Response.json(delivered, { status: 201 }); }
+        if (input.email) { await env.EMAILS!.send({ kind: "organization.invite", recipient: input.email, url: `${url.origin}/?invite=${encodeURIComponent(invite.token)}` }); const { token: _, ...delivered } = invite; return Response.json(delivered, { status: 201 }); }
         return Response.json(invite, { status: 201 });
       }
       if (tail === "teams" && request.method === "GET") return Response.json({ teams: await organizations.teams(organizationId, identity.userId) });
@@ -472,6 +493,10 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     await service.revokeEverywhere(identity.userId);
     return new Response(null, { status: 204, headers: { "set-cookie": webSessionCookie("", url.protocol === "https:").replace(/Max-Age=\d+/, "Max-Age=0") } });
   }
+  if (url.pathname === "/api/sessions/current" && request.method === "DELETE") {
+    await service.revokeSession(identity.userId, identity.sessionId);
+    return new Response(null, { status: 204, headers: { "set-cookie": webSessionCookie("", url.protocol === "https:").replace(/Max-Age=\d+/, "Max-Age=0") } });
+  }
   const sessionMatch = /^\/api\/sessions\/([^/]+)$/.exec(url.pathname);
   if (sessionMatch && request.method === "DELETE") {
     return await service.revokeSession(identity.userId, sessionMatch[1]) ? new Response(null, { status: 204 }) : jsonError("Session not found.", 404);
@@ -512,12 +537,14 @@ export function createHandler(overrides: Partial<HandlerDependencies> = {}) {
   return async (request: Request, env: Env): Promise<Response> => {
     const startedAt = dependencies.now();
     const requestId = requestIdFor(request, dependencies.requestId);
-    const route = new URL(request.url).pathname;
+    const route = new URL(request.url).pathname.replace(/^\/invite\/[^/]+$/, "/invite/:token");
     let response: Response;
     let outcome: RequestOutcome["outcome"] = "success";
     try {
       response = await dependencies.route(request, env);
       if (response.status >= 500) outcome = "error";
+      const changed = /^\/api\/organizations\/([^/]+)(?:\/(members|teams|workspaces|invites|leave|transfer)(?:\/.*)?)?$/.exec(route);
+      if (response.ok && changed && ["POST", "PATCH", "PUT", "DELETE"].includes(request.method)) await env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${decodeURIComponent(changed[1])}`)).fetch(new Request("https://internal/organization/changed", { method: "POST", headers: { "x-organization-id": decodeURIComponent(changed[1]) } }));
     } catch (error) {
       outcome = "error";
       dependencies.log({
@@ -573,9 +600,9 @@ export class HubCoordinator {
           if (attachment?.kind === "computer" && attachment.boardSync) { try { socket.send(JSON.stringify({ kind: "board.changed" })); } catch { socket.close(); } }
           if (attachment?.kind !== "board") continue;
           try {
-            for (const frame of frames) socket.send(JSON.stringify(frame));
+            void this.sendOrganizationReset(socket, frames.at(-1)?.cursor ?? 0);
             const cursor = frames.at(-1)?.cursor;
-            if (cursor !== undefined) socket.serializeAttachment({ kind: "board", cursor });
+            if (cursor !== undefined) socket.serializeAttachment({ ...attachment, cursor });
           } catch {
             socket.close(1011, "Live updates stopped; reconnect to continue.");
           }
@@ -587,6 +614,20 @@ export class HubCoordinator {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") return Response.json({ status: "ok" });
+    const org = request.headers.get("x-organization-id");
+    const user = request.headers.get("x-user-id");
+    if (org) await this.ctx.storage.put("organizationId", org);
+    if (url.pathname === "/organization/changed") {
+      for (const socket of this.ctx.getWebSockets()) void this.sendOrganizationReset(socket);
+      return Response.json({ ok: true });
+    }
+    if (url.pathname === "/organization/live") {
+      if (!org || !user || request.headers.get("upgrade")?.toLowerCase() !== "websocket") return jsonError("Open a live connection.", 426);
+      const [client, server] = Object.values(new WebSocketPair()); this.ctx.acceptWebSocket(server);
+      server.serializeAttachment({ kind: "organization", userId: user, sessionId: request.headers.get("x-session-id") });
+      await this.sendOrganizationReset(server);
+      return new Response(null, { status: 101, webSocket: client });
+    }
     if (url.pathname.startsWith("/notifications")) {
       const org = request.headers.get("x-organization-id"); const user = request.headers.get("x-user-id");
       if (!org || !user) return jsonError("Sign in again.", 401);
@@ -692,7 +733,9 @@ export class HubCoordinator {
       const actor = boardActorSchema.safeParse(input?.actor);
       if (!actor.success) return jsonError("Invalid board actor", 400);
       try {
-        return Response.json(await this.board.append(input?.input, actor.data), { status: 201 });
+        const parsed = boardAppendInputSchema.parse(input?.input);
+        if (org && user && !await new BoardAccess(new D1OrganizationStore(this.env.DB), this.board, org, user).canWrite(parsed)) return jsonError("Ticket not found.", 404);
+        return Response.json(await this.board.append(parsed, actor.data), { status: 201 });
       } catch {
         return jsonError("Invalid board event", 400);
       }
@@ -716,9 +759,14 @@ export class HubCoordinator {
     const projectionMatch = /^\/board\/projections\/(tickets|agents|memories|routines)(?:\/([^/]+))?$/.exec(url.pathname);
     if (request.method === "GET" && projectionMatch) {
       const entity = boardProjectionEntitySchema.parse(projectionMatch[1]);
-      if (!projectionMatch[2]) return Response.json(await this.board.list(entity));
+      const access = org && user ? new BoardAccess(new D1OrganizationStore(this.env.DB), this.board, org, user) : undefined;
+      if (!projectionMatch[2]) {
+        const result = await this.board.list(entity);
+        if (access) result.items = (await Promise.all(result.items.map(async (p) => await access.canRead(p) ? p : undefined))).filter((p): p is NonNullable<typeof p> => !!p);
+        return Response.json({ ...result, cursor: (await this.board.liveFramesAfter()).cursor });
+      }
       const projection = await this.board.detail(entity, decodeURIComponent(projectionMatch[2]));
-      return projection ? Response.json(projection) : jsonError("Not found", 404);
+      return projection && (!access || await access.canRead(projection)) ? Response.json(projection) : jsonError("Not found", 404);
     }
     if (request.method === "GET" && url.pathname === "/board/live") {
       if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return jsonError("Expected WebSocket", 426);
@@ -729,8 +777,9 @@ export class HubCoordinator {
       const pair = new WebSocketPair();
       const [client, server] = Object.values(pair);
       this.ctx.acceptWebSocket(server);
-      server.serializeAttachment({ kind: "board", cursor: replay.cursor });
-      for (const frame of replay.frames) server.send(JSON.stringify(frame));
+      server.serializeAttachment({ kind: "board", cursor: replay.cursor, userId: user, sessionId: request.headers.get("x-session-id") });
+      if (user) await this.sendOrganizationReset(server, replay.cursor);
+      else for (const frame of replay.frames) server.send(JSON.stringify(frame));
       return new Response(null, { status: 101, webSocket: client });
     }
     return Response.json({ error: "Not found" }, { status: 404 });
@@ -853,6 +902,18 @@ export class HubCoordinator {
     const computers = org ? await this.computerService().list(org, userId) : [];
     const allowed = new Set(computers.filter((c) => c.canUse).map((c) => c.computerId));
     return (await this.threads.list(userId)).filter((thread) => allowed.has(thread.computerId));
+  }
+
+  private async sendOrganizationReset(socket: WebSocket, cursor = 0): Promise<void> {
+    const meta = socket.deserializeAttachment() as { kind?: string; userId?: string; sessionId?: string } | null;
+    if (!meta || !["board", "organization"].includes(meta.kind ?? "")) return;
+    const org = await this.ctx.storage.get<string>("organizationId");
+    if (meta.userId) {
+      const member = org && await new D1OrganizationStore(this.env.DB).membership(org, meta.userId);
+      const session = (await new D1AccountStore(this.env.DB).sessionsFor(meta.userId)).find((s) => s.id === meta.sessionId);
+      if (!member || !session || session.revokedAt || session.accessExpiresAt <= Date.now()) { socket.close(1008, "Sign in again."); return; }
+    }
+    try { socket.send(JSON.stringify({ kind: "reset", cursor, reason: "cursor_unavailable" })); } catch { socket.close(); }
   }
 
   private async sendThreadFrame(socket: WebSocket, frame: ThreadLiveFrame): Promise<void> {

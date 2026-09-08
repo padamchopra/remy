@@ -27,6 +27,7 @@ function ensureRemyServer(): Plugin {
     name: "ensure-remy-server",
     apply: "serve",
     async configureServer(vite) {
+      if (process.env.VITE_REMY_HUB_MODE === "1") { vite.middlewares.use("/api/runtime", (_req, res) => { res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ mode: "hub", auth: { magicLink: true, google: true, github: true, sso: true } })); }); return; }
       await ensureLocalServer(fileURLToPath(new URL("../server", import.meta.url)), local);
       vite.httpServer?.once("close", () => stopSpawnedServer());
     },
@@ -62,7 +63,7 @@ export default defineConfig({
     // you want to see a change.
     hmr: false,
     proxy: {
-      ...(process.env.VITE_REMY_HUB_URL ? Object.fromEntries(["/api/organizations", "/api/device"].map((path) => [path, { target: process.env.VITE_REMY_HUB_URL, ws: true, changeOrigin: false }])) : {}),
+      ...(process.env.VITE_REMY_HUB_URL ? Object.fromEntries(["/api/organizations", "/api/device", "/api/auth", "/api/sessions", "/api/profile", "/api/invitations"].map((path) => [path, { target: process.env.VITE_REMY_HUB_URL, ws: true, changeOrigin: false }])) : {}),
       "/api": {
         target: local.url,
         changeOrigin: true,
