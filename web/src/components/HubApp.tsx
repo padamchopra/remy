@@ -1,3 +1,4 @@
+const Inbox = lazy(() => import("./HubInbox").then(m => ({default:m.HubInbox})));
 const Routing = lazy(() => import("./HubRouting").then(m => ({default:m.HubRouting})));
 import { lazy, useEffect, useState } from "react";
 import {
@@ -185,6 +186,9 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           icon: MessagesSquare,
           route: { name: "threads", organizationId },
           selected: section === "threads",
+        },
+        {
+          label: "Inbox", icon: User, route: {name:"inbox",organizationId}, selected:section==="inbox",
         },
         {
           label: "Tasks",
@@ -391,6 +395,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                 <Computers organizationId={organization.id} />
               </Deferred>
             </div>
+            <div hidden={section!=="inbox"} className="min-h-0 flex-1 overflow-auto"><Deferred open={section==="inbox"}><Inbox organizationId={organization.id} userId={profile?.id??""} agentId={route.name==="inbox"?route.agent:undefined} choose={id=>navigate({name:"inbox",agent:id,organizationId:organization.id})}/></Deferred></div>
             <div hidden={section!=="routing"} className="min-h-0 overflow-auto"><Deferred open={section==="routing"}><Routing organizationId={organization.id}/></Deferred></div>
             {(["members", "teams", "workspaces"] as const).map((kind) => (
               <div

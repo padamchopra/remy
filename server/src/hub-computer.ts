@@ -229,6 +229,7 @@ export class HubComputerConnection {
     if (parsed.data.kind === "board.changed") void this.boardSync?.sync();
     if (parsed.data.kind === "notification.ack") { const id = parsed.data.id; setKv(NOTIFICATION_OUTBOX, (getKv<HubNotificationInput[]>(NOTIFICATION_OUTBOX) ?? []).filter((n) => n.id !== id)); }
     if (parsed.data.kind === "update_required") { this.stopped = true; socket.close(1008, "Update Remy to reconnect."); return; }
+    if (parsed.data.kind === "agent.deleted") { const {deleteChat}=await import("./chat.js");const shared=new Set(hubThreadIds(this.registration.organizationId));for(const id of parsed.data.threadIds)if(shared.has(id))deleteChat(id); }
     if (parsed.data.kind === "request") await this.proxy(socket, parsed.data);
     if (parsed.data.kind === "subscribe") this.subscribe(socket, parsed.data.id, parsed.data.path);
     if (parsed.data.kind === "unsubscribe") { this.subscriptions.get(parsed.data.id)?.close(); this.subscriptions.delete(parsed.data.id); }

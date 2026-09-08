@@ -13,6 +13,38 @@ export class BoardAccess {
   async canRead(projection: BoardProjection): Promise<boolean> {
     if (!(await this.store.membership(this.organizationId, this.userId)))
       return false;
+    if (projection.entity === "agent") {
+      const scope = projection.fields.scope ?? "org",
+        owner = projection.fields.ownerId;
+      if (scope === "personal") return owner === this.userId;
+      if (scope === "team")
+        return (
+          typeof owner === "string" &&
+          (await this.store.teamMembers(this.organizationId, owner)).includes(
+            this.userId,
+          )
+        );
+      if (scope === "workspace") {
+        if (typeof owner !== "string") return false;
+        try {
+          await new OrganizationService(this.store).workspace(
+            this.organizationId,
+            this.userId,
+            owner,
+          );
+          return true;
+        } catch {
+          return false;
+        }
+      }
+      return scope === "org";
+    }
+    if (projection.entity === "memory" || projection.entity === "recurrence") {
+      const agent =
+        typeof projection.fields.agentId === "string" &&
+        (await this.board.detail("agents", projection.fields.agentId));
+      return !!agent && this.canRead(agent);
+    }
     const workspaceId = projection.fields.projectId;
     if (workspaceId === undefined || workspaceId === "") return true;
     if (typeof workspaceId !== "string") return false;
@@ -48,6 +80,74 @@ export class BoardAccess {
     if (input.kind === "create" && current) return false;
     if (input.kind !== "create" && (!current || !(await this.canRead(current))))
       return false;
+    if (input.entity === "agent") {
+      const fields = { ...current?.fields, ...input.payload },
+        scope = fields.scope ?? "org",
+        owner = fields.ownerId;
+      if (
+        fields.name !== undefined &&
+        (typeof fields.name !== "string" ||
+          !fields.name.trim() ||
+          fields.name.length > 120)
+      )
+        return false;
+      if (
+        fields.instructions !== undefined &&
+        (typeof fields.instructions !== "string" ||
+          fields.instructions.length > 32000)
+      )
+        return false;
+      const member = await this.store.membership(
+        this.organizationId,
+        this.userId,
+      );
+      if (
+        !member ||
+        !["org", "team", "workspace", "personal"].includes(String(scope))
+      )
+        return false;
+      if (current?.fields.builtIn) return false;
+      if (
+        input.payload.builtIn ||
+        (input.payload.createdByUserId &&
+          input.payload.createdByUserId !== this.userId)
+      )
+        return false;
+      if (scope === "personal" && owner !== this.userId) return false;
+      if (scope === "org" && member.role === "member") return false;
+      if (
+        scope === "team" &&
+        (typeof owner !== "string" ||
+          !(await this.store.teamMembers(this.organizationId, owner)).includes(
+            this.userId,
+          ))
+      )
+        return false;
+      if (
+        scope === "workspace" &&
+        (typeof owner !== "string" ||
+          !(await this.store.workspace(this.organizationId, owner)))
+      )
+        return false;
+      if (
+        current &&
+        (scope !== current.fields.scope || owner !== current.fields.ownerId)
+      ) {
+        const outward =
+          (current.fields.scope === "personal" && scope === "team") ||
+          (current.fields.scope === "team" && scope === "org");
+        if (!outward) return false;
+      }
+    }
+    if (input.entity === "ticket") {
+      const assigned = input.payload.assigneeAgentId ?? input.payload.toAgentId;
+      if (assigned && !["you", "workspace"].includes(String(assigned))) {
+        const agent =
+          typeof assigned === "string" &&
+          (await this.board.detail("agents", assigned));
+        if (!agent || !(await this.canRead(agent))) return false;
+      }
+    }
     return this.canRead({
       ...(current ?? {
         entity: input.entity,

@@ -1,3 +1,4 @@
+import { ScopedAgents } from "./scoped-agents.js";
 import { resolveComputer } from "./routing.js";
 import { routingRuleSchema } from "@remy/contract";
 import { GitCapabilities, GithubInstallation, githubRepository, proxyGit } from "./hosted-git.js";
@@ -286,7 +287,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       events.push({ ...parsed.data, actor: { kind: "computer", id: computer.computerId, label: computer.name } });
     }
     const coordinator = env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${organizationId}`));
-    return coordinator.fetch(new Request("https://internal/board/sync", { method: "POST", body: JSON.stringify({ version: version.data, events }) }));
+    return coordinator.fetch(new Request("https://internal/board/sync", { method: "POST", headers:{"x-organization-id":organizationId,"x-user-id":String((grant as {granted_by:string}).granted_by)}, body: JSON.stringify({ version: version.data, events }) }));
   }
   const detachMatch = /^\/api\/organizations\/([^/]+)\/computers\/detach$/.exec(url.pathname);
   if (detachMatch && request.method === "POST") {
@@ -460,6 +461,10 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         if (request.headers.has("x-filename")) headers.set("x-filename", request.headers.get("x-filename")!);
         const internal = new URL(`https://internal/${tail}`); internal.search = url.search;
         return board().fetch(new Request(internal, { method: request.method, headers, body: request.body, ...(request.body ? { duplex: "half" } : {}) }));
+      }
+      if(/^agents(?:\/[^/]+(?:\/(?:conversation|message))?)?$/.test(tail)) {
+        await organizations.member(organizationId,identity.userId);
+        return board().fetch(new Request(`https://internal/${tail}`,{method:request.method,headers:{"x-organization-id":organizationId,"x-user-id":identity.userId,"content-type":"application/json"},body:request.body}));
       }
       if(tail==="routing" || tail==="routing/resolve" || tail==="routing/preference") {
         const member=await organizations.member(organizationId,identity.userId);
@@ -740,7 +745,7 @@ export class HubCoordinator {
 
   constructor(private readonly ctx: DurableObjectState, readonly env: Env) {
     this.computers = new D1ComputerStore(env.DB);
-    this.notifications = new HubNotifications(env.DB, (computerId, threadId) => this.threads.get(computerId, threadId));
+    this.notifications = new HubNotifications(env.DB, (computerId, threadId) => this.threads.get(computerId, threadId), (id,user)=>this.canReadAgentThread(id,user));
     this.threads = new ThreadStore(new DurableBoardStorage(ctx.storage), (frame) => { this.threadPublishing = this.threadPublishing.then(() => this.publishThreadFrame(frame)).catch(() => undefined); });
     this.board = new OrganizationBoard(new DurableBoardStorage(ctx.storage), {
       publish: (frames) => {
@@ -767,6 +772,7 @@ export class HubCoordinator {
     const user = request.headers.get("x-user-id");
     if (org) await this.ctx.storage.put("organizationId", org);
     if (url.pathname === "/organization/changed") {
+      if(org){await this.scopedAgents(org).departures();await this.cleanAgentThreads();}
       this.invalidateComputers();
       for (const socket of this.ctx.getWebSockets()) void this.sendOrganizationReset(socket);
       return Response.json({ ok: true });
@@ -833,6 +839,17 @@ export class HubCoordinator {
       server.send(JSON.stringify({ kind: "welcome", protocolVersion: COMPUTER_PROTOCOL_VERSION, heartbeatIntervalMs: COMPUTER_HEARTBEAT_INTERVAL_MS, threadRelay: true, notifications: true }));
       await this.scheduleAlarm(Date.now() + COMPUTER_HEARTBEAT_TIMEOUT_MS);
       return new Response(null, { status: 101, webSocket: client });
+    }
+    const agentRoute=/^\/agents(?:\/([^/]+)(?:\/(conversation|message))?)?$/.exec(url.pathname);
+    if(agentRoute && org && user) {
+      const agents=this.scopedAgents(org);
+      try {
+        if(!agentRoute[1] && request.method==="GET")return Response.json({agents:await agents.visible(user)});
+        const id=decodeURIComponent(agentRoute[1]??"");
+        if(agentRoute[2]==="conversation" && request.method==="GET")return Response.json({messages:await agents.conversation(id,user)});
+        if(agentRoute[2]==="message" && request.method==="POST") {const input=await body<{text?:string;messageId?:string}>(request);if(typeof input?.text!=="string" || typeof input.messageId!=="string")return jsonError("Enter a message.",400);const messages=await agents.message(id,user,input.text,input.messageId);this.invalidateComputers();return Response.json({messages});}
+      }catch{return jsonError("Agent not found.",404);}
+      return jsonError("This agent action is unavailable.",405);
     }
     const agentTool=/^\/agent-tools\/([^/]+)$/.exec(url.pathname);
     if(agentTool && request.method==="POST" && org) {
@@ -909,8 +926,14 @@ export class HubCoordinator {
     }
     if (request.method === "POST" && url.pathname === "/board/sync") {
       const input = await request.json() as { events: unknown[]; version: Record<string, number> };
-      await this.board.mergeRemote(input.events);
-      return Response.json({ events: await this.board.eventsSince(input.version), version: await this.board.versionVector() });
+      const rows=input.events.map(v=>boardLogEventSchema.parse(v));
+      if(rows.some(e=>!["project","ticket"].includes(e.entity)))return jsonError("Agents and their memories stay in your organization’s Inbox.",403);
+      if(!org || !user)return jsonError("Tasks access is unavailable.",403);
+      const access=new BoardAccess(new D1OrganizationStore(this.env.DB),this.board,org,user);
+      for(const e of rows)if(e.entity==="ticket") {const existing=await this.board.detail("tickets",e.entityId);if(existing && !await access.canRead(existing))return jsonError("Ticket not found.",404);const assigned=e.payload.assigneeAgentId??e.payload.toAgentId;if(assigned && !["you","workspace"].includes(String(assigned)))return jsonError("Assign organization agents from Inbox.",403);}
+      await this.board.mergeRemote(rows);
+      const outgoing=await this.board.eventsSince(input.version,500,true);
+      return Response.json({events:outgoing.filter(e=>["project","ticket"].includes(e.entity)),version:await this.board.versionVector()});
     }
     if (request.method === "POST" && url.pathname === "/board/append") {
       const input = await body<{ input?: unknown; actor?: unknown }>(request);
@@ -919,6 +942,8 @@ export class HubCoordinator {
       try {
         const parsed = boardAppendInputSchema.parse(input?.input);
         if (org && user && !await new BoardAccess(new D1OrganizationStore(this.env.DB), this.board, org, user).canWrite(parsed)) return jsonError("Ticket not found.", 404);
+        if(parsed.entity==="agent" && parsed.kind==="tombstone" && org) {await this.scopedAgents(org).remove(parsed.entityId,actor.data);return Response.json({ok:true},{status:201});}
+        if(parsed.entity==="agent" && parsed.kind==="create" && user)parsed.payload.createdByUserId=user;
         const event=await this.board.append(parsed, actor.data);
         if(parsed.entity==="ticket" && parsed.payload.assigneeAgentId) {
           const ticket=await this.board.detail("tickets",parsed.entityId);
@@ -1000,6 +1025,7 @@ export class HubCoordinator {
       }
       const now = Date.now();
       socket.serializeAttachment({ ...attachment, ready: true, boardSync: frame.boardSync === true, lastSeenAt: now });
+      await this.cleanAgentThreads();
       if (organizationId) await this.computers.seen(organizationId, attachment.computerId, now, frame.capabilities, frame.daemonVersion);
       this.invalidateComputers();
       return;
@@ -1085,6 +1111,8 @@ export class HubCoordinator {
     }
   }
 
+  private scopedAgents(org:string) {return new ScopedAgents(this.board,new DurableBoardStorage(this.ctx.storage),new D1OrganizationStore(this.env.DB),org);}
+
   private async prewarmWorkspace(workspaceId:string):Promise<void> {
     const org=await this.ctx.storage.get<string>("organizationId");if(!org || !await new D1OrganizationStore(this.env.DB).workspace(org,workspaceId))return;
     const settings=await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).settings(org,workspaceId);
@@ -1123,6 +1151,19 @@ export class HubCoordinator {
     return new ComputerService(this.computers, Date.now, this.env.MINIMUM_DAEMON_VERSION ?? "0.1.0", new D1OrganizationStore(this.env.DB));
   }
 
+  private async cleanAgentThreads() {
+    for(const [key,run] of await this.ctx.storage.list<{agentId:string;computerId:string}>({prefix:"agent-run:"})) {
+      if(await this.board.detail("agents",run.agentId))continue;
+      const id=key.slice("agent-run:".length);
+      this.computerSocket(run.computerId)?.send(JSON.stringify({kind:"agent.deleted",threadIds:[id]}));
+    }
+  }
+  private async canReadAgentThread(id:string,userId:string):Promise<boolean> {
+    const run=await this.ctx.storage.get<{agentId:string}>(`agent-run:${id}`);
+    if(!run)return true;
+    const org=await this.ctx.storage.get<string>("organizationId");if(!org)return false;
+    try{await this.scopedAgents(org).get(run.agentId,userId);return true;}catch{return false;}
+  }
   private async visibleThreads(userId: string) {
     const org = await this.ctx.storage.get<string>("organizationId");
     const computers = org ? await this.computerService().list(org, userId) : [];
@@ -1130,7 +1171,7 @@ export class HubCoordinator {
     const visible = [];
     for (const thread of await this.threads.list(userId)) {
       const computer = org && await this.computers.computer(org, thread.computerId);
-      if (computer && allowed.has(thread.computerId) && await this.computerService().canReadWorkspace(computer, userId, thread.detail.cwd)) visible.push(thread);
+      if (computer && await this.canReadAgentThread(thread.id,userId) && allowed.has(thread.computerId) && await this.computerService().canReadWorkspace(computer, userId, thread.detail.cwd)) visible.push(thread);
     }
     return visible;
   }
@@ -1161,7 +1202,7 @@ export class HubCoordinator {
       const current = await this.threads.get(computerId, threadId);
       const key = `threads:viewer:${meta.subscriptionId}:${computerId}:${threadId}`;
       const computer = await this.computers.computer(organizationId, computerId);
-      if (!current || !computer || !await this.computerService().canUse(computer, meta.userId) || !canReadThread(current.access, meta.userId) || !await this.computerService().canReadWorkspace(computer, meta.userId, current.detail.cwd)) {
+      if (!current || !await this.canReadAgentThread(threadId,meta.userId) || !computer || !await this.computerService().canUse(computer, meta.userId) || !canReadThread(current.access, meta.userId) || !await this.computerService().canReadWorkspace(computer, meta.userId, current.detail.cwd)) {
         if (await this.ctx.storage.get<boolean>(key)) {
           socket.send(JSON.stringify({ kind: "remove", cursor: frame.cursor, computerId, threadId }));
           await this.ctx.storage.delete(key);
@@ -1170,7 +1211,7 @@ export class HubCoordinator {
       }
       await this.ctx.storage.put(key, true);
       // Replays use the current access decision, never the historical visibility.
-      if (frame.kind === "snapshot" && (!canReadThread(frame.thread.access, meta.userId) || !await this.computerService().canReadWorkspace(computer, meta.userId, frame.thread.detail.cwd))) return;
+      if (frame.kind === "snapshot" && (!await this.canReadAgentThread(frame.thread.id,meta.userId) || !canReadThread(frame.thread.access, meta.userId) || !await this.computerService().canReadWorkspace(computer, meta.userId, frame.thread.detail.cwd))) return;
     }
     socket.send(JSON.stringify(frame));
   }
@@ -1212,7 +1253,7 @@ export class HubCoordinator {
     let target;
     try { target = await this.computerService().requireUse(request.headers.get("x-organization-id")!, computerId, actor.id); } catch { return jsonError("This computer is not available to you.", 404); }
     const snapshot = id ? await this.threads.get(computerId, id) : undefined;
-    if (id && (!snapshot || !canReadThread(snapshot.access, actor.id) || !await this.computerService().canReadWorkspace(target, actor.id, snapshot.detail.cwd))) return jsonError("This thread is no longer available.", 404);
+    if (id && (!await this.canReadAgentThread(id,actor.id) || !snapshot || !canReadThread(snapshot.access, actor.id) || !await this.computerService().canReadWorkspace(target, actor.id, snapshot.detail.cwd))) return jsonError("This thread is no longer available.", 404);
     if (id && !action && request.method === "GET" && !this.computerSocket(computerId)) return Response.json({ ...snapshot!, stale: true, member: actor });
     if (id && action !== "join" && request.method !== "GET" && !canWriteThread(snapshot!.access, actor.id)) return jsonError("Join this thread before replying.", 403);
     if (action === "attachments" && id) {

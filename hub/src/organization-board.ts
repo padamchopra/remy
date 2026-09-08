@@ -147,9 +147,9 @@ export class OrganizationBoard {
     return await storage.get<BoardVersionVector>(VECTOR_KEY) ?? {};
   }
 
-  async eventsSince(vector: BoardVersionVector, limit = 500): Promise<BoardLogEvent[]> {
+  async eventsSince(vector: BoardVersionVector, limit = 500, sharedTasksOnly = false): Promise<BoardLogEvent[]> {
     const bounded = Math.min(Math.max(Math.trunc(limit), 1), 500);
-    return (await eventsIn(this.storage)).filter((event) => event.lamport > (vector[event.deviceId] ?? 0)).slice(0, bounded);
+    return (await eventsIn(this.storage)).filter(e=>!sharedTasksOnly || ["project","ticket"].includes(e.entity)).filter((event) => event.lamport > (vector[event.deviceId] ?? 0)).slice(0, bounded);
   }
 
   async list(entity: BoardProjectionEntity): Promise<{ items: BoardProjection[]; version: BoardVersionVector }> {
