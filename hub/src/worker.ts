@@ -10,6 +10,7 @@ import {
   computerAccessSchema,
   computerToHubFrameSchema,
   boardActorSchema,
+  boardLogEventSchema,
   boardAppendInputSchema,
   boardProjectionEntitySchema,
   boardVersionVectorSchema,
@@ -210,6 +211,25 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     || url.pathname.startsWith("/api/organizations/");
   if (!protectedRoute) return Response.json(hubErrorSchema.parse({ error: "Not found" }), { status: 404 });
 
+  const boardSyncMatch = /^\/api\/organizations\/([^/]+)\/computers\/board-sync$/.exec(url.pathname);
+  if (boardSyncMatch && request.method === "POST") {
+    const organizationId = decodeURIComponent(boardSyncMatch[1]);
+    const computer = await authenticateComputer(request, organizationId, computerStore);
+    if (!computer || computer.ownership === "hosted") return jsonError("This computer cannot synchronize your Tasks.", 403);
+    const grant = await env.DB.prepare(`SELECT g.granted_by FROM organization_board_computers g JOIN memberships m ON m.organization_id=g.organization_id AND m.user_id=g.granted_by WHERE g.organization_id=? AND g.computer_id=? AND m.role IN ('owner','admin')`).bind(organizationId, computer.computerId).first();
+    if (!grant) return jsonError("Allow Tasks synchronization in Computers settings.", 403);
+    const input = await body<{ version?: unknown; events?: unknown }>(request);
+    const version = boardVersionVectorSchema.safeParse(input?.version ?? {});
+    if (!version.success || !Array.isArray(input?.events) || input.events.length > 500 || JSON.stringify(input).length > 2_000_000) return jsonError("Choose a valid Tasks update.", 400);
+    const events = [];
+    for (const value of input.events) {
+      const parsed = boardLogEventSchema.safeParse(value);
+      if (!parsed.success) return jsonError("Choose a valid Tasks update.", 400);
+      events.push({ ...parsed.data, actor: { kind: "computer", id: computer.computerId, label: computer.name } });
+    }
+    const coordinator = env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${organizationId}`));
+    return coordinator.fetch(new Request("https://internal/board/sync", { method: "POST", body: JSON.stringify({ version: version.data, events }) }));
+  }
   const detachMatch = /^\/api\/organizations\/([^/]+)\/computers\/detach$/.exec(url.pathname);
   if (detachMatch && request.method === "POST") {
     const org = decodeURIComponent(detachMatch[1]);
@@ -348,6 +368,16 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         if (request.headers.has("x-filename")) headers.set("x-filename", request.headers.get("x-filename")!);
         const internal = new URL(`https://internal/${tail}`); internal.search = url.search;
         return board().fetch(new Request(internal, { method: request.method, headers, body: request.body, ...(request.body ? { duplex: "half" } : {}) }));
+      }
+      const boardGrant = /^computers\/([^/]+)\/board-access$/.exec(tail);
+      if (boardGrant && ["GET", "PUT", "DELETE"].includes(request.method)) {
+        const member = await organizations.member(organizationId, identity.userId);
+        const computerId = decodeURIComponent(boardGrant[1]);
+        const computer = await computerStore.computer(organizationId, computerId);
+        if (!computer || computer.ownership === "hosted" || member.role === "member" || !await computers.canManage(computer, identity.userId)) return jsonError("Computer not found.", 404);
+        if (request.method === "PUT") await env.DB.prepare("INSERT INTO organization_board_computers (organization_id,computer_id,granted_by,created_at) VALUES (?,?,?,?) ON CONFLICT(organization_id,computer_id) DO UPDATE SET granted_by=excluded.granted_by").bind(organizationId, computerId, identity.userId, Date.now()).run();
+        if (request.method === "DELETE") await env.DB.prepare("DELETE FROM organization_board_computers WHERE organization_id=? AND computer_id=?").bind(organizationId, computerId).run();
+        return Response.json({ enabled: !!await env.DB.prepare("SELECT 1 FROM organization_board_computers WHERE organization_id=? AND computer_id=?").bind(organizationId, computerId).first() });
       }
       if (tail === "board/events" && request.method === "POST") {
         await organizations.member(organizationId, identity.userId);
@@ -539,7 +569,9 @@ export class HubCoordinator {
     this.board = new OrganizationBoard(new DurableBoardStorage(ctx.storage), {
       publish: (frames) => {
         for (const socket of this.ctx.getWebSockets()) {
-          if ((socket.deserializeAttachment() as { kind?: string } | null)?.kind !== "board") continue;
+          const attachment = socket.deserializeAttachment() as { kind?: string; boardSync?: boolean } | null;
+          if (attachment?.kind === "computer" && attachment.boardSync) { try { socket.send(JSON.stringify({ kind: "board.changed" })); } catch { socket.close(); } }
+          if (attachment?.kind !== "board") continue;
           try {
             for (const frame of frames) socket.send(JSON.stringify(frame));
             const cursor = frames.at(-1)?.cursor;
@@ -650,6 +682,11 @@ export class HubCoordinator {
       await this.ctx.storage.put("uptime.latest", frame);
       return new Response(null, { status: 204 });
     }
+    if (request.method === "POST" && url.pathname === "/board/sync") {
+      const input = await request.json() as { events: unknown[]; version: Record<string, number> };
+      await this.board.mergeRemote(input.events);
+      return Response.json({ events: await this.board.eventsSince(input.version), version: await this.board.versionVector() });
+    }
     if (request.method === "POST" && url.pathname === "/board/append") {
       const input = await body<{ input?: unknown; actor?: unknown }>(request);
       const actor = boardActorSchema.safeParse(input?.actor);
@@ -723,7 +760,7 @@ export class HubCoordinator {
         return;
       }
       const now = Date.now();
-      socket.serializeAttachment({ ...attachment, ready: true, lastSeenAt: now });
+      socket.serializeAttachment({ ...attachment, ready: true, boardSync: frame.boardSync === true, lastSeenAt: now });
       if (organizationId) await this.computers.seen(organizationId, attachment.computerId, now, frame.capabilities, frame.daemonVersion);
       this.invalidateComputers();
       return;
