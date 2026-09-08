@@ -2246,9 +2246,7 @@ function PhonesField({ serverId }: { serverId: string }) {
 
 /// Your machines on the tailnet, and what it takes to pair one.
 ///
-/// Tailscale already knows every device you own, so this is a list to pick from
-/// rather than a link to carry. Clicking Pair asks that machine; a person there
-/// compares a six-digit code and allows it. Nothing is shared until they do.
+/// Same-owner Tailscale requests pair immediately; older computers may ask for a code.
 function DiscoveredDevices({ homeId, reachable }: { homeId?: string; reachable: boolean }) {
   const refresh = useStore((s) => s.refresh);
   const [devices, setDevices] = useState<TailnetDevice[]>();
@@ -2306,12 +2304,16 @@ function DiscoveredDevices({ homeId, reachable }: { homeId?: string; reachable: 
     if (!homeId || !device.url) return;
     setBusy(true);
     try {
-      setAttempt(
-        await transport.request<PairAttempt>(homeId, "/pair/start", {
-          method: "POST",
-          body: { url: device.url, name: device.name },
-        }),
-      );
+      const next = await transport.request<PairAttempt>(homeId, "/pair/start", {
+        method: "POST",
+        body: { url: device.url, name: device.name },
+      });
+      setAttempt(next);
+      if (next.state === "approved") {
+        toast.success(`Paired ${next.name}.`);
+        void refresh();
+        void load(true);
+      }
     } catch (caught) {
       toast.error(`Couldn't ask ${device.name} to pair`, { description: apiError(caught) });
     } finally {

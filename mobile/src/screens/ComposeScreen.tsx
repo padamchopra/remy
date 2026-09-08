@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Dimensions,
-  Keyboard,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -33,6 +31,7 @@ import {
   MenuSeparator,
   Popover,
 } from "../components/ComposerMenu";
+import { ComposerLayout } from "../components/ComposerLayout";
 import { WorkspaceMark } from "../components/WorkspaceMark";
 import { workspaceGroups } from "../lib/projects";
 
@@ -86,7 +85,6 @@ export function ComposeScreen({ onCreated }: { onCreated: (id: string) => void }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [pickingPlace, setPickingPlace] = useState(false);
-  const [keyboard, setKeyboard] = useState(0);
 
   useEffect(() => {
     void loadSettings().catch(() => {});
@@ -95,18 +93,6 @@ export function ComposeScreen({ onCreated }: { onCreated: (id: string) => void }
       // ships with is enough to paint the picker.
     });
   }, [loadSettings, loadProviders]);
-
-  useEffect(() => {
-    const show = Keyboard.addListener("keyboardWillChangeFrame", (event) => {
-      const overlap = Dimensions.get("window").height - event.endCoordinates.screenY;
-      setKeyboard(Math.max(0, overlap));
-    });
-    const hide = Keyboard.addListener("keyboardWillHide", () => setKeyboard(0));
-    return () => {
-      show.remove();
-      hide.remove();
-    };
-  }, []);
 
   useEffect(() => {
     if (target) return;
@@ -261,9 +247,10 @@ export function ComposeScreen({ onCreated }: { onCreated: (id: string) => void }
   const selectedPlace = home ? deviceValue(server?.id ?? "") : workspace?.id;
 
   return (
-    <View style={[styles.wrap, keyboard > 0 && { paddingBottom: keyboard + space.lg }]}>
+    <ComposerLayout>
       <ScrollView
-        contentContainerStyle={[styles.body, keyboard > 0 && styles.bodyRaised]}
+        contentContainerStyle={styles.body}
+        automaticallyAdjustKeyboardInsets={false}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
       >
@@ -282,13 +269,14 @@ export function ComposeScreen({ onCreated }: { onCreated: (id: string) => void }
           <TextInput
             value={text}
             onChangeText={setText}
+            accessibilityLabel="Message"
             placeholder="Ask a question or describe a change."
             placeholderTextColor={color.mutedForeground}
             multiline
             editable={!busy}
             style={styles.input}
             textAlignVertical="top"
-            scrollEnabled={false}
+            scrollEnabled
           />
           <View style={styles.toolbar}>
             {cloud ? (
@@ -304,6 +292,8 @@ export function ComposeScreen({ onCreated }: { onCreated: (id: string) => void }
                 }}
               />
             )}
+          </View>
+          <View style={styles.toolbar}>
             <ComposerMenu
               icon={PermissionIcon}
               label={permission.label}
@@ -388,7 +378,7 @@ export function ComposeScreen({ onCreated }: { onCreated: (id: string) => void }
           );
         })}
       </Popover>
-    </View>
+    </ComposerLayout>
   );
 }
 
@@ -473,18 +463,12 @@ function BranchPicker({
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: color.background },
   body: {
     flexGrow: 1,
     justifyContent: "center",
     paddingHorizontal: space.lg,
     paddingVertical: space.xl,
     gap: 28,
-  },
-  bodyRaised: {
-    justifyContent: "flex-end",
-    paddingTop: space.md,
-    paddingBottom: 0,
   },
   headline: {
     color: color.foreground,
@@ -522,6 +506,7 @@ const styles = StyleSheet.create({
   },
   input: {
     minHeight: 112,
+    maxHeight: 160,
     width: "100%",
     color: color.foreground,
     fontSize: 16,
@@ -531,6 +516,7 @@ const styles = StyleSheet.create({
   },
   toolbar: {
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
     paddingHorizontal: 6,
     paddingBottom: 6,
@@ -544,8 +530,8 @@ const styles = StyleSheet.create({
   },
   send: {
     marginLeft: "auto",
-    width: 32,
-    height: 32,
+    width: 40,
+    height: 40,
     borderRadius: 16,
     backgroundColor: color.primary,
     alignItems: "center",
@@ -553,7 +539,7 @@ const styles = StyleSheet.create({
   },
   sendOff: { opacity: 0.4 },
   meta: {
-    flexDirection: "row",
+    flexDirection: "column",
     alignItems: "center",
     gap: 4,
     paddingHorizontal: 6,
@@ -561,8 +547,8 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: color.border,
   },
-  device: { flexShrink: 1, minWidth: 0, maxWidth: "42%" },
-  git: { marginLeft: "auto", flexDirection: "row", alignItems: "center", flexShrink: 1, minWidth: 0 },
+  device: { alignSelf: "flex-start", minWidth: 0, maxWidth: "100%" },
+  git: { width: "100%", flexDirection: "row", flexWrap: "wrap", alignItems: "center", minWidth: 0 },
   checkout: { flexShrink: 0 },
   error: { color: color.destructive, fontSize: 13, textAlign: "center" },
   note: { color: color.mutedForeground, fontSize: 12, textAlign: "center" },

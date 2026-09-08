@@ -458,7 +458,7 @@ export function ChatComposer({
               void submit();
             }}
           >
-            <InputGroup className="items-stretch rounded-xl">
+            <InputGroup className="compose-box items-stretch">
               <InputGroupTextarea
                 ref={textareaRef}
                 aria-label="Message"

@@ -575,7 +575,7 @@ export function ChatView({
             void submit();
           }}
         >
-          <InputGroup className="items-stretch rounded-2xl border-border/80 bg-card/95 shadow-sm">
+          <InputGroup className="compose-box compose-box-reply items-stretch">
             <InlineImageComposer
               key={chat.id}
               ref={composerRef}
@@ -673,12 +673,7 @@ export function ChatView({
                     <Square />
                     Stop
                   </InputGroupButton>
-                ) : (
-                  <span aria-hidden className="invisible flex h-6 items-center gap-1 px-2 text-sm">
-                    <Square className="size-3.5" />
-                    Stop
-                  </span>
-                )}
+                ) : null}
                 <InputGroupButton
                   type="submit"
                   variant="default"

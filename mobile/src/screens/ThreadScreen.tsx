@@ -3,10 +3,8 @@ import * as ImagePicker from "expo-image-picker";
 import {
   ActivityIndicator,
   Image,
-  KeyboardAvoidingView,
   NativeScrollEvent,
   NativeSyntheticEvent,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -51,6 +49,7 @@ import type {
 } from "../state/types";
 import { StateBadge } from "../components/Badge";
 import { Button } from "../components/Button";
+import { ComposerLayout } from "../components/ComposerLayout";
 import { ComposerMenu } from "../components/ComposerMenu";
 import { EmptyState } from "../components/Empty";
 import { Markdown } from "../components/Markdown";
@@ -236,7 +235,7 @@ export function ThreadScreen({
   };
 
   return (
-    <KeyboardAvoidingView style={styles.wrap} behavior={Platform.OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={88}>
+    <ComposerLayout>
       <View style={styles.header}>
         <View style={styles.headerText}>
           <Text style={type.caption} numberOfLines={1}>
@@ -264,6 +263,9 @@ export function ThreadScreen({
       <ScrollView
         ref={scroll}
         style={styles.feed}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        automaticallyAdjustKeyboardInsets={false}
         contentContainerStyle={styles.feedContent}
         onScroll={onFeedScroll}
         scrollEventThrottle={32}
@@ -370,6 +372,8 @@ export function ThreadScreen({
               }}
             />
           )}
+        </View>
+        <View style={styles.toolbar}>
           <ComposerMenu
             icon={permission.icon}
             label={permission.label}
@@ -387,7 +391,7 @@ export function ThreadScreen({
           </Pressable>
           {open?.context ? <ContextLabel context={open.context} /> : null}
           {working ? (
-            <Pressable onPress={() => void interrupt()} style={styles.stop}>
+            <Pressable onPress={() => void interrupt()} accessibilityRole="button" accessibilityLabel="Stop response" style={styles.stop}>
               <Square size={14} color={color.foreground} fill={color.foreground} />
               <Text style={styles.stopLabel}>Stop</Text>
             </Pressable>
@@ -402,6 +406,7 @@ export function ThreadScreen({
           <TextInput
             value={text}
             onChangeText={setText}
+            accessibilityLabel="Message"
             placeholder="Reply, or ask for the next change."
             placeholderTextColor={color.mutedForeground}
             multiline
@@ -409,6 +414,8 @@ export function ThreadScreen({
           />
           <Pressable
             onPress={() => void submit()}
+            accessibilityRole="button"
+            accessibilityLabel="Send"
             disabled={(!text.trim() && images.length === 0) || busy || images.some((image) => image.status !== "ready")}
             style={[
               styles.send,
@@ -420,7 +427,7 @@ export function ThreadScreen({
           </Pressable>
         </View>
       </View>
-    </KeyboardAvoidingView>
+    </ComposerLayout>
   );
 }
 
@@ -1003,7 +1010,9 @@ const styles = StyleSheet.create({
   composer: {
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: color.border,
-    padding: space.md,
+    paddingHorizontal: space.md,
+    paddingTop: space.md,
+    paddingBottom: 0,
     gap: 8,
   },
   imageDrafts: { gap: 8 },
@@ -1042,8 +1051,8 @@ const styles = StyleSheet.create({
   imageError: { ...type.caption, color: color.destructive, padding: 4 },
   toolbar: { flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center" },
   attach: {
-    width: 32,
-    height: 32,
+    width: 40,
+    height: 40,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: color.border,
@@ -1065,8 +1074,8 @@ const styles = StyleSheet.create({
   },
   input: { flex: 1, minHeight: 40, maxHeight: 140, color: color.foreground, fontSize: 15, paddingHorizontal: 8 },
   send: {
-    width: 32,
-    height: 32,
+    width: 40,
+    height: 40,
     borderRadius: 16,
     backgroundColor: color.primary,
     alignItems: "center",
