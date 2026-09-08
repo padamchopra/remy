@@ -8,7 +8,7 @@ import {
 } from "@remy/contract";
 import type { OrganizationStore } from "./organization-store.js";
 import type { ComputerStore, StoredComputer } from "./computer-store.js";
-import { OrganizationError } from "./organizations.js";
+import { OrganizationService, repositoryOrigin, OrganizationError } from "./organizations.js";
 
 export class ComputerService {
   constructor(private readonly store: ComputerStore, private readonly now: () => number = Date.now, private readonly minimumDaemonVersion = "0.1.0", private readonly organizations?: OrganizationStore) {}
@@ -38,6 +38,23 @@ export class ComputerService {
       if ((await this.organizations?.teamMembers(computer.organizationId, teamId))?.includes(userId)) return true;
     }
     return false;
+  }
+
+  async canUseWorkspace(computer: StoredComputer, userId: string, workspaceId: string): Promise<boolean> {
+    const capability = computer.capabilities.workspaces.find((w) => w.id === workspaceId);
+    if (!capability || !await this.canUse(computer, userId)) return false;
+    if (!this.organizations) return true;
+    const workspace = await this.organizations.workspace(computer.organizationId, workspaceId)
+      ?? (capability.origin ? await this.organizations.workspaceByOrigin(computer.organizationId, repositoryOrigin(capability.origin)) : undefined);
+    if (!workspace) return true;
+    try { await new OrganizationService(this.organizations).workspace(computer.organizationId, userId, workspace.id); return true; }
+    catch { return false; }
+  }
+
+  async canReadWorkspace(computer: StoredComputer, userId: string, cwd: unknown): Promise<boolean> {
+    if (typeof cwd !== "string") return false;
+    const workspace = computer.capabilities.workspaces.filter((w) => cwd === w.path || cwd.startsWith(w.path.replace(/\/$/, "") + "/")).sort((a,b) => b.path.length-a.path.length)[0];
+    return !!workspace && this.canUseWorkspace(computer, userId, workspace.id);
   }
 
   async canManage(computer: StoredComputer, userId: string): Promise<boolean> {
@@ -78,6 +95,7 @@ export class ComputerService {
     }
     return Promise.all(visible.map(async ({ publicKey: _, ...computer }) => computerSummarySchema.parse({
       ...computer,
+      capabilities: { ...computer.capabilities, workspaces: userId ? (await Promise.all(computer.capabilities.workspaces.map(async (w) => await this.canUseWorkspace({ ...computer, publicKey: "" }, userId, w.id) ? w : undefined))).filter((w) => w !== undefined) : computer.capabilities.workspaces },
       canManage: userId ? await this.canManage({ ...computer, publicKey: "" }, userId) : false,
       canUse: userId ? await this.canUse({ ...computer, publicKey: "" }, userId) : false,
       availability: computer.lastSeenAt !== null && now - computer.lastSeenAt <= COMPUTER_HEARTBEAT_TIMEOUT_MS ? "available" : "offline",

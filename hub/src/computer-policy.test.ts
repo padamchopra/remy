@@ -162,7 +162,7 @@ test("organization and hosted computers have no personal owner and survive the r
 test("notifications address eligible participants, persist once, and honor device revocation on retry", async () => {
   const { sqlite, db, service } = database();
   try {
-    await service.register("org", "ada", input);
+    await service.register("org", "ada", { ...input, capabilities: { ...input.capabilities, workspaces: [{ id: "w", name: "Release", path: "/src/release", origin: null }] } });
     await service.update("org", input.computerId, "ada", {
       access: { mode: "organization", userIds: [], teamIds: [] },
     });
@@ -176,7 +176,7 @@ test("notifications address eligible participants, persist once, and honor devic
         source: "manual",
         participants: [{ id: "grace", label: "Grace" }],
       },
-      detail: { id: "thread", title: "Release", entries: [] },
+      detail: { id: "thread", title: "Release", cwd: "/src/release", entries: [] },
       revision: 1,
       stale: false,
       observedAt: 1,
@@ -311,7 +311,7 @@ test("competing registrations cannot replace another member's signing key", asyn
 test("a list cursor cannot skip an update that arrives while its snapshot is being read", async () => {
   const { sqlite, db, service } = database();
   try {
-    await service.register("org", "ada", input);
+    await service.register("org", "ada", { ...input, capabilities: { ...input.capabilities, workspaces: [{ id: "w", name: "Release", path: "/src/release", origin: null }] } });
     const { HubCoordinator } = await import("./worker.js");
     const values = new Map<string, unknown>([["organizationId", "org"]]);
     let afterList: (() => Promise<void>) | undefined;
@@ -329,7 +329,7 @@ test("a list cursor cannot skip an update that arrives while its snapshot is bei
     const coordinator = new HubCoordinator({ storage, getWebSockets: () => [] } as unknown as DurableObjectState, { DB: db } as never);
     const threads = (coordinator as unknown as { threads: import("./thread-store.js").ThreadStore }).threads;
     const id = crypto.randomUUID();
-    const snapshot = { id, revision: 1, access: { organizationId: "org", owner: { id: "ada", label: "Ada" }, visibility: "open" as const, participants: [] }, detail: { id, title: "Release", entries: [] } };
+    const snapshot = { id, revision: 1, access: { organizationId: "org", owner: { id: "ada", label: "Ada" }, visibility: "open" as const, participants: [] }, detail: { id, title: "Release", cwd: "/src/release", entries: [] } };
     await threads.snapshot(input.computerId, snapshot);
     afterList = () => threads.snapshot(input.computerId, { ...snapshot, revision: 2, detail: { ...snapshot.detail, title: "Updated release" } });
     const response = await coordinator.fetch(new Request("https://internal/threads", { headers: { "x-thread-member": encodeURIComponent(JSON.stringify({ id: "ada", label: "Ada" })), "x-organization-id": "org" } }));
@@ -363,5 +363,24 @@ test("board access follows current workspace restrictions on reads and every wri
     assert.equal(await access.canRead(ticket), false);
     await service.removeMember("org", "ada", "grace");
     assert.equal(await access.canRead({ ...ticket, fields: {} }), false);
+  } finally { sqlite.close(); }
+});
+
+test("workspace restrictions apply to capability lists and thread access including nested folders", async () => {
+  const { sqlite, service, computers, organizations } = database();
+  try {
+    await service.register("org", "ada", { ...input, ownership: "organization", capabilities: { ...input.capabilities, workspaces: [{ id: "clone", name: "Android", path: "/src/android", origin: "git@github.com:studio/android.git" }] } });
+    await organizations.createWorkspace({ id: "android", organizationId: "org", name: "Android", origin: "github.com/studio/android", restricted: true, createdAt: 1, updatedAt: 1 }, { userIds: [], teamIds: ["release"] });
+    const computer = (await computers.computer("org", input.computerId))!;
+    assert.equal(await service.canUseWorkspace(computer, "grace", "clone"), false);
+    assert.equal((await service.list("org", "grace"))[0].capabilities.workspaces.length, 0);
+    await organizations.addTeamMember("org", "release", "grace", 1);
+    assert.equal(await service.canUseWorkspace(computer, "grace", "clone"), true);
+    assert.equal(await service.canReadWorkspace(computer, "grace", "/src/android/subdir"), true);
+    assert.equal(await service.canReadWorkspace(computer, "grace", "/src/android-other"), false);
+    assert.equal(await service.canReadWorkspace(computer, "grace", undefined), false);
+    await organizations.removeTeamMember("org", "release", "grace");
+    assert.equal(await service.canReadWorkspace(computer, "grace", "/src/android"), false);
+    assert.equal(await service.canUseWorkspace(computer, "ada", "clone"), true);
   } finally { sqlite.close(); }
 });
