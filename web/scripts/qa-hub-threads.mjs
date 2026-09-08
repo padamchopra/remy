@@ -97,7 +97,7 @@ try {
     .getByRole("textbox", { name: "Message", exact: true })
     .fill("Review the release notes with me.");
   await page.getByRole("button", { name: "Send message", exact: true }).click();
-  await page
+  await page.getByLabel("Thread transcript")
     .getByText("I’m checking the release notes with your latest feedback.", {
       exact: true,
     })
@@ -268,7 +268,8 @@ try {
   assert.equal(overflow, false);
   await page.screenshot({ path: join(out, "desktop.png") });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("button", { name: "Hide sidebar", exact: true }).click();
+  const toggle = page.getByRole("button", { name: "Toggle Sidebar", exact: true });
+  if (await toggle.isVisible()) { await toggle.click(); await page.keyboard.press("Escape"); }
   await page.waitForTimeout(250);
   await page.screenshot({ path: join(out, "mobile.png") });
   assert.equal(
@@ -300,7 +301,7 @@ try {
     .getByRole("button", { name: "Open to organization", exact: true })
     .waitFor();
   assert.equal(
-    (await call("computer-owner", "", undefined, "GET")).status,
+    (await call("reader", "", undefined, "GET")).status,
     404,
   );
   assert.equal((await call("grace", "", undefined, "GET")).status, 200);
@@ -309,7 +310,7 @@ try {
     .getByRole("textbox", { name: "Message", exact: true })
     .fill("Keep this follow-up with the remaining participants.");
   await page.getByRole("button", { name: "Send message", exact: true }).click();
-  await teammate.getByText("Sign in again.", { exact: true }).waitFor();
+  await teammate.getByText("Sign in again.", { exact: true }).first().waitFor();
   assert.equal(
     await teammate
       .getByText("Keep this follow-up with the remaining participants.", {

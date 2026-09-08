@@ -12,7 +12,7 @@ function token(random: Random): string {
   return btoa(raw).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 
-function repositoryOrigin(value: string): string {
+export function repositoryOrigin(value: string): string {
   return value.trim().replace(/\.git$/i, "").replace(/^git@([^:]+):/, "$1/").replace(/^ssh:\/\//, "").replace(/^https?:\/\//, "").replace(/\/$/, "");
 }
 

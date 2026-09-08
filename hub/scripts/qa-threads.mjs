@@ -24,6 +24,7 @@ process.env.MC_CONFIG_DIR = join(temp, "computer");
 const workspacePath = join(temp, "release-workspace");
 mkdirSync(workspacePath);
 execFileSync("git", ["init", "-q", workspacePath]);
+execFileSync("git", ["-C", workspacePath, "remote", "add", "origin", "https://example.test/studio/release.git"]);
 const bundle = join(temp, "worker.mjs");
 await build({
   stdin: {
@@ -115,6 +116,7 @@ const tokens = {};
 for (const [id, name, kind] of [
   ["ada", "Ada", "web"],
   ["grace", "Grace", "phone"],
+  ["reader", "Lin", "web"],
   ["computer-owner", "Ada", "computer"],
 ]) {
   const token = randomBytes(32).toString("base64url");
@@ -229,6 +231,11 @@ const {
 const { config } = await import("../../server/dist/config.js");
 config.deviceName = "Studio";
 const workspace = await addWorkspace("Release notes", workspacePath);
+if (process.env.QA_THREAD_PICKER) {
+  const second = join(temp, "android-workspace"); mkdirSync(second); execFileSync("git", ["init", "-q", second]);
+  execFileSync("git", ["-C", second, "remote", "add", "origin", "https://example.test/studio/android.git"]);
+  await addWorkspace("Android", second);
+}
 const registration = await registerHubComputer(
   hubUrl,
   organizationId,

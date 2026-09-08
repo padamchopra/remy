@@ -1,0 +1,25 @@
+import assert from 'node:assert/strict';
+import { readFileSync, mkdirSync } from 'node:fs';
+import { chromium } from 'playwright-core';
+import { chromiumPath } from './chromium.mjs';
+const info=JSON.parse(readFileSync(process.env.QA_SESSION,'utf8')); const out=process.env.QA_ARTIFACTS;mkdirSync(out,{recursive:true});
+const base=`${info.hubUrl}/api/organizations/${info.organizationId}`;
+const call=async(user,path,method='GET',body)=>{const r=await fetch(base+path,{method,headers:{authorization:`Bearer ${info.tokens[user]}`,'content-type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})});return {status:r.status,body:r.status===204?null:await r.json()};};
+await fetch(info.controlUrl+'/restore-grace',{method:'POST',headers:{authorization:`Bearer ${info.controlToken}`}});
+const browser=await chromium.launch({executablePath:chromiumPath()});const context=await browser.newContext({viewport:{width:1280,height:900},colorScheme:'dark',recordVideo:{dir:out,size:{width:1280,height:900}}});await context.addCookies([{name:'remy_session',value:info.tokens.grace,url:info.hubUrl,httpOnly:true,sameSite:'Lax'}]);const p=await context.newPage();
+try {
+ await p.goto(`${info.hubUrl}/#/threads?organization=${info.organizationId}`);
+ const computer=p.getByRole('combobox',{name:'Thread computer',exact:true});await computer.click();await p.getByRole('option',{name:'Studio',exact:true}).click();await computer.click();await p.keyboard.press('Escape');
+ const workspace=p.getByRole('combobox',{name:'Thread workspace',exact:true});await workspace.click();await p.getByRole('option',{name:'Android',exact:true}).click();await workspace.click();await p.keyboard.press('Escape');assert.equal(await workspace.innerText(),'Android');
+ await p.getByLabel('Thread name',{exact:true}).fill('Check the Android release');await p.screenshot({path:out+'/picker.png'});await p.getByRole('button',{name:'Start thread',exact:true}).click();await p.getByRole('textbox',{name:'Message',exact:true}).waitFor();
+ const id=p.url().split('/threads/')[1].split('?')[0];const threadPath=`/computers/${info.computerId}/threads/${id}`;
+ const started=await call('grace',threadPath);assert.equal(started.status,200);assert.equal(started.body.detail.title,'Check the Android release');assert.ok(started.body.detail.cwd.endsWith('android-workspace'));
+ await p.getByRole('textbox',{name:'Message',exact:true}).fill('Review the Android release.');await p.getByRole('button',{name:'Send message',exact:true}).click();await p.getByLabel('Thread transcript').getByText('I’m checking the release notes with your latest feedback.',{exact:true}).waitFor();
+ const registered=await call('ada','/workspaces','POST',{name:'Android',origin:'https://example.test/studio/android.git',access:{userIds:[],teamIds:[]}});assert.equal(registered.status,201);
+ await p.getByText('This thread is unavailable',{exact:true}).waitFor();assert.equal((await call('grace',threadPath)).status,404);assert.equal((await call('grace',threadPath+'/message','POST',{text:'Should be denied',messageId:`u-${crypto.randomUUID()}`})).status,404);
+ const list=await call('grace','/computers');assert.ok(!list.body.computers[0].capabilities.workspaces.some(w=>w.name==='Android'));
+ const all=await call('ada','/computers');const android=all.body.computers[0].capabilities.workspaces.find(w=>w.name==='Android');assert.equal((await call('grace',`/computers/${info.computerId}/threads`,'POST',{workspaceId:android.id})).status,404);
+ await call('ada',`/workspaces/${registered.body.id}`,'PATCH',{access:{userIds:['grace'],teamIds:[]}});await p.getByRole('textbox',{name:'Message',exact:true}).waitFor();await p.screenshot({path:out+'/restored-access.png'});
+ await p.getByRole('button',{name:'Team threads',exact:true}).click();await p.setViewportSize({width:390,height:844});await workspace.waitFor();assert.ok(await p.getByRole('form',{name:'New thread'}).evaluate(e=>e.scrollWidth<=e.clientWidth));
+ await call('ada',`/workspaces/${registered.body.id}`,'DELETE');console.log('PASS: composer computer and workspace selection, keyboard dismissal, start on computer, persisted folder, live workspace revocation, denied reads/writes/start, grant recovery, narrow layout');
+} catch(e){await p.screenshot({path:out+'/failure.png'});console.error(await p.locator('body').innerText());throw e;}finally{await context.close();await browser.close();}console.log(`VIDEO=${await p.video().path()}`);

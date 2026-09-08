@@ -618,6 +618,7 @@ export class HubCoordinator {
     const user = request.headers.get("x-user-id");
     if (org) await this.ctx.storage.put("organizationId", org);
     if (url.pathname === "/organization/changed") {
+      this.invalidateComputers();
       for (const socket of this.ctx.getWebSockets()) void this.sendOrganizationReset(socket);
       return Response.json({ ok: true });
     }
@@ -901,7 +902,12 @@ export class HubCoordinator {
     const org = await this.ctx.storage.get<string>("organizationId");
     const computers = org ? await this.computerService().list(org, userId) : [];
     const allowed = new Set(computers.filter((c) => c.canUse).map((c) => c.computerId));
-    return (await this.threads.list(userId)).filter((thread) => allowed.has(thread.computerId));
+    const visible = [];
+    for (const thread of await this.threads.list(userId)) {
+      const computer = org && await this.computers.computer(org, thread.computerId);
+      if (computer && allowed.has(thread.computerId) && await this.computerService().canReadWorkspace(computer, userId, thread.detail.cwd)) visible.push(thread);
+    }
+    return visible;
   }
 
   private async sendOrganizationReset(socket: WebSocket, cursor = 0): Promise<void> {
@@ -930,7 +936,7 @@ export class HubCoordinator {
       const current = await this.threads.get(computerId, threadId);
       const key = `threads:viewer:${meta.subscriptionId}:${computerId}:${threadId}`;
       const computer = await this.computers.computer(organizationId, computerId);
-      if (!current || !computer || !await this.computerService().canUse(computer, meta.userId) || !canReadThread(current.access, meta.userId)) {
+      if (!current || !computer || !await this.computerService().canUse(computer, meta.userId) || !canReadThread(current.access, meta.userId) || !await this.computerService().canReadWorkspace(computer, meta.userId, current.detail.cwd)) {
         if (await this.ctx.storage.get<boolean>(key)) {
           socket.send(JSON.stringify({ kind: "remove", cursor: frame.cursor, computerId, threadId }));
           await this.ctx.storage.delete(key);
@@ -939,7 +945,7 @@ export class HubCoordinator {
       }
       await this.ctx.storage.put(key, true);
       // Replays use the current access decision, never the historical visibility.
-      if (frame.kind === "snapshot" && !canReadThread(frame.thread.access, meta.userId)) return;
+      if (frame.kind === "snapshot" && (!canReadThread(frame.thread.access, meta.userId) || !await this.computerService().canReadWorkspace(computer, meta.userId, frame.thread.detail.cwd))) return;
     }
     socket.send(JSON.stringify(frame));
   }
@@ -978,9 +984,10 @@ export class HubCoordinator {
       return new Response(null, { status: 101, webSocket: client });
     }
     if (!computerId) return jsonError("This action is not available.", 404);
-    try { await this.computerService().requireUse(request.headers.get("x-organization-id")!, computerId, actor.id); } catch { return jsonError("This computer is not available to you.", 404); }
+    let target;
+    try { target = await this.computerService().requireUse(request.headers.get("x-organization-id")!, computerId, actor.id); } catch { return jsonError("This computer is not available to you.", 404); }
     const snapshot = id ? await this.threads.get(computerId, id) : undefined;
-    if (id && (!snapshot || !canReadThread(snapshot.access, actor.id))) return jsonError("This thread is no longer available.", 404);
+    if (id && (!snapshot || !canReadThread(snapshot.access, actor.id) || !await this.computerService().canReadWorkspace(target, actor.id, snapshot.detail.cwd))) return jsonError("This thread is no longer available.", 404);
     if (id && !action && request.method === "GET" && !this.computerSocket(computerId)) return Response.json({ ...snapshot!, stale: true, member: actor });
     if (id && action !== "join" && request.method !== "GET" && !canWriteThread(snapshot!.access, actor.id)) return jsonError("Join this thread before replying.", 403);
     if (action === "attachments" && id) {
@@ -1009,6 +1016,11 @@ export class HubCoordinator {
     if (!socket) return jsonError("This computer is offline; try again when it reconnects.", 503);
     const payload = await limitedBody(request, 96_000);
     if (!payload) return jsonError("Send a shorter message.", 413);
+    if (!id) {
+      let input;
+      try { input = JSON.parse(new TextDecoder().decode(payload)); } catch { return jsonError("Choose a workspace.", 400); }
+      if (typeof input.workspaceId !== "string" || !await this.computerService().canUseWorkspace(target, actor.id, input.workspaceId)) return jsonError("This workspace is not available to you.", 404);
+    }
     const requestId = crypto.randomUUID();
     const response = new Promise<Response>((resolve) => {
       const timer = setTimeout(() => { this.pending.delete(requestId); resolve(jsonError("This computer did not answer; check the thread before retrying.", 504)); }, 30_000);

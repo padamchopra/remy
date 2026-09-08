@@ -1,3 +1,4 @@
+import { HubThreadComposer } from "./HubThreadComposer";
 import { watchHubComputers } from "@/lib/hub-computers";
 import { HubNotifications } from "./HubNotifications";
 import { deviceIcon, type DeviceIconId } from "@/lib/devices";
@@ -207,42 +208,7 @@ export default function HubThreads({
           ))}
           {!threads.length && !computers.some((c) => c.canUse && c.availability !== "offline") && <Empty><EmptyHeader><EmptyTitle>Connect a computer</EmptyTitle><EmptyDescription>Your threads run on a computer you connect to your organization.</EmptyDescription></EmptyHeader><Button variant="outline" data-link onClick={() => navigate({ name: "settings", tab: "devices", organizationId })}>Open Computers</Button></Empty>}
           {!threads.length && computers.some((c) => c.canUse && c.availability !== "offline") && <p className="text-sm text-muted-foreground">Choose a workspace to start a thread.</p>}
-          {computers
-            .filter(
-              (computer) =>
-                computer.canUse !== false && computer.availability !== "offline" && !computer.updateRequired,
-            )
-            .flatMap((computer) =>
-              computer.capabilities.workspaces.map((workspace) => (
-                <Button
-                  key={`${computer.computerId}:${workspace.id}`}
-                  variant="outline"
-                  disabled={busy}
-                  onClick={async () => {
-                    setBusy(true);
-                    setError("");
-                    try {
-                      const result = await hubRequest<{ id: string }>(
-                        hubThreadPath(organizationId, computer.computerId),
-                        "POST",
-                        { workspaceId: workspace.id },
-                      );
-                      open(computer.computerId, result.id);
-                    } catch (e) {
-                      setError(
-                        e instanceof Error
-                          ? e.message
-                          : "This thread could not start.",
-                      );
-                    } finally {
-                      setBusy(false);
-                    }
-                  }}
-                >
-                  Start in {workspace.name} · {computer.name}
-                </Button>
-              )),
-            )}
+          <HubThreadComposer organizationId={organizationId} computers={computers} open={open} />
         </div>
       ) : (
         <>
