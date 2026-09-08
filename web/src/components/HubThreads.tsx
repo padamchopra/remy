@@ -205,11 +205,8 @@ export default function HubThreads({
               <span className="min-w-0 break-words">{item.detail.title}<span className="block text-xs text-muted-foreground">{computers.find((c) => c.computerId === item.computerId)?.name ?? "Computer unavailable"} · Started by {item.access.owner.label}{item.stale ? " · Offline" : ""}</span></span>
             </Button>
           ))}
-          {!threads.length && (
-            <p className="text-sm text-muted-foreground">
-              Choose a workspace to start a thread.
-            </p>
-          )}
+          {!threads.length && !computers.some((c) => c.canUse && c.availability !== "offline") && <Empty><EmptyHeader><EmptyTitle>Connect a computer</EmptyTitle><EmptyDescription>Your threads run on a computer you connect to your organization.</EmptyDescription></EmptyHeader><Button variant="outline" data-link onClick={() => navigate({ name: "settings", tab: "devices", organizationId })}>Open Computers</Button></Empty>}
+          {!threads.length && computers.some((c) => c.canUse && c.availability !== "offline") && <p className="text-sm text-muted-foreground">Choose a workspace to start a thread.</p>}
           {computers
             .filter(
               (computer) =>

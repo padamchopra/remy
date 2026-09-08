@@ -27,7 +27,16 @@ execFileSync("git", ["init", "-q", workspacePath]);
 const bundle = join(temp, "worker.mjs");
 await build({
   stdin: {
-    contents: 'export { default, HubCoordinator } from "./hub/src/worker.ts";',
+    contents: process.env.QA_HUB_WEB === "1" ? `
+      import worker from "./hub/src/worker.ts";
+      export { HubCoordinator } from "./hub/src/worker.ts";
+      export default { ...worker, fetch(request, env, ctx) {
+        return worker.fetch(request, { ...env, BETTER_AUTH_URL: new URL(request.url).origin,
+          AUTH_SECRET: { get: async () => "disposable-qa-secret-with-more-than-thirty-two-characters" },
+          EMAILS: { send: async (mail) => { await env.DB.prepare("INSERT INTO qa_emails (recipient,url) VALUES (?,?)").bind(mail.recipient,mail.url).run(); } }
+        }, ctx);
+      } };
+    ` : 'export { default, HubCoordinator } from "./hub/src/worker.ts";',
     resolveDir: root,
     loader: "ts",
   },
@@ -62,6 +71,7 @@ const mf = new Miniflare(
     workers: [
       {
         name: "hub",
+        ...(process.env.QA_HUB_WEB === "1" ? { assets: { directory: join(root, "web/dist"), binding: "ASSETS", run_worker_first: ["/api/*", "/health", "/invite/*"], routerConfig: { has_user_worker: true }, assetConfig: { not_found_handling: "single-page-application" } } } : {}),
         script: readFileSync(bundle, "utf8"),
         modules: true,
         compatibilityDate: "2026-09-04",
@@ -94,6 +104,7 @@ for (const file of readdirSync(join(root, "hub/migrations"))
     .filter(Boolean))
     await db.prepare(statement).run();
 }
+await db.prepare("CREATE TABLE qa_emails (recipient TEXT, url TEXT)").run();
 const organizationId = "release-team";
 const now = Date.now();
 await db
@@ -276,7 +287,10 @@ const control = createServer(async (req, res) => {
   }
   const controlPath = new URL(req.url, "http://127.0.0.1");
   const askedThread = controlPath.searchParams.get("threadId") ?? thread.id;
-  if (controlPath.pathname === "/local-thread") {
+  if (controlPath.pathname === "/mail") {
+    const value = await db.prepare("SELECT url FROM qa_emails WHERE recipient=? ORDER BY rowid DESC LIMIT 1").bind(controlPath.searchParams.get("email") ?? "").first();
+    res.setHeader("content-type", "application/json"); res.end(JSON.stringify(value ?? {})); return;
+  } else if (controlPath.pathname === "/local-thread") {
     const { getChat } = await import("../../server/dist/chat.js");
     const local = getChat(askedThread);
     res.setHeader("content-type", "application/json");

@@ -162,3 +162,19 @@ test("web callback sessions become HTTP-only hashed sessions", async () => {
   assert.equal(store.sessions[0].clientKind, "web");
   assert.doesNotMatch(JSON.stringify(store.sessions), /remy_session|callback/);
 });
+
+test("hosted sessions reject foreign origins and sign out only the current session", async () => {
+  const store = new MemoryAccountStore();
+  const service = new AccountService(store, () => 50_000, deterministicRandom());
+  const pair = await service.createSession("person-1", "web", "Web");
+  const phone = await service.createSession("person-1", "phone", "Phone");
+  const route = createRouteHandler({ accountStore: () => store, accountService: () => service });
+  const foreign = await route(new Request("https://hub.example/api/sessions/current", { method: "DELETE", headers: { cookie: `remy_session=${pair.accessToken}`, origin: "https://unrelated.example" } }), env());
+  assert.equal(foreign.status, 401);
+  assert.ok(await service.authenticate(pair.accessToken));
+  const signedOut = await route(new Request("https://hub.example/api/sessions/current", { method: "DELETE", headers: { cookie: `remy_session=${pair.accessToken}`, origin: "https://hub.example" } }), env());
+  assert.equal(signedOut.status, 204);
+  assert.match(signedOut.headers.get("set-cookie") ?? "", /Max-Age=0/);
+  assert.equal(await service.authenticate(pair.accessToken), undefined);
+  assert.ok(await service.authenticate(phone.accessToken));
+});

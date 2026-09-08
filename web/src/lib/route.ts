@@ -8,7 +8,7 @@ import type { SettingsTab } from "@/lib/settings-sections";
 /// reload; a hash is the same string in both places, so the browser and the
 /// desktop window agree without either needing a rewrite rule.
 
-export type Route =
+export type Route = (
   // Inbox is a list of agents and the conversation with one, so which agent is
   // open is part of where the window is. Addressed by handle, which is what
   // somebody types and what a mention already says.
@@ -21,7 +21,7 @@ export type Route =
   | { name: "board"; scope?: string }
   | { name: "ticket"; key: string }
   | { name: "prs" }
-  | { name: "settings"; tab: SettingsTab; analyticsTab?: AnalyticsTab; deviceId?: string; organizationId?: string };
+  | { name: "settings"; tab: SettingsTab; analyticsTab?: AnalyticsTab; deviceId?: string; organizationId?: string }) & { organizationId?: string };
 
 export interface AppLocation {
   route: Route;
@@ -32,7 +32,7 @@ const SETTINGS_TABS: SettingsTab[] = [
   "version-control",
   "providers",
   "devices",
-  "analytics",
+  "analytics", "members", "teams",
 ];
 
 /// The section a route belongs to, which is what the sidebar highlights.
@@ -43,7 +43,7 @@ export function sectionOf(route: Route): "inbox" | "chats" | "workspaces" | "prs
   return route.name;
 }
 
-export function parseLocation(hash: string): AppLocation {
+function parseRoute(hash: string): AppLocation {
   const raw = hash.replace(/^#/, "");
   const [path, query = ""] = raw.split("?");
   const [head, tail] = path.replace(/^\/+/, "").split("/");
@@ -112,5 +112,14 @@ export function formatLocation({ route }: AppLocation): string {
               : route.name === "prs"
                 ? "/pull-requests"
                 : `/inbox${route.agent ? `/${encodeURIComponent(route.agent)}` : ""}`;
-  return `#${path}`;
+  if (!route.organizationId) return `#${path}`;
+  const [base, query] = path.split("?");
+  const params = new URLSearchParams(query); params.set("organization", route.organizationId);
+  return `#${base}?${params}`;
+}
+
+export function parseLocation(hash: string): AppLocation {
+  const result = parseRoute(hash);
+  const org = new URLSearchParams(hash.split("?")[1] ?? "").get("organization");
+  return org ? { route: { ...result.route, organizationId: org } } : result;
 }
