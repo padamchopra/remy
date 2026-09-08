@@ -32,3 +32,5 @@ jobs:
       - run: npm run typecheck --prefix contract
       - run: npm test --prefix hub
       - run: npm run typecheck --prefix hub
+      - run: npm ci --prefix hub/runtime --no-audit --no-fund
+      - run: npm run typecheck --prefix hub/runtime

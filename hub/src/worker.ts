@@ -1,3 +1,7 @@
+import { HostedSettingsStore } from "./hosted-settings.js";
+import { HostedLifecycle } from "./hosted-lifecycle.js";
+import { HttpRuntimeProvider } from "./computer-runtime.js";
+import { hostedSettingsSchema } from "@remy/contract";
 import { BoardAccess } from "./board-access.js";
 import { HubNotifications, type ApplePushConfig } from "./notifications.js";
 import { canReadThread, canWriteThread, threadMemberSchema, threadSnapshotSchema, type ThreadLiveFrame, type ThreadMember } from "@remy/contract";
@@ -38,6 +42,10 @@ import { OrganizationError, OrganizationService } from "./organizations.js";
 
 export interface Env extends ApplePushConfig {
   ASSETS?: Fetcher;
+  HOSTED_CONTROL_URL?: string;
+  HOSTED_CONTROL_TOKEN?: SecretsStoreSecret;
+  HOSTED_IMAGE?: string;
+  HOSTED_ARCHIVE?: string;
   AUTH_SECRET: SecretsStoreSecret;
   BETTER_AUTH_URL: string;
   COORDINATOR: DurableObjectNamespace;
@@ -349,7 +357,15 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         await organizations.member(organizationId, identity.userId);
         if (request.headers.get("origin") && request.headers.get("origin") !== url.origin) return jsonError("Open this computer in Remy.", 403);
         const id = decodeURIComponent(computerMatch[1]);
-        if (request.method === "DELETE") await computers.remove(organizationId, id, identity.userId);
+        if (request.method === "DELETE") {
+          const current=await computerStore.computer(organizationId,id);
+          if(current?.ownership==="hosted") {
+            if(!await computers.canManage(current,identity.userId)) return jsonError("Computer not found.",404);
+            const removed=await board().fetch(new Request(`https://internal/hosted-computers/${encodeURIComponent(id)}`,{method:"DELETE",headers:{"x-organization-id":organizationId}}));
+            if(!removed.ok) return removed;
+          }
+          await computers.remove(organizationId, id, identity.userId);
+        }
         else {
           const input = await body<{ name?: unknown; icon?: unknown; access?: unknown }>(request);
           if (!input || (input.name !== undefined && (typeof input.name !== "string" || !input.name.trim() || input.name.length > 120)) || (input.icon !== undefined && (typeof input.icon !== "string" || input.icon.length > 40))) return jsonError("Choose valid computer details.", 400);
@@ -363,6 +379,32 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       if (/^computers\/[^/]+\/(proxy|stream)(\/|$)/.test(tail)) {
         await organizations.member(organizationId, identity.userId);
         return jsonError("Use the thread's own address.", 403);
+      }
+      const hostedMatch = /^hosted(?:\/([^/]+)(?:\/(prewarm|settings))?)?$/.exec(tail);
+      if (hostedMatch) {
+        const member = await organizations.member(organizationId, identity.userId);
+        const workspaceId = hostedMatch[1] ? decodeURIComponent(hostedMatch[1]) : "";
+        if (workspaceId) await organizations.workspace(organizationId, identity.userId, workspaceId);
+        const settings = new HostedSettingsStore(env.DB, () => env.AUTH_SECRET.get());
+        if (request.method === "GET" && (!workspaceId || hostedMatch[2] === "settings")) return Response.json({ settings: await settings.settings(organizationId,workspaceId), secretNames: member.role !== "member" ? await settings.secretNames(organizationId) : [], available: !!env.HOSTED_CONTROL_URL && !!env.HOSTED_CONTROL_TOKEN && !!env.HOSTED_IMAGE });
+        if (request.method === "PUT" && (!workspaceId || hostedMatch[2] === "settings")) {
+          if (member.role === "member") return jsonError("Ask an admin to change hosted computers.",403);
+          const input = await body<{settings?:unknown;secret?:{name?:unknown;value?:unknown}}>(request);
+          if (input?.secret) {
+            const {name,value}=input.secret;
+            if (workspaceId || !["ANTHROPIC_API_KEY","OPENAI_API_KEY"].includes(String(name)) || (value!==null && (typeof value!=="string" || !value || value.length>8192))) return jsonError("Choose a valid model key.",400);
+            await settings.setSecret(organizationId,String(name),value as string|null);
+          } else {
+            const parsed=hostedSettingsSchema.safeParse(input?.settings);
+            if(!parsed.success && !(workspaceId && input?.settings===null)) return jsonError("Choose valid hosted computer settings.",400);
+            await settings.save(organizationId,workspaceId,input!.settings);
+          }
+          await board().fetch(new Request("https://internal/organization/changed",{method:"POST",headers:{"x-organization-id":organizationId}}));
+          return Response.json({ok:true});
+        }
+        if(workspaceId && (request.method === "GET" || (request.method === "POST" && hostedMatch[2] === "prewarm"))) {
+          return board().fetch(new Request(`https://internal/hosted/${encodeURIComponent(workspaceId)}`,{method:request.method,headers:{"x-organization-id":organizationId}}));
+        }
       }
       if (tail === "threads" || tail === "threads/live" || /^computers\/[^/]+\/threads(?:\/|$)/.test(tail)) {
         await organizations.member(organizationId, identity.userId);
@@ -449,9 +491,11 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       if (!tail && request.method === "PATCH") { const input = await body<{ name?: string }>(request); const name = input?.name?.trim(); if (!name || name.length > 120) return jsonError("Enter an organization name.", 400); await organizations.rename(organizationId, identity.userId, name); return new Response(null, { status: 204 }); }
       if (!tail && request.method === "DELETE") {
         const input = await body<{ confirmation?: string }>(request);
-        await organizations.delete(organizationId, identity.userId, input?.confirmation ?? "");
+        const impact = await organizations.deletionImpact(organizationId, identity.userId);
+        if (input?.confirmation !== impact.name) return jsonError("Enter the organization name to confirm deletion.", 400);
         const response = await board().fetch("https://internal/board", { method: "DELETE" });
         if (!response.ok) throw new Error("Organization board deletion failed");
+        await organizations.delete(organizationId, identity.userId, input?.confirmation ?? "");
         return new Response(null, { status: 204 });
       }
       const memberMatch = /^members\/([^/]+)$/.exec(tail);
@@ -473,7 +517,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         if (input.access !== undefined && input.access !== null && (!Array.isArray(input.access.teamIds) || !input.access.teamIds.every((id) => typeof id === "string") || !Array.isArray(input.access.userIds) || !input.access.userIds.every((id) => typeof id === "string"))) return jsonError("Choose valid workspace access.", 400);
         return Response.json(await organizations.updateWorkspace(organizationId, identity.userId, decodeURIComponent(workspaceMatch[1]), { ...(typeof input.name === "string" ? { name: input.name.trim() } : {}), ...(input.access !== undefined ? { access: input.access as { teamIds: string[]; userIds: string[] } | null } : {}) }));
       }
-      if (workspaceMatch && request.method === "DELETE") { await organizations.deleteWorkspace(organizationId, identity.userId, decodeURIComponent(workspaceMatch[1])); return new Response(null, { status: 204 }); }
+      if (workspaceMatch && request.method === "DELETE") { if ((await organizations.member(organizationId, identity.userId)).role === "member") return jsonError("Only an administrator can remove a workspace.", 403); const cleanup = await board().fetch(new Request(`https://internal/hosted-workspace/${workspaceMatch[1]}`, {method:"DELETE"})); if (!cleanup.ok) return jsonError("This hosted computer could not be removed; try again.", 502); await organizations.deleteWorkspace(organizationId, identity.userId, decodeURIComponent(workspaceMatch[1])); return new Response(null, { status: 204 }); }
     }
   } catch (error) {
     if (error instanceof OrganizationError) return jsonError(error.message, error.status);
@@ -585,6 +629,7 @@ export class HubCoordinator {
   private readonly board: OrganizationBoard;
   private readonly threads: ThreadStore;
   private threadPublishing = Promise.resolve();
+  private hosted?: HostedLifecycle;
   private readonly computers: D1ComputerStore;
   private readonly notifications: HubNotifications;
   private readonly pending = new Map<string, { computerId: string; resolve: (response: Response) => void; timer: ReturnType<typeof setTimeout> }>();
@@ -685,6 +730,23 @@ export class HubCoordinator {
       await this.scheduleAlarm(Date.now() + COMPUTER_HEARTBEAT_TIMEOUT_MS);
       return new Response(null, { status: 101, webSocket: client });
     }
+    const removeWorkspace = /^\/hosted-workspace\/([^/]+)$/.exec(url.pathname);
+    if(removeWorkspace && request.method === "DELETE") { const state = await this.hostedService().get(decodeURIComponent(removeWorkspace[1])); if(state) await this.hostedService().remove(state.computerId); return new Response(null,{status:204}); }
+    const removeHosted=/^\/hosted-computers\/([^/]+)$/.exec(url.pathname);
+    if(removeHosted && request.method==="DELETE") {try{await this.hostedService().remove(decodeURIComponent(removeHosted[1]));return Response.json({ok:true});}catch{return jsonError("This hosted computer could not be removed; try again.",502);}}
+    const hostedMatch=/^\/hosted\/([^/]+)$/.exec(url.pathname);
+    if(hostedMatch && org){
+      const workspace=decodeURIComponent(hostedMatch[1]);
+      const safe=(state:Awaited<ReturnType<HostedLifecycle["get"]>>)=>state?{workspaceId:state.workspaceId,computerId:state.computerId,provider:state.provider,phase:state.phase,lastUsedAt:state.lastUsedAt,error:state.error,usage:state.usage,timing:state.timing}:null;
+      if(request.method==="POST") {
+        const settings=await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).settings(org,workspace);
+        if(!settings.enabled) return jsonError("Enable hosted computers for this workspace.",409);
+        this.ctx.waitUntil(this.hostedService().ensure(workspace,settings).catch(()=>undefined).finally(()=>this.invalidateComputers()));
+        await this.scheduleAlarm(Date.now()+60_000);
+        return Response.json({state:safe(await this.hostedService().get(workspace))},{status:202});
+      }
+      if(request.method==="GET") return Response.json({state:safe(await this.hostedService().get(workspace))});
+    }
     const threadResponse = await this.threadRequest(request);
     if (threadResponse) return threadResponse;
     const proxyMatch = /^\/computers\/([^/]+)\/proxy(\/.*)$/.exec(url.pathname);
@@ -736,7 +798,12 @@ export class HubCoordinator {
       try {
         const parsed = boardAppendInputSchema.parse(input?.input);
         if (org && user && !await new BoardAccess(new D1OrganizationStore(this.env.DB), this.board, org, user).canWrite(parsed)) return jsonError("Ticket not found.", 404);
-        return Response.json(await this.board.append(parsed, actor.data), { status: 201 });
+        const event=await this.board.append(parsed, actor.data);
+        if(parsed.entity==="ticket" && parsed.payload.assigneeAgentId) {
+          const ticket=await this.board.detail("tickets",parsed.entityId);
+          if(typeof ticket?.fields.projectId==="string") this.ctx.waitUntil(this.prewarmWorkspace(ticket.fields.projectId));
+        }
+        return Response.json(event, { status: 201 });
       } catch {
         return jsonError("Invalid board event", 400);
       }
@@ -754,6 +821,7 @@ export class HubCoordinator {
     }
     if (request.method === "DELETE" && url.pathname === "/board") {
       for (const socket of this.ctx.getWebSockets()) socket.close(1001, "This organization was deleted.");
+      for (const state of await this.hostedService().list()) await this.hostedService().remove(state.computerId);
       await this.ctx.storage.deleteAll();
       return new Response(null, { status: 204 });
     }
@@ -828,6 +896,8 @@ export class HubCoordinator {
     if (frame.kind === "thread.snapshot") {
       if (frame.snapshot.access.organizationId !== organizationId) { socket.close(1008, "Invalid organization."); return; }
       await this.threads.snapshot(attachment.computerId, frame.snapshot);
+      const running=(await this.threads.list()).some(t=>t.computerId===attachment.computerId && ["working","running","busy","needs_input"].includes(String(t.detail.state)));
+      await this.hostedService().activity(attachment.computerId,running,frame.snapshot.detail.entries.some(e=>e.kind==="assistant"));
       return;
     }
     if (frame.kind === "thread.manifest") { await this.threads.manifest(attachment.computerId, frame.ids); return; }
@@ -892,6 +962,39 @@ export class HubCoordinator {
         try { socket.send(JSON.stringify({ kind: "reset", cursor: 0 })); } catch { socket.close(); }
       }
     }
+  }
+
+  private async prewarmWorkspace(workspaceId:string):Promise<void> {
+    const org=await this.ctx.storage.get<string>("organizationId");if(!org || !await new D1OrganizationStore(this.env.DB).workspace(org,workspaceId))return;
+    const settings=await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).settings(org,workspaceId);
+    if(!settings.enabled)return;
+    try{await this.hostedService().ensure(workspaceId,settings);}catch{}finally{this.invalidateComputers();await this.scheduleAlarm(Date.now()+60_000);}
+  }
+
+  private hostedService(): HostedLifecycle {
+    if(this.hosted) return this.hosted;
+    const settings=new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get());
+    this.hosted=new HostedLifecycle(new DurableBoardStorage(this.ctx.storage),id=>{
+      if(!this.env.HOSTED_CONTROL_URL || !this.env.HOSTED_CONTROL_TOKEN) throw new Error("Hosted computers are not configured.");
+      return new HttpRuntimeProvider(id,this.env.HOSTED_CONTROL_URL,()=>this.env.HOSTED_CONTROL_TOKEN!.get());
+    }, async state=>{
+      const org=(await this.ctx.storage.get<string>("organizationId"))!;
+      const workspace=await new D1OrganizationStore(this.env.DB).workspace(org,state.workspaceId);
+      if(!workspace || !this.env.HOSTED_IMAGE) throw new Error("Hosted workspace unavailable.");
+      const encoded=(buffer:ArrayBuffer)=>btoa(String.fromCharCode(...new Uint8Array(buffer))).replaceAll("+","-").replaceAll("/","_").replace(/=+$/,"");
+      let keys=await this.ctx.storage.get<{publicKey:string;privateKey:string}>(`hosted-key:${state.computerId}`);
+      if(!keys){const pair=await crypto.subtle.generateKey("Ed25519",true,["sign","verify"]) as CryptoKeyPair;keys={publicKey:encoded(await crypto.subtle.exportKey("spki",pair.publicKey)),privateKey:encoded(await crypto.subtle.exportKey("pkcs8",pair.privateKey))};await this.ctx.storage.put(`hosted-key:${state.computerId}`,keys);}
+      const now=Date.now();
+      const registration={computerId:state.computerId,organizationId:org,ownerUserId:null,ownership:"hosted" as const,name:`Hosted ${workspace.name}`,icon:"cloud",platform:"linux" as const,daemonVersion:this.env.MINIMUM_DAEMON_VERSION??"0.1.0",protocol:{minimum:1,maximum:1},publicKey:keys.publicKey,capabilities:{providers:[],workspaces:[{id:workspace.id,name:workspace.name,path:"/workspace",origin:workspace.origin}],worktrees:true,terminals:true,emulator:false},access:{mode:"organization" as const,userIds:[],teamIds:[]},registeredAt:now,updatedAt:now};
+      if(!await this.computers.computer(org,state.computerId)) await this.computers.register({...registration,lastSeenAt:null});
+      const actual=await this.computers.computer(org,state.computerId);
+      const environment={...await settings.secrets(org),MC_CONFIG_DIR:"/data/remy",REMY_HOSTED_BOOTSTRAP:JSON.stringify({registration:{...actual,hubUrl:this.env.BETTER_AUTH_URL},privateKey:keys.privateKey,workspace:{name:workspace.name,origin:workspace.origin}})};
+      const domains=[new URL(this.env.BETTER_AUTH_URL).hostname,"api.anthropic.com","api.openai.com","github.com","api.github.com","objects.githubusercontent.com","release-assets.githubusercontent.com","registry.npmjs.org"];
+      return {organizationId:org,computerId:state.computerId,settings:state.settings,image:this.env.HOSTED_IMAGE,archive:this.env.HOSTED_ARCHIVE??"",environment,allowedDomains:domains};
+    }, async id=>{
+      for(let attempt=0;attempt<300;attempt++){if(this.computerSocket(id))return;await new Promise(resolve=>setTimeout(resolve,100));}
+      throw new Error("Hosted computer did not connect.");
+    }, Date.now, id => !!this.computerSocket(id));return this.hosted;
   }
 
   private computerService(): ComputerService {
@@ -1041,11 +1144,15 @@ export class HubCoordinator {
   }
 
   async alarm(): Promise<void> {
+    await this.hostedService().idle();
+    const hostedDue=(await this.hostedService().list()).length ? Date.now()+60_000 : undefined;
+
     const notificationOrg = await this.ctx.storage.get<string>("organizationId");
     if (notificationOrg) await this.notifications.deliver(notificationOrg, this.env);
     const now = Date.now();
     const pushDue = notificationOrg ? await this.env.DB.prepare("SELECT MIN(next_attempt_at) AS due FROM notification_pushes WHERE organization_id=?").bind(notificationOrg).first<{ due: number | null }>() : null;
     let next: number | undefined = pushDue?.due ? Math.max(Date.now() + 1000, pushDue.due) : undefined;
+    if(hostedDue) next=Math.min(next ?? hostedDue,hostedDue);
     for (const socket of this.ctx.getWebSockets()) {
       const attachment = socket.deserializeAttachment() as { kind?: string; lastSeenAt?: number } | null;
       if (attachment?.kind !== "computer" || !attachment.lastSeenAt) continue;

@@ -384,3 +384,16 @@ test("workspace restrictions apply to capability lists and thread access includi
     assert.equal(await service.canUseWorkspace(computer, "ada", "clone"), true);
   } finally { sqlite.close(); }
 });
+
+test("hosted model keys are encrypted per organization and settings inherit explicitly",async()=>{
+  const {sqlite,db}=database();const {HostedSettingsStore}=await import('./hosted-settings.js');const store=new HostedSettingsStore(db,async()=>"test-encryption-root-with-at-least-thirty-two-characters");
+  try{
+    await store.setSecret('org','OPENAI_API_KEY','test-private-value');
+    const row=sqlite.prepare('SELECT ciphertext FROM organization_secrets WHERE organization_id=?').get('org') as {ciphertext:string};assert.ok(!row.ciphertext.includes('test-private-value'));
+    assert.deepEqual(await store.secretNames('org'),['OPENAI_API_KEY']);assert.deepEqual(await store.secrets('org'),{OPENAI_API_KEY:'test-private-value'});assert.deepEqual(await store.secrets('other'),{});
+    sqlite.prepare('INSERT INTO organization_secrets VALUES (?,?,?)').run('other','OPENAI_API_KEY',row.ciphertext);await assert.rejects(store.secrets('other'));
+    await store.save('org','',{enabled:true,provider:'modal',cpu:2});assert.equal((await store.settings('org','w')).cpu,2);
+    await store.save('org','w',{enabled:true,provider:'modal',cpu:4});assert.equal((await store.settings('org','w')).cpu,4);await store.save('org','w',null);assert.equal((await store.settings('org','w')).cpu,2);
+    await store.setSecret('org','OPENAI_API_KEY',null);assert.deepEqual(await store.secretNames('org'),[]);
+  }finally{sqlite.close();}
+});
