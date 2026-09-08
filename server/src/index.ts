@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { WebSocketServer } from "ws";
-import { hubComputerRegistration, registerHubComputerWithDeviceCode, startHubComputerConnection } from "./hub-computer.js";
+import { beginHubComputerAuthorization, finishHubComputerAuthorization, detachHubComputer, hubComputerRegistration, registerHubComputerWithDeviceCode, startHubComputerConnection } from "./hub-computer.js";
 import { answerMentions } from "./mentions.js";
 import { config, patchSettings, publicSettings } from "./config.js";
 import { AgentStartupError, AgentUnavailableError, agentKind, inferAgent, type AgentKind } from "./agent.js";
@@ -413,17 +413,32 @@ const server = createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/health") {
       return json(res, 200, { ok: true });
     }
+    if (req.method === "POST" && url.pathname === "/server/hub/authorize") {
+      const input = await readJson(req);
+      if (typeof input.hubUrl !== "string" || typeof input.organizationId !== "string" || !(typeof input.ownership === "string" && ["personal", "organization", "hosted"].includes(input.ownership))) return json(res, 400, { error: "Choose your organization and computer owner." });
+      try { return json(res, 200, await beginHubComputerAuthorization(input.hubUrl, input.organizationId, input.ownership as "personal" | "organization" | "hosted")); }
+      catch (error) { return json(res, 409, { error: (error as Error).message }); }
+    }
+    if (req.method === "POST" && url.pathname === "/server/hub/authorize/complete") {
+      try { return json(res, 201, { registration: await finishHubComputerAuthorization() }); }
+      catch (error) { return json(res, 409, { error: (error as Error).message }); }
+    }
     if (req.method === "POST" && url.pathname === "/server/hub/computer") {
       const input = await readJson(req);
       if (typeof input.hubUrl !== "string" || typeof input.organizationId !== "string" || typeof input.deviceCode !== "string") {
         return json(res, 400, { error: "Choose a valid organization." });
       }
       try {
-        await registerHubComputerWithDeviceCode(input.hubUrl, input.organizationId, input.deviceCode);
+        if (input.ownership !== undefined && !(typeof input.ownership === "string" && ["personal", "organization", "hosted"].includes(input.ownership))) return json(res, 400, { error: "Choose who owns this computer." });
+        await registerHubComputerWithDeviceCode(input.hubUrl, input.organizationId, input.deviceCode, input.ownership as "personal" | "organization" | "hosted" | undefined);
         return json(res, 201, { registration: hubComputerRegistration() });
       } catch (error) {
         return json(res, 409, { error: (error as Error).message || "This computer could not be registered." });
       }
+    }
+    if (req.method === "DELETE" && url.pathname === "/server/hub/computer") {
+      try { await detachHubComputer(); return json(res, 200, { ok: true }); }
+      catch (error) { return json(res, 409, { error: (error as Error).message }); }
     }
     if (req.method === "GET" && url.pathname === "/server/hub/computer") {
       return json(res, 200, { registration: hubComputerRegistration() ?? null });

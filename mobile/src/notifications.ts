@@ -1,8 +1,8 @@
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
-import { Platform } from "react-native";
+import { Linking, Platform } from "react-native";
 import { transport } from "./lib/transport";
-import { notificationDestination, type NavigationDestination } from "./lib/navigation-destination";
+import { hubNotificationUrl, notificationDestination, type NavigationDestination } from "./lib/navigation-destination";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -41,7 +41,10 @@ export async function registerPush(): Promise<void> {
 
 export function listenForNotificationTap(onDestination: (destination: NavigationDestination) => void): () => void {
   const sub = Notifications.addNotificationResponseReceivedListener((response) => {
-    const destination = notificationDestination(response.notification.request.content.data);
+    const data = response.notification.request.content.data;
+    const hubUrl = hubNotificationUrl(data);
+    if (hubUrl) { void Linking.openURL(hubUrl); return; }
+    const destination = notificationDestination(data);
     if (destination) onDestination(destination);
   });
   return () => sub.remove();

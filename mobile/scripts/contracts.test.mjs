@@ -274,3 +274,12 @@ test("a routine's last attempt keeps its day and time", options, async () => {
   assert.match(whenLast(new Date(2026, 8, 2, 9, 5).getTime(), now), /^Yesterday at /);
   assert.match(whenLast(new Date(2026, 7, 28, 9, 5).getTime(), now), /^(28 Aug|Aug 28) at /);
 });
+
+test("hub notification taps preserve organization ownership and never open a local thread", options, async () => {
+  const { hubNotificationUrl, notificationDestination } = await load("lib/navigation-destination.ts");
+  const data = { hubUrl: "https://teams.example.com", organizationId: "release", computerId: "studio", threadId: "thread-1" };
+  assert.equal(hubNotificationUrl(data), "https://teams.example.com/#/threads/thread-1?organization=release&computer=studio");
+  assert.equal(notificationDestination(data), undefined);
+  assert.equal(hubNotificationUrl({ ...data, hubUrl: "http://unsafe.example.com" }), undefined);
+  assert.equal(hubNotificationUrl({ ...data, hubUrl: "https://user:password@teams.example.com" }), undefined);
+});

@@ -98,9 +98,19 @@ export const computerCapabilitiesSchema = z.object({
 });
 export type ComputerCapabilities = z.infer<typeof computerCapabilitiesSchema>;
 
+export const computerAccessSchema = z.object({
+  mode: z.enum(["owner", "selected", "organization"]),
+  userIds: z.array(z.string().min(1)).max(100).default([]),
+  teamIds: z.array(z.string().min(1)).max(100).default([]),
+});
+export type ComputerAccess = z.infer<typeof computerAccessSchema>;
+export const computerOwnershipSchema = z.enum(["personal", "organization", "hosted"]);
+
 export const computerRegistrationInputSchema = z.object({
   computerId: z.string().uuid(),
-  name: z.string().min(1),
+  name: z.string().trim().min(1).max(120),
+  icon: z.string().max(40).default(""),
+  ownership: computerOwnershipSchema.default("personal"),
   platform: z.enum(["darwin", "linux"]),
   daemonVersion: z.string().min(1),
   protocol: computerProtocolRangeSchema,
@@ -111,7 +121,8 @@ export type ComputerRegistrationInput = z.infer<typeof computerRegistrationInput
 
 export const computerRegistrationSchema = computerRegistrationInputSchema.extend({
   organizationId: z.string().min(1),
-  ownerUserId: z.string().min(1),
+  ownerUserId: z.string().min(1).nullable(),
+  access: computerAccessSchema.default({ mode: "owner", userIds: [], teamIds: [] }),
   registeredAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),
 });
@@ -132,6 +143,8 @@ export const computerSummarySchema = computerRegistrationSchema.omit({ publicKey
   availability: computerAvailabilitySchema,
   lastSeenAt: z.number().int().nonnegative().nullable(),
   updateRequired: z.boolean(),
+  canManage: z.boolean().optional(),
+  canUse: z.boolean().optional(),
 });
 export type ComputerSummary = z.infer<typeof computerSummarySchema>;
 
@@ -166,8 +179,17 @@ export function canWriteThread(access: ThreadAccess, userId: string): boolean {
   return access.owner.id === userId || access.participants.some((member) => member.id === userId);
 }
 
+export const hubNotificationInputSchema = z.object({
+  id: z.string().uuid(), threadId: z.string().uuid(),
+  title: z.string().min(1).max(160), message: z.string().max(500),
+  highPriority: z.boolean(), createdAt: z.number().int().nonnegative(),
+});
+export type HubNotificationInput = z.infer<typeof hubNotificationInputSchema>;
+export type HubNotification = HubNotificationInput & { computerId: string; computerName: string; readAt: number | null };
+
 const proxyHeadersSchema = z.record(z.string(), z.string());
 export const computerToHubFrameSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("notification"), notification: hubNotificationInputSchema }),
   z.object({ kind: z.literal("thread.snapshot"), snapshot: threadSnapshotSchema }),
   z.object({ kind: z.literal("thread.manifest"), ids: z.array(z.string().uuid()) }),
   z.object({ kind: z.literal("hello"), protocolVersion: z.number().int().positive(), daemonVersion: z.string().min(1), capabilities: computerCapabilitiesSchema }),
@@ -178,7 +200,8 @@ export const computerToHubFrameSchema = z.discriminatedUnion("kind", [
 ]);
 export type ComputerToHubFrame = z.infer<typeof computerToHubFrameSchema>;
 export const hubToComputerFrameSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("welcome"), protocolVersion: z.number().int().positive(), heartbeatIntervalMs: z.number().int().positive(), threadRelay: z.boolean().optional() }),
+  z.object({ kind: z.literal("welcome"), protocolVersion: z.number().int().positive(), heartbeatIntervalMs: z.number().int().positive(), threadRelay: z.boolean().optional(), notifications: z.boolean().optional() }),
+  z.object({ kind: z.literal("notification.ack"), id: z.string().uuid() }),
   z.object({ kind: z.literal("update_required"), minimumDaemonVersion: z.string().min(1) }),
   z.object({ kind: z.literal("request"), id: z.string().min(1), method: z.string().min(1), path: z.string().startsWith("/"), headers: proxyHeadersSchema, body: z.string(), actor: threadMemberSchema.optional() }),
   z.object({ kind: z.literal("subscribe"), id: z.string().min(1), path: z.string().startsWith("/") }),

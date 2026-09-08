@@ -1,3 +1,4 @@
+import { HubNotifications, type ApplePushConfig } from "./notifications.js";
 import { canReadThread, canWriteThread, threadMemberSchema, threadSnapshotSchema, type ThreadLiveFrame, type ThreadMember } from "@remy/contract";
 import { ThreadStore } from "./thread-store.js";
 import {
@@ -6,6 +7,7 @@ import {
   COMPUTER_HEARTBEAT_TIMEOUT_MS,
   COMPUTER_PROTOCOL_VERSION,
   computerRegistrationInputSchema,
+  computerAccessSchema,
   computerToHubFrameSchema,
   boardActorSchema,
   boardAppendInputSchema,
@@ -32,7 +34,7 @@ import { D1OrganizationStore, type OrganizationStore } from "./organization-stor
 import { DurableBoardStorage, OrganizationBoard } from "./organization-board.js";
 import { OrganizationError, OrganizationService } from "./organizations.js";
 
-export interface Env {
+export interface Env extends ApplePushConfig {
   AUTH_SECRET: SecretsStoreSecret;
   BETTER_AUTH_URL: string;
   COORDINATOR: DurableObjectNamespace;
@@ -157,7 +159,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
   const organizationStore = (dependencies.organizationStore ?? ((current) => new D1OrganizationStore(current.DB)))(env);
   const organizations = (dependencies.organizationService ?? ((current) => new OrganizationService(current)))(organizationStore);
   const computerStore = (dependencies.computerStore ?? ((current) => new D1ComputerStore(current.DB)))(env);
-  const computers = new ComputerService(computerStore, Date.now, env.MINIMUM_DAEMON_VERSION ?? "0.1.0");
+  const computers = new ComputerService(computerStore, Date.now, env.MINIMUM_DAEMON_VERSION ?? "0.1.0", organizationStore);
 
   if (url.pathname === "/api/auth/sign-in/magic-link" && request.method === "POST") {
     const cloned = request.clone();
@@ -208,6 +210,15 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     || url.pathname.startsWith("/api/organizations/");
   if (!protectedRoute) return Response.json(hubErrorSchema.parse({ error: "Not found" }), { status: 404 });
 
+  const detachMatch = /^\/api\/organizations\/([^/]+)\/computers\/detach$/.exec(url.pathname);
+  if (detachMatch && request.method === "POST") {
+    const org = decodeURIComponent(detachMatch[1]);
+    const computer = await authenticateComputer(request, org, computerStore);
+    if (!computer) return jsonError("This computer could not be authenticated.", 401);
+    await computerStore.remove(org, computer.computerId);
+    await env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${org}`)).fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": org, "x-removed-computer": computer.computerId } }));
+    return Response.json({ ok: true });
+  }
   const computerConnectMatch = /^\/api\/organizations\/([^/]+)\/computers\/connect$/.exec(url.pathname);
   if (computerConnectMatch && request.method === "GET") {
     if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return jsonError("Open a WebSocket connection.", 426);
@@ -255,11 +266,70 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         if (identity.clientKind !== "computer") return jsonError("Use a computer authorization.", 403);
         const input = computerRegistrationInputSchema.safeParse(await body(request));
         if (!input.success) return jsonError("Choose valid computer details.", 400);
-        return Response.json(await computers.register(organizationId, identity.userId, input.data), { status: 201 });
+        const registration = await computers.register(organizationId, identity.userId, input.data);
+        await board().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId } }));
+        return Response.json(registration, { status: 201 });
       }
       if (tail === "computers" && request.method === "GET") {
         await organizations.member(organizationId, identity.userId);
-        return Response.json({ computers: await computers.list(organizationId) });
+        return Response.json({ computers: await computers.list(organizationId, identity.userId) });
+      }
+      if (tail === "notifications/devices" && (request.method === "GET" || request.method === "POST")) {
+        await organizations.member(organizationId, identity.userId);
+        if (request.method === "GET") {
+          const devices = await env.DB.prepare("SELECT id,name,enabled FROM member_push_devices WHERE organization_id=? AND user_id=?").bind(organizationId, identity.userId).all();
+          return Response.json({ devices: devices.results });
+        }
+        if (identity.clientKind !== "phone") return jsonError("Register Apple Push from your phone.", 403);
+        const input = await body<{ token?: string; environment?: string; name?: string }>(request);
+        if (!input || !/^[a-fA-F0-9]{64,200}$/.test(input.token ?? "") || !["production", "sandbox"].includes(input.environment ?? "") || typeof input.name !== "string" || !input.name.trim() || input.name.length > 80) return jsonError("Choose valid phone details.", 400);
+        const id = crypto.randomUUID();
+        await env.DB.prepare("INSERT INTO member_push_devices (id,organization_id,user_id,session_id,token,environment,name) VALUES (?,?,?,?,?,?,?) ON CONFLICT(organization_id,token) DO UPDATE SET user_id=excluded.user_id,session_id=excluded.session_id,environment=excluded.environment,name=excluded.name,enabled=1").bind(id, organizationId, identity.userId, identity.sessionId, input.token!.toLowerCase(), input.environment, input.name.trim()).run();
+        await board().fetch(new Request("https://internal/notifications/changed", { method: "POST", headers: { "x-organization-id": organizationId, "x-user-id": identity.userId } }));
+        return Response.json({ ok: true }, { status: 201 });
+      }
+      const pushDevice = /^notifications\/devices\/([^/]+)$/.exec(tail);
+      if (pushDevice && ["PATCH", "DELETE"].includes(request.method)) {
+        await organizations.member(organizationId, identity.userId);
+        if (request.headers.get("origin") && request.headers.get("origin") !== url.origin) return jsonError("Open notifications in Remy.", 403);
+        if (request.method === "DELETE") await env.DB.prepare("DELETE FROM member_push_devices WHERE organization_id=? AND user_id=? AND id=?").bind(organizationId, identity.userId, decodeURIComponent(pushDevice[1])).run();
+        else {
+          const input = await body<{ enabled?: boolean }>(request);
+          if (typeof input?.enabled !== "boolean") return jsonError("Choose whether this phone receives notifications.", 400);
+          await env.DB.prepare("UPDATE member_push_devices SET enabled=? WHERE organization_id=? AND user_id=? AND id=?").bind(Number(input.enabled), organizationId, identity.userId, decodeURIComponent(pushDevice[1])).run();
+        }
+        await board().fetch(new Request("https://internal/notifications/changed", { method: "POST", headers: { "x-organization-id": organizationId, "x-user-id": identity.userId } }));
+        return Response.json({ ok: true });
+      }
+      if (tail === "notifications" || tail === "notifications/live" || /^notifications\/[0-9a-f-]{36}\/read$/.test(tail)) {
+        await organizations.member(organizationId, identity.userId);
+        if (request.method !== "GET" && request.headers.get("origin") && request.headers.get("origin") !== url.origin) return jsonError("Open notifications in Remy.", 403);
+        return board().fetch(new Request(`https://internal/${tail}`, { method: request.method, headers: { "x-organization-id": organizationId, "x-user-id": identity.userId, "x-session-id": identity.sessionId, upgrade: request.headers.get("upgrade") ?? "" } }));
+      }
+      if (tail === "computers/options" && request.method === "GET") {
+        const member = await organizations.member(organizationId, identity.userId);
+        const members = await organizations.members(organizationId, identity.userId);
+        return Response.json({ role: member.role, members: await Promise.all(members.map(async (m) => ({ id: m.userId, label: (await store.profile(m.userId))?.name || "Member" }))), teams: await organizations.teams(organizationId, identity.userId) });
+      }
+      if (tail === "computers/live" && request.method === "GET") {
+        await organizations.member(organizationId, identity.userId);
+        return board().fetch(new Request("https://internal/computers/live", { headers: { upgrade: request.headers.get("upgrade") ?? "", "x-organization-id": organizationId, "x-user-id": identity.userId, "x-session-id": identity.sessionId } }));
+      }
+      const computerMatch = /^computers\/([^/]+)$/.exec(tail);
+      if (computerMatch && ["PATCH", "DELETE"].includes(request.method)) {
+        await organizations.member(organizationId, identity.userId);
+        if (request.headers.get("origin") && request.headers.get("origin") !== url.origin) return jsonError("Open this computer in Remy.", 403);
+        const id = decodeURIComponent(computerMatch[1]);
+        if (request.method === "DELETE") await computers.remove(organizationId, id, identity.userId);
+        else {
+          const input = await body<{ name?: unknown; icon?: unknown; access?: unknown }>(request);
+          if (!input || (input.name !== undefined && (typeof input.name !== "string" || !input.name.trim() || input.name.length > 120)) || (input.icon !== undefined && (typeof input.icon !== "string" || input.icon.length > 40))) return jsonError("Choose valid computer details.", 400);
+          const access = input.access === undefined ? undefined : computerAccessSchema.safeParse(input.access);
+          if (access && !access.success) return jsonError("Choose who can use this computer.", 400);
+          await computers.update(organizationId, id, identity.userId, { ...(typeof input.name === "string" ? { name: input.name.trim() } : {}), ...(typeof input.icon === "string" ? { icon: input.icon } : {}), ...(access?.success ? { access: access.data } : {}) });
+        }
+        await board().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId, ...(request.method === "DELETE" ? { "x-removed-computer": id } : {}) } }));
+        return Response.json({ ok: true });
       }
       if (/^computers\/[^/]+\/(proxy|stream)(\/|$)/.test(tail)) {
         await organizations.member(organizationId, identity.userId);
@@ -271,7 +341,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         const actor = threadMemberSchema.parse({ id: identity.userId, label: profile?.name || "Member" });
         if (request.method !== "GET" && request.headers.get("origin") && request.headers.get("origin") !== url.origin) return jsonError("Open this thread in Remy.", 403);
         const computerId = /^computers\/([^/]+)\/threads/.exec(tail)?.[1];
-        if (computerId && !await computerStore.computer(organizationId, decodeURIComponent(computerId))) return jsonError("Computer not found.", 404);
+        if (computerId) await computers.requireUse(organizationId, decodeURIComponent(computerId), identity.userId);
         const headers = new Headers({ "x-thread-member": encodeURIComponent(JSON.stringify(actor)), "x-thread-session": identity.sessionId, "x-organization-id": organizationId });
         if (request.headers.get("upgrade") === "websocket") headers.set("upgrade", "websocket");
         if (request.headers.has("content-type")) headers.set("content-type", request.headers.get("content-type")!);
@@ -322,7 +392,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         if (input?.access && (!Array.isArray(input.access.teamIds) || !input.access.teamIds.every((id) => typeof id === "string") || !Array.isArray(input.access.userIds) || !input.access.userIds.every((id) => typeof id === "string"))) return jsonError("Choose valid workspace access.", 400);
         return Response.json(await organizations.createWorkspace(organizationId, identity.userId, { name, origin, ...(input?.access ? { access: input.access as { teamIds: string[]; userIds: string[] } } : {}) }), { status: 201 });
       }
-      if (tail === "leave" && request.method === "POST") { await organizations.leave(organizationId, identity.userId); return new Response(null, { status: 204 }); }
+      if (tail === "leave" && request.method === "POST") { await organizations.leave(organizationId, identity.userId); await board().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId } })); return new Response(null, { status: 204 }); }
       if (tail === "transfer" && request.method === "POST") { const input = await body<{ userId?: string }>(request); if (!input?.userId) return jsonError("Choose a new owner.", 400); await organizations.transfer(organizationId, identity.userId, input.userId); return new Response(null, { status: 204 }); }
       if (tail === "deletion-impact" && request.method === "GET") return Response.json(await organizations.deletionImpact(organizationId, identity.userId));
       if (!tail && request.method === "PATCH") { const input = await body<{ name?: string }>(request); const name = input?.name?.trim(); if (!name || name.length > 120) return jsonError("Enter an organization name.", 400); await organizations.rename(organizationId, identity.userId, name); return new Response(null, { status: 204 }); }
@@ -335,12 +405,12 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       }
       const memberMatch = /^members\/([^/]+)$/.exec(tail);
       if (memberMatch && request.method === "PATCH") { const input = await body<{ role?: "admin" | "member" }>(request); if (input?.role !== "admin" && input?.role !== "member") return jsonError("Choose admin or member access.", 400); await organizations.changeRole(organizationId, identity.userId, decodeURIComponent(memberMatch[1]), input.role); return new Response(null, { status: 204 }); }
-      if (memberMatch && request.method === "DELETE") { await organizations.removeMember(organizationId, identity.userId, decodeURIComponent(memberMatch[1])); return new Response(null, { status: 204 }); }
+      if (memberMatch && request.method === "DELETE") { await organizations.removeMember(organizationId, identity.userId, decodeURIComponent(memberMatch[1])); await board().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId } })); return new Response(null, { status: 204 }); }
       const teamMatch = /^teams\/([^/]+)$/.exec(tail);
       if (teamMatch && request.method === "PATCH") { const input = await body<{ name?: string }>(request); const name = input?.name?.trim(); if (!name || name.length > 120) return jsonError("Enter a team name.", 400); await organizations.renameTeam(organizationId, identity.userId, decodeURIComponent(teamMatch[1]), name); return new Response(null, { status: 204 }); }
-      if (teamMatch && request.method === "DELETE") { await organizations.deleteTeam(organizationId, identity.userId, decodeURIComponent(teamMatch[1])); return new Response(null, { status: 204 }); }
+      if (teamMatch && request.method === "DELETE") { await organizations.deleteTeam(organizationId, identity.userId, decodeURIComponent(teamMatch[1])); await board().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId } })); return new Response(null, { status: 204 }); }
       const teamMemberMatch = /^teams\/([^/]+)\/members\/([^/]+)$/.exec(tail);
-      if (teamMemberMatch && (request.method === "PUT" || request.method === "DELETE")) { await organizations.changeTeamMember(organizationId, identity.userId, decodeURIComponent(teamMemberMatch[1]), decodeURIComponent(teamMemberMatch[2]), request.method === "PUT"); return new Response(null, { status: 204 }); }
+      if (teamMemberMatch && (request.method === "PUT" || request.method === "DELETE")) { await organizations.changeTeamMember(organizationId, identity.userId, decodeURIComponent(teamMemberMatch[1]), decodeURIComponent(teamMemberMatch[2]), request.method === "PUT"); await board().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId } })); return new Response(null, { status: 204 }); }
       const teamMembersMatch = /^teams\/([^/]+)\/members$/.exec(tail);
       if (teamMembersMatch && request.method === "GET") return Response.json({ userIds: await organizations.teamMembers(organizationId, identity.userId, decodeURIComponent(teamMembersMatch[1])) });
       const workspaceMatch = /^workspaces\/([^/]+)$/.exec(tail);
@@ -459,10 +529,12 @@ export class HubCoordinator {
   private readonly threads: ThreadStore;
   private threadPublishing = Promise.resolve();
   private readonly computers: D1ComputerStore;
+  private readonly notifications: HubNotifications;
   private readonly pending = new Map<string, { computerId: string; resolve: (response: Response) => void; timer: ReturnType<typeof setTimeout> }>();
 
   constructor(private readonly ctx: DurableObjectState, readonly env: Env) {
     this.computers = new D1ComputerStore(env.DB);
+    this.notifications = new HubNotifications(env.DB, (computerId, threadId) => this.threads.get(computerId, threadId));
     this.threads = new ThreadStore(new DurableBoardStorage(ctx.storage), (frame) => { this.threadPublishing = this.threadPublishing.then(() => this.publishThreadFrame(frame)).catch(() => undefined); });
     this.board = new OrganizationBoard(new DurableBoardStorage(ctx.storage), {
       publish: (frames) => {
@@ -483,6 +555,45 @@ export class HubCoordinator {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") return Response.json({ status: "ok" });
+    if (url.pathname.startsWith("/notifications")) {
+      const org = request.headers.get("x-organization-id"); const user = request.headers.get("x-user-id");
+      if (!org || !user) return jsonError("Sign in again.", 401);
+      await this.ctx.storage.put("organizationId", org);
+      if (url.pathname === "/notifications/changed" && request.method === "POST") { this.invalidateNotifications(user); return Response.json({ ok: true }); }
+      if (url.pathname === "/notifications" && request.method === "GET") {
+        const devices = await this.env.DB.prepare("SELECT id,name,enabled FROM member_push_devices WHERE organization_id=? AND user_id=?").bind(org, user).all();
+        return Response.json({ notifications: await this.notifications.list(org, user), devices: devices.results });
+      }
+      if (url.pathname === "/notifications/live" && request.method === "GET") {
+        if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return jsonError("Open a WebSocket connection.", 426);
+        const [client, server] = Object.values(new WebSocketPair()); this.ctx.acceptWebSocket(server);
+        server.serializeAttachment({ kind: "notifications", userId: user, sessionId: request.headers.get("x-session-id") });
+        server.send(JSON.stringify({ kind: "reset" }));
+        return new Response(null, { status: 101, webSocket: client });
+      }
+      const read = /^\/notifications\/([0-9a-f-]{36})\/read$/.exec(url.pathname);
+      if (read && request.method === "POST") { await this.notifications.read(org, user, read[1]); this.invalidateNotifications(user); return Response.json({ ok: true }); }
+      return jsonError("This action is not available.", 404);
+    }
+    if (url.pathname === "/computers/changed" && request.method === "POST") {
+      await this.ctx.storage.put("organizationId", request.headers.get("x-organization-id"));
+      const removed = request.headers.get("x-removed-computer");
+      if (removed) {
+        this.computerSocket(removed)?.close(1008, "This computer was removed.");
+        await this.threads.manifest(removed, []);
+      }
+      this.invalidateComputers();
+      return Response.json({ ok: true });
+    }
+    if (url.pathname === "/computers/live" && request.method === "GET") {
+      if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return jsonError("Open a WebSocket connection.", 426);
+      await this.ctx.storage.put("organizationId", request.headers.get("x-organization-id"));
+      const [client, server] = Object.values(new WebSocketPair());
+      this.ctx.acceptWebSocket(server);
+      server.serializeAttachment({ kind: "computers", userId: request.headers.get("x-user-id"), sessionId: request.headers.get("x-session-id") });
+      server.send(JSON.stringify({ kind: "reset" }));
+      return new Response(null, { status: 101, webSocket: client });
+    }
     if (request.method === "GET" && url.pathname === "/computers/connect") {
       if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return jsonError("Expected WebSocket", 426);
       const computerId = request.headers.get("x-computer-id");
@@ -496,8 +607,8 @@ export class HubCoordinator {
       this.ctx.acceptWebSocket(server);
       await this.ctx.storage.put("organizationId", request.headers.get("x-organization-id") ?? "");
       server.serializeAttachment({ kind: "computer", computerId, lastSeenAt: Date.now(), minimumDaemonVersion: request.headers.get("x-minimum-daemon-version") ?? "0.1.0" });
-      server.send(JSON.stringify({ kind: "welcome", protocolVersion: COMPUTER_PROTOCOL_VERSION, heartbeatIntervalMs: COMPUTER_HEARTBEAT_INTERVAL_MS, threadRelay: true }));
-      await this.ctx.storage.setAlarm(Date.now() + COMPUTER_HEARTBEAT_TIMEOUT_MS);
+      server.send(JSON.stringify({ kind: "welcome", protocolVersion: COMPUTER_PROTOCOL_VERSION, heartbeatIntervalMs: COMPUTER_HEARTBEAT_INTERVAL_MS, threadRelay: true, notifications: true }));
+      await this.scheduleAlarm(Date.now() + COMPUTER_HEARTBEAT_TIMEOUT_MS);
       return new Response(null, { status: 101, webSocket: client });
     }
     const threadResponse = await this.threadRequest(request);
@@ -588,7 +699,14 @@ export class HubCoordinator {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
 
+  private readonly computerMessages = new WeakMap<WebSocket, Promise<void>>();
   async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    const pending = (this.computerMessages.get(socket) ?? Promise.resolve()).then(() => this.handleSocketMessage(socket, message));
+    this.computerMessages.set(socket, pending.catch(() => { socket.close(1011, "Reconnect to continue."); }));
+    await pending;
+  }
+
+  private async handleSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void> {
     if (typeof message === "string" && new TextEncoder().encode(message).byteLength > 256_000) { socket.close(1009, "Send a smaller update."); return; }
     if (message === "ping") { socket.send("pong"); return; }
     const attachment = socket.deserializeAttachment() as { kind?: string; computerId?: string; minimumDaemonVersion?: string; ready?: boolean } | null;
@@ -596,6 +714,8 @@ export class HubCoordinator {
     let frame: ReturnType<typeof computerToHubFrameSchema.parse>;
     try { frame = computerToHubFrameSchema.parse(JSON.parse(message)); } catch { socket.close(1003, "Invalid computer frame."); return; }
     const organizationId = String((await this.ctx.storage.get<string>("organizationId")) ?? "");
+    const registeredOrg = await this.ctx.storage.get<string>("organizationId");
+    if (!registeredOrg || !await this.computers.computer(registeredOrg, attachment.computerId)) { socket.close(1008, "This computer was removed."); return; }
     if (frame.kind === "hello") {
       if (frame.protocolVersion !== COMPUTER_PROTOCOL_VERSION || versionBefore(frame.daemonVersion, attachment.minimumDaemonVersion ?? "0.1.0")) {
         socket.send(JSON.stringify({ kind: "update_required", minimumDaemonVersion: attachment.minimumDaemonVersion ?? "0.1.0" }));
@@ -605,10 +725,19 @@ export class HubCoordinator {
       const now = Date.now();
       socket.serializeAttachment({ ...attachment, ready: true, lastSeenAt: now });
       if (organizationId) await this.computers.seen(organizationId, attachment.computerId, now, frame.capabilities, frame.daemonVersion);
+      this.invalidateComputers();
       return;
     }
     if (!attachment.ready) { socket.close(1008, "Introduce this computer first."); return; }
     if (this.computerSocket(attachment.computerId) !== socket) return;
+    if (frame.kind === "notification") {
+      const recipients = await this.notifications.raise(registeredOrg, attachment.computerId, frame.notification);
+      if (!recipients) return;
+      socket.send(JSON.stringify({ kind: "notification.ack", id: frame.notification.id }));
+      for (const userId of recipients) this.invalidateNotifications(userId);
+      await this.scheduleAlarm(Date.now() + 1_000);
+      return;
+    }
     if (frame.kind === "thread.snapshot") {
       if (frame.snapshot.access.organizationId !== organizationId) { socket.close(1008, "Invalid organization."); return; }
       await this.threads.snapshot(attachment.computerId, frame.snapshot);
@@ -619,7 +748,7 @@ export class HubCoordinator {
       const now = Date.now();
       socket.serializeAttachment({ ...attachment, lastSeenAt: now });
       if (organizationId) await this.computers.seen(organizationId, attachment.computerId, now);
-      await this.ctx.storage.setAlarm(now + COMPUTER_HEARTBEAT_TIMEOUT_MS);
+      await this.scheduleAlarm(now + COMPUTER_HEARTBEAT_TIMEOUT_MS);
       return;
     }
     if (frame.kind === "response") {
@@ -653,9 +782,40 @@ export class HubCoordinator {
     const org = await this.ctx.storage.get<string>("organizationId");
     if (org) await this.computers.seen(org, meta.computerId, 0);
     await this.threads.offline(meta.computerId);
+    this.invalidateComputers();
     for (const [id, pending] of this.pending) if (pending.computerId === meta.computerId) {
       clearTimeout(pending.timer); this.pending.delete(id); pending.resolve(jsonError("This computer is offline; try again when it reconnects.", 503));
     }
+  }
+
+  private invalidateNotifications(userId?: string): void {
+    for (const socket of this.ctx.getWebSockets()) {
+      const meta = socket.deserializeAttachment() as { kind?: string; userId?: string } | null;
+      if (meta?.kind === "notifications" && (!userId || meta.userId === userId)) {
+        try { socket.send(JSON.stringify({ kind: "reset" })); } catch { socket.close(); }
+      }
+    }
+  }
+
+  private invalidateComputers(): void {
+    this.invalidateNotifications();
+    for (const socket of this.ctx.getWebSockets()) {
+      const kind = (socket.deserializeAttachment() as { kind?: string } | null)?.kind;
+      if (kind === "computers" || kind === "threads") {
+        try { socket.send(JSON.stringify({ kind: "reset", cursor: 0 })); } catch { socket.close(); }
+      }
+    }
+  }
+
+  private computerService(): ComputerService {
+    return new ComputerService(this.computers, Date.now, this.env.MINIMUM_DAEMON_VERSION ?? "0.1.0", new D1OrganizationStore(this.env.DB));
+  }
+
+  private async visibleThreads(userId: string) {
+    const org = await this.ctx.storage.get<string>("organizationId");
+    const computers = org ? await this.computerService().list(org, userId) : [];
+    const allowed = new Set(computers.filter((c) => c.canUse).map((c) => c.computerId));
+    return (await this.threads.list(userId)).filter((thread) => allowed.has(thread.computerId));
   }
 
   private async sendThreadFrame(socket: WebSocket, frame: ThreadLiveFrame): Promise<void> {
@@ -671,7 +831,8 @@ export class HubCoordinator {
       if (meta.threadId && (meta.threadId !== threadId || meta.computerId !== computerId)) return;
       const current = await this.threads.get(computerId, threadId);
       const key = `threads:viewer:${meta.subscriptionId}:${computerId}:${threadId}`;
-      if (!current || !canReadThread(current.access, meta.userId)) {
+      const computer = await this.computers.computer(organizationId, computerId);
+      if (!current || !computer || !await this.computerService().canUse(computer, meta.userId) || !canReadThread(current.access, meta.userId)) {
         if (await this.ctx.storage.get<boolean>(key)) {
           socket.send(JSON.stringify({ kind: "remove", cursor: frame.cursor, computerId, threadId }));
           await this.ctx.storage.delete(key);
@@ -700,8 +861,9 @@ export class HubCoordinator {
     const computerId = match ? decodeURIComponent(match[1]) : undefined;
     const id = match?.[2]; const action = match?.[3]; const attachmentId = match?.[4];
     if (url.pathname === "/threads" && request.method === "GET") {
-      const threads = await this.threads.list(actor.id);
-      return Response.json({ threads: threads.map((thread) => ({ ...thread, stale: thread.stale || !this.computerSocket(thread.computerId) })), cursor: (await this.threads.replay()).cursor, member: actor });
+      const cursor = (await this.threads.replay()).cursor;
+      const threads = await this.visibleThreads(actor.id);
+      return Response.json({ threads: threads.map((thread) => ({ ...thread, stale: thread.stale || !this.computerSocket(thread.computerId) })), cursor, member: actor });
     }
     if (url.pathname === "/threads/live" && request.method === "GET") {
       if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return jsonError("Open a WebSocket connection.", 426);
@@ -711,13 +873,14 @@ export class HubCoordinator {
       this.ctx.acceptWebSocket(server);
       const subscriptionId = crypto.randomUUID();
       server.serializeAttachment({ kind: "threads", userId: actor.id, sessionId: request.headers.get("x-thread-session"), subscriptionId, computerId: url.searchParams.get("computerId"), threadId: url.searchParams.get("threadId") });
-      for (const thread of await this.threads.list(actor.id)) await this.ctx.storage.put(`threads:viewer:${subscriptionId}:${thread.computerId}:${thread.id}`, true);
+      for (const thread of await this.visibleThreads(actor.id)) await this.ctx.storage.put(`threads:viewer:${subscriptionId}:${thread.computerId}:${thread.id}`, true);
       const replay = await this.threads.replay(cursor);
       for (const frame of replay.frames) await this.sendThreadFrame(server, frame);
       server.send(JSON.stringify({ kind: "ready", cursor: replay.cursor }));
       return new Response(null, { status: 101, webSocket: client });
     }
     if (!computerId) return jsonError("This action is not available.", 404);
+    try { await this.computerService().requireUse(request.headers.get("x-organization-id")!, computerId, actor.id); } catch { return jsonError("This computer is not available to you.", 404); }
     const snapshot = id ? await this.threads.get(computerId, id) : undefined;
     if (id && (!snapshot || !canReadThread(snapshot.access, actor.id))) return jsonError("This thread is no longer available.", 404);
     if (id && !action && request.method === "GET" && !this.computerSocket(computerId)) return Response.json({ ...snapshot!, stale: true, member: actor });
@@ -762,9 +925,17 @@ export class HubCoordinator {
     return answer;
   }
 
+  private async scheduleAlarm(at: number): Promise<void> {
+    const current = await this.ctx.storage.getAlarm();
+    if (current === null || at < current) await this.ctx.storage.setAlarm(at);
+  }
+
   async alarm(): Promise<void> {
+    const notificationOrg = await this.ctx.storage.get<string>("organizationId");
+    if (notificationOrg) await this.notifications.deliver(notificationOrg, this.env);
     const now = Date.now();
-    let next: number | undefined;
+    const pushDue = notificationOrg ? await this.env.DB.prepare("SELECT MIN(next_attempt_at) AS due FROM notification_pushes WHERE organization_id=?").bind(notificationOrg).first<{ due: number | null }>() : null;
+    let next: number | undefined = pushDue?.due ? Math.max(Date.now() + 1000, pushDue.due) : undefined;
     for (const socket of this.ctx.getWebSockets()) {
       const attachment = socket.deserializeAttachment() as { kind?: string; lastSeenAt?: number } | null;
       if (attachment?.kind !== "computer" || !attachment.lastSeenAt) continue;

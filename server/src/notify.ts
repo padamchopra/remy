@@ -345,6 +345,12 @@ setInterval(() => {
   }
 }, 30_000).unref();
 
+const notificationRouters = new Set<(event: NotifyEvent) => boolean>();
+export function onAddressedNotification(route: (event: NotifyEvent) => boolean): () => void {
+  notificationRouters.add(route);
+  return () => notificationRouters.delete(route);
+}
+
 /// Routes a local notification to this machine and its opted-in peers.
 export async function sendNotification(evt: NotifyEvent): Promise<void> {
   evt = { ...evt, deviceId: evt.deviceId ?? deviceId };
@@ -352,6 +358,7 @@ export async function sendNotification(evt: NotifyEvent): Promise<void> {
   const now = Date.now();
   if (now - (lastSent.get(throttleKey) ?? 0) < THROTTLE_MS) return;
   lastSent.set(throttleKey, now);
+  for (const route of notificationRouters) if (route(evt)) return;
   await Promise.all([
     config.notifySelf ? deliverHere(evt) : Promise.resolve(),
     forwardNotification({ ...evt }),

@@ -12,6 +12,6 @@ export const SETTINGS_SECTIONS: {
   { id: "general", label: "General", icon: Monitor },
   { id: "version-control", label: "Version control", icon: GitBranch },
   { id: "providers", label: "Providers", icon: Boxes },
-  { id: "devices", label: "Devices", icon: Laptop },
+  { id: "devices", label: "Computers", icon: Laptop },
   { id: "analytics", label: "Analytics", icon: ChartNoAxesCombined },
 ];
