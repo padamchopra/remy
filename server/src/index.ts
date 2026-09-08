@@ -1,3 +1,4 @@
+import {hubAgentTool} from "./hub-agent-tools.js";
 import { appendHubBoard, configureHubBoard, hubBoardList, hubBoardState, importHubBoard } from "./hub-board.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { timingSafeEqual } from "node:crypto";
@@ -417,6 +418,10 @@ const server = createServer(async (req, res) => {
       const { setKv } = await import("./db.js");
       await checkpointTurns(listAllChats(), turns => setKv("hostedCheckpointTurns", turns), interruptChat);
       return json(res, 200, { ok: true });
+    }
+    if (url.pathname === "/routing" && (req.method === "GET" || req.method === "PUT")) {
+      if(!scopedChatId)return json(res,403,{error:"Open this agent's conversation to change routing."});
+      return json(res,200,await hubAgentTool(scopedChatId,req.method==="GET"?"read_routing":"edit_routing",req.method==="PUT"?await readJson(req):{}));
     }
     if (req.method === "GET" && url.pathname === "/health") {
       return json(res, 200, { ok: true });

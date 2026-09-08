@@ -1,3 +1,5 @@
+import { resolveComputer } from "./routing.js";
+import { routingRuleSchema } from "@remy/contract";
 import { GitCapabilities, GithubInstallation, githubRepository, proxyGit } from "./hosted-git.js";
 import { HostedSettingsStore } from "./hosted-settings.js";
 import { HostedLifecycle } from "./hosted-lifecycle.js";
@@ -231,6 +233,12 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     return Response.json(hubErrorSchema.parse({ error: "Not found" }), { status: 404 });
   }
 
+  const agentToolRoute=/^\/api\/organizations\/([^/]+)\/computers\/agent-tools\/([^/]+)$/.exec(url.pathname);
+  if(agentToolRoute && request.method==="POST") {
+    const org=decodeURIComponent(agentToolRoute[1]),computer=await authenticateComputer(request,org,computerStore);
+    if(!computer)return jsonError("This computer cannot use agent tools.",403);
+    return env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${org}`)).fetch(new Request(`https://internal/agent-tools/${agentToolRoute[2]}`,{method:"POST",headers:{"x-organization-id":org,"x-computer-id":computer.computerId,"content-type":"application/json"},body:request.body}));
+  }
   const gitRoute = /^\/api\/organizations\/([^/]+)\/git\/([^/]+)(?:\/(token|info\/refs|git-upload-pack|git-receive-pack))?$/.exec(url.pathname);
   if (gitRoute) {
     const org=decodeURIComponent(gitRoute[1]), workspaceId=decodeURIComponent(gitRoute[2]), action=gitRoute[3];
@@ -452,6 +460,56 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         if (request.headers.has("x-filename")) headers.set("x-filename", request.headers.get("x-filename")!);
         const internal = new URL(`https://internal/${tail}`); internal.search = url.search;
         return board().fetch(new Request(internal, { method: request.method, headers, body: request.body, ...(request.body ? { duplex: "half" } : {}) }));
+      }
+      if(tail==="routing" || tail==="routing/resolve" || tail==="routing/preference") {
+        const member=await organizations.member(organizationId,identity.userId);
+        const stored=await env.DB.prepare("SELECT rules FROM organization_routing WHERE organization_id=?").bind(organizationId).first<{rules:string}>();
+        const rules=routingRuleSchema.array().parse(JSON.parse(stored?.rules??"[]"));
+        if(tail==="routing" && request.method==="GET")return Response.json({rules,canEdit:member.role!=="member"});
+        if(tail==="routing" && request.method==="PUT") {
+          if(member.role==="member")return jsonError("Only an administrator can change routing.",403);
+          const input=await body<{rules?:unknown}>(request);const parsed=routingRuleSchema.array().max(100).safeParse(input?.rules);
+          if(!parsed.success)return jsonError("Choose valid routing rules.",400);
+          for(const rule of parsed.data) {
+            if(!rule.target.computerId && !rule.target.class)return jsonError("Choose a computer or computer type.",400);
+            if(rule.workspaceId)await organizations.workspace(organizationId,identity.userId,rule.workspaceId);
+            if(rule.teamId && !await organizationStore.team(organizationId,rule.teamId))return jsonError("Choose a team in your organization.",400);
+            if(rule.target.computerId && !await computerStore.computer(organizationId,rule.target.computerId))return jsonError("Choose a computer in your organization.",400);
+          }
+          await env.DB.prepare("INSERT INTO organization_routing(organization_id,rules) VALUES(?,?) ON CONFLICT(organization_id) DO UPDATE SET rules=excluded.rules").bind(organizationId,JSON.stringify(parsed.data)).run();
+          return Response.json({rules:parsed.data});
+        }
+        if(tail==="routing/preference" && request.method==="GET") {
+          const workspaceId=url.searchParams.get("workspaceId");
+          if(!workspaceId)return jsonError("Choose a workspace.",400);
+          await organizations.workspace(organizationId,identity.userId,workspaceId);
+          const preference=await env.DB.prepare("SELECT computer_id FROM member_computer_preferences WHERE organization_id=? AND user_id=? AND workspace_id=?").bind(organizationId,identity.userId,workspaceId).first<{computer_id:string}>();
+          return Response.json({computerId:preference?.computer_id??null});
+        }
+        if(request.method==="POST") {
+          const input=await body<{workspaceId?:string;trigger?:string;computerId?:string|null;prewarm?:boolean;usePreference?:boolean}>(request);
+          if(!input?.workspaceId)return jsonError("Choose a workspace.",400);
+          const workspace=await organizations.workspace(organizationId,identity.userId,input.workspaceId);
+          const all=await computers.list(organizationId,identity.userId);
+          if(tail==="routing/preference") {
+            if(input.computerId) {
+              const choice=resolveComputer([],all,{workspaceId:workspace.id,origin:workspace.origin,teamIds:[],trigger:"manual",override:input.computerId});
+              if(!choice.computerId)return jsonError(choice.reason,409);
+              await env.DB.prepare("INSERT INTO member_computer_preferences(organization_id,user_id,workspace_id,computer_id) VALUES(?,?,?,?) ON CONFLICT(organization_id,user_id,workspace_id) DO UPDATE SET computer_id=excluded.computer_id").bind(organizationId,identity.userId,workspace.id,input.computerId).run();
+            }else await env.DB.prepare("DELETE FROM member_computer_preferences WHERE organization_id=? AND user_id=? AND workspace_id=?").bind(organizationId,identity.userId,workspace.id).run();
+            return Response.json({ok:true});
+          }
+          const teams=await organizationStore.teams(organizationId),teamIds:string[]=[];
+          for(const team of teams)if((await organizationStore.teamMembers(organizationId,team.id)).includes(identity.userId))teamIds.push(team.id);
+          const preference=input.usePreference?await env.DB.prepare("SELECT computer_id FROM member_computer_preferences WHERE organization_id=? AND user_id=? AND workspace_id=?").bind(organizationId,identity.userId,workspace.id).first<{computer_id:string}>():null;
+          const choice=resolveComputer(rules,all,{workspaceId:workspace.id,origin:workspace.origin,teamIds,trigger:input.trigger??"manual",...(preference?{override:preference.computer_id}:{})});
+          if(choice.hostedWorkspaceId && input.prewarm) {
+            const response=await board().fetch(new Request(`https://internal/hosted/${workspace.id}`,{method:"POST",headers:{"x-organization-id":organizationId}}));
+            if(!response.ok)return response;
+          }
+          return Response.json(choice);
+        }
+        return jsonError("This routing action is unavailable.",405);
       }
       const gitPolicy = /^workspaces\/([^/]+)\/git$/.exec(tail);
       if(gitPolicy && ["GET","PUT"].includes(request.method)) {
@@ -775,6 +833,23 @@ export class HubCoordinator {
       server.send(JSON.stringify({ kind: "welcome", protocolVersion: COMPUTER_PROTOCOL_VERSION, heartbeatIntervalMs: COMPUTER_HEARTBEAT_INTERVAL_MS, threadRelay: true, notifications: true }));
       await this.scheduleAlarm(Date.now() + COMPUTER_HEARTBEAT_TIMEOUT_MS);
       return new Response(null, { status: 101, webSocket: client });
+    }
+    const agentTool=/^\/agent-tools\/([^/]+)$/.exec(url.pathname);
+    if(agentTool && request.method==="POST" && org) {
+      const binding=await this.ctx.storage.get<{computerId:string;userId:string;agentId:string;orchestrator:boolean}>(`agent-run:${decodeURIComponent(agentTool[1])}`);
+      if(!binding || binding.computerId!==request.headers.get("x-computer-id") || !binding.orchestrator)return jsonError("This agent cannot change routing.",403);
+      const member=await new D1OrganizationStore(this.env.DB).membership(org,binding.userId);
+      if(!member || member.role==="member")return jsonError("Only an administrator can change routing.",403);
+      const input=await body<{action?:string;input?:{rules?:unknown}}>(request);
+      if(input?.action==="edit_routing") {
+        const parsed=routingRuleSchema.array().max(100).safeParse(input.input?.rules);
+        if(!parsed.success)return jsonError("Choose valid routing rules.",400);
+        const organizations=new D1OrganizationStore(this.env.DB);
+        for(const r of parsed.data)if((!r.target.computerId && !r.target.class) || (r.target.computerId && !await this.computers.computer(org,r.target.computerId)) || (r.workspaceId && !await organizations.workspace(org,r.workspaceId)) || (r.teamId && !await organizations.team(org,r.teamId)))return jsonError("Choose routing within your organization.",400);
+        await this.env.DB.prepare("INSERT INTO organization_routing(organization_id,rules) VALUES(?,?) ON CONFLICT(organization_id) DO UPDATE SET rules=excluded.rules").bind(org,JSON.stringify(parsed.data)).run();
+      }else if(input?.action!=="read_routing")return jsonError("This agent tool is unavailable.",403);
+      const row=await this.env.DB.prepare("SELECT rules FROM organization_routing WHERE organization_id=?").bind(org).first<{rules:string}>();
+      return Response.json({rules:JSON.parse(row?.rules??"[]")});
     }
     const removeWorkspace = /^\/hosted-workspace\/([^/]+)$/.exec(url.pathname);
     if(removeWorkspace && request.method === "DELETE") { const state = await this.hostedService().get(decodeURIComponent(removeWorkspace[1])); if(state) await this.hostedService().remove(state.computerId); return new Response(null,{status:204}); }

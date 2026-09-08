@@ -1,3 +1,4 @@
+import {hubAgentTool} from "./hub-agent-tools.js";
 import { createSdkMcpServer, tool } from "./provider-adapters/claude.js";
 import { basename } from "node:path";
 import { homedir } from "node:os";
@@ -180,6 +181,8 @@ export function inProcessTicketMcpServer(
     version: "1",
     instructions: REMY_TOOL_INSTRUCTIONS,
     tools: [
+      tool("read_routing", "Read your organization’s routing rules.", {}, async () => ok(JSON.stringify(await hubAgentTool(chatId,"read_routing")))),
+      tool("edit_routing", "Replace your organization’s ordered routing rules.", {rules:z.array(z.object({id:z.string(),name:z.string(),workspaceId:z.string().optional(),teamId:z.string().optional(),trigger:z.enum(["manual","ticket","routine","agent"]).optional(),target:z.object({computerId:z.string().optional(),class:z.enum(["hosted","darwin","linux"]).optional(),emulator:z.boolean().optional()})})).max(100)}, async (input) => ok(JSON.stringify(await hubAgentTool(chatId,"edit_routing",input)))),
       tool(
         "list_workspaces",
         "List the workspace folders registered on this machine.",

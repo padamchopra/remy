@@ -1,3 +1,4 @@
+const Routing = lazy(() => import("./HubRouting").then(m => ({default:m.HubRouting})));
 import { lazy, useEffect, useState } from "react";
 import {
   Folder,
@@ -204,6 +205,9 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           selected: section === "devices",
         },
         {
+          label: "Routing", icon: Laptop, route: {name:"settings",tab:"routing",organizationId}, selected:section==="routing",
+        },
+        {
           label: "Members",
           icon: User,
           route: { name: "settings", tab: "members", organizationId },
@@ -387,6 +391,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                 <Computers organizationId={organization.id} />
               </Deferred>
             </div>
+            <div hidden={section!=="routing"} className="min-h-0 overflow-auto"><Deferred open={section==="routing"}><Routing organizationId={organization.id}/></Deferred></div>
             {(["members", "teams", "workspaces"] as const).map((kind) => (
               <div
                 hidden={section !== kind}

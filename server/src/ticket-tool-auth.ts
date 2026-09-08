@@ -33,6 +33,7 @@ export function remyToolChatId(authorization: string | undefined): string | unde
 /// Remy capabilities expose orchestration but cannot change settings, pairing,
 /// notifications, checkouts, files, or destructive workspace/thread routes.
 export function isRemyToolRoute(method: string | undefined, pathname: string): boolean {
+  if ((method === "GET" || method === "PUT") && pathname === "/routing") return true;
   if (method === "GET" && pathname === "/board") return true;
   if (method === "GET" && pathname === "/agents") return true;
   if ((method === "GET" || method === "POST") && /^\/agents\/[^/]+\/memories$/.test(pathname)) return true;

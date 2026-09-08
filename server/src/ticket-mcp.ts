@@ -219,6 +219,8 @@ const server = new McpServer(
   { instructions: REMY_TOOL_INSTRUCTIONS },
 );
 
+server.registerTool("read_routing", {description:"Read your organization's routing rules.",inputSchema:{}}, async()=>ok(JSON.stringify(await request("/routing"))));
+server.registerTool("edit_routing", {description:"Replace your organization's ordered routing rules.",inputSchema:{rules:z.array(z.object({id:z.string(),name:z.string(),workspaceId:z.string().optional(),teamId:z.string().optional(),trigger:z.enum(["manual","ticket","routine","agent"]).optional(),target:z.object({computerId:z.string().optional(),class:z.enum(["hosted","darwin","linux"]).optional(),emulator:z.boolean().optional()})})).max(100)}}, async input=>ok(JSON.stringify(await request("/routing", {method:"PUT",body:input}))));
 server.registerTool("list_workspaces", {
   description: "List the workspace folders registered on this machine.",
   inputSchema: {},
