@@ -12,7 +12,9 @@ function fixture() {
     checkpoints = 0;
   let connected = true;
   const storage = {
-    delete: async (key: string) => { values.delete(key); },
+    delete: async (key: string) => {
+      values.delete(key);
+    },
     get: async (key: string) => structuredClone(values.get(key)),
     put: async (key: string, value: unknown) => {
       values.set(key, structuredClone(value));
@@ -34,11 +36,12 @@ function fixture() {
         id: input.computerId,
         provider: "modal",
         providerReference: "sb-test",
+        startedAt: now,
       };
     },
     start: async (runtime) => {
       restores++;
-      return runtime;
+      return { ...runtime, startedAt: now };
     },
     stop: async () => {},
     checkpoint: async (runtime) => {
@@ -69,7 +72,9 @@ function fixture() {
     );
   return {
     create,
-    disconnect: () => { connected = false; },
+    disconnect: () => {
+      connected = false;
+    },
     provider,
     tick: (ms: number) => {
       now += ms;
@@ -141,9 +146,30 @@ test("disabled workspaces never allocate and provider changes cannot silently lo
 });
 
 test("a disconnected ready computer restarts and deletion waits for a wake", async () => {
- const f = fixture(), life = f.create();
- const first = await life.ensure("w", settings); f.disconnect();
- await life.ensure("w", settings); assert.equal(f.counts().restores, 1);
- await Promise.all([life.ensure("w", settings), life.remove(first.computerId)]);
- assert.equal(await life.get("w"), undefined);
+  const f = fixture(),
+    life = f.create();
+  const first = await life.ensure("w", settings);
+  f.disconnect();
+  await life.ensure("w", settings);
+  assert.equal(f.counts().restores, 1);
+  await Promise.all([
+    life.ensure("w", settings),
+    life.remove(first.computerId),
+  ]);
+  assert.equal(await life.get("w"), undefined);
+});
+
+test("Modal rotates before expiry even during active work and preserves computer identity", async () => {
+  const f = fixture(),
+    life = f.create();
+  const first = await life.ensure("w", settings);
+  await life.activity(first.computerId, true);
+  f.tick(23 * 60 * 60_000);
+  await Promise.all([life.idle(), life.ensure("w", settings)]);
+  const after = (await life.get("w"))!;
+  assert.equal(after.computerId, first.computerId);
+  assert.equal(after.phase, "ready");
+  assert.deepEqual(f.counts(), { allocations: 1, checkpoints: 1, restores: 1 });
+  await f.create().idle();
+  assert.equal(f.counts().checkpoints, 1);
 });

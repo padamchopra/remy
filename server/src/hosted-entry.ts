@@ -53,3 +53,11 @@ try {
 const { addWorkspace } = await import("./workspaces.js");
 await addWorkspace(bootstrap.workspace.name, "/workspace");
 await import("./index.js");
+
+const { resumeCheckpointTurns } = await import("./hosted-turns.js");
+const { sendChatMessage } = await import("./chat.js");
+void resumeCheckpointTurns(
+  getKv<import("./hosted-turns.js").CheckpointTurn[]>("hostedCheckpointTurns") ?? [],
+  turns => setKv("hostedCheckpointTurns", turns),
+  (id, prompt, messageId) => sendChatMessage(id, prompt, [], [], undefined, messageId, { id: "remy", label: "Remy" }),
+).catch(() => console.error("A thread could not resume after your computer restarted."));

@@ -411,6 +411,13 @@ const server = createServer(async (req, res) => {
       ? (scopedAgentId ? getAgent(scopedAgentId)?.handle : undefined) ?? "remy"
       : typeof asked === "string" ? getAgent(asked)?.handle ?? "you" : "you";
 
+    if (req.method === "POST" && url.pathname === "/server/hosted-checkpoint") {
+      if (hubComputerRegistration()?.ownership !== "hosted") return json(res, 404, { error: "Computer not found." });
+      const { checkpointTurns } = await import("./hosted-turns.js");
+      const { setKv } = await import("./db.js");
+      await checkpointTurns(listAllChats(), turns => setKv("hostedCheckpointTurns", turns), interruptChat);
+      return json(res, 200, { ok: true });
+    }
     if (req.method === "GET" && url.pathname === "/health") {
       return json(res, 200, { ok: true });
     }

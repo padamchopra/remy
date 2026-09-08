@@ -3,6 +3,7 @@ export type ComputerRuntime = {
   id: string;
   provider: string;
   providerReference: string;
+  startedAt?: number;
   snapshot?: string;
   snapshotBytes?: number;
 };

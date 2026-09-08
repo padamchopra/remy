@@ -186,11 +186,17 @@ export class HostedLifecycle {
         const state = await this.get(entry.workspaceId);
         if (!state) return;
         await this.meter(state);
+        const rotate =
+          state.provider === "modal" &&
+          !!state.runtime &&
+          this.now() - (state.runtime.startedAt ?? 0) >= 23 * 60 * 60_000;
         if (
           state.phase !== "ready" ||
-          state.active ||
-          this.now() - state.lastUsedAt < state.settings.idleMinutes * 60_000 ||
-          !state.runtime
+          !state.runtime ||
+          (!rotate &&
+            (state.active ||
+              this.now() - state.lastUsedAt <
+                state.settings.idleMinutes * 60_000))
         ) {
           await this.save(state);
           return;
@@ -218,7 +224,15 @@ export class HostedLifecycle {
             state.error =
               "This computer could not save its checkpoint; try restoring it.";
           }
-          return this.save(state);
+          await this.save(state);
+          if (rotate && state.phase === "asleep") {
+            try {
+              return await this.wake(state.workspaceId, state.settings);
+            } catch {
+              return;
+            }
+          }
+          return state;
         }
       });
     }

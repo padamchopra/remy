@@ -41,6 +41,7 @@ export class ModalRuntime implements ComputerRuntimeProvider {
     } catch (e) {
       if ((e as Error).name !== "NotFoundError") throw e;
     }
+    const reused = !!sandbox;
     if (!sandbox)
       sandbox = await this.client.sandboxes.experimentalCreate(
         app,
@@ -75,6 +76,7 @@ export class ModalRuntime implements ComputerRuntimeProvider {
       id: input.computerId,
       provider: this.id,
       providerReference: sandbox.sandboxId,
+      startedAt: reused ? (runtime.startedAt ?? 0) : Date.now(),
     };
   }
   async stop(runtime: ComputerRuntime) {
@@ -86,6 +88,12 @@ export class ModalRuntime implements ComputerRuntimeProvider {
     const sandbox = await this.client.sandboxes.fromId(
       runtime.providerReference,
     );
+    const prepare = await sandbox.exec([
+      "node",
+      "/opt/remy/server/dist/hosted-checkpoint.js",
+    ]);
+    if ((await prepare.wait()) !== 0)
+      throw new Error("Computer could not prepare its checkpoint.");
     const stop = await sandbox.exec(["node", "-e", stopProgram]);
     if ((await stop.wait()) !== 0) throw new Error("Computer did not stop.");
     const size = await sandbox.exec(["du", "-sb", "/data", "/workspace"]);
