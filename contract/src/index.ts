@@ -455,3 +455,13 @@ export type HostedComputerState = {
   usage: { activeMs: number; warmIdleMs: number; snapshotByteMs: number };
   timing: { allocationMs?: number; restoreMs?: number; readyMs?: number; warmRequestMs?: number; firstResponseMs?: number };
 };
+
+export const routingRuleSchema = z.object({
+  id: z.string().min(1).max(100),
+  name: z.string().min(1).max(120),
+  workspaceId: z.string().optional(),
+  teamId: z.string().optional(),
+  trigger: z.enum(["manual", "ticket", "routine", "agent"]).optional(),
+  target: z.object({computerId:z.string().optional(),class:z.enum(["hosted","darwin","linux"]).optional(),emulator:z.boolean().optional()}),
+});
+export type RoutingRule = z.infer<typeof routingRuleSchema>;

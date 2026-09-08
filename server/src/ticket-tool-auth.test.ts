@@ -66,6 +66,10 @@ test("a Remy capability reaches orchestration without reaching administration", 
   assert.equal(isRemyToolRoute("POST", "/agents/one/memories/memory-one"), false);
   assert.equal(isRemyToolRoute("POST", "/agents/one/dm"), false);
   assert.equal(isRemyToolRoute("POST", "/chats/chat-2/read"), false);
+  assert.equal(isRemyToolRoute("GET", "/routing"), true);
+  assert.equal(isRemyToolRoute("PUT", "/routing"), true);
+  assert.equal(isRemyToolRoute("PUT", "/routing/preference"), false);
+  assert.equal(isRemyToolRoute("DELETE", "/routing"), false);
   assert.equal(isRemyToolRoute("POST", "/agents"), false);
   assert.equal(isRemyToolRoute("DELETE", "/agents/one"), false);
 });

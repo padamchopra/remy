@@ -1,6 +1,6 @@
 import { Boxes, ChartNoAxesCombined, GitBranch, Laptop, Monitor } from "lucide-react";
 
-export type SettingsTab = "general" | "version-control" | "providers" | "devices" | "analytics" | "members" | "teams";
+export type SettingsTab = "general" | "version-control" | "providers" | "devices" | "analytics" | "members" | "teams" | "routing";
 
 /// The settings tabs, listed here rather than beside the pane they open so the
 /// sidebar can draw them without loading it.
