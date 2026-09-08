@@ -89,7 +89,7 @@ for (const file of readdirSync(join(root, "hub/migrations"))
     join(root, "hub/migrations", file),
     "utf8",
   )
-    .split(";")
+    .split(/;(?=\s*(?:CREATE|INSERT|DROP|ALTER|PRAGMA|$))/i)
     .map((s) => s.trim())
     .filter(Boolean))
     await db.prepare(statement).run();
@@ -108,6 +108,8 @@ for (const [id, name, kind] of [
 ]) {
   const token = randomBytes(32).toString("base64url");
   tokens[id] = token;
+  const userId = id === "computer-owner" ? "ada" : id;
+  if (id !== "computer-owner") {
   await db
     .prepare(
       "INSERT INTO user (id,name,email,createdAt,updatedAt) VALUES (?,?,?,?,?)",
@@ -116,15 +118,16 @@ for (const [id, name, kind] of [
     .run();
   await db
     .prepare("INSERT INTO memberships VALUES (?,?,?,?,?,?)")
-    .bind(randomUUID(), organizationId, id, "owner", now, now)
+    .bind(randomUUID(), organizationId, id, id === "grace" ? "member" : "owner", now, now)
     .run();
+  }
   await db
     .prepare(
       "INSERT INTO auth_sessions (id,user_id,client_kind,client_name,access_token_hash,access_expires_at,created_at,last_seen_at) VALUES (?,?,?,?,?,?,?,?)",
     )
     .bind(
       randomUUID(),
-      id,
+      userId,
       kind,
       name,
       createHash("sha256").update(token).digest("base64url"),
@@ -244,6 +247,7 @@ const request = async (path, member = "ada", method = "GET", body) => {
     throw new Error(`${response.status}: ${JSON.stringify(data)}`);
   return data;
 };
+if (!process.env.QA_COMPUTER_POLICY) await request(`/computers/${registration.computerId}`, "ada", "PATCH", { access: { mode: "organization", userIds: [], teamIds: [] } });
 for (let attempt = 0; attempt < 150; attempt++) {
   if (
     (await request("/computers")).computers.some(
@@ -270,7 +274,18 @@ const control = createServer(async (req, res) => {
     res.end();
     return;
   }
-  if (req.url === "/disconnect") connection.stop();
+  const controlPath = new URL(req.url, "http://127.0.0.1");
+  const askedThread = controlPath.searchParams.get("threadId") ?? thread.id;
+  if (controlPath.pathname === "/local-thread") {
+    const { getChat } = await import("../../server/dist/chat.js");
+    const local = getChat(askedThread);
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ exists: !!local, state: local?.state }));
+    return;
+  } else if (controlPath.pathname === "/notify") {
+    const { sendNotification } = await import("../../server/dist/notify.js");
+    await sendNotification({ session: askedThread, title: "Release notes need you", message: "Review the release notes before publishing.", highPriority: true });
+  } else if (req.url === "/disconnect") connection.stop();
   else if (req.url === "/reconnect") connection.start();
   else if (req.url === "/revoke-grace" || req.url === "/restore-grace") {
     await db

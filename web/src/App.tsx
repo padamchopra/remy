@@ -573,6 +573,7 @@ export function App() {
         <Suspense fallback={<SurfaceLoading />}>
         {hubOpen ? null : view === "settings" ? (
           <SettingsPane
+            organizationId={route.name === "settings" ? route.organizationId : undefined}
             tab={settingsTab}
             analyticsTab={analyticsTab}
             onAnalyticsTab={(tab) => go({ name: "settings", tab: "analytics", analyticsTab: tab }, true)}

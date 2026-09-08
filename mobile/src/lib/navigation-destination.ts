@@ -58,6 +58,7 @@ export function storedDestination(value: unknown): NavigationDestination | undef
 export function notificationDestination(data: unknown): NavigationDestination | undefined {
   if (!data || typeof data !== "object") return undefined;
   const row = data as Record<string, unknown>;
+  if (typeof row.organizationId === "string") return undefined;
   if (typeof row.click === "string") {
     const parsed = navigationDestination(row.click);
     if (parsed) return parsed;
@@ -68,4 +69,17 @@ export function notificationDestination(data: unknown): NavigationDestination | 
   if (typeof row.ticketKey === "string") return { kind: "ticket", key: row.ticketKey };
   if (typeof row.repository === "string" && Number.isSafeInteger(row.number) && Number(row.number) > 0) return { kind: "pull-request", repository: row.repository, number: Number(row.number), ...(serverId ? { serverId } : {}) };
   return undefined;
+}
+
+export function hubNotificationUrl(data: unknown): string | undefined {
+  if (!data || typeof data !== "object") return undefined;
+  const row = data as Record<string, unknown>;
+  if (typeof row.hubUrl !== "string" || typeof row.organizationId !== "string" || typeof row.computerId !== "string" || typeof row.threadId !== "string") return undefined;
+  try {
+    const url = new URL(row.hubUrl);
+    if (url.protocol !== "https:" || url.username || url.password) return undefined;
+    url.pathname = "/"; url.search = "";
+    url.hash = `/threads/${encodeURIComponent(row.threadId)}?${new URLSearchParams({ organization: row.organizationId, computer: row.computerId })}`;
+    return url.toString();
+  } catch { return undefined; }
 }

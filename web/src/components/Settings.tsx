@@ -1,3 +1,4 @@
+import { HubComputers } from "./HubComputers";
 import {
   closestCenter,
   DndContext,
@@ -118,6 +119,7 @@ export function SettingsPane({
   tab,
   analyticsTab,
   onAnalyticsTab,
+  organizationId,
   providerDeviceId,
   onProviderDevice,
   release,
@@ -125,6 +127,7 @@ export function SettingsPane({
   tab: SettingsTab;
   analyticsTab: AnalyticsTab;
   onAnalyticsTab: (tab: AnalyticsTab) => void;
+  organizationId?: string;
   providerDeviceId?: string;
   onProviderDevice: (deviceId: string) => void;
   release: {
@@ -146,7 +149,7 @@ export function SettingsPane({
       <ScrollArea className="min-h-0 flex-1">
         <div className={cn("mx-auto flex w-full flex-col gap-6 px-5 py-6", tab === "analytics" ? "max-w-6xl" : "max-w-2xl")}>
           {tab === "devices" ? (
-            <DevicesPane />
+            <DevicesPane organizationId={organizationId} />
           ) : tab === "version-control" ? (
             <VersionControlPane />
           ) : tab === "providers" ? (
@@ -1377,7 +1380,7 @@ function Unreachable({ deviceName }: { deviceName?: string } = {}) {
   );
 }
 
-function DevicesPane() {
+function DevicesPane({ organizationId }: { organizationId?: string }) {
   const servers = useStore((s) => s.servers);
   const settings = useStore((s) => s.settings);
   const saveSettings = useStore((s) => s.saveSettings);
@@ -1478,9 +1481,10 @@ function DevicesPane() {
 
   return (
     <div className="flex flex-col gap-6">
+      <HubComputers organizationId={organizationId} />
       <Field>
         <FieldContent>
-          <FieldLabel>Devices</FieldLabel>
+          <FieldLabel>Computers</FieldLabel>
           <FieldDescription className="text-xs">
             Manage this machine and the devices paired with it.
           </FieldDescription>

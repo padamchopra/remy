@@ -34,7 +34,7 @@ test("the daemon reconnects outbound with a fresh signed authorization and capab
       });
     });
   });
-  const connection = new HubComputerConnection({ computerId: "b7ebfcbe-f2f4-4a1b-8707-3029fa65d14b", organizationId: "org-1", ownerUserId: "owner-1", name: "Studio", platform: "darwin", daemonVersion: "0.1.0", protocol: { minimum: 1, maximum: 1 }, publicKey: "unused", capabilities, registeredAt: 1, updatedAt: 1, hubUrl: `http://127.0.0.1:${address.port}` }, async () => capabilities);
+  const connection = new HubComputerConnection({ icon: "", ownership: "personal", access: { mode: "owner", userIds: [], teamIds: [] }, computerId: "b7ebfcbe-f2f4-4a1b-8707-3029fa65d14b", organizationId: "org-1", ownerUserId: "owner-1", name: "Studio", platform: "darwin", daemonVersion: "0.1.0", protocol: { minimum: 1, maximum: 1 }, publicKey: "unused", capabilities, registeredAt: 1, updatedAt: 1, hubUrl: `http://127.0.0.1:${address.port}` }, async () => capabilities);
   context.after(() => connection.stop());
   connection.start();
   await connectedTwice;

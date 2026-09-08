@@ -1,8 +1,8 @@
 import { handleHubThreadRequest, hubThreadIds, hubThreadSnapshot } from "./hub-threads.js";
-import { onLocalBroadcast } from "./notify.js";
+import { onLocalBroadcast, onAddressedNotification } from "./notify.js";
 import { saveChatImage } from "./chat-attachments.js";
 import { execFileSync } from "node:child_process";
-import { createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, sign } from "node:crypto";
+import { createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, randomUUID, sign } from "node:crypto";
 import { hostname } from "node:os";
 import {
   COMPUTER_HEARTBEAT_INTERVAL_MS,
@@ -10,6 +10,7 @@ import {
   computerConnectionMessage,
   computerRegistrationSchema,
   hubToComputerFrameSchema,
+  type HubNotificationInput,
   type ComputerCapabilities,
   type ComputerConnectionAuthorization,
   type ComputerRegistration,
@@ -17,12 +18,13 @@ import {
 } from "@remy/contract";
 import WebSocket from "ws";
 import { deviceId } from "./board-log.js";
-import { config } from "./config.js";
+import { config, patchSettings } from "./config.js";
 import { getKv, setKv } from "./db.js";
 import { discoveredProviders } from "./provider-adapters/index.js";
 import { tooling } from "./tooling.js";
 import { listWorkspaces } from "./workspaces.js";
 
+const NOTIFICATION_OUTBOX = "hubNotificationOutbox";
 const REGISTRATION_KEY = "hubComputerRegistration";
 const PRIVATE_KEY_KV = "hubComputerPrivateKey";
 const KEYCHAIN_SERVICE = "me.padamchopra.Remy.hub-computer";
@@ -73,11 +75,12 @@ export function connectionAuthorization(organizationId: string, computerId: stri
   return `RemyComputer ${base64url(JSON.stringify(authorization))}`;
 }
 
-export async function registerHubComputer(hubUrl: string, organizationId: string, accessToken: string): Promise<HubComputerRegistration> {
+export async function registerHubComputer(hubUrl: string, organizationId: string, accessToken: string, ownership: "personal" | "organization" | "hosted" = "personal"): Promise<HubComputerRegistration> {
   const keys = privateKey();
   const input = {
     computerId: deviceId,
     name: config.deviceName || hostname(),
+    icon: config.deviceIcon, ownership,
     platform: process.platform === "linux" ? "linux" as const : "darwin" as const,
     daemonVersion: DAEMON_VERSION,
     protocol: { minimum: COMPUTER_PROTOCOL_VERSION, maximum: COMPUTER_PROTOCOL_VERSION },
@@ -90,11 +93,12 @@ export async function registerHubComputer(hubUrl: string, organizationId: string
   if (!response.ok) throw new Error(`The hub refused this computer (${response.status}).`);
   const registration = { ...computerRegistrationSchema.parse(await response.json()), hubUrl: new URL(hubUrl).origin };
   setKv(REGISTRATION_KEY, registration);
+  patchSettings({ hubMode: true });
   restartHubComputerConnection(registration);
   return registration;
 }
 
-export async function registerHubComputerWithDeviceCode(hubUrl: string, organizationId: string, deviceCode: string): Promise<HubComputerRegistration> {
+export async function registerHubComputerWithDeviceCode(hubUrl: string, organizationId: string, deviceCode: string, ownership: "personal" | "organization" | "hosted" = "personal"): Promise<HubComputerRegistration> {
   const tokenResponse = await fetch(new URL("/api/device/token", hubUrl), {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ deviceCode }), signal: AbortSignal.timeout(15_000),
   });
@@ -103,7 +107,7 @@ export async function registerHubComputerWithDeviceCode(hubUrl: string, organiza
   if (!tokenResponse.ok) throw new Error("Start computer authorization again.");
   const token = await tokenResponse.json() as { accessToken?: unknown };
   if (typeof token.accessToken !== "string") throw new Error("Start computer authorization again.");
-  return registerHubComputer(hubUrl, organizationId, token.accessToken);
+  return registerHubComputer(hubUrl, organizationId, token.accessToken, ownership);
 }
 
 export class HubComputerConnection {
@@ -115,18 +119,30 @@ export class HubComputerConnection {
   private threadRelay = false;
   private introduced = false;
   private syncingThreads = false;
+  private notificationRelay = false;
+  private offNotifications?: () => void;
   private offBroadcast?: () => void;
   private snapshots = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly subscriptions = new Map<string, WebSocket>();
 
   constructor(private readonly registration: HubComputerRegistration, private readonly makeCapabilities = computerCapabilities) {}
 
-  start(): void { if (!this.stopped && this.socket && this.socket.readyState <= WebSocket.OPEN) return; this.stopped = false; this.connect(); }
-  stop(): void { this.offBroadcast?.(); for (const timer of this.snapshots.values()) clearTimeout(timer); this.snapshots.clear(); this.stopped = true; clearTimeout(this.retry); clearInterval(this.heartbeat); const socket = this.socket; this.socket = undefined; socket?.close(); for (const stream of this.subscriptions.values()) stream.close(); this.subscriptions.clear(); }
+  start(): void { if (!this.stopped && this.socket && this.socket.readyState <= WebSocket.OPEN) return; this.stopped = false;
+    this.offNotifications?.();
+    this.offNotifications = onAddressedNotification((evt) => {
+      if (!hubThreadSnapshot(evt.session, this.registration.organizationId)) return false;
+      const outbox = (getKv<HubNotificationInput[]>(NOTIFICATION_OUTBOX) ?? []).filter((n) => n.createdAt > Date.now() - 7 * 86400000);
+      outbox.push({ id: randomUUID(), threadId: evt.session, title: evt.title.slice(0, 160), message: evt.message.slice(0, 500), highPriority: evt.highPriority, createdAt: Date.now() });
+      setKv(NOTIFICATION_OUTBOX, outbox.slice(-1000));
+      this.flushNotifications();
+      return true;
+    });
+    this.connect(); }
+  stop(): void { this.offNotifications?.(); this.offBroadcast?.(); for (const timer of this.snapshots.values()) clearTimeout(timer); this.snapshots.clear(); this.stopped = true; clearTimeout(this.retry); clearInterval(this.heartbeat); const socket = this.socket; this.socket = undefined; socket?.close(); for (const stream of this.subscriptions.values()) stream.close(); this.subscriptions.clear(); }
 
   private connect(): void {
     if (this.stopped) return;
-    this.threadRelay = false; this.introduced = false; this.syncingThreads = false;
+    this.threadRelay = false; this.notificationRelay = false; this.introduced = false; this.syncingThreads = false;
     const key = privateKey();
     const url = new URL(`/api/organizations/${encodeURIComponent(this.registration.organizationId)}/computers/connect`, this.registration.hubUrl);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -136,10 +152,10 @@ export class HubComputerConnection {
       if (this.socket !== socket || this.stopped) { socket.close(); return; }
       this.attempts = 0;
       void this.hello(socket).catch(() => socket.close(1011, "Reconnect to update this computer."));
-      this.heartbeat = setInterval(() => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ kind: "heartbeat", availability: "available", observedAt: Date.now() })); }, COMPUTER_HEARTBEAT_INTERVAL_MS);
+      this.heartbeat = setInterval(() => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ kind: "heartbeat", availability: "available", observedAt: Date.now() })); this.flushNotifications(); }, COMPUTER_HEARTBEAT_INTERVAL_MS);
     });
     socket.on("message", (data) => { if (this.socket === socket) void this.message(socket, data.toString()).catch(() => socket.close(1011, "Reconnect to continue.")); });
-    socket.on("close", () => { if (this.socket !== socket) return; this.socket = undefined; this.offBroadcast?.(); for (const stream of this.subscriptions.values()) stream.close(); this.subscriptions.clear(); clearInterval(this.heartbeat); if (!this.stopped) this.scheduleReconnect(); });
+    socket.on("close", (code, reason) => { if (this.socket !== socket) return; if (code === 1008 && reason.toString() === "This computer was removed.") { this.stopped = true; this.offNotifications?.(); } this.socket = undefined; this.offBroadcast?.(); for (const stream of this.subscriptions.values()) stream.close(); this.subscriptions.clear(); clearInterval(this.heartbeat); if (!this.stopped) this.scheduleReconnect(); });
     socket.on("error", () => undefined);
   }
 
@@ -149,6 +165,7 @@ export class HubComputerConnection {
     socket.send(JSON.stringify({ kind: "hello", protocolVersion: COMPUTER_PROTOCOL_VERSION, daemonVersion: DAEMON_VERSION, capabilities }));
     this.introduced = true;
     this.syncThreads(socket);
+    this.flushNotifications();
   }
 
   private syncThreads(socket: WebSocket): void {
@@ -174,6 +191,17 @@ export class HubComputerConnection {
     socket.send(JSON.stringify({ kind: "thread.manifest", ids: hubThreadIds(this.registration.organizationId) }));
   }
 
+  private flushNotifications(): void {
+    const socket = this.socket;
+    if (!this.introduced || !this.notificationRelay || socket?.readyState !== WebSocket.OPEN) return;
+    for (const notification of getKv<HubNotificationInput[]>(NOTIFICATION_OUTBOX) ?? []) {
+      const snapshot = hubThreadSnapshot(notification.threadId, this.registration.organizationId);
+      if (!snapshot) continue;
+      socket.send(JSON.stringify({ kind: "thread.snapshot", snapshot }));
+      socket.send(JSON.stringify({ kind: "notification", notification }));
+    }
+  }
+
   private scheduleReconnect(): void {
     const maximum = Math.min(30_000, 500 * 2 ** Math.min(this.attempts++, 6));
     this.retry = setTimeout(() => this.connect(), Math.floor(maximum * (0.75 + Math.random() * 0.5)));
@@ -184,7 +212,8 @@ export class HubComputerConnection {
     try { value = JSON.parse(raw); } catch { socket.close(1003, "Invalid hub frame."); return; }
     const parsed = hubToComputerFrameSchema.safeParse(value);
     if (!parsed.success) { socket.close(1003, "Invalid hub frame."); return; }
-    if (parsed.data.kind === "welcome") { this.threadRelay = parsed.data.threadRelay === true; this.syncThreads(socket); }
+    if (parsed.data.kind === "welcome") { this.threadRelay = parsed.data.threadRelay === true; this.notificationRelay = parsed.data.notifications === true; this.syncThreads(socket); this.flushNotifications(); }
+    if (parsed.data.kind === "notification.ack") { const id = parsed.data.id; setKv(NOTIFICATION_OUTBOX, (getKv<HubNotificationInput[]>(NOTIFICATION_OUTBOX) ?? []).filter((n) => n.id !== id)); }
     if (parsed.data.kind === "update_required") { this.stopped = true; socket.close(1008, "Update Remy to reconnect."); return; }
     if (parsed.data.kind === "request") await this.proxy(socket, parsed.data);
     if (parsed.data.kind === "subscribe") this.subscribe(socket, parsed.data.id, parsed.data.path);
@@ -246,4 +275,37 @@ export function hubComputerRegistration(): Omit<HubComputerRegistration, "public
   if (!registration) return undefined;
   const { publicKey: _, ...safe } = registration;
   return safe;
+}
+
+export async function detachHubComputer(): Promise<void> {
+  const registration = getKv<HubComputerRegistration>(REGISTRATION_KEY);
+  if (registration) {
+    const url = new URL(`/api/organizations/${encodeURIComponent(registration.organizationId)}/computers/detach`, registration.hubUrl);
+    const response = await fetch(url, { method: "POST", headers: { authorization: connectionAuthorization(registration.organizationId, registration.computerId, privateKey().privateKey) }, signal: AbortSignal.timeout(15_000) });
+    if (!response.ok && response.status !== 401) throw new Error("This computer could not be removed; try again when your organization reconnects.");
+  }
+  stopHubComputerConnection();
+  setKv(REGISTRATION_KEY, null);
+  setKv(NOTIFICATION_OUTBOX, []);
+  patchSettings({ hubMode: false });
+}
+
+export async function beginHubComputerAuthorization(hubUrl: string, organizationId: string, ownership: "personal" | "organization" | "hosted") {
+  const url = new URL(hubUrl);
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))) throw new Error("Enter a secure organization address.");
+  if (!organizationId || organizationId.length > 200) throw new Error("Choose your organization.");
+  const response = await fetch(new URL("/api/device/authorization", url.origin), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientKind: "computer", clientName: config.deviceName || hostname() }), signal: AbortSignal.timeout(15000) });
+  if (!response.ok) throw new Error("This organization could not be reached; try again.");
+  const value = await response.json() as { deviceCode: string; userCode: string; expiresIn: number };
+  if (typeof value.deviceCode !== "string" || typeof value.userCode !== "string") throw new Error("Start computer authorization again.");
+  setKv("hubPendingAuthorization", { hubUrl: url.origin, organizationId, ownership, deviceCode: value.deviceCode, expiresAt: Date.now() + value.expiresIn * 1000 });
+  return { userCode: value.userCode };
+}
+
+export async function finishHubComputerAuthorization() {
+  const pending = getKv<{ hubUrl: string; organizationId: string; ownership: "personal" | "organization" | "hosted"; deviceCode: string; expiresAt: number }>("hubPendingAuthorization");
+  if (!pending || pending.expiresAt <= Date.now()) throw new Error("Start computer authorization again.");
+  await registerHubComputerWithDeviceCode(pending.hubUrl, pending.organizationId, pending.deviceCode, pending.ownership);
+  setKv("hubPendingAuthorization", null);
+  return hubComputerRegistration();
 }

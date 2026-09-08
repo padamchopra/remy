@@ -13,7 +13,7 @@ function setup(userId = "ada") {
             ? { userId, sessionId: "session", clientKind: "web" }
             : undefined,
       }) as never,
-    organizationStore: () => ({}) as never,
+    organizationStore: () => ({ membership: async () => ({ role: "member" }) }) as never,
     organizationService: () =>
       ({
         member: async (org: string) => {
@@ -27,7 +27,7 @@ function setup(userId = "ada") {
     computerStore: () =>
       ({
         computer: async (org: string, id: string) =>
-          org === "team" && id === "studio" ? { computerId: id } : undefined,
+          org === "team" && id === "studio" ? { computerId: id, ownerUserId: userId, access: { mode: "owner", userIds: [], teamIds: [] } } : undefined,
       }) as never,
   });
   const env = {

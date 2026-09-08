@@ -21,7 +21,7 @@ export type Route =
   | { name: "board"; scope?: string }
   | { name: "ticket"; key: string }
   | { name: "prs" }
-  | { name: "settings"; tab: SettingsTab; analyticsTab?: AnalyticsTab; deviceId?: string };
+  | { name: "settings"; tab: SettingsTab; analyticsTab?: AnalyticsTab; deviceId?: string; organizationId?: string };
 
 export interface AppLocation {
   route: Route;
@@ -69,6 +69,7 @@ export function parseLocation(hash: string): AppLocation {
       route: {
         name: "settings",
         tab,
+        ...(tab === "devices" && params.get("organization") ? { organizationId: params.get("organization")! } : {}),
         ...(tab === "analytics" ? { analyticsTab } : {}),
         ...(tab === "providers" && deviceId ? { deviceId } : {}),
       },
@@ -102,7 +103,7 @@ export function formatLocation({ route }: AppLocation): string {
             ? `/tickets/${encodeURIComponent(route.key)}`
             : route.name === "settings"
               ? `/settings/${route.tab}${
-                  route.tab === "analytics" && route.analyticsTab === "usage"
+                  route.tab === "devices" && route.organizationId ? `?organization=${encodeURIComponent(route.organizationId)}` : route.tab === "analytics" && route.analyticsTab === "usage"
                     ? "?tab=usage"
                     : route.tab === "providers" && route.deviceId
                       ? `?device=${encodeURIComponent(route.deviceId)}`

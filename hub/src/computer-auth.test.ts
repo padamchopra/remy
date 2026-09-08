@@ -7,11 +7,12 @@ import type { ComputerStore, StoredComputer } from "./computer-store.js";
 
 const pair = generateKeyPairSync("ed25519");
 const row: StoredComputer = {
+  icon: "", ownership: "personal", access: { mode: "owner", userIds: [], teamIds: [] },
   computerId: "b7ebfcbe-f2f4-4a1b-8707-3029fa65d14b", organizationId: "org-1", ownerUserId: "owner-1", name: "Studio", platform: "darwin", daemonVersion: "1.0.0",
   protocol: { minimum: 1, maximum: 1 }, publicKey: Buffer.from(pair.publicKey.export({ format: "der", type: "spki" })).toString("base64url"), capabilities: { providers: [], workspaces: [], worktrees: true, terminals: true, emulator: false }, registeredAt: 1, updatedAt: 1, lastSeenAt: null,
 };
 const nonces = new Set<string>();
-const store: ComputerStore = { computer: async (org, id) => org === row.organizationId && id === row.computerId ? row : undefined, computers: async () => [row], register: async () => "created", seen: async () => true, claimNonce: async (id, nonce) => { const key = `${id}:${nonce}`; if (nonces.has(key)) return false; nonces.add(key); return true; } };
+const store: ComputerStore = { update: async () => true, remove: async () => true, computer: async (org, id) => org === row.organizationId && id === row.computerId ? row : undefined, computers: async () => [row], register: async () => "created", seen: async () => true, claimNonce: async (id, nonce) => { const key = `${id}:${nonce}`; if (nonces.has(key)) return false; nonces.add(key); return true; } };
 
 function request(at: number, key = pair.privateKey): Request {
   const unsigned = { computerId: row.computerId, timestamp: at, nonce: "a-safe-single-use-nonce" };

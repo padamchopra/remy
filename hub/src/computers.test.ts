@@ -13,6 +13,8 @@ class MemoryStore implements ComputerStore {
   async computers(org: string) { return this.rows.filter((row) => row.organizationId === org); }
   async register(computer: StoredComputer) { const existing = this.rows.find((row) => row.computerId === computer.computerId); if (existing && (existing.organizationId !== computer.organizationId || existing.ownerUserId !== computer.ownerUserId)) return "conflict" as const; if (existing) Object.assign(existing, computer); else this.rows.push(computer); return existing ? "updated" as const : "created" as const; }
   async seen(org: string, id: string, at: number, capabilities?: ComputerCapabilities, daemonVersion?: string) { const row = await this.computer(org, id); if (!row) return false; row.lastSeenAt = at; if (capabilities) row.capabilities = capabilities; if (daemonVersion) row.daemonVersion = daemonVersion; return true; }
+  async update(org: string, id: string, patch: Partial<StoredComputer>) { const row = await this.computer(org, id); if (!row) return false; Object.assign(row, patch); return true; }
+  async remove(org: string, id: string) { const before = this.rows.length; this.rows = this.rows.filter((r) => r.organizationId !== org || r.computerId !== id); return before !== this.rows.length; }
   async claimNonce(id: string, nonce: string) { const key = `${id}:${nonce}`; if (this.nonces.has(key)) return false; this.nonces.add(key); return true; }
 }
 
@@ -53,11 +55,11 @@ test("a computer session registers and an organization member can list the safe 
   const route = createRouteHandler({
     accountStore: () => ({}) as never,
     accountService: () => ({ authenticate: async () => ({ sessionId: "session", userId: "owner-1", clientKind: "computer" }) }) as never,
-    organizationStore: () => ({}) as never,
+    organizationStore: () => ({ membership: async () => ({ role: "member" }) }) as never,
     organizationService: () => ({ member: async () => ({ role: "owner" }) }) as never,
     computerStore: () => store,
   });
-  const environment = { AUTH_SECRET: {} as SecretsStoreSecret, BETTER_AUTH_URL: "https://hub.example", COORDINATOR: {} as DurableObjectNamespace, DB: {} as D1Database, ENVIRONMENT: "staging", JOBS: {} as Queue, OBJECTS: {} as R2Bucket, RELEASE: "test" } satisfies Env;
+  const environment = { AUTH_SECRET: {} as SecretsStoreSecret, BETTER_AUTH_URL: "https://hub.example", COORDINATOR: { idFromName: (id: string) => id, get: () => ({ fetch: async () => Response.json({ ok: true }) }) } as unknown as DurableObjectNamespace, DB: {} as D1Database, ENVIRONMENT: "staging", JOBS: {} as Queue, OBJECTS: {} as R2Bucket, RELEASE: "test" } satisfies Env;
   const registered = await route(new Request("https://hub.example/api/organizations/org-1/computers", { method: "POST", headers: { authorization: "Bearer token", "content-type": "application/json" }, body: JSON.stringify(input) }), environment);
   assert.equal(registered.status, 201);
   const listed = await route(new Request("https://hub.example/api/organizations/org-1/computers", { headers: { authorization: "Bearer token" } }), environment);

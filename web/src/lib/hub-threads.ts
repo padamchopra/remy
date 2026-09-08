@@ -9,6 +9,10 @@ export const hubThreadPath = (
 ) =>
   `${hubThreadBase(organizationId)}/computers/${encodeURIComponent(computerId)}/threads${threadId ? `/${encodeURIComponent(threadId)}` : ""}`;
 
+export class HubRequestError extends Error {
+  constructor(message: string, readonly status: number) { super(message); }
+}
+
 export async function hubRequest<T>(
   path: string,
   method = "GET",
@@ -22,10 +26,11 @@ export async function hubRequest<T>(
   });
   const result = await response.json();
   if (!response.ok)
-    throw new Error(
+    throw new HubRequestError(
       typeof result.error === "string"
         ? result.error
         : "This request failed; try again.",
+      response.status,
     );
   return result as T;
 }
@@ -112,6 +117,7 @@ export function watchHubThreads(
   };
   const recover = (error: unknown) => {
     if (stopped) return;
+    if (error instanceof HubRequestError && [401, 403, 404].includes(error.status)) { stopped = true; threads.clear(); emit(); socket?.close(); failed(error.message); return; }
     failed(
       error instanceof Error
         ? error.message
