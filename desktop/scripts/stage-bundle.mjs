@@ -6,7 +6,7 @@
 //
 // electron-builder skips a top-level `node_modules` in extraResources, so
 // desktop/package.json copies `build/server/node_modules` as its own entry.
-import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const serverSrc = join(root, "server");
 const cacheDir = join(root, "desktop/build");
 const out = join(cacheDir, "server");
+const contractOut = join(cacheDir, "contract");
 const electronVersion = JSON.parse(readFileSync(join(root, "desktop/node_modules/electron/package.json"), "utf8")).version;
 
 function run(command, args, cwd, env = process.env) {
@@ -44,6 +45,7 @@ function pruneNativeExtras(serverDir) {
 }
 
 rmSync(out, { recursive: true, force: true });
+rmSync(contractOut, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 
 run("npm", ["run", "build"], serverSrc);
@@ -54,6 +56,23 @@ cpSync(join(serverSrc, "dist"), join(out, "dist"), {
 });
 copyFileSync(join(serverSrc, "package.json"), join(out, "package.json"));
 copyFileSync(join(serverSrc, "package-lock.json"), join(out, "package-lock.json"));
+copyFileSync(join(serverSrc, ".npmrc"), join(out, ".npmrc"));
+cpSync(join(root, "contract"), contractOut, {
+  recursive: true,
+  filter: (src) => !src.includes(`${join(root, "contract")}/node_modules`),
+});
+run(join(serverSrc, "node_modules/.bin/tsc"), [
+  join(contractOut, "src/index.ts"),
+  "--noCheck",
+  "--module", "NodeNext",
+  "--moduleResolution", "NodeNext",
+  "--target", "ES2022",
+  "--outDir", join(contractOut, "dist"),
+], contractOut);
+const contractPackagePath = join(contractOut, "package.json");
+const contractPackage = JSON.parse(readFileSync(contractPackagePath, "utf8"));
+contractPackage.exports["."].default = "./dist/index.js";
+writeFileSync(contractPackagePath, `${JSON.stringify(contractPackage, null, 2)}\n`);
 if (existsSync(join(serverSrc, "hooks"))) {
   cpSync(join(serverSrc, "hooks"), join(out, "hooks"), { recursive: true });
 }
