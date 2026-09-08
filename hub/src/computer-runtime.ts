@@ -39,7 +39,7 @@ export class HttpRuntimeProvider implements ComputerRuntimeProvider {
     readonly id: string,
     private readonly endpoint: string,
     private readonly credential: () => Promise<string>,
-    private readonly send: typeof fetch = fetch,
+    private readonly send: typeof fetch = (input, init) => fetch(input, init),
   ) {
     const url = new URL(endpoint);
     if (url.protocol !== "https:" && url.hostname !== "127.0.0.1")
@@ -56,7 +56,7 @@ export class HttpRuntimeProvider implements ComputerRuntimeProvider {
         },
         body: JSON.stringify(input),
         signal: AbortSignal.timeout(180_000),
-        redirect: "error",
+        redirect: "manual",
       },
     );
     if (!response.ok)
