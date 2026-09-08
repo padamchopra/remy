@@ -33,6 +33,7 @@ setKv("config", {
 });
 if (bootstrap.workspace.id) {
   setKv("hostedWorkspaceId", bootstrap.workspace.id);
+  setKv("hostedWorkspaceRepository", { path: "/workspace", origin: bootstrap.workspace.origin });
   const registration = bootstrap.registration as {
     organizationId: string;
     hubUrl: string;

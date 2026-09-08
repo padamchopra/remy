@@ -177,3 +177,20 @@ test("switches the main checkout before a thread starts and preserves Git's fail
   );
   assert.equal(execFileSync("git", ["-C", path, "branch", "--show-current"], { encoding: "utf8" }).trim(), "feature");
 });
+
+
+test("hosted workspace identity stays canonical while Git uses its capability proxy", async () => {
+  const { setKv } = await import("./db.js");
+  const folder = realpathSync(mkdtempSync(join(tmpdir(), "remy-hosted-origin-")));
+  execFileSync("git", ["init", "-q", folder]);
+  const proxy = "https://hub.example/api/organizations/studio/git/release";
+  execFileSync("git", ["-C", folder, "remote", "add", "origin", proxy]);
+  setKv("hostedWorkspaceRepository", { path: folder, origin: "github.com/studio/release" });
+  try {
+    const hosted = await addWorkspace("Hosted release", folder);
+    assert.equal(hosted.origin, "github.com/studio/release");
+    assert.equal(execFileSync("git", ["-C", folder, "remote", "get-url", "origin"], {encoding:"utf8"}).trim(), proxy);
+    const ordinary = await workspace("unrelated");
+    assert.equal(ordinary.origin, null);
+  } finally { setKv("hostedWorkspaceRepository", null); rmSync(folder, {recursive:true, force:true}); }
+});
