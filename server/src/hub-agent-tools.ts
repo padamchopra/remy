@@ -2,7 +2,7 @@ import { getKv } from "./db.js";
 import { connectionAuthorization } from "./hub-computer.js";
 export async function hubAgentTool(
   chatId: string,
-  action: "read_routing" | "edit_routing",
+  action: string,
   input: unknown = {},
 ) {
   const registration = getKv<{

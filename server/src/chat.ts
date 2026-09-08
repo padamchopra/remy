@@ -1,3 +1,4 @@
+import { getKv, setKv } from "./db.js";
 import type { ThreadMember } from "@remy/contract";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -597,7 +598,7 @@ This is the agent's Inbox conversation. When the person signals that something s
               ? { sessionId: providerSessionId(this.record, this.record.provider) }
               : {}),
             additionalDirectories: [uploadRoot],
-            developerInstructions: remyProviderInstructions(agent?.instructions),
+            developerInstructions: remyProviderInstructions(getKv<string>(`hubPersona:${this.record.id}`) ?? agent?.instructions),
             inProcessMcp: inProcessTicketMcpServer(this.record.id, this.record.agentId, this.record.dm === true, {
               currentCwd: this.record.cwd,
               list: listChats,
@@ -1569,6 +1570,7 @@ export function deleteChat(id: string): void {
   chat.markDeleted();
   chats.delete(id);
   removeChat(id);
+  setKv(`hubPersona:${id}`, null);
   broadcast({ type: "chat-list", operation: "remove", chatIds: [id] });
   broadcast({ type: "chats" });
   syncSleepAssertion();

@@ -219,6 +219,8 @@ const server = new McpServer(
   { instructions: REMY_TOOL_INSTRUCTIONS },
 );
 
+for(const action of ["list_organization_computers","list_organization_workspaces"])server.registerTool(action,{description:"List organization resources visible to the person.",inputSchema:{}},async()=>ok(JSON.stringify(await request(`/organization-tools/${action}`,{method:"POST",body:{}}))));
+for(const action of ["explain_routing","start_organization_thread","create_organization_ticket","handoff_organization_ticket","move_organization_thread"])server.registerTool(action,{description:"Act within the person's visible organization workspaces.",inputSchema:{workspaceId:z.string(),prompt:z.string().optional(),title:z.string().optional(),ticketId:z.string().optional(),agentId:z.string().optional(),threadId:z.string().optional(),computerId:z.string().optional()}},async input=>{const result=await request<{artifact?:ConvArtifact}>(`/organization-tools/${action}`,{method:"POST",body:input});return ok(JSON.stringify(result),result.artifact);});
 server.registerTool("read_routing", {description:"Read your organization's routing rules.",inputSchema:{}}, async()=>ok(JSON.stringify(await request("/routing"))));
 server.registerTool("edit_routing", {description:"Replace your organization's ordered routing rules.",inputSchema:{rules:z.array(z.object({id:z.string(),name:z.string(),workspaceId:z.string().optional(),teamId:z.string().optional(),trigger:z.enum(["manual","ticket","routine","agent"]).optional(),target:z.object({computerId:z.string().optional(),class:z.enum(["hosted","darwin","linux"]).optional(),emulator:z.boolean().optional()})})).max(100)}}, async input=>ok(JSON.stringify(await request("/routing", {method:"PUT",body:input}))));
 server.registerTool("list_workspaces", {

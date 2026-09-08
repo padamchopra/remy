@@ -115,6 +115,7 @@ export async function handleHubThreadRequest(
           effort: workspace.effort,
         },
       });
+      if(typeof input.hubInstructions==="string")setKv(`hubPersona:${chat.id}`,input.hubInstructions.slice(0,64000));
       shareHubThread(
         chat.id,
         organizationId,

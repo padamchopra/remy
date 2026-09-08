@@ -419,6 +419,10 @@ const server = createServer(async (req, res) => {
       await checkpointTurns(listAllChats(), turns => setKv("hostedCheckpointTurns", turns), interruptChat);
       return json(res, 200, { ok: true });
     }
+    if(req.method==="POST" && /^\/organization-tools\/[a-z_]+$/.test(url.pathname)) {
+      if(!scopedChatId)return json(res,403,{error:"Open your agent's conversation first."});
+      return json(res,200,await hubAgentTool(scopedChatId,url.pathname.split("/")[2],await readJson(req)));
+    }
     if (url.pathname === "/routing" && (req.method === "GET" || req.method === "PUT")) {
       if(!scopedChatId)return json(res,403,{error:"Open this agent's conversation to change routing."});
       return json(res,200,await hubAgentTool(scopedChatId,req.method==="GET"?"read_routing":"edit_routing",req.method==="PUT"?await readJson(req):{}));
