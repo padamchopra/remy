@@ -62,6 +62,107 @@ test("a valid session gets not found for another organization's resource", async
   assert.deepEqual(await response.json(), { error: "Organization not found." });
 });
 
+test("board writes derive the member actor and stay inside the organization object", async () => {
+  const store = new MemoryOrganizationStore();
+  const service = new OrganizationService(store, () => 1000, random);
+  const org = await service.create("user-1", "Example");
+  let objectName = "";
+  let forwarded: { input: unknown; actor: unknown } | undefined;
+  const environment = {
+    ...env(),
+    COORDINATOR: {
+      idFromName: (name: string) => { objectName = name; return {} as DurableObjectId; },
+      get: () => ({
+        fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+          const request = new Request(input, init);
+          forwarded = await request.json() as { input: unknown; actor: unknown };
+          return Response.json({ accepted: true }, { status: 201 });
+        },
+      }),
+    } as unknown as DurableObjectNamespace,
+  };
+  const route = createRouteHandler({
+    accountStore: () => ({ profile: async () => ({ name: "Ada" }) }) as never,
+    accountService: () => ({ authenticate: async () => ({ sessionId: "session-1", userId: "user-1", clientKind: "web" }) }) as never,
+    organizationStore: () => store,
+    organizationService: () => service,
+  });
+
+  const response = await route(new Request(`https://hub.example/api/organizations/${org.id}/board/events`, {
+    method: "POST",
+    headers: { authorization: "Bearer valid-user-1-session", "content-type": "application/json" },
+    body: JSON.stringify({ entity: "ticket", entityId: "ticket-1", kind: "field", payload: { title: "Converged" } }),
+  }), environment);
+
+  assert.equal(response.status, 201);
+  assert.equal(objectName, `organization:${org.id}`);
+  assert.deepEqual(forwarded, {
+    input: { entity: "ticket", entityId: "ticket-1", kind: "field", payload: { title: "Converged" } },
+    actor: { kind: "member", id: "user-1", label: "Ada" },
+  });
+});
+
+test("a non-member cannot read or write an organization's board", async () => {
+  const store = new MemoryOrganizationStore();
+  const service = new OrganizationService(store, () => 1000, random);
+  const org = await service.create("owner", "Private");
+  let reachedObject = false;
+  const environment = {
+    ...env(),
+    COORDINATOR: {
+      idFromName: () => ({}) as DurableObjectId,
+      get: () => ({ fetch: async () => { reachedObject = true; return Response.json({}); } }),
+    } as unknown as DurableObjectNamespace,
+  };
+  const route = createRouteHandler({
+    accountStore: () => ({}) as never,
+    accountService: () => ({ authenticate: async () => ({ sessionId: "session-2", userId: "outsider", clientKind: "web" }) }) as never,
+    organizationStore: () => store,
+    organizationService: () => service,
+  });
+
+  const response = await route(new Request(`https://hub.example/api/organizations/${org.id}/board/tickets`, { headers: { authorization: "Bearer outsider-session" } }), environment);
+
+  assert.equal(response.status, 404);
+  assert.equal(reachedObject, false);
+});
+
+test("deleting an organization clears its board object", async () => {
+  const store = new MemoryOrganizationStore();
+  const service = new OrganizationService(store, () => 1000, random);
+  const org = await service.create("owner", "Example");
+  let boardDelete = false;
+  const environment = {
+    ...env(),
+    COORDINATOR: {
+      idFromName: () => ({}) as DurableObjectId,
+      get: () => ({
+        fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+          const request = new Request(input, init);
+          boardDelete = request.method === "DELETE" && new URL(request.url).pathname === "/board";
+          return new Response(null, { status: 204 });
+        },
+      }),
+    } as unknown as DurableObjectNamespace,
+  };
+  const route = createRouteHandler({
+    accountStore: () => ({}) as never,
+    accountService: () => ({ authenticate: async () => ({ sessionId: "session-1", userId: "owner", clientKind: "web" }) }) as never,
+    organizationStore: () => store,
+    organizationService: () => service,
+  });
+
+  const response = await route(new Request(`https://hub.example/api/organizations/${org.id}`, {
+    method: "DELETE",
+    headers: { authorization: "Bearer owner-session", "content-type": "application/json" },
+    body: JSON.stringify({ confirmation: "Example" }),
+  }), environment);
+
+  assert.equal(response.status, 204);
+  assert.equal(boardDelete, true);
+  assert.equal(await store.organization(org.id), undefined);
+});
+
 test("email and link invitations expire and can be accepted only once", async () => {
   const store = new MemoryOrganizationStore(); let now = 1000; const service = new OrganizationService(store, () => now, random); const org = await service.create("owner", "Example");
   const invite = await service.createInvite(org.id, "owner", { email: "Person@Example.com", role: "member" });
@@ -86,7 +187,7 @@ test("owners transfer before leaving and deletion requires an impact preview con
   const invite = await service.createInvite(org.id, "owner", { role: "admin" }); await service.acceptInvite("next", invite.token, []);
   await assert.rejects(service.leave(org.id, "owner"), /Transfer ownership/); await service.transfer(org.id, "owner", "next"); await service.leave(org.id, "owner");
   assert.equal((await store.membership(org.id, "next"))?.role, "owner");
-  const impact = await service.deletionImpact(org.id, "next"); assert.equal(impact.members, 1); assert.deepEqual(impact.deletes, ["memberships", "teams", "invitations", "workspaces", "organization settings"]);
+  const impact = await service.deletionImpact(org.id, "next"); assert.equal(impact.members, 1); assert.deepEqual(impact.deletes, ["memberships", "teams", "invitations", "workspaces", "tasks", "agents", "memories", "routines", "organization settings"]);
   await assert.rejects(service.delete(org.id, "next", "Wrong"), /organization name/); await service.delete(org.id, "next", "Example"); assert.equal(await store.organization(org.id), undefined);
 });
 

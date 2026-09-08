@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CONTRACT_VERSION, accountProfileSchema, computerHeartbeatSchema, deviceAuthorizationSchema, organizationDeletionImpactSchema, organizationSchema, organizationWorkspaceSchema, parseHubHealth, tokenPairSchema, uptimeCheckFrameSchema } from "./index.js";
+import { CONTRACT_VERSION, accountProfileSchema, boardAppendInputSchema, boardLiveFrameSchema, boardLogEventSchema, computerHeartbeatSchema, deviceAuthorizationSchema, organizationDeletionImpactSchema, organizationSchema, organizationWorkspaceSchema, parseHubHealth, tokenPairSchema, uptimeCheckFrameSchema } from "./index.js";
 
 test("accepts a compatible hub health response", () => {
   const health = parseHubHealth({
@@ -68,4 +68,21 @@ test("validates organization workspaces and optional administrative access", () 
   const workspace = { id: "workspace-1", organizationId: "org-1", name: "Remy", origin: "github.com/padam/remy", restricted: true, createdAt: 1, updatedAt: 1 };
   assert.equal(organizationWorkspaceSchema.parse(workspace).restricted, true);
   assert.deepEqual(organizationWorkspaceSchema.parse({ ...workspace, access: { teamIds: ["team-1"], userIds: [] } }).access?.teamIds, ["team-1"]);
+});
+
+test("validates attributed board events and resumable live frames", () => {
+  const input = boardAppendInputSchema.parse({ entity: "ticket", entityId: "ticket-1", kind: "create", payload: { title: "Ship it" } });
+  const event = boardLogEventSchema.parse({
+    ...input,
+    id: "event-1",
+    deviceId: "hub-1",
+    lamport: 1,
+    at: 1,
+    actor: { kind: "member", id: "user-1", label: "Ada" },
+  });
+
+  assert.equal(event.actor.label, "Ada");
+  assert.equal(boardLiveFrameSchema.parse({ kind: "event", cursor: 1, event }).cursor, 1);
+  assert.equal(boardLiveFrameSchema.parse({ kind: "reset", cursor: 8, reason: "cursor_unavailable" }).kind, "reset");
+  assert.throws(() => boardLogEventSchema.parse({ ...event, actor: undefined }));
 });

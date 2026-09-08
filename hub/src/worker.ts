@@ -1,5 +1,9 @@
 import {
   CONTRACT_VERSION,
+  boardActorSchema,
+  boardAppendInputSchema,
+  boardProjectionEntitySchema,
+  boardVersionVectorSchema,
   hubErrorSchema,
   hubHealthSchema,
   requestOutcomeSchema,
@@ -15,6 +19,7 @@ import { D1AccountStore, type AccountStore } from "./account-store.js";
 import { AccountService, bearerToken, webSessionCookie } from "./accounts.js";
 import { authFor } from "./auth.js";
 import { D1OrganizationStore, type OrganizationStore } from "./organization-store.js";
+import { DurableBoardStorage, OrganizationBoard } from "./organization-board.js";
 import { OrganizationError, OrganizationService } from "./organizations.js";
 
 export interface Env {
@@ -177,6 +182,30 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     const organizationMatch = /^\/api\/organizations\/([^/]+)(?:\/(.*))?$/.exec(url.pathname);
     if (organizationMatch) {
       const organizationId = decodeURIComponent(organizationMatch[1]); const tail = organizationMatch[2] ?? "";
+      const board = () => env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${organizationId}`));
+      if (tail === "board/events" && request.method === "POST") {
+        await organizations.member(organizationId, identity.userId);
+        const input = boardAppendInputSchema.safeParse(await body(request));
+        if (!input.success) return jsonError("Choose a valid change.", 400);
+        const profile = await store.profile(identity.userId);
+        const actor = boardActorSchema.parse({ kind: "member", id: identity.userId, label: profile?.name ?? "Member" });
+        return board().fetch("https://internal/board/append", { method: "POST", body: JSON.stringify({ input: input.data, actor }) });
+      }
+      if (tail === "board/live" && request.method === "GET") {
+        await organizations.member(organizationId, identity.userId);
+        if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return jsonError("Open a WebSocket connection.", 426);
+        const cursor = url.searchParams.get("cursor");
+        const live = new URL("https://internal/board/live");
+        if (cursor !== null) live.searchParams.set("cursor", cursor);
+        return board().fetch(new Request(live, { headers: { upgrade: "websocket" } }));
+      }
+      const boardMatch = /^board\/(tickets|agents|memories|routines)(?:\/([^/]+))?$/.exec(tail);
+      if (boardMatch && request.method === "GET") {
+        await organizations.member(organizationId, identity.userId);
+        const entity = boardProjectionEntitySchema.parse(boardMatch[1]);
+        const entityId = boardMatch[2] ? decodeURIComponent(boardMatch[2]) : undefined;
+        return board().fetch(`https://internal/board/projections/${entity}${entityId ? `/${encodeURIComponent(entityId)}` : ""}`);
+      }
       if (tail === "members" && request.method === "GET") return Response.json({ members: await organizations.members(organizationId, identity.userId) });
       if (tail === "invites" && request.method === "POST") {
         const input = await body<{ email?: string; role?: "admin" | "member" }>(request);
@@ -201,7 +230,13 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       if (tail === "transfer" && request.method === "POST") { const input = await body<{ userId?: string }>(request); if (!input?.userId) return jsonError("Choose a new owner.", 400); await organizations.transfer(organizationId, identity.userId, input.userId); return new Response(null, { status: 204 }); }
       if (tail === "deletion-impact" && request.method === "GET") return Response.json(await organizations.deletionImpact(organizationId, identity.userId));
       if (!tail && request.method === "PATCH") { const input = await body<{ name?: string }>(request); const name = input?.name?.trim(); if (!name || name.length > 120) return jsonError("Enter an organization name.", 400); await organizations.rename(organizationId, identity.userId, name); return new Response(null, { status: 204 }); }
-      if (!tail && request.method === "DELETE") { const input = await body<{ confirmation?: string }>(request); await organizations.delete(organizationId, identity.userId, input?.confirmation ?? ""); return new Response(null, { status: 204 }); }
+      if (!tail && request.method === "DELETE") {
+        const input = await body<{ confirmation?: string }>(request);
+        await organizations.delete(organizationId, identity.userId, input?.confirmation ?? "");
+        const response = await board().fetch("https://internal/board", { method: "DELETE" });
+        if (!response.ok) throw new Error("Organization board deletion failed");
+        return new Response(null, { status: 204 });
+      }
       const memberMatch = /^members\/([^/]+)$/.exec(tail);
       if (memberMatch && request.method === "PATCH") { const input = await body<{ role?: "admin" | "member" }>(request); if (input?.role !== "admin" && input?.role !== "member") return jsonError("Choose admin or member access.", 400); await organizations.changeRole(organizationId, identity.userId, decodeURIComponent(memberMatch[1]), input.role); return new Response(null, { status: 204 }); }
       if (memberMatch && request.method === "DELETE") { await organizations.removeMember(organizationId, identity.userId, decodeURIComponent(memberMatch[1])); return new Response(null, { status: 204 }); }
@@ -323,7 +358,23 @@ export function createHandler(overrides: Partial<HandlerDependencies> = {}) {
 }
 
 export class HubCoordinator {
-  constructor(private readonly ctx: DurableObjectState, readonly env: Env) {}
+  private readonly board: OrganizationBoard;
+
+  constructor(private readonly ctx: DurableObjectState, readonly env: Env) {
+    this.board = new OrganizationBoard(new DurableBoardStorage(ctx.storage), {
+      publish: (frames) => {
+        for (const socket of this.ctx.getWebSockets()) {
+          try {
+            for (const frame of frames) socket.send(JSON.stringify(frame));
+            const cursor = frames.at(-1)?.cursor;
+            if (cursor !== undefined) socket.serializeAttachment({ cursor });
+          } catch {
+            socket.close(1011, "Live updates stopped; reconnect to continue.");
+          }
+        }
+      },
+    });
+  }
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -333,7 +384,65 @@ export class HubCoordinator {
       await this.ctx.storage.put("uptime.latest", frame);
       return new Response(null, { status: 204 });
     }
+    if (request.method === "POST" && url.pathname === "/board/append") {
+      const input = await body<{ input?: unknown; actor?: unknown }>(request);
+      const actor = boardActorSchema.safeParse(input?.actor);
+      if (!actor.success) return jsonError("Invalid board actor", 400);
+      try {
+        return Response.json(await this.board.append(input?.input, actor.data), { status: 201 });
+      } catch {
+        return jsonError("Invalid board event", 400);
+      }
+    }
+    if (request.method === "POST" && url.pathname === "/board/merge") {
+      const input = await body<{ events?: unknown }>(request);
+      return Response.json(await this.board.mergeRemote(input?.events));
+    }
+    if (request.method === "POST" && url.pathname === "/board/events") {
+      const input = await body<{ version?: unknown; limit?: unknown }>(request);
+      const version = boardVersionVectorSchema.safeParse(input?.version ?? {});
+      if (!version.success) return jsonError("Invalid board version", 400);
+      const limit = typeof input?.limit === "number" ? input.limit : 500;
+      return Response.json({ events: await this.board.eventsSince(version.data, limit), version: await this.board.versionVector() });
+    }
+    if (request.method === "DELETE" && url.pathname === "/board") {
+      for (const socket of this.ctx.getWebSockets()) socket.close(1001, "This organization was deleted.");
+      await this.ctx.storage.deleteAll();
+      return new Response(null, { status: 204 });
+    }
+    const projectionMatch = /^\/board\/projections\/(tickets|agents|memories|routines)(?:\/([^/]+))?$/.exec(url.pathname);
+    if (request.method === "GET" && projectionMatch) {
+      const entity = boardProjectionEntitySchema.parse(projectionMatch[1]);
+      if (!projectionMatch[2]) return Response.json(await this.board.list(entity));
+      const projection = await this.board.detail(entity, decodeURIComponent(projectionMatch[2]));
+      return projection ? Response.json(projection) : jsonError("Not found", 404);
+    }
+    if (request.method === "GET" && url.pathname === "/board/live") {
+      if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return jsonError("Expected WebSocket", 426);
+      const rawCursor = url.searchParams.get("cursor");
+      const cursor = rawCursor === null ? undefined : Number(rawCursor);
+      if (cursor !== undefined && (!Number.isSafeInteger(cursor) || cursor < 0)) return jsonError("Invalid cursor", 400);
+      const replay = await this.board.liveFramesAfter(cursor);
+      const pair = new WebSocketPair();
+      const [client, server] = Object.values(pair);
+      this.ctx.acceptWebSocket(server);
+      server.serializeAttachment({ cursor: replay.cursor });
+      for (const frame of replay.frames) server.send(JSON.stringify(frame));
+      return new Response(null, { status: 101, webSocket: client });
+    }
     return Response.json({ error: "Not found" }, { status: 404 });
+  }
+
+  async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    if (message === "ping") socket.send("pong");
+  }
+
+  async webSocketClose(socket: WebSocket, code: number, reason: string): Promise<void> {
+    socket.close(code, reason);
+  }
+
+  async webSocketError(socket: WebSocket): Promise<void> {
+    socket.close(1011, "Live updates stopped; reconnect to continue.");
   }
 }
 
