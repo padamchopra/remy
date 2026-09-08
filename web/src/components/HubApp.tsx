@@ -1,3 +1,4 @@
+const Connections = lazy(() => import("./HubConnections").then(m => ({default:m.HubConnections})));
 const Inbox = lazy(() => import("./HubInbox").then(m => ({default:m.HubInbox})));
 const Routing = lazy(() => import("./HubRouting").then(m => ({default:m.HubRouting})));
 import { lazy, useEffect, useState } from "react";
@@ -212,6 +213,9 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           label: "Routing", icon: Laptop, route: {name:"settings",tab:"routing",organizationId}, selected:section==="routing",
         },
         {
+          label: "Connections", icon: Laptop, route: {name:"settings",tab:"connections",organizationId}, selected:section==="connections",
+        },
+        {
           label: "Members",
           icon: User,
           route: { name: "settings", tab: "members", organizationId },
@@ -396,6 +400,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               </Deferred>
             </div>
             <div hidden={section!=="inbox"} className="min-h-0 flex-1 overflow-auto"><Deferred open={section==="inbox"}><Inbox organizationId={organization.id} userId={profile?.id??""} agentId={route.name==="inbox"?route.agent:undefined} choose={id=>navigate({name:"inbox",agent:id,organizationId:organization.id})}/></Deferred></div>
+            <div hidden={section!=="connections"} className="min-h-0 overflow-auto"><Deferred open={section==="connections"}><Connections organizationId={organization.id}/></Deferred></div>
             <div hidden={section!=="routing"} className="min-h-0 overflow-auto"><Deferred open={section==="routing"}><Routing organizationId={organization.id}/></Deferred></div>
             {(["members", "teams", "workspaces"] as const).map((kind) => (
               <div

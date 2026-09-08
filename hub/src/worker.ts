@@ -1,3 +1,6 @@
+import { connectionRoute, connectionWebhook } from "./connection-routes.js";
+import { connectionProviders } from "./connection-providers.js";
+import type { ConnectionDelivery, ConnectionJob } from "./connections.js";
 import { HubRoutines } from "./hub-routines.js";
 import { hubRoutineSchema } from "@remy/contract";
 import { seedHubAgents } from "./remy-agent.js";
@@ -52,6 +55,12 @@ export interface Env extends ApplePushConfig {
   HOSTED_CONTROL_URL?: string;
   HOSTED_CONTROL_TOKEN?: SecretsStoreSecret;
   HOSTED_IMAGE?: string;
+  GITHUB_CONNECTION_CLIENT_ID?: string;
+  GITHUB_CONNECTION_CLIENT_SECRET?: SecretsStoreSecret;
+  GITHUB_WEBHOOK_SECRET?: SecretsStoreSecret;
+  LINEAR_CLIENT_ID?: string;
+  LINEAR_CLIENT_SECRET?: SecretsStoreSecret;
+  LINEAR_WEBHOOK_SECRET?: SecretsStoreSecret;
   GITHUB_APP_ID?: string;
   GITHUB_APP_PRIVATE_KEY?: SecretsStoreSecret;
   HOSTED_ARCHIVE?: string;
@@ -61,7 +70,7 @@ export interface Env extends ApplePushConfig {
   DB: D1Database;
   EMAILS?: Queue<{ kind: "auth.magic-link" | "auth.verify-email" | "auth.change-email" | "organization.invite"; recipient: string; url: string }>;
   ENVIRONMENT: HubEnvironment;
-  JOBS: Queue<UptimeCheckFrame>;
+  JOBS: Queue<UptimeCheckFrame | ConnectionJob>;
   OBJECTS: R2Bucket;
   RELEASE: string;
   GITHUB_CLIENT_ID?: string;
@@ -230,7 +239,8 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     || /^\/api\/sessions\/[^/]+$/.test(url.pathname)
     || url.pathname === "/api/invitations/accept"
     || url.pathname === "/api/organizations"
-    || url.pathname.startsWith("/api/organizations/");
+    || url.pathname.startsWith("/api/organizations/")
+    || url.pathname.startsWith("/api/connections/");
   if (!protectedRoute) {
     if (request.method === "GET" && /^\/invite\/[^/]+$/.test(url.pathname)) return Response.redirect(new URL(`/?invite=${encodeURIComponent(decodeURIComponent(url.pathname.slice(8)))}`, url.origin), 302);
     if (env.ASSETS && request.method === "GET" && !url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
@@ -324,8 +334,12 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     return new Response(object.body, { headers: { "content-type": object.httpMetadata?.contentType ?? "application/octet-stream", "content-length": String(object.size), "x-filename": object.customMetadata?.name ?? "image" } });
   }
 
+  const webhookResponse = await connectionWebhook(request, env);
+  if (webhookResponse) return webhookResponse;
   const identity = await identityFor(request, service);
   if (!identity) return jsonError("Sign in again.", 401);
+  const connectionResponse = await connectionRoute(request, env, identity.userId);
+  if (connectionResponse) return connectionResponse;
   try {
     if (url.pathname === "/api/organizations" && request.method === "GET") return Response.json({ organizations: await organizations.list(identity.userId) });
     if (url.pathname === "/api/organizations" && request.method === "POST") {
@@ -740,6 +754,7 @@ export function createHandler(overrides: Partial<HandlerDependencies> = {}) {
 }
 
 export class HubCoordinator {
+  private readonly connectionDeliveries = new Map<string,Promise<void>>();
   private readonly board: OrganizationBoard;
   private readonly threads: ThreadStore;
   private threadPublishing = Promise.resolve();
@@ -777,6 +792,28 @@ export class HubCoordinator {
     const org = request.headers.get("x-organization-id");
     const user = request.headers.get("x-user-id");
     if (org) {await this.ctx.storage.put("organizationId", org);await seedHubAgents(this.board,new D1OrganizationStore(this.env.DB),org);}
+    if (url.pathname === "/connections/changed") {
+      for (const socket of this.ctx.getWebSockets()) {
+        const a=socket.deserializeAttachment() as {kind?:string;userId?:string};
+        if(a.kind==="organization" && org && a.userId && await new D1OrganizationStore(this.env.DB).membership(org,a.userId)) socket.send(JSON.stringify({kind:"connections.changed"}));
+      }
+      return Response.json({ok:true});
+    }
+    if(url.pathname.startsWith("/connections/delivery/")) {
+      const id=url.pathname.split("/").at(-1)!;
+      let work=this.connectionDeliveries.get(id);
+      if(!work) {
+        work=(async()=>{
+          const delivery=await this.env.DB.prepare("SELECT * FROM connection_deliveries WHERE id=?").bind(id).first<ConnectionDelivery>();
+          if(!delivery || delivery.status==="done")return;
+          const provider=connectionProviders(this.env).find(p=>p.id===delivery.provider);
+          await provider?.receive?.(delivery);
+          await this.env.DB.prepare("UPDATE connection_deliveries SET status='done' WHERE id=?").bind(id).run();
+        })();
+        this.connectionDeliveries.set(id,work);
+      }
+      try {await work;return Response.json({ok:true});} finally {if(this.connectionDeliveries.get(id)===work)this.connectionDeliveries.delete(id);}
+    }
     if (url.pathname === "/organization/changed") {
       if(org){await this.scopedAgents(org).departures();await this.cleanAgentThreads();}
       this.invalidateComputers();
@@ -1499,6 +1536,23 @@ export async function consumeUptimeChecks(batch: MessageBatch<UptimeCheckFrame>,
 
 export default {
   fetch: handleRequest,
-  queue: consumeUptimeChecks,
-  scheduled: (_controller, env, context) => context.waitUntil(runUptimeCheck(env)),
-} satisfies ExportedHandler<Env, UptimeCheckFrame>;
+  queue: async (batch,env,ctx) => {
+    for(const message of batch.messages) {
+      if("kind" in message.body && message.body.kind==="connection.webhook") {
+        try {
+          const response=await env.COORDINATOR.get(env.COORDINATOR.idFromName(`connection-delivery:${message.body.id}`)).fetch(`https://internal/connections/delivery/${message.body.id}`);
+          if(!response.ok)throw Error("Connection delivery failed");
+          message.ack();
+        } catch {message.retry({delaySeconds:30});}
+      } else await consumeUptimeChecks({...batch,messages:[message]} as MessageBatch<UptimeCheckFrame>,env);
+    }
+  },
+  scheduled: (_controller, env, context) => context.waitUntil((async()=>{
+    await runUptimeCheck(env);
+    const pending=await env.DB.prepare("SELECT id FROM connection_deliveries WHERE status='pending' AND next_attempt_at<=? ORDER BY next_attempt_at LIMIT 100").bind(Date.now()).all<{id:string}>();
+    for(const row of pending.results) {
+      await env.JOBS.send({kind:"connection.webhook",id:row.id});
+      await env.DB.prepare("UPDATE connection_deliveries SET next_attempt_at=? WHERE id=?").bind(Date.now()+300_000,row.id).run();
+    }
+  })()),
+} satisfies ExportedHandler<Env, UptimeCheckFrame | ConnectionJob>;
