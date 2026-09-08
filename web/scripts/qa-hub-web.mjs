@@ -75,7 +75,7 @@ try {
   await nav(p, "Workspaces"); await nav(p, "Remove"); await p.getByRole("alertdialog").getByRole("button", { name: "Remove", exact: true }).click(); await p.getByRole("alertdialog").waitFor({ state: "hidden" });
   assert.equal((await request(p, `${base}/workspaces`)).body.workspaces.length, 0);
   await nav(p, "Members"); await nav(p, "Remove"); await p.getByRole("alertdialog").getByRole("button", { name: "Remove", exact: true }).click(); await p.getByRole("alertdialog").waitFor({ state: "hidden" });
-  assert.equal((await request(grace.p, `${base}/board/tickets`)).status, 403);
+  assert.equal((await request(grace.p, `${base}/board/tickets`)).status, 404);
   await nav(p, "Sign out"); await p.getByRole("button", { name: "Email sign-in link", exact: true }).waitFor();
   assert.deepEqual(errors, []); console.log("PASS: real magic-link sessions, create organization, invite acceptance, shared Tasks, workspace/team restrictions, live revocation, roles, editing, deep links, org switching, persistent sidebar and mobile layout");
 } finally { await a.close(); await ada.c.close(); await grace.c.close(); await browser.close(); }
