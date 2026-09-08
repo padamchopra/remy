@@ -877,7 +877,7 @@ export class HubCoordinator {
         const change={entity:"recurrence" as const,entityId:crypto.randomUUID(),kind:"create" as const,payload:{...parsed.data,type:"routine"}};
         if(!await new BoardAccess(store,this.board,org,binding.userId).canWrite(change))return jsonError("This workspace is unavailable.",404);
         const result=await this.board.append(change,{kind:"member",id:binding.userId,label:"Member"});const next=await this.routineService().tick();if(next)await this.scheduleAlarm(next);
-        return Response.json({...result,artifact:{kind:"routine",id:change.entityId,title:parsed.data.name}});
+        return Response.json({...result,artifact:{kind:"routine",organizationId:org,id:change.entityId,title:parsed.data.name}});
       }
       if(action==="list_organization_workspaces")return Response.json({workspaces:await new OrganizationService(store).workspaces(org,binding.userId)});
       if(action==="list_organization_computers") {const threads=await this.visibleThreads(binding.userId);return Response.json({computers:(await this.computerService().list(org,binding.userId)).map(c=>({...c,activeThreads:threads.filter(t=>t.computerId===c.computerId && ["working","running","busy"].includes(String(t.detail.state))).length}))});}
