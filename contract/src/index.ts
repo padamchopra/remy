@@ -438,3 +438,20 @@ export function foldBoardEvents(entity: BoardLogEntity, id: string, events: Boar
   if (entity === "ticket" && links.size > 0) fields = { ...fields, threads: [...links.values()] };
   return { entity, id, fields, activity, createdAt, updatedAt, lastActor };
 }
+
+export const hostedSettingsSchema = z.object({
+  enabled: z.boolean().default(false),
+  provider: z.enum(["fly-sprites", "modal"]).default("fly-sprites"),
+  region: z.string().regex(/^[a-z0-9-]{0,40}$/).default(""),
+  cpu: z.number().min(0.25).max(16).default(1),
+  memoryMiB: z.number().int().min(512).max(32768).default(2048),
+  idleMinutes: z.number().int().min(10).max(15).default(12),
+});
+export type HostedSettings = z.infer<typeof hostedSettingsSchema>;
+export type HostedComputerState = {
+  workspaceId: string; computerId: string; provider: HostedSettings["provider"];
+  phase: "allocating" | "restoring" | "ready" | "checkpointing" | "asleep" | "failed";
+  lastUsedAt: number; error?: string;
+  usage: { activeMs: number; warmIdleMs: number; snapshotByteMs: number };
+  timing: { allocationMs?: number; restoreMs?: number; readyMs?: number; warmRequestMs?: number; firstResponseMs?: number };
+};

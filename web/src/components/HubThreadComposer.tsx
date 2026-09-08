@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ComputerSummary } from "@remy/contract";
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { deviceIcon, type DeviceIconId } from "@/lib/devices";
-import { hubRequest, hubThreadPath } from "@/lib/hub-threads";
+import { hubRequest, hubThreadPath, hubThreadBase } from "@/lib/hub-threads";
 
 export function HubThreadComposer({ organizationId, computers, open }: { organizationId: string; computers: ComputerSummary[]; open: (computer: string, thread: string) => void }) {
   const [selected, select] = useState("");
@@ -16,6 +16,11 @@ export function HubThreadComposer({ organizationId, computers, open }: { organiz
   const eligible = computers.filter((c) => c.canUse && c.availability !== "offline" && !c.updateRequired && c.capabilities.workspaces.length);
   const computer = eligible.find((c) => c.computerId === selected) ?? (!selected ? eligible[0] : undefined);
   const workspace = computer?.capabilities.workspaces.find((w) => w.id === workspaceId) ?? (!workspaceId ? computer?.capabilities.workspaces[0] : undefined);
+  useEffect(() => {
+    if (!title.trim() || computer?.ownership !== "hosted" || !workspace?.origin) return;
+    const timer=setTimeout(()=>{void hubRequest<{workspaces:{id:string;origin:string}[]}>(`${hubThreadBase(organizationId)}/workspaces`).then(async ({workspaces})=>{const target=workspaces.find(w=>w.origin===workspace.origin);if(target)await hubRequest(`${hubThreadBase(organizationId)}/hosted/${target.id}/prewarm`,"POST");}).catch(()=>undefined);},300);
+    return()=>clearTimeout(timer);
+  },[title,computer?.ownership,workspace?.origin,organizationId]);
   if (!eligible.length) return null;
   return <form className="flex w-full max-w-xl flex-col gap-3 rounded-lg border p-4" aria-label="New thread" onSubmit={async (event) => {
     event.preventDefault(); if (!computer || !workspace || busy) return;

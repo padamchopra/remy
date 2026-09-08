@@ -30,9 +30,11 @@ await build({
   stdin: {
     contents: process.env.QA_HUB_WEB === "1" ? `
       import worker from "./hub/src/worker.ts";
-      export { HubCoordinator } from "./hub/src/worker.ts";
+      import { HubCoordinator as Coordinator } from "./hub/src/worker.ts";
+      const secrets = env => ({ ...env, AUTH_SECRET: { get: async () => "disposable-qa-secret-with-more-than-thirty-two-characters" }, HOSTED_CONTROL_TOKEN: { get: async () => env.QA_HOSTED_TOKEN || "disposable-runtime-credential-for-failure-check" } });
+      export class HubCoordinator extends Coordinator { constructor(ctx,env) { super(ctx,secrets(env)); } }
       export default { ...worker, fetch(request, env, ctx) {
-        return worker.fetch(request, { ...env, BETTER_AUTH_URL: new URL(request.url).origin,
+        return worker.fetch(request, { ...secrets(env), BETTER_AUTH_URL: new URL(request.url).origin,
           AUTH_SECRET: { get: async () => "disposable-qa-secret-with-more-than-thirty-two-characters" },
           EMAILS: { send: async (mail) => { await env.DB.prepare("INSERT INTO qa_emails (recipient,url) VALUES (?,?)").bind(mail.recipient,mail.url).run(); } }
         }, ctx);
@@ -85,7 +87,8 @@ const mf = new Miniflare(
         bindings: {
           ENVIRONMENT: "staging",
           RELEASE: "qa",
-          BETTER_AUTH_URL: "http://localhost",
+          BETTER_AUTH_URL: process.env.QA_PUBLIC_HUB_URL ?? "http://localhost",
+          ...(process.env.QA_HOSTED ? { HOSTED_CONTROL_URL: process.env.QA_HOSTED_CONTROL ?? "http://127.0.0.1:9", HOSTED_IMAGE: process.env.QA_HOSTED_IMAGE ?? "qa-image", QA_HOSTED_TOKEN: process.env.QA_HOSTED_TOKEN ?? "" } : {}),
         },
       },
     ],

@@ -1,0 +1,11 @@
+FROM node:22-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends git python3 make g++ ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /opt/remy
+COPY contract ./contract
+COPY server ./server
+COPY package.json ./package.json
+RUN npm ci --prefix contract && npm ci --prefix server && npm run build --prefix server && npm install --global @anthropic-ai/claude-code @openai/codex
+ARG DAEMON_VERSION
+RUN node -e 'const fs=require("fs"); const p=require("./package.json"); if(!process.env.DAEMON_VERSION) throw Error("DAEMON_VERSION required"); p.version=process.env.DAEMON_VERSION; fs.writeFileSync("package.json",JSON.stringify(p))'
+ENV MC_CONFIG_DIR=/data/remy
+CMD ["node","/opt/remy/server/dist/hosted-entry.js"]

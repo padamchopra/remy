@@ -1,0 +1,19 @@
+{
+  "name": "@remy/runtime-adapters",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/*.test.ts"
+  },
+  "dependencies": {
+    "modal": "0.10.0",
+    "@fly/sprites": "0.2.2",
+    "tsx": "^4.20.5"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "@types/node": "^22.18.1"
+  }
+}

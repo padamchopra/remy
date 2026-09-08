@@ -1,3 +1,4 @@
+import { HubHostedComputers } from "./HubHostedComputers";
 import { HubBoardSync } from "./HubBoardSync";
 import { apiError } from "@/lib/api-error";
 import { useEffect, useState } from "react";
@@ -244,6 +245,7 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
         </Empty>
       )}
       {org && !computers.length && !stale && <Empty><EmptyHeader><EmptyTitle>No computers yet</EmptyTitle><EmptyDescription>Open Remy on your Mac, then attach it to your organization in Computers settings.</EmptyDescription></EmptyHeader></Empty>}
+      {org && <HubHostedComputers key={org} organizationId={org} admin={options.role !== "member"} />}
       <ItemGroup className="gap-3">
         {computers.map((computer) => {
           const Icon = deviceIcon(computer.icon as DeviceIconId);

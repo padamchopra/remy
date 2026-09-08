@@ -140,6 +140,7 @@ export default function HubOrganizationSettings({
           access: { userIds: ids, teamIds: [] },
         });
       } else {
+        void hubRequest(`${base}/hosted/${item.id}/prewarm`, "POST").catch(() => undefined);
         const value = await hubRequest<HubWorkspace>(
           `${base}/workspaces/${item.id}`,
         );
