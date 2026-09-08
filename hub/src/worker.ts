@@ -1,3 +1,5 @@
+import {LinearBoard} from "./linear-board.js";
+import {linearFor} from "./linear-routes.js";
 import {linearRoute} from "./linear-routes.js";
 import { githubFor, githubRoute } from "./github-routes.js";
 import { connectionRoute, connectionWebhook } from "./connection-routes.js";
@@ -50,7 +52,7 @@ import { D1ComputerStore, type ComputerStore } from "./computer-store.js";
 import { ComputerService, versionBefore } from "./computers.js";
 import { D1OrganizationStore, type OrganizationStore } from "./organization-store.js";
 import { DurableBoardStorage, OrganizationBoard } from "./organization-board.js";
-import { OrganizationError, OrganizationService } from "./organizations.js";
+import { repositoryOrigin, OrganizationError, OrganizationService } from "./organizations.js";
 
 export interface Env extends ApplePushConfig {
   ASSETS?: Fetcher;
@@ -345,6 +347,8 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
   if (connectionResponse) return connectionResponse;
   const githubResponse=await githubRoute(request,env,identity.userId);if(githubResponse)return githubResponse;
   const linearResponse=await linearRoute(request,env,identity.userId);if(linearResponse)return linearResponse;
+  const linearBoardRoute=/^\/api\/organizations\/([^/]+)\/linear-board$/.exec(url.pathname);
+  if(linearBoardRoute){const org=decodeURIComponent(linearBoardRoute[1]);return env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${org}`)).fetch(new Request("https://internal/linear/board",{method:request.method,headers:{"x-organization-id":org,"x-user-id":identity.userId,"content-type":"application/json"},...(request.method==="GET"?{}:{body:request.body})}));}
   try {
     if (url.pathname === "/api/organizations" && request.method === "GET") return Response.json({ organizations: await organizations.list(identity.userId) });
     if (url.pathname === "/api/organizations" && request.method === "POST") {
@@ -775,6 +779,7 @@ export class HubCoordinator {
     this.threads = new ThreadStore(new DurableBoardStorage(ctx.storage), (frame) => { this.threadPublishing = this.threadPublishing.then(() => this.publishThreadFrame(frame)).catch(() => undefined); });
     this.board = new OrganizationBoard(new DurableBoardStorage(ctx.storage), {
       publish: (frames) => {
+        this.ctx.waitUntil(this.scheduleAlarm(Date.now()+1000));
         for (const socket of this.ctx.getWebSockets()) {
           const attachment = socket.deserializeAttachment() as { kind?: string; boardSync?: boolean } | null;
           if (attachment?.kind === "computer" && attachment.boardSync) { try { socket.send(JSON.stringify({ kind: "board.changed" })); } catch { socket.close(); } }
@@ -903,6 +908,18 @@ export class HubCoordinator {
         }
       }catch{return jsonError("This GitHub action is unavailable.",400);}
     }
+    if(url.pathname==="/linear/wake" && org){await this.scheduleAlarm(Date.now()+1000);return Response.json({ok:true});}
+    if(url.pathname==="/linear/board" && org && user) {
+      try {
+        if(request.method==="GET")return Response.json(await this.linearBoard(org).state(user));
+        if(request.method==="POST")return await this.withLinear(async()=>{
+          const input=await request.json() as {workspaceId:string;enabled:boolean;agentMap:Record<string,string>};
+          if(typeof input.enabled!=="boolean" || !input.agentMap || Array.isArray(input.agentMap))return jsonError("Choose a sync preference.",400);
+          if(input.enabled)for(const id of Object.values(input.agentMap)){const agent=await this.scopedAgents(org).get(id,user);if(agent.fields.scope==="personal" || agent.fields.scope==="workspace"&&agent.fields.ownerId!==input.workspaceId)return jsonError("Choose an agent shared with this workspace.",400);}
+          await this.linearBoard(org).configure(user,input.workspaceId,input.enabled,input.agentMap);await this.scheduleAlarm(Date.now()+1000);return Response.json(await this.linearBoard(org).state(user));
+        });
+      }catch{return jsonError("Your Linear sync preference could not be saved.",400);}
+    }
     const agentRoute=/^\/agents(?:\/([^/]+)(?:\/(conversation|message|runs))?)?$/.exec(url.pathname);
     if(agentRoute && org && user) {
       const agents=this.scopedAgents(org);
@@ -928,6 +945,15 @@ export class HubCoordinator {
       try { await this.scopedAgents(org).get(binding.agentId,binding.userId); } catch {return jsonError("This agent is unavailable.",403);}
       const input=await body<{action?:string;input?:{rules?:unknown;workspaceId?:string;prompt?:string;title?:string;ticketId?:string;agentId?:string;threadId?:string;computerId?:string}}>(request);
       const action=input?.action,asked=input?.input??{},store=new D1OrganizationStore(this.env.DB);
+      if(action==="resolve_linear_ticket") {
+        const input=asked as Record<string,unknown>;
+        try{const resolved=await this.withLinear(()=>this.linearBoard(org).resolve(binding.userId,String(input.workspaceId),String(input.key)));return Response.json({...resolved,artifact:{kind:"ticket",organizationId:org,key:resolved.ticketId,title:resolved.issue.title}});}catch{return jsonError("This Linear ticket could not be resolved.",400);}
+      }
+      if(action==="comment_organization_ticket") {
+        const input=asked as Record<string,unknown>,ticket=await this.board.detail("tickets",String(input.ticketId));
+        if(!ticket || typeof input.text!=="string" || !input.text.trim() || input.text.length>60000 || !await new BoardAccess(store,this.board,org,binding.userId).canRead(ticket))return jsonError("This ticket is unavailable.",404);
+        return Response.json(await this.board.append({entity:"ticket",entityId:ticket.id,kind:"comment",payload:{text:input.text,threadId:decodeURIComponent(agentTool[1]),computerId:binding.computerId}},{kind:"agent",id:binding.agentId,label:String((await this.scopedAgents(org).get(binding.agentId,binding.userId)).fields.name)}));
+      }
       if(action==="github_action") {
         const githubInput=asked as Record<string,unknown>;
         try{return Response.json(await githubFor(this.env).action(org,binding.userId,String(githubInput.workspaceId),String(githubInput.action),githubInput));}catch{return jsonError("Your GitHub action could not complete.",400);}
@@ -1162,6 +1188,7 @@ export class HubCoordinator {
       if(!["working","running","busy","needs_input"].includes(String(frame.snapshot.detail.state))) {
         const text=frame.snapshot.detail.entries.filter(e=>e.kind==="assistant"&&e.text).map(e=>e.text).join("\n\n");
         this.ctx.waitUntil(this.replyOnGitHub(organizationId,attachment.computerId,frame.snapshot.id,text));
+        this.ctx.waitUntil(this.withLinear(async()=>{try{const service=this.linearBoard(organizationId);const artifacts=await service.artifacts(frame.snapshot.id,frame.snapshot.detail.entries.flatMap(e=>Array.isArray(e.artifacts)?e.artifacts:[]));await service.reply(attachment.computerId!,frame.snapshot.id,`${text}${artifacts?`\n\n${artifacts}`:''}`);}catch{await this.scheduleAlarm(Date.now()+60_000);}}));
       }
       return;
     }
@@ -1450,13 +1477,28 @@ export class HubCoordinator {
     if (!allowed) return jsonError("This action is not available.", 404);
     const socket = this.computerSocket(computerId);
     if (!socket) return jsonError("This computer is offline; try again when it reconnects.", 503);
-    const payload = await limitedBody(request, 96_000);
+    let payload = await limitedBody(request, 96_000);
     if (!payload) return jsonError("Send a shorter message.", 413);
     if (!id) {
       let input;
       try { input = JSON.parse(new TextDecoder().decode(payload)); } catch { return jsonError("Choose a workspace.", 400); }
       if(input.hubInstructions!==undefined || input.hubInbox!==undefined)return jsonError("This thread configuration is unavailable.",403);
       if (typeof input.workspaceId !== "string" || !await this.computerService().canUseWorkspace(target, actor.id, input.workspaceId)) return jsonError("This workspace is not available to you.", 404);
+    }
+    if(id && action==="message" && snapshot) {
+      const org=request.headers.get("x-organization-id")!;
+      try {
+        const input=JSON.parse(new TextDecoder().decode(payload)),key=typeof input.text==="string"?/\bwork on\s+([A-Z][A-Z0-9]*-\d+)\b/i.exec(input.text)?.[1]?.toUpperCase():undefined;
+        if(key){const local=target.capabilities.workspaces.find(w=>w.path===snapshot.detail.cwd),workspace=local?.origin?await new D1OrganizationStore(this.env.DB).workspaceByOrigin(org,repositoryOrigin(local.origin)):undefined;
+          if(workspace&&(await this.linearBoard(org).policies()).some(p=>p.enabled&&p.workspace_id===workspace.id)) {
+            const resolved=await this.withLinear(()=>this.linearBoard(org).resolve(actor.id,workspace.id,key));
+            input.text+=`\n\nLinked Linear ticket ${resolved.issue.identifier}: ${resolved.issue.title}\n${resolved.issue.description??''}\n${resolved.issue.url}`;
+            if(resolved.ticketId)await this.linearBoard(org).attachRun(resolved.ticketId,computerId,id,actor.id);
+            if(resolved.ticketId)await this.board.append({entity:"ticket",entityId:resolved.ticketId,kind:"link",payload:{chatId:id,computerId}},{kind:"member",id:actor.id,label:actor.label});
+            payload=new TextEncoder().encode(JSON.stringify(input)).buffer;
+          }
+        }
+      }catch{return jsonError("This Linear ticket could not be resolved in your workspace.",400);}
     }
     const requestId = crypto.randomUUID();
     const response = new Promise<Response>((resolve) => {
@@ -1477,6 +1519,10 @@ export class HubCoordinator {
     if (current === null || at < current) await this.ctx.storage.setAlarm(at);
   }
 
+  private linearWork:Promise<unknown>|undefined;
+  private async withLinear<T>(work:()=>Promise<T>):Promise<T> {const before=this.linearWork,job=(async()=>{await before?.catch(()=>undefined);return work();})();this.linearWork=job;try{return await job;}finally{if(this.linearWork===job)this.linearWork=undefined;}}
+  private linearBoard(org:string){return new LinearBoard(org,linearFor(this.env),this.board,new DurableBoardStorage(this.ctx.storage),async(user,workspace,agent,prompt)=>{const row=await this.scopedAgents(org).get(agent,user);if(row.fields.scope==='personal'||row.fields.scope==='workspace'&&row.fields.ownerId!==workspace)throw Error('This agent is unavailable.');return this.startAgentThread(agent,user,workspace,prompt,'agent','linear');},new URL(this.env.BETTER_AUTH_URL).origin);}
+
   private readonly githubReplies=new Map<string,Promise<void>>();
   private async replyOnGitHub(org:string,computer:string,thread:string,text:string) {
     if(this.githubReplies.has(thread))return this.githubReplies.get(thread);
@@ -1487,6 +1533,14 @@ export class HubCoordinator {
   }
 
   async alarm(): Promise<void> {
+    const linearOrg=await this.ctx.storage.get<string>("organizationId");
+    if(linearOrg) await this.withLinear(async()=>{
+      const service=this.linearBoard(linearOrg);await service.tick();
+      for(const [key,run] of await this.ctx.storage.list<{computerId:string;ticketId:string}>({prefix:"linear:run:"})){
+        const id=key.slice("linear:run:".length);if(await this.ctx.storage.get(`linear:run-done:${id}`))continue;
+        const thread=await this.threads.get(run.computerId,id);if(thread&&!['working','running','busy','needs_input'].includes(String(thread.detail.state)))try{const text=thread.detail.entries.filter(e=>e.kind==='assistant'&&e.text).map(e=>e.text).join("\n\n"),artifacts=await service.artifacts(id,thread.detail.entries.flatMap(e=>Array.isArray(e.artifacts)?e.artifacts:[]));await service.reply(run.computerId,id,`${text}${artifacts?`\n\n${artifacts}`:''}`);}catch{}
+      }
+    });
     const routineDue=await this.routineService().tick();
     await this.hostedService().idle();
     const hostedDue=(await this.hostedService().list()).length ? Date.now()+60_000 : undefined;
@@ -1502,6 +1556,7 @@ export class HubCoordinator {
     let next: number | undefined = pushDue?.due ? Math.max(Date.now() + 1000, pushDue.due) : undefined;
     if(hostedDue) next=Math.min(next ?? hostedDue,hostedDue);
     if(routineDue) next=Math.min(next ?? routineDue,routineDue);
+    if(linearOrg && (await this.linearBoard(linearOrg).policies()).some(p=>p.enabled))next=Math.min(next??Infinity,Date.now()+60_000);
     for (const socket of this.ctx.getWebSockets()) {
       const attachment = socket.deserializeAttachment() as { kind?: string; lastSeenAt?: number } | null;
       if (attachment?.kind !== "computer" || !attachment.lastSeenAt) continue;

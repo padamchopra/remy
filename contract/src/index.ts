@@ -368,7 +368,7 @@ function compareEvents(left: BoardLogEvent, right: BoardLogEvent): number {
 
 const editable: Record<BoardLogEntity, readonly string[]> = {
   project: ["name", "keyPrefix", "defaultProvider", "defaultModel", "defaultEffort", "defaultPermissionMode"],
-  ticket: ["title", "body", "status", "priority", "assigneeAgentId", "parentId", "rank", "deviceId", "branch", "handoffs", "startedAt", "closedAt"],
+  ticket: ["number", "keyPrefix", "linearIssueId", "externalUrl", "assigneeMemberId", "assigneeName", "labels", "title", "body", "status", "priority", "assigneeAgentId", "parentId", "rank", "deviceId", "branch", "handoffs", "startedAt", "closedAt"],
   agent: ["scope", "ownerId", "createdByUserId", "builtIn", "name", "handle", "role", "instructions", "provider", "model", "effort", "permissionMode", "avatar", "tint", "autoStart", "handoffTo", "gitIdentity", "gitName"],
   memory: ["content"],
   recurrence: ["projectId", "runAsUserId", "timeZone", "name", "prompt", "cadence", "hour", "minute", "weekday", "day", "enabled", "schedulerDeviceId"],

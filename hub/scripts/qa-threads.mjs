@@ -108,6 +108,7 @@ const mf = new Miniflare(
   }),
 );
 const hubUrl = (await mf.ready).origin;
+if(process.env.QA_LINEAR)oauth?.bindHub(hubUrl);
 const db = await mf.getD1Database("DB");
 for (const file of readdirSync(join(root, "hub/migrations"))
   .filter((name) => name.endsWith(".sql"))
@@ -192,7 +193,7 @@ setProviderAdapterForTest({
             handlers.event({ type: "turn.started" });
             const id = randomUUID();
             let toolReply;
-            if(process.env.QA_BUILTINS && _options.developerInstructions?.includes("organization")) {
+            if((process.env.QA_BUILTINS || process.env.QA_LINEAR) && _options.developerInstructions?.includes("organization")) {
               const {Client}=await import("../../server/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js");
               const {InMemoryTransport}=await import("../../server/node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.js");
               const [clientSide,serverSide]=InMemoryTransport.createLinkedPair();const client=new Client({name:"Disposable model fixture",version:"1"});
@@ -200,7 +201,8 @@ setProviderAdapterForTest({
               try {
                 const call=async(name,args={})=>{const result=await client.callTool({name,arguments:args});if(result.isError)throw Error("Fixture tool failed");const {applyToolOutput}=await import("../../server/dist/transcript.js");const entry={id:crypto.randomUUID(),kind:"tool",tool:name};applyToolOutput(entry,result.content[0].text,10000);handlers.event({type:"entry.updated",entry});return JSON.parse(result.content[0].text.split("\n<remy-artifact>")[0]);};
                 const {workspaces}=await call("list_organization_workspaces"),android=workspaces.find(w=>w.name==="Android");
-                if(input.prompt.includes("Repeat the release review")) {const next=new Date(Date.now()+65000);await call("create_organization_routine",{name:"Daily release review",prompt:"Review the release notes.",projectId:android.id,cadence:"daily",hour:next.getUTCHours(),minute:next.getUTCMinutes(),timeZone:"UTC"});toolReply="The daily release review is scheduled.";}
+                if(process.env.QA_LINEAR && input.prompt.includes("ENG-7")){const workspace=workspaces.find(w=>w.name==="Release workspace");const resolved=await call("resolve_linear_ticket",{workspaceId:workspace.id,key:"ENG-7"});await call("comment_organization_ticket",{ticketId:resolved.ticketId,text:"I checked the release notes and started verification."});toolReply="The release notes are checked and ready for review.";}
+                else if(input.prompt.includes("Repeat the release review")) {const next=new Date(Date.now()+65000);await call("create_organization_routine",{name:"Daily release review",prompt:"Review the release notes.",projectId:android.id,cadence:"daily",hour:next.getUTCHours(),minute:next.getUTCMinutes(),timeZone:"UTC"});toolReply="The daily release review is scheduled.";}
                 else if(input.prompt.includes("Send Android work")) {const {computers}=await call("list_organization_computers"),{rules}=await call("read_routing");await call("edit_routing",{rules:[{id:"android",name:"Android on Studio",workspaceId:android.id,target:{computerId:computers.find(c=>c.name==="Studio").computerId}},...rules.filter(r=>r.id!=="android")]});toolReply="Android work now goes to Studio.";}
                 else if(input.prompt.includes("Create an Android ticket")){await call("create_organization_ticket",{workspaceId:android.id,title:"Check the Android release",prompt:"Review the next release."});toolReply="I created the Android release ticket.";}
               } finally {await client.close();}
@@ -324,6 +326,8 @@ const control = createServer(async (req, res) => {
   }
   const controlPath = new URL(req.url, "http://127.0.0.1");
   const askedThread = controlPath.searchParams.get("threadId") ?? thread.id;
+  if(controlPath.pathname === "/linear") {res.setHeader("content-type","application/json");res.end(JSON.stringify({issues:[...(oauth?.linearIssues.values()??[])],comments:[...(oauth?.linearComments.values()??[])]}));return;}
+  if(controlPath.pathname === "/linear-edit" && req.method==="POST") {try{let raw="";for await(const part of req)raw+=part;const input=JSON.parse(raw);await oauth.changeIssue(input.id,input.patch);res.writeHead(204);res.end();}catch{res.writeHead(400);res.end();}return;}
   if(controlPath.pathname === "/github") {res.setHeader("content-type","application/json");res.end(JSON.stringify({actions:oauth?.actions,comments:oauth?.comments}));return;}
   if (controlPath.pathname === "/mail") {
     const value = await db.prepare("SELECT url FROM qa_emails WHERE recipient=? ORDER BY rowid DESC LIMIT 1").bind(controlPath.searchParams.get("email") ?? "").first();
