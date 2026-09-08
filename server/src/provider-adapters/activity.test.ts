@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ThreadActivityTracker, type ThreadActivity } from "./thread-activity.js";
-import type { ConvEntry } from "./transcript.js";
+import { ThreadActivityTracker, type ThreadActivity } from "./activity.js";
+import type { ConvEntry } from "../transcript.js";
 
 function harness(entries: ConvEntry[] = []) {
   let now = 1_000;

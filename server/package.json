@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --test dist/*.test.js",
+    "test": "npm run build && node --test dist/*.test.js dist/provider-adapters/*.test.js",
     "start": "node dist/index.js",
     "postinstall": "find node_modules/node-pty/prebuilds -name spawn-helper -exec chmod +x {} +"
   },

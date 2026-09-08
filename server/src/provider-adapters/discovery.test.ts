@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { claudeModels, codexModels, cursorModels } from "./provider-discovery.js";
+import { claudeModels, codexModels, cursorModels } from "./discovery.js";
 
 test("Claude's SDK names the installed generations and context windows", () => {
   const models = claudeModels([

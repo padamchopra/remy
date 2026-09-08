@@ -5,6 +5,7 @@ import { getKv, setKv } from "./db.js";
 import {
   knowsEffort,
   knowsModel,
+  defaultProviderIds,
   provider,
   providerEffort,
   providerId,
@@ -184,8 +185,10 @@ function favoriteModels(value: unknown): string[] {
   }))].slice(0, 24);
 }
 
-function enabledProviders(value: unknown): ProviderId[] {
-  if (!Array.isArray(value)) return PROVIDERS.map((entry) => entry.id);
+function enabledProviders(value: unknown, hosted = false): ProviderId[] {
+  if (!Array.isArray(value)) {
+    return defaultProviderIds(hosted);
+  }
   const enabled = [...new Set(value.flatMap((entry) => {
     const found = provider(entry);
     return found ? [found.id] : [];
@@ -278,7 +281,8 @@ export function branchPrefix(value: unknown): string | undefined {
 function load(): Config {
   const parsed = getKv<Partial<Config> & { preventSleepWhileBusy?: boolean }>("config") ?? {};
   tailscaleServePreferenceStored = typeof parsed.tailscaleServeEnabled === "boolean";
-  const enabled = enabledProviders(parsed.enabledProviders);
+  const hubMode = parsed.hubMode === true;
+  const enabled = enabledProviders(parsed.enabledProviders, hubMode);
   const parsedDefaultProvider = providerId(parsed.defaultProvider);
   const defaultProvider = enabled.includes(parsedDefaultProvider) ? parsedDefaultProvider : enabled[0];
   const parsedRemyProvider = providerId(parsed.remyProvider);
@@ -288,7 +292,7 @@ function load(): Config {
   const config: Config = {
     port: Number(parsed.port) || 8420,
     token: typeof parsed.token === "string" && parsed.token.length >= 32 ? parsed.token : randomBytes(32).toString("hex"),
-    hubMode: parsed.hubMode === true,
+    hubMode,
     contextLimit: Number(parsed.contextLimit) > 0 ? Number(parsed.contextLimit) : 200_000,
     preventSleep: preventSleepMode(parsed.preventSleep, parsed.preventSleepWhileBusy),
     defaultCheckout: oneOf(CHECKOUT_MODES, parsed.defaultCheckout, "main"),

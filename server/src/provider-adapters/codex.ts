@@ -1,8 +1,20 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline";
-import { codexSandbox } from "./providers.js";
-import { applyToolOutput, clip, MAX_ARG, MAX_OUTPUT, MAX_TEXT, MAX_THINK, type ConvEntry, type ConvTodo } from "./transcript.js";
+import { codexSandbox } from "../providers.js";
+import { applyToolOutput, clip, resultText, MAX_ARG, MAX_OUTPUT, MAX_TEXT, MAX_THINK, type ConvEntry, type ConvTodo } from "../transcript.js";
+import { ThreadActivityTracker } from "./activity.js";
+import { discoverCodexModels } from "./discovery.js";
+import type {
+  ProviderAdapter,
+  ProviderApprovalDecision,
+  ProviderEvent,
+  ProviderHandlers,
+  ProviderSession,
+  ProviderSessionOptions,
+  ProviderTurn,
+} from "./types.js";
 
 /// The app-server shapes Remy renders. They stay deliberately smaller than the
 /// generated protocol: the installed Codex CLI is the schema authority, while
@@ -30,6 +42,7 @@ export type CodexItem =
       server: string;
       tool: string;
       arguments?: unknown;
+      output?: string;
       error?: { message: string };
       status: "in_progress" | "completed" | "failed";
     }
@@ -137,6 +150,158 @@ export interface CodexSession {
   }): CodexRun;
   close(): void;
 }
+
+class CodexAdapterSession implements ProviderSession {
+  private readonly session: CodexSession;
+  private readonly entries = new Map<string, ConvEntry>();
+  private readonly activity: ThreadActivityTracker;
+  private turnId = "";
+
+  constructor(options: ProviderSessionOptions, private readonly handlers: ProviderHandlers) {
+    for (const entry of options.entries ?? []) this.entries.set(entry.id, entry);
+    this.activity = new ThreadActivityTracker(options.entries ?? [], (entry) => this.emitEntry(entry));
+    this.activity.disconnected();
+    this.session = createCodexSession(
+      {
+        command: options.command,
+        cwd: options.cwd,
+        ...(options.model ? { model: options.model } : {}),
+        ...(options.effort ? { effort: options.effort } : {}),
+        permissionMode: options.permissionMode,
+        ...(options.sessionId ? { threadId: options.sessionId } : {}),
+        ...(options.additionalDirectories ? { additionalDirectories: options.additionalDirectories } : {}),
+        ...(options.developerInstructions ? { developerInstructions: options.developerInstructions } : {}),
+        ...(options.mcpProcess ? { mcpServer: options.mcpProcess } : {}),
+        ...(options.env ? { env: options.env } : {}),
+      },
+      (event) => this.receive(event),
+      (request) => this.approve(request),
+      (request) => this.answer(request),
+    );
+  }
+
+  turn(input: ProviderTurn) {
+    this.turnId = `${randomUUID().slice(0, 8)}-`;
+    const run = this.session.run(input.prompt, {
+      ...(input.model ? { model: input.model } : {}),
+      ...(input.effort ? { effort: input.effort } : {}),
+      permissionMode: input.permissionMode,
+      images: input.images.map((image) => ({ dataUrl: image.dataUrl })),
+    });
+    return { done: run.done, interrupt: () => run.stop() };
+  }
+
+  close(): void {
+    this.session.close();
+  }
+
+  private receive(event: CodexEvent): void {
+    if (event.type === "activity") {
+      this.activity.codex(event.method, event.params, event.parentThreadId);
+      return;
+    }
+    let normalized: ProviderEvent | undefined;
+    switch (event.type) {
+      case "session.closed":
+        this.activity.disconnected();
+        normalized = { type: "session.closed" };
+        break;
+      case "thread.started":
+        normalized = { type: "session.started", sessionId: event.thread_id };
+        break;
+      case "turn.started":
+        normalized = { type: "turn.started" };
+        break;
+      case "turn.completed":
+        normalized = { type: "turn.completed" };
+        break;
+      case "turn.failed":
+        normalized = { type: "turn.failed", error: event.error.message };
+        break;
+      case "usage.updated":
+        normalized = {
+          type: "usage.updated",
+          tokens: codexTokens(event.usage),
+          ...(event.usage.context_window ? { limit: event.usage.context_window } : {}),
+        };
+        break;
+      case "error":
+        normalized = { type: "turn.failed", error: event.message };
+        break;
+      case "item.started":
+      case "item.updated":
+      case "item.completed": {
+        const todos = codexTodos(event.item);
+        if (todos.length) normalized = { type: "todos.updated", todos };
+        else {
+          const entry = codexEntry(event.item, this.turnId);
+          if (entry) {
+            if (event.type === "item.completed") entry.completedAt = Date.now();
+            this.emitEntry(entry);
+          }
+        }
+        break;
+      }
+    }
+    if (normalized) this.handlers.event(normalized);
+  }
+
+  private emitEntry(entry: ConvEntry): void {
+    const existing = this.entries.get(entry.id);
+    if (existing) Object.assign(existing, entry);
+    else this.entries.set(entry.id, entry);
+    this.handlers.event({ type: "entry.updated", entry });
+  }
+
+  private async approve(request: CodexApprovalRequest) {
+    if (!this.handlers.approve) return "decline" as const;
+    const entry = this.entries.get(`${this.turnId}${request.itemId}`);
+    const decision = await this.handlers.approve({
+      tool: request.kind === "command" ? "Bash" : "Edit",
+      input: request.kind === "command"
+        ? { command: request.command ?? "" }
+        : { file_path: entry?.file ?? this.entries.get(request.itemId)?.file ?? "" },
+      signal: request.signal,
+      ...(request.reason ? { reason: request.reason } : {}),
+      allowAlways: request.allowAlways,
+      edit: request.kind === "file_change",
+    });
+    return codexDecision(decision);
+  }
+
+  private async answer(request: CodexQuestionRequest): Promise<Record<string, string[]>> {
+    if (!this.handlers.answer) return {};
+    const questions = request.questions.map((question) => ({
+      question: question.question,
+      ...(question.header ? { header: question.header } : {}),
+      multiSelect: false,
+      options: (question.options ?? []).map((option) => ({ label: option.label, detail: option.description })),
+    }));
+    const answers = await this.handlers.answer({ questions, signal: request.signal });
+    return Object.fromEntries(request.questions.map((question) => {
+      const answer = answers[question.question];
+      if (Array.isArray(answer)) return [question.id, answer.filter((value): value is string => typeof value === "string")];
+      return [question.id, typeof answer === "string" ? [answer] : []];
+    }));
+  }
+}
+
+function codexDecision(decision: ProviderApprovalDecision): CodexApprovalDecision {
+  if (decision === "allowAlways") return "acceptForSession";
+  if (decision === "allow") return "accept";
+  return "decline";
+}
+
+export const codexAdapter: ProviderAdapter = {
+  id: "codex",
+  createSession: (options, handlers) => new CodexAdapterSession(options, handlers),
+  answer: (options) => codexAnswer({
+    ...options,
+    prompt: [options.systemPrompt, options.developerInstructions, options.prompt].filter(Boolean).join("\n\n"),
+  }),
+  discoverModels: discoverCodexModels,
+  errorMessage: codexErrorMessage,
+};
 
 /// The app-server command line contains configuration keys and environment
 /// variable names, never their values. Those travel only in the child env.
@@ -627,6 +792,9 @@ function toCodexItem(value: unknown): CodexItem | undefined {
       tool: stringValue(item.tool) ?? "tool",
       arguments: item.arguments,
       ...(typeof error.message === "string" ? { error: { message: error.message } } : {}),
+      ...(resultText(item.result) ?? resultText(item.output)
+        ? { output: resultText(item.result) ?? resultText(item.output) }
+        : {}),
       status,
     };
   }
@@ -672,6 +840,7 @@ export function codexEntry(item: CodexItem, turn = ""): ConvEntry | undefined {
       const entry: ConvEntry = { id, kind: "tool", tool: `${item.server}.${item.tool}`, verb: "Called", arg: clip(item.tool ?? "", MAX_ARG) };
       if (item.status !== "in_progress") entry.status = item.status === "failed" ? "error" : "ok";
       if (item.error?.message) entry.output = clip(item.error.message, MAX_OUTPUT);
+      else if (item.output) applyToolOutput(entry, item.output, MAX_OUTPUT);
       return entry;
     }
     case "web_search":

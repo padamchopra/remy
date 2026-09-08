@@ -1,8 +1,6 @@
 import { homedir } from "node:os";
-import { query, type Options } from "@anthropic-ai/claude-agent-sdk";
 import { agentCommand } from "./agent.js";
-import { codexAnswer } from "./codex.js";
-import { cursorAnswer } from "./cursor.js";
+import { providerAnswer } from "./provider-adapters/index.js";
 import { providerId, type ProviderId } from "./providers.js";
 
 /// Names a thread, and the branch its work belongs on, from the message that
@@ -104,74 +102,27 @@ export async function suggestName(
   // `off` is how someone declines this entirely.
   if (model === "off") return undefined;
   const resolved = providerId(provider);
-  const answer = resolved === "codex"
-    ? await nameWithCodex(request, model, effort)
-    : resolved === "cursor"
-      ? await nameWithCursor(request, model, effort)
-      : await nameWithClaude(request, model, effort);
+  const answer = await nameWithProvider(request, resolved, model, effort);
   return answer ? parse(answer) : undefined;
 }
 
-/// Read-only in the home directory, like the Claude side: this is a naming call
-/// and it has no business reading the repository.
-async function nameWithCodex(request: string, model: string, effort: string): Promise<string | undefined> {
+async function nameWithProvider(
+  request: string,
+  provider: ProviderId,
+  model: string,
+  effort: string,
+): Promise<string | undefined> {
   try {
-    return await codexAnswer({
-      command: agentCommand("codex")!,
-      prompt: `${SYSTEM}\n\nName the session that starts with this request:\n\n${request}`,
+    return await providerAnswer(provider, {
+      command: agentCommand(provider)!,
+      prompt: `Name the session that starts with this request:\n\n${request}`,
       cwd: homedir(),
+      systemPrompt: SYSTEM,
       ...(model ? { model } : {}),
       ...(effort ? { effort } : {}),
       timeoutMs: TIMEOUT_MS,
     });
   } catch {
     return undefined;
-  }
-}
-
-async function nameWithCursor(request: string, model: string, effort: string): Promise<string | undefined> {
-  try {
-    return await cursorAnswer({
-      command: agentCommand("cursor")!,
-      prompt: `${SYSTEM}\n\nName the session that starts with this request:\n\n${request}`,
-      cwd: homedir(),
-      ...(model ? { model } : {}),
-      ...(effort ? { effort } : {}),
-      timeoutMs: TIMEOUT_MS,
-    });
-  } catch {
-    return undefined;
-  }
-}
-
-async function nameWithClaude(request: string, model: string, effort: string): Promise<string | undefined> {
-  const options: Options = {
-    // Home, not the project: this is a one-shot naming call, and it has no
-    // business reading the repository or its CLAUDE.md.
-    cwd: homedir(),
-    pathToClaudeCodeExecutable: agentCommand("claude"),
-    systemPrompt: SYSTEM,
-    settingSources: [],
-    maxTurns: 1,
-    allowedTools: [],
-    ...(model ? { model } : {}),
-    ...(effort ? { effort: effort as NonNullable<Options["effort"]> } : {}),
-  };
-
-  const handle = query({ prompt: `Name the session that starts with this request:\n\n${request}`, options });
-  const timeout = setTimeout(() => void handle.interrupt().catch(() => {}), TIMEOUT_MS);
-  try {
-    let answer = "";
-    for await (const message of handle) {
-      if (message.type !== "assistant") continue;
-      for (const block of message.message.content) {
-        if (block.type === "text") answer += block.text;
-      }
-    }
-    return answer;
-  } catch {
-    return undefined;
-  } finally {
-    clearTimeout(timeout);
   }
 }

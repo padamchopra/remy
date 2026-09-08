@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   codexSandbox,
+  defaultProviderIds,
   knowsEffort,
   knowsModel,
   modelLabel,
@@ -17,6 +18,11 @@ test("every provider offers a default, and names its own executable", () => {
     assert.equal(provider.models[0]?.value, "", `${provider.id} should start with its default`);
     assert.ok(provider.command, `${provider.id} needs a command`);
   }
+});
+
+test("hosted computers leave Cursor off until it is explicitly enabled", () => {
+  assert.deepEqual(defaultProviderIds(false), ["claude", "codex", "cursor"]);
+  assert.deepEqual(defaultProviderIds(true), ["claude", "codex"]);
 });
 
 test("an unknown provider falls back rather than being stored", () => {

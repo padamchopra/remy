@@ -81,7 +81,7 @@ import {
   updateChat,
 } from "./chat.js";
 import { findProjectFiles, findSkills } from "./discovery.js";
-import { discoveredProviders } from "./provider-discovery.js";
+import { discoveredProviders } from "./provider-adapters/index.js";
 import { setProviderEnabled } from "./provider-settings.js";
 import { externalMcpProvider } from "./external-mcp-auth.js";
 import { explicitlyRequestedTicketStatus } from "./ticket-tool-contract.js";

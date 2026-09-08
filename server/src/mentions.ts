@@ -1,6 +1,11 @@
 import { homedir } from "node:os";
 import { existsSync } from "node:fs";
-import { createSdkMcpServer, query, tool, type Options } from "@anthropic-ai/claude-agent-sdk";
+import {
+  createSdkMcpServer,
+  runClaudeQuery,
+  tool,
+  type ClaudeOptions,
+} from "./provider-adapters/claude.js";
 import { z } from "zod";
 import { agentCommand } from "./agent.js";
 import { assignedAgent, type Agent } from "./agents.js";
@@ -144,7 +149,7 @@ async function answer(agent: Agent, ticket: TicketView, comment: string): Promis
   const model = agent.model || config.defaultModel || undefined;
   const effort = (agent.provider === "default" ? config.defaultEffort : agent.effort) || undefined;
   const instructions = agent.instructions.trim();
-  const options: Options = {
+  const options: ClaudeOptions = {
     cwd: cwd ?? homedir(),
     pathToClaudeCodeExecutable: agentCommand("claude"),
     systemPrompt: {
@@ -157,7 +162,7 @@ async function answer(agent: Agent, ticket: TicketView, comment: string): Promis
     allowedTools: ALLOWED,
     mcpServers: { remy: boardTools(ticket.id) },
     ...(model ? { model } : {}),
-    ...(effort ? { effort: effort as NonNullable<Options["effort"]> } : {}),
+    ...(effort ? { effort: effort as NonNullable<ClaudeOptions["effort"]> } : {}),
     // Belt and braces: `allowedTools` is the allowlist, and this refuses
     // anything that reaches the callback anyway. A mention must not be a way
     // to run a command on the machine.
@@ -176,7 +181,7 @@ async function answer(agent: Agent, ticket: TicketView, comment: string): Promis
   };
 
   let reply = "";
-  for await (const message of query({ prompt: brief(ticket, comment, cwd), options })) {
+  for await (const message of runClaudeQuery({ prompt: brief(ticket, comment, cwd), options })) {
     if (message.type === "result" && "result" in message && typeof message.result === "string") {
       reply = message.result;
     }
