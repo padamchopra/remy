@@ -26,6 +26,7 @@ export function HubThreadComposer({
     >([]),
     [workspaceId, setWorkspace] = useState(""),
     [selected, select] = useState("automatic"),
+    [preferenceLoaded, setPreferenceLoaded] = useState(false),
     [title, setTitle] = useState(""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -37,6 +38,26 @@ export function HubThreadComposer({
       })
       .catch((e) => setError(e.message));
   }, [base]);
+  useEffect(() => {
+    let cancelled = false;
+    setPreferenceLoaded(false);
+    if (workspaceId)
+      void hubRequest<{ computerId: string | null }>(
+        `${base}/routing/preference?workspaceId=${encodeURIComponent(workspaceId)}`,
+      )
+        .then((value) => {
+          if (!cancelled) {
+            select(value.computerId ?? "automatic");
+            setPreferenceLoaded(true);
+          }
+        })
+        .catch((e) => {
+          if (!cancelled) setError(e.message);
+        });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId, base]);
   const workspace = workspaces.find((w) => w.id === workspaceId);
   const eligible = computers.filter(
     (c) =>
@@ -48,7 +69,7 @@ export function HubThreadComposer({
       ),
   );
   useEffect(() => {
-    if (!title.trim() || !workspaceId) return;
+    if (!title.trim() || !workspaceId || !preferenceLoaded) return;
     const timer = setTimeout(() => {
       void hubRequest(`${base}/routing/resolve`, "POST", {
         workspaceId,
@@ -58,14 +79,14 @@ export function HubThreadComposer({
       }).catch(() => undefined);
     }, 300);
     return () => clearTimeout(timer);
-  }, [title, workspaceId, base]);
+  }, [title, workspaceId, base, preferenceLoaded, selected]);
   return (
     <form
       className="flex w-full max-w-xl flex-col gap-3 rounded-lg border p-4"
       aria-label="New thread"
       onSubmit={async (event) => {
         event.preventDefault();
-        if (!workspace || busy) return;
+        if (!workspace || busy || !preferenceLoaded) return;
         setBusy(true);
         setError("");
         try {
@@ -73,6 +94,7 @@ export function HubThreadComposer({
             computerId?: string;
             workspaceId?: string;
             reason?: string;
+            hostedWorkspaceId?: string;
           } = {};
           if (selected !== "automatic") {
             const c = eligible.find((c) => c.computerId === selected);
@@ -92,7 +114,7 @@ export function HubThreadComposer({
                 prewarm: attempt === 0,
               });
               if (choice.computerId) break;
-              if (attempt === 59)
+              if (!choice.hostedWorkspaceId || attempt === 59)
                 throw Error(choice.reason ?? "This computer could not start.");
               await new Promise((r) => setTimeout(r, 1000));
             }
@@ -155,14 +177,28 @@ export function HubThreadComposer({
         <FieldLabel>Computer</FieldLabel>
         <Select
           value={selected}
-          disabled={busy}
-          onValueChange={(v) => {
+          disabled={busy || !preferenceLoaded}
+          onValueChange={async (v) => {
             if (!v) return;
+            const previous = selected;
             select(v);
-            void hubRequest(`${base}/routing/preference`, "POST", {
-              workspaceId,
-              computerId: v === "automatic" ? null : v,
-            }).catch((e) => setError(e.message));
+            setPreferenceLoaded(false);
+            setError("");
+            try {
+              await hubRequest(`${base}/routing/preference`, "POST", {
+                workspaceId,
+                computerId: v === "automatic" ? null : v,
+              });
+            } catch (e) {
+              select(previous);
+              setError(
+                e instanceof Error
+                  ? e.message
+                  : "Your computer choice could not be saved.",
+              );
+            } finally {
+              setPreferenceLoaded(true);
+            }
           }}
         >
           <SelectTrigger aria-label="Thread computer">
@@ -170,6 +206,14 @@ export function HubThreadComposer({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="automatic">Use routing rules</SelectItem>
+            {selected !== "automatic" &&
+              !eligible.some((c) => c.computerId === selected) && (
+                <SelectItem value={selected} disabled>
+                  {computers.find((c) => c.computerId === selected)?.name ??
+                    "Saved computer"}{" "}
+                  (unavailable)
+                </SelectItem>
+              )}
             {eligible.map((c) => (
               <SelectItem key={c.computerId} value={c.computerId}>
                 {c.name}
@@ -183,7 +227,7 @@ export function HubThreadComposer({
       </p>
       {busy && <p role="status">Preparing your thread…</p>}
       {error && <p role="alert">{error}</p>}
-      <Button type="submit" disabled={busy || !workspace}>
+      <Button type="submit" disabled={busy || !workspace || !preferenceLoaded}>
         Start thread
       </Button>
     </form>

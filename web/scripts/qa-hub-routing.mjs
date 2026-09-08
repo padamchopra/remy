@@ -14,5 +14,14 @@ try {
  await page.getByRole('button',{name:'Threads',exact:true}).first().click();await page.getByRole('combobox',{name:'Thread workspace',exact:true}).click();await page.getByRole('option',{name:'Android',exact:true}).click();await page.getByLabel('Thread name',{exact:true}).fill('Review Android routing');await page.getByRole('button',{name:'Start thread',exact:true}).click();await page.getByRole('textbox',{name:'Message',exact:true}).waitFor();assert.ok(page.url().includes(`computer=${c.computerId}`));
  const id=page.url().split('/threads/')[1].split('?')[0];const started=await call('ada',`/computers/${c.computerId}/threads/${id}`);assert.ok(started.body.detail.cwd.endsWith('android-workspace'));
  const pref=await call('ada','/routing/preference','POST',{workspaceId:w.body.id,computerId:c.computerId});assert.equal(pref.status,200);assert.equal((await call('ada','/routing/resolve','POST',{workspaceId:w.body.id,usePreference:true})).body.reason,'Your workspace preference.');assert.equal((await call('grace','/routing/resolve','POST',{workspaceId:w.body.id,usePreference:true})).body.reason,'Matched Android on the office Mac.');
+ assert.equal((await call('ada',`/routing/preference?workspaceId=${w.body.id}`)).body.computerId,c.computerId);
+ assert.equal((await call('grace',`/routing/preference?workspaceId=${w.body.id}`)).body.computerId,null);
+ await page.getByRole('button',{name:'Threads',exact:true}).first().click();
+ await page.getByRole('combobox',{name:'Thread workspace',exact:true}).click();await page.getByRole('option',{name:'Android',exact:true}).click();
+ await page.waitForFunction(name=>document.querySelector('[aria-label="Thread computer"]')?.textContent.includes(name),c.name);
+ await page.getByRole('combobox',{name:'Thread computer',exact:true}).click();await page.getByRole('option',{name:'Use routing rules',exact:true}).click();
+ await page.getByRole('button',{name:'Start thread',exact:true}).waitFor({state:'visible'});
+ await page.waitForFunction(()=>!document.querySelector('[aria-label="Thread computer"]')?.disabled);
+ assert.equal((await call('ada',`/routing/preference?workspaceId=${w.body.id}`)).body.computerId,null);
  await page.goto(`${info.hubUrl}/#/settings/routing?organization=${info.organizationId}`);await page.setViewportSize({width:390,height:844});await page.getByRole('button',{name:'Save routing',exact:true}).waitFor();assert.ok(await page.getByRole('region',{name:'Routing',exact:true}).evaluate(e=>e.scrollWidth<=e.clientWidth));await page.screenshot({path:out+'/mobile-routing.png'});console.log('PASS: rule editing, dry run, automatic Android thread placement, per-member workspace preference, member write denial, mobile layout');
 } catch(e){await page.screenshot({path:out+'/failure.png'});console.error(await page.locator('body').innerText());throw e;}finally{await context.close();await browser.close();}console.log(`VIDEO=${await page.video().path()}`);

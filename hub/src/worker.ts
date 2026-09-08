@@ -479,6 +479,13 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           await env.DB.prepare("INSERT INTO organization_routing(organization_id,rules) VALUES(?,?) ON CONFLICT(organization_id) DO UPDATE SET rules=excluded.rules").bind(organizationId,JSON.stringify(parsed.data)).run();
           return Response.json({rules:parsed.data});
         }
+        if(tail==="routing/preference" && request.method==="GET") {
+          const workspaceId=url.searchParams.get("workspaceId");
+          if(!workspaceId)return jsonError("Choose a workspace.",400);
+          await organizations.workspace(organizationId,identity.userId,workspaceId);
+          const preference=await env.DB.prepare("SELECT computer_id FROM member_computer_preferences WHERE organization_id=? AND user_id=? AND workspace_id=?").bind(organizationId,identity.userId,workspaceId).first<{computer_id:string}>();
+          return Response.json({computerId:preference?.computer_id??null});
+        }
         if(request.method==="POST") {
           const input=await body<{workspaceId?:string;trigger?:string;computerId?:string|null;prewarm?:boolean;usePreference?:boolean}>(request);
           if(!input?.workspaceId)return jsonError("Choose a workspace.",400);
