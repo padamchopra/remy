@@ -1,3 +1,4 @@
+import type { ThreadMember } from "@remy/contract";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -393,6 +394,7 @@ export class Chat {
     codeReferences: ChatCodeReference[] = [],
     agentContext?: string,
     messageId?: string,
+    member?: ThreadMember,
   ): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed && codeReferences.length === 0) return;
@@ -433,6 +435,7 @@ This is the agent's Inbox conversation. When the person signals that something s
     this.append({
       id: entryId,
       kind: "user",
+      ...(member ? { member } : {}),
       text: clip(safeText, MAX_TEXT),
       ...(attachments.length > 0 ? { attachments } : {}),
       ...(safeReferences.length > 0 ? { codeReferences: safeReferences } : {}),
@@ -466,11 +469,12 @@ This is the agent's Inbox conversation. When the person signals that something s
     this.push();
   }
 
-  respondApproval(requestId: string, decision: "allow" | "allowAlways" | "deny"): void {
+  respondApproval(requestId: string, decision: "allow" | "allowAlways" | "deny", member?: ThreadMember): void {
     // `settle` owns removing the request — deleting it here first would make it
     // a no-op and leave Claude parked on a permission it thinks is unanswered.
     const settle = this.pending.get(requestId);
     if (!settle) throw new Error("that request is no longer waiting");
+    if (member) this.recordResponse(member, "approval", requestId, decision);
     const approval = this.approval?.requestId === requestId ? this.approval : undefined;
     this.state = "working";
     if (decision === "deny") {
@@ -485,12 +489,18 @@ This is the agent's Inbox conversation. When the person signals that something s
     this.push();
   }
 
-  respondQuestion(requestId: string, answers: Record<string, unknown>): void {
+  respondQuestion(requestId: string, answers: Record<string, unknown>, member?: ThreadMember): void {
     const settle = this.pending.get(requestId);
     if (!settle) throw new Error("that question is no longer waiting");
+    if (member) this.recordResponse(member, "question", requestId, answers);
     this.state = "working";
     settle({ decision: "allow", answers });
     this.push();
+  }
+
+  private recordResponse(member: ThreadMember, kind: "approval" | "question", requestId: string, value: unknown): void {
+    this.append({ id: `response-${requestId}`, kind: "user", member, response: { kind, requestId, value: JSON.parse(redactKnownSecrets(JSON.stringify(value))) }, text: kind === "approval" ? (value === "deny" ? "Declined permission." : value === "allowAlways" ? "Always allowed permission." : "Allowed permission.") : clip(redactKnownSecrets(Object.entries(value as Record<string, unknown>).map(([question, answer]) => `${question}\n${typeof answer === "string" ? answer : JSON.stringify(answer)}`).join("\n\n")), MAX_TEXT) });
+    this.persist();
   }
 
   /// Ends the agent's process but keeps the chat: the next message resumes the
@@ -1515,8 +1525,9 @@ export async function sendChatMessage(
   codeReferences: ChatCodeReference[] = [],
   agentContext?: string,
   messageId?: string,
+  member?: ThreadMember,
 ): Promise<void> {
-  await mustGet(id).send(text, attachments, codeReferences, agentContext, messageId);
+  await mustGet(id).send(text, attachments, codeReferences, agentContext, messageId, member);
 }
 
 export async function runChatEnvironmentCommand(
@@ -1538,12 +1549,13 @@ export function respondToApproval(
   id: string,
   requestId: string,
   decision: "allow" | "allowAlways" | "deny",
+  member?: ThreadMember,
 ): void {
-  mustGet(id).respondApproval(requestId, decision);
+  mustGet(id).respondApproval(requestId, decision, member);
 }
 
-export function respondToQuestion(id: string, requestId: string, answers: Record<string, unknown>): void {
-  mustGet(id).respondQuestion(requestId, answers);
+export function respondToQuestion(id: string, requestId: string, answers: Record<string, unknown>, member?: ThreadMember): void {
+  mustGet(id).respondQuestion(requestId, answers, member);
 }
 
 export function chatCwd(id: string): string {

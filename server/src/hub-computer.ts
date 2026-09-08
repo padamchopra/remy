@@ -1,3 +1,6 @@
+import { handleHubThreadRequest, hubThreadIds, hubThreadSnapshot } from "./hub-threads.js";
+import { onLocalBroadcast } from "./notify.js";
+import { saveChatImage } from "./chat-attachments.js";
 import { execFileSync } from "node:child_process";
 import { createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, sign } from "node:crypto";
 import { hostname } from "node:os";
@@ -109,28 +112,66 @@ export class HubComputerConnection {
   private retry?: ReturnType<typeof setTimeout>;
   private heartbeat?: ReturnType<typeof setInterval>;
   private attempts = 0;
+  private threadRelay = false;
+  private introduced = false;
+  private syncingThreads = false;
+  private offBroadcast?: () => void;
+  private snapshots = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly subscriptions = new Map<string, WebSocket>();
 
   constructor(private readonly registration: HubComputerRegistration, private readonly makeCapabilities = computerCapabilities) {}
 
-  start(): void { this.stopped = false; this.connect(); }
-  stop(): void { this.stopped = true; clearTimeout(this.retry); clearInterval(this.heartbeat); this.socket?.close(); for (const stream of this.subscriptions.values()) stream.close(); this.subscriptions.clear(); }
+  start(): void { if (!this.stopped && this.socket && this.socket.readyState <= WebSocket.OPEN) return; this.stopped = false; this.connect(); }
+  stop(): void { this.offBroadcast?.(); for (const timer of this.snapshots.values()) clearTimeout(timer); this.snapshots.clear(); this.stopped = true; clearTimeout(this.retry); clearInterval(this.heartbeat); const socket = this.socket; this.socket = undefined; socket?.close(); for (const stream of this.subscriptions.values()) stream.close(); this.subscriptions.clear(); }
 
   private connect(): void {
     if (this.stopped) return;
+    this.threadRelay = false; this.introduced = false; this.syncingThreads = false;
     const key = privateKey();
     const url = new URL(`/api/organizations/${encodeURIComponent(this.registration.organizationId)}/computers/connect`, this.registration.hubUrl);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(url, { headers: { authorization: connectionAuthorization(this.registration.organizationId, this.registration.computerId, key.privateKey) } });
     this.socket = socket;
-    socket.on("open", () => { this.attempts = 0; void this.hello(socket); this.heartbeat = setInterval(() => socket.send(JSON.stringify({ kind: "heartbeat", availability: "available", observedAt: Date.now() })), COMPUTER_HEARTBEAT_INTERVAL_MS); });
-    socket.on("message", (data) => { void this.message(socket, data.toString()); });
-    socket.on("close", () => { clearInterval(this.heartbeat); if (!this.stopped) this.scheduleReconnect(); });
+    socket.on("open", () => {
+      if (this.socket !== socket || this.stopped) { socket.close(); return; }
+      this.attempts = 0;
+      void this.hello(socket).catch(() => socket.close(1011, "Reconnect to update this computer."));
+      this.heartbeat = setInterval(() => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ kind: "heartbeat", availability: "available", observedAt: Date.now() })); }, COMPUTER_HEARTBEAT_INTERVAL_MS);
+    });
+    socket.on("message", (data) => { if (this.socket === socket) void this.message(socket, data.toString()).catch(() => socket.close(1011, "Reconnect to continue.")); });
+    socket.on("close", () => { if (this.socket !== socket) return; this.socket = undefined; this.offBroadcast?.(); for (const stream of this.subscriptions.values()) stream.close(); this.subscriptions.clear(); clearInterval(this.heartbeat); if (!this.stopped) this.scheduleReconnect(); });
     socket.on("error", () => undefined);
   }
 
   private async hello(socket: WebSocket): Promise<void> {
-    socket.send(JSON.stringify({ kind: "hello", protocolVersion: COMPUTER_PROTOCOL_VERSION, daemonVersion: DAEMON_VERSION, capabilities: await this.makeCapabilities() }));
+    const capabilities = await this.makeCapabilities();
+    if (this.socket !== socket || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(JSON.stringify({ kind: "hello", protocolVersion: COMPUTER_PROTOCOL_VERSION, daemonVersion: DAEMON_VERSION, capabilities }));
+    this.introduced = true;
+    this.syncThreads(socket);
+  }
+
+  private syncThreads(socket: WebSocket): void {
+    if (!this.introduced || !this.threadRelay || this.syncingThreads) return;
+    this.syncingThreads = true;
+    const publish = (id: string) => {
+      if (socket.readyState !== WebSocket.OPEN) return;
+      const snapshot = hubThreadSnapshot(id, this.registration.organizationId);
+      if (snapshot) socket.send(JSON.stringify({ kind: "thread.snapshot", snapshot }));
+      else socket.send(JSON.stringify({ kind: "thread.manifest", ids: hubThreadIds(this.registration.organizationId) }));
+    };
+    this.offBroadcast?.();
+    this.offBroadcast = onLocalBroadcast((value) => {
+      const frame = value as { type?: string; chatId?: string };
+      if (frame.type === "chats") {
+        if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ kind: "thread.manifest", ids: hubThreadIds(this.registration.organizationId) }));
+      }
+      if (!frame.chatId || !["chat", "hub-thread"].includes(frame.type ?? "") || this.snapshots.has(frame.chatId)) return;
+      const id = frame.chatId;
+      this.snapshots.set(id, setTimeout(() => { this.snapshots.delete(id); publish(id); }, 50));
+    });
+    for (const id of hubThreadIds(this.registration.organizationId)) publish(id);
+    socket.send(JSON.stringify({ kind: "thread.manifest", ids: hubThreadIds(this.registration.organizationId) }));
   }
 
   private scheduleReconnect(): void {
@@ -139,8 +180,11 @@ export class HubComputerConnection {
   }
 
   private async message(socket: WebSocket, raw: string): Promise<void> {
-    const parsed = hubToComputerFrameSchema.safeParse(JSON.parse(raw));
+    let value: unknown;
+    try { value = JSON.parse(raw); } catch { socket.close(1003, "Invalid hub frame."); return; }
+    const parsed = hubToComputerFrameSchema.safeParse(value);
     if (!parsed.success) { socket.close(1003, "Invalid hub frame."); return; }
+    if (parsed.data.kind === "welcome") { this.threadRelay = parsed.data.threadRelay === true; this.syncThreads(socket); }
     if (parsed.data.kind === "update_required") { this.stopped = true; socket.close(1008, "Update Remy to reconnect."); return; }
     if (parsed.data.kind === "request") await this.proxy(socket, parsed.data);
     if (parsed.data.kind === "subscribe") this.subscribe(socket, parsed.data.id, parsed.data.path);
@@ -157,6 +201,18 @@ export class HubComputerConnection {
 
   private async proxy(socket: WebSocket, frame: Extract<HubToComputerFrame, { kind: "request" }>): Promise<void> {
     try {
+      if (frame.path.startsWith("/hub/threads")) {
+        if (!frame.actor || frame.body.length > 128_000) throw new Error("Invalid thread request");
+        const input = frame.body ? JSON.parse(Buffer.from(frame.body, "base64url").toString()) : {};
+        const response = await handleHubThreadRequest(this.registration.organizationId, frame.actor, frame.method, frame.path, input, async (chatId, attachmentId) => {
+          const url = new URL(`/api/organizations/${encodeURIComponent(this.registration.organizationId)}/computers/${encodeURIComponent(this.registration.computerId)}/thread-attachments/${chatId}/${attachmentId}`, this.registration.hubUrl);
+          const image = await fetch(url, { headers: { authorization: connectionAuthorization(this.registration.organizationId, this.registration.computerId, privateKey().privateKey) }, signal: AbortSignal.timeout(15_000), redirect: "error" });
+          if (!image.ok || Number(image.headers.get("content-length")) > 10 * 1024 * 1024) throw new Error("This image is no longer available.");
+          return { ...saveChatImage(chatId, image.headers.get("x-filename"), image.headers.get("content-type"), Buffer.from(await image.arrayBuffer())), remoteId: attachmentId };
+        });
+        if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ kind: "response", id: frame.id, status: response.status, headers: { "content-type": "application/json" }, body: base64url(await response.text()) }));
+        return;
+      }
       const headers = new Headers(frame.headers); headers.set("authorization", `Bearer ${config.token}`); headers.delete("host"); headers.delete("cookie");
       const response = await fetch(`http://127.0.0.1:${config.port}${frame.path}`, { method: frame.method, headers, body: frame.body ? Buffer.from(frame.body, "base64url") : undefined, redirect: "manual" });
       const responseHeaders: Record<string, string> = {}; response.headers.forEach((value, key) => { if (!key.startsWith("set-cookie")) responseHeaders[key] = value; });
@@ -172,6 +228,11 @@ function restartHubComputerConnection(registration: HubComputerRegistration): vo
   connection?.stop();
   connection = new HubComputerConnection(registration);
   connection.start();
+}
+
+export function stopHubComputerConnection(): void {
+  connection?.stop();
+  connection = undefined;
 }
 
 export function startHubComputerConnection(): void {

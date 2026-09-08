@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useMemo, useState, type ComponentProps } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
   ArrowUpRight,
@@ -86,6 +86,8 @@ function initialSidebarShown(): boolean {
     return true;
   }
 }
+
+const HubThreads = lazy(() => import("@/components/HubThreads"));
 
 function routeForSection(section: Section): Route {
   if (section === "chats") return { name: "threads" };
@@ -213,8 +215,11 @@ export function App() {
   const providerDeviceId = route.name === "settings" && route.tab === "providers"
     ? route.deviceId
     : undefined;
-  const selected = route.name === "threads" ? (route.focus ?? route.threadId ?? null) : null;
-  const routedThreadId = route.name === "threads" ? route.threadId : undefined;
+  const hubTarget = useRef<{ organizationId: string; computerId?: string; threadId?: string } | undefined>(undefined);
+  const hubOpen = route.name === "threads" && !!route.organizationId;
+  if (route.name === "threads" && route.organizationId) hubTarget.current = { organizationId: route.organizationId, computerId: route.computerId, threadId: route.threadId };
+  const selected = !hubOpen && route.name === "threads" ? (route.focus ?? route.threadId ?? null) : null;
+  const routedThreadId = !hubOpen && route.name === "threads" ? route.threadId : undefined;
   const workspaceSettingsId = route.name === "workspaces" ? (route.workspaceId ?? null) : null;
   const hubMode = useStore((state) => state.settings?.hubMode === true);
 
@@ -562,8 +567,11 @@ export function App() {
             sidebarShown ? "ml-0" : "ml-2",
           )}
         >
+        <div className={hubOpen ? "flex min-h-0 min-w-0 flex-1" : "hidden"}>
+          <Deferred open={hubOpen}>{hubTarget.current && <HubThreads {...hubTarget.current} navigate={(next) => go(next)} />}</Deferred>
+        </div>
         <Suspense fallback={<SurfaceLoading />}>
-        {view === "settings" ? (
+        {hubOpen ? null : view === "settings" ? (
           <SettingsPane
             tab={settingsTab}
             analyticsTab={analyticsTab}

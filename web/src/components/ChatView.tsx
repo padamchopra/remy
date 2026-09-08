@@ -1549,9 +1549,9 @@ function Entry({
           <UserAvatar />
         </MessageAvatar>
         <MessageContent>
-          {lead && (
+          {(lead || entry.member) && (
             <MessageHeader className="max-h-5 overflow-hidden">
-              You
+              {entry.member?.label ?? "You"}
             </MessageHeader>
           )}
           <Bubble align="end" variant="muted">

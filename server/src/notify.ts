@@ -275,7 +275,15 @@ function queueChat(frame: Record<string, unknown>): void {
 // Chat frames merge for one animation frame per thread. Each thread has its own
 // timer, so a burst in one cannot hold another back.
 /// Queues a local live frame for only the clients that own its surface.
+const localListeners = new Set<(payload: unknown) => void>();
+
+export function onLocalBroadcast(listener: (payload: unknown) => void): () => void {
+  localListeners.add(listener);
+  return () => { localListeners.delete(listener); };
+}
+
 export function broadcast(payload: unknown): void {
+  for (const listener of localListeners) listener(payload);
   if (payload && typeof payload === "object" && !Array.isArray(payload)) {
     const frame = payload as Record<string, unknown>;
     if (frame.type === "chat" && typeof frame.chatId === "string") {
