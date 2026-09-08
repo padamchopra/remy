@@ -1,3 +1,4 @@
+import { startConnectionProvider } from "./qa-connection-provider.mjs";
 import { createServer } from "node:http";
 import { builtinModules } from "node:module";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
@@ -25,13 +26,14 @@ const workspacePath = join(temp, "release-workspace");
 mkdirSync(workspacePath);
 execFileSync("git", ["init", "-q", workspacePath]);
 execFileSync("git", ["-C", workspacePath, "remote", "add", "origin", "https://example.test/studio/release.git"]);
+const oauth = process.env.QA_CONNECTIONS ? await startConnectionProvider() : undefined;
 const bundle = join(temp, "worker.mjs");
 await build({
   stdin: {
     contents: process.env.QA_HUB_WEB === "1" ? `
       import worker from "./hub/src/worker.ts";
       import { HubCoordinator as Coordinator } from "./hub/src/worker.ts";
-      const secrets = env => ({ ...env, AUTH_SECRET: { get: async () => "disposable-qa-secret-with-more-than-thirty-two-characters" }, HOSTED_CONTROL_TOKEN: { get: async () => env.QA_HOSTED_TOKEN || "disposable-runtime-credential-for-failure-check" } });
+      const secrets = env => ({ ...env, ...(env.QA_CONNECTIONS ? {LINEAR_CLIENT_SECRET:{get:async()=>"disposable-secret"},GITHUB_CONNECTION_CLIENT_SECRET:{get:async()=>"disposable-secret"}} : {}), AUTH_SECRET: { get: async () => "disposable-qa-secret-with-more-than-thirty-two-characters" }, HOSTED_CONTROL_TOKEN: { get: async () => env.QA_HOSTED_TOKEN || "disposable-runtime-credential-for-failure-check" } });
       export class HubCoordinator extends Coordinator { constructor(ctx,env) { super(ctx,secrets(env)); } }
       export default { ...worker, fetch(request, env, ctx) {
         return worker.fetch(request, { ...secrets(env), BETTER_AUTH_URL: new URL(request.url).origin,
@@ -51,6 +53,15 @@ await build({
   conditions: ["workerd", "worker", "browser"],
   external: ["node:*", "cloudflare:*"],
   plugins: [
+    ...(oauth ? [{name:"disposable-oauth-provider",setup(build) {
+      build.onLoad({filter:/connection-providers\.ts$/},async ({path})=>({loader:"ts",contents:readFileSync(path,"utf8")
+        .replaceAll("https://github.com/login/oauth/authorize",oauth.url+"/authorize")
+        .replaceAll("https://linear.app/oauth/authorize",oauth.url+"/authorize")
+        .replaceAll("https://github.com/login/oauth/access_token",oauth.url+"/token")
+        .replaceAll("https://api.linear.app/oauth/token",oauth.url+"/token")
+        .replaceAll("https://api.linear.app/graphql",oauth.url+"/graphql")
+        .replaceAll("https://api.github.com/user",oauth.url+"/user")}));
+    }}] : []),
     {
       name: "node-builtins",
       setup(build) {
@@ -85,6 +96,7 @@ const mf = new Miniflare(
           COORDINATOR: { className: "HubCoordinator", useSQLite: true },
         },
         bindings: {
+          ...(oauth?{QA_CONNECTIONS:true,LINEAR_CLIENT_ID:"disposable-linear",GITHUB_CONNECTION_CLIENT_ID:"disposable-github"}:{}),
           ENVIRONMENT: "staging",
           RELEASE: "qa",
           BETTER_AUTH_URL: process.env.QA_PUBLIC_HUB_URL ?? "http://localhost",
@@ -367,6 +379,7 @@ console.log(
 const cleanup = async () => {
   connection.stop();
   control.close();
+  oauth?.close();
   await mf.dispose();
   rmSync(temp, { recursive: true, force: true });
   process.exit(0);

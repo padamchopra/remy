@@ -1,0 +1,22 @@
+import assert from "node:assert/strict";
+import {readFileSync,mkdirSync} from "node:fs";
+import {chromium} from "playwright-core";
+import {chromiumPath} from "./chromium.mjs";
+const info=JSON.parse(readFileSync(process.env.QA_SESSION,"utf8")),out=process.env.QA_ARTIFACTS;mkdirSync(out,{recursive:true});
+const base=`${info.hubUrl}/api/organizations/${info.organizationId}`;
+const call=async(user,path,method="GET",body)=>{const r=await fetch(base+path,{method,headers:{authorization:`Bearer ${info.tokens[user]}`,"content-type":"application/json"},...(body===undefined?{}:{body:JSON.stringify(body)})});return {status:r.status,body:await r.json()};};
+const browser=await chromium.launch({executablePath:chromiumPath()}),context=await browser.newContext({viewport:{width:1280,height:900},colorScheme:"dark",recordVideo:{dir:out,size:{width:1280,height:900}}});await context.addCookies([{name:"remy_session",value:info.tokens.ada,url:info.hubUrl,httpOnly:true,sameSite:"Lax"}]);const page=await context.newPage(),other=await context.newPage();
+const route=`${info.hubUrl}/#/settings/connections?organization=${info.organizationId}`;
+try {
+ await page.goto(route);await other.goto(route);await page.getByRole("button",{name:"Connect Linear",exact:true}).waitFor();
+ assert.equal((await call("grace","/connections/linear","POST",{scope:"organization"})).status,403);
+ await page.getByRole("button",{name:"Connect Linear",exact:true}).click();await page.getByRole("link",{name:"Allow connection",exact:true}).click();
+ await page.getByText("Release team · Connected",{exact:true}).waitFor();await other.getByText("Release team · Connected",{exact:true}).waitFor();
+ await page.getByRole("button",{name:"Connect GitHub",exact:true}).click();await page.getByRole("link",{name:"Allow connection",exact:true}).click();await page.getByText("ada-release · Connected",{exact:true}).waitFor();
+ const own=await call("ada","/connections"),member=await call("grace","/connections");assert.equal(own.body.connections.length,2);assert.equal(member.body.connections.length,1);assert.ok(!JSON.stringify(own.body).includes("disposable-connection-token"));
+ await page.screenshot({path:out+"/connected.png"});
+ await page.getByRole("button",{name:"Disconnect Linear",exact:true}).click();await page.getByRole("button",{name:"Cancel",exact:true}).click();assert.equal((await call("ada","/connections")).body.connections.length,2);
+ await page.getByRole("button",{name:"Disconnect Linear",exact:true}).click();await page.getByRole("button",{name:"Disconnect account",exact:true}).click();await other.getByRole("button",{name:"Connect Linear",exact:true}).waitFor();assert.equal((await call("ada","/connections")).body.connections.length,1);
+ await page.reload();await page.getByText("ada-release · Connected",{exact:true}).waitFor();await page.setViewportSize({width:390,height:844});assert.ok(await page.getByRole("region",{name:"Connections",exact:true}).evaluate(e=>e.scrollWidth<=e.clientWidth));await page.screenshot({path:out+"/mobile.png"});
+ console.log("PASS: OAuth consent with PKCE, organization and private member accounts, cross-tab live updates, disconnect cancellation and confirmation, readback without credentials, reload and phone width");
+} catch(e){await page.screenshot({path:out+"/failure.png"});console.error(await page.locator("body").innerText());throw e;}finally{await other.close();await context.close();await browser.close();}console.log(`VIDEO=${await page.video().path()}`);
