@@ -104,7 +104,7 @@ export class GithubInstallation {
   constructor(
     private readonly appId: string,
     private readonly privateKey: () => Promise<string>,
-    private readonly send: typeof fetch = fetch,
+    private readonly send: typeof fetch = (input, init) => fetch(input, init),
   ) {}
   async token(
     installation: number,
@@ -128,7 +128,7 @@ export class GithubInstallation {
           repositories: [repository.split("/")[1]],
           permissions: { contents: write ? "write" : "read" },
         }),
-        redirect: "error",
+        redirect: "manual",
       },
     );
     if (!response.ok) throw Error("GitHub access is unavailable.");
