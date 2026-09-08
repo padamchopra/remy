@@ -178,9 +178,22 @@ setProviderAdapterForTest({
           done: (async () => {
             handlers.event({ type: "turn.started" });
             const id = randomUUID();
-            const reply = input.prompt.includes("approval")
+            let toolReply;
+            if(process.env.QA_BUILTINS && _options.developerInstructions?.includes("organization")) {
+              const {Client}=await import("../../server/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js");
+              const {InMemoryTransport}=await import("../../server/node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.js");
+              const [clientSide,serverSide]=InMemoryTransport.createLinkedPair();const client=new Client({name:"Disposable model fixture",version:"1"});
+              await _options.inProcessMcp.instance.connect(serverSide);await client.connect(clientSide);
+              try {
+                const call=async(name,args={})=>{const result=await client.callTool({name,arguments:args});if(result.isError)throw Error("Fixture tool failed");return JSON.parse(result.content[0].text.split("\n<remy-artifact>")[0]);};
+                const {workspaces}=await call("list_organization_workspaces"),android=workspaces.find(w=>w.name==="Android");
+                if(input.prompt.includes("Send Android work")) {const {computers}=await call("list_organization_computers"),{rules}=await call("read_routing");await call("edit_routing",{rules:[{id:"android",name:"Android on Studio",workspaceId:android.id,target:{computerId:computers.find(c=>c.name==="Studio").computerId}},...rules.filter(r=>r.id!=="android")]});toolReply="Android work now goes to Studio.";}
+                else if(input.prompt.includes("Create an Android ticket")){await call("create_organization_ticket",{workspaceId:android.id,title:"Check the Android release",prompt:"Review the next release."});toolReply="I created the Android release ticket.";}
+              } finally {await client.close();}
+            }
+            const reply = toolReply ?? (input.prompt.includes("approval")
               ? "I’ll ask before changing the release notes."
-              : "I’m checking the release notes with your latest feedback.";
+              : "I’m checking the release notes with your latest feedback.");
             for (let end = 1; end <= reply.length; end += 4) {
               if (interrupted) return;
               handlers.event({

@@ -226,6 +226,28 @@ export function HubInbox({
         {agent && (
           <div className="flex min-w-0 flex-1 basis-80 flex-col gap-4">
             <h2>{String(agent.fields.name)}</h2>
+            {agent.fields.builtIn === "orchestrator" && (
+              <form
+                className="flex gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const value = new FormData(e.currentTarget).get("name");
+                  attempt(() =>
+                    append("agent", agent.id, "field", { name: String(value) }),
+                  );
+                }}
+              >
+                <Input
+                  aria-label="Organization agent name"
+                  name="name"
+                  defaultValue={String(agent.fields.name)}
+                  maxLength={120}
+                />
+                <Button type="submit" variant="outline">
+                  Rename agent
+                </Button>
+              </form>
+            )}
             <div
               className="flex flex-col gap-3 rounded-lg border p-4"
               aria-label="Agent conversation"

@@ -106,7 +106,10 @@ export class BoardAccess {
         !["org", "team", "workspace", "personal"].includes(String(scope))
       )
         return false;
-      if (current?.fields.builtIn) return false;
+      if (current?.fields.builtIn) {
+        const allowed=["provider","model","effort","permissionMode",...(current.fields.builtIn==="orchestrator" && member.role!=="member"?["name"]:[])];
+        return input.kind==="field" && Object.keys(input.payload).every(k=>allowed.includes(k)) && await this.canRead(current);
+      }
       if (
         input.payload.builtIn ||
         (input.payload.createdByUserId &&

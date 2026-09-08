@@ -1,3 +1,4 @@
+import { seedHubAgents } from "./remy-agent.js";
 import { ScopedAgents } from "./scoped-agents.js";
 import { resolveComputer } from "./routing.js";
 import { routingRuleSchema } from "@remy/contract";
@@ -328,7 +329,9 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     if (url.pathname === "/api/organizations" && request.method === "POST") {
       const input = await body<{ name?: string }>(request); const name = input?.name?.trim();
       if (!name || name.length > 120) return jsonError("Enter an organization name.", 400);
-      return Response.json(await organizations.create(identity.userId, name), { status: 201 });
+      const created=await organizations.create(identity.userId,name);
+      await env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${created.id}`)).fetch(new Request("https://internal/organization/changed",{method:"POST",headers:{"x-organization-id":created.id}}));
+      return Response.json(created,{status:201});
     }
     if (url.pathname === "/api/invitations/accept" && request.method === "POST") {
       const input = await body<{ token?: string }>(request);
@@ -770,7 +773,7 @@ export class HubCoordinator {
     if (request.method === "GET" && url.pathname === "/health") return Response.json({ status: "ok" });
     const org = request.headers.get("x-organization-id");
     const user = request.headers.get("x-user-id");
-    if (org) await this.ctx.storage.put("organizationId", org);
+    if (org) {await this.ctx.storage.put("organizationId", org);await seedHubAgents(this.board,new D1OrganizationStore(this.env.DB),org);}
     if (url.pathname === "/organization/changed") {
       if(org){await this.scopedAgents(org).departures();await this.cleanAgentThreads();}
       this.invalidateComputers();
@@ -847,17 +850,45 @@ export class HubCoordinator {
         if(!agentRoute[1] && request.method==="GET")return Response.json({agents:await agents.visible(user)});
         const id=decodeURIComponent(agentRoute[1]??"");
         if(agentRoute[2]==="conversation" && request.method==="GET")return Response.json({messages:await agents.conversation(id,user)});
-        if(agentRoute[2]==="message" && request.method==="POST") {const input=await body<{text?:string;messageId?:string}>(request);if(typeof input?.text!=="string" || typeof input.messageId!=="string")return jsonError("Enter a message.",400);const messages=await agents.message(id,user,input.text,input.messageId);this.invalidateComputers();return Response.json({messages});}
+        if(agentRoute[2]==="message" && request.method==="POST") {const input=await body<{text?:string;messageId?:string}>(request);if(typeof input?.text!=="string" || typeof input.messageId!=="string")return jsonError("Enter a message.",400);await agents.message(id,user,input.text,input.messageId);this.ctx.waitUntil(this.runAgent(id,user,input.text,input.messageId).catch(()=>undefined));return Response.json({messages:await agents.conversation(id,user)},{status:202});}
       }catch{return jsonError("Agent not found.",404);}
       return jsonError("This agent action is unavailable.",405);
     }
     const agentTool=/^\/agent-tools\/([^/]+)$/.exec(url.pathname);
     if(agentTool && request.method==="POST" && org) {
       const binding=await this.ctx.storage.get<{computerId:string;userId:string;agentId:string;orchestrator:boolean}>(`agent-run:${decodeURIComponent(agentTool[1])}`);
-      if(!binding || binding.computerId!==request.headers.get("x-computer-id") || !binding.orchestrator)return jsonError("This agent cannot change routing.",403);
+      if(!binding || binding.computerId!==request.headers.get("x-computer-id"))return jsonError("This agent cannot use organization tools.",403);
       const member=await new D1OrganizationStore(this.env.DB).membership(org,binding.userId);
-      if(!member || member.role==="member")return jsonError("Only an administrator can change routing.",403);
-      const input=await body<{action?:string;input?:{rules?:unknown}}>(request);
+      if(!member)return jsonError("This agent is unavailable.",403);
+      try { await this.scopedAgents(org).get(binding.agentId,binding.userId); } catch {return jsonError("This agent is unavailable.",403);}
+      const input=await body<{action?:string;input?:{rules?:unknown;workspaceId?:string;prompt?:string;title?:string;ticketId?:string;agentId?:string;threadId?:string;computerId?:string}}>(request);
+      const action=input?.action,asked=input?.input??{},store=new D1OrganizationStore(this.env.DB);
+      if(action==="list_organization_workspaces")return Response.json({workspaces:await new OrganizationService(store).workspaces(org,binding.userId)});
+      if(action==="list_organization_computers") {const threads=await this.visibleThreads(binding.userId);return Response.json({computers:(await this.computerService().list(org,binding.userId)).map(c=>({...c,activeThreads:threads.filter(t=>t.computerId===c.computerId && ["working","running","busy"].includes(String(t.detail.state))).length}))});}
+      if(["explain_routing","start_organization_thread","create_organization_ticket","handoff_organization_ticket","move_organization_thread"].includes(action??"")) {
+        if(!asked.workspaceId)return jsonError("Choose a workspace.",400);
+        const workspace=await new OrganizationService(store).workspace(org,binding.userId,asked.workspaceId);
+        if(action==="explain_routing")return Response.json(await this.routeFor(binding.userId,workspace.id,"agent"));
+        const actor={id:binding.userId,label:(await new D1AccountStore(this.env.DB).profile(binding.userId))?.name??"Member"};
+        if(action==="create_organization_ticket" || action==="handoff_organization_ticket") {
+          const change={entity:"ticket" as const,entityId:asked.ticketId??crypto.randomUUID(),kind:action==="create_organization_ticket"?"create" as const:"handoff" as const,payload:action==="create_organization_ticket"?{projectId:workspace.id,title:asked.title??"New ticket",body:asked.prompt??""}:{toAgentId:asked.agentId}};
+          if(!await new BoardAccess(store,this.board,org,binding.userId).canWrite(change))return jsonError("This ticket or agent is unavailable.",404);
+          const current=await this.board.detail("tickets",change.entityId);if(current && current.fields.projectId!==workspace.id)return jsonError("Choose the ticket's workspace.",403);
+          const result=await this.board.append(change,{kind:"member",...actor});return Response.json({...result,artifact:{kind:"ticket",id:change.entityId,title:String(result.projection?.fields.title??"Ticket"),detail:workspace.name}});
+        }
+        let prompt=asked.prompt??"";
+        if(action==="move_organization_thread") {
+          if(!binding.orchestrator || !asked.computerId || !asked.threadId)return jsonError("Choose a thread to continue.",400);
+          const source=(await this.visibleThreads(binding.userId)).find(t=>t.id===asked.threadId && t.computerId===asked.computerId);
+          if(!source || !canWriteThread(source.access,binding.userId))return jsonError("This thread is unavailable.",404);
+          prompt=`Continue this work on the destination computer. Repository changes and provider session state have not been transferred.\n${source.detail.entries.filter(e=>["user","assistant"].includes(String(e.kind))).slice(-30).map(e=>e.text??"").join("\n")}\n${prompt}`;
+        }
+        if(!prompt.trim() || prompt.length>64000)return jsonError("Enter a shorter task.",400);
+        const result=await this.startAgentThread(binding.agentId,binding.userId,workspace.id,prompt);
+        if(action==="move_organization_thread")await this.dispatchComputer(asked.computerId!,actor,"POST",`/hub/threads/${asked.threadId}/stop`,{});
+        return Response.json({...result,artifact:{kind:"thread",id:result.threadId,title:asked.title??"Organization thread",detail:workspace.name}});
+      }
+      if(!binding.orchestrator || member.role==="member")return jsonError("Only an administrator's organization agent can change routing.",403);
       if(input?.action==="edit_routing") {
         const parsed=routingRuleSchema.array().max(100).safeParse(input.input?.rules);
         if(!parsed.success)return jsonError("Choose valid routing rules.",400);
@@ -1045,6 +1076,9 @@ export class HubCoordinator {
       await this.threads.snapshot(attachment.computerId, frame.snapshot);
       const running=(await this.threads.list()).some(t=>t.computerId===attachment.computerId && ["working","running","busy","needs_input"].includes(String(t.detail.state)));
       await this.hostedService().activity(attachment.computerId,running,frame.snapshot.detail.entries.some(e=>e.kind==="assistant"));
+      const run=await this.ctx.storage.get<{agentId:string}>(`agent-run:${frame.snapshot.id}`);
+      if(run && !running){const text=frame.snapshot.detail.entries.filter(e=>e.kind==="assistant" && e.text).map(e=>e.text).join("\n\n");if(text)await this.appendAgentReply(run.agentId,`reply:${frame.snapshot.id}`,text);}
+
       return;
     }
     if (frame.kind === "thread.manifest") { await this.threads.manifest(attachment.computerId, frame.ids); return; }
@@ -1111,6 +1145,51 @@ export class HubCoordinator {
     }
   }
 
+  private readonly agentStarts=new Map<string,Promise<unknown>>();
+  private async dispatchComputer(computerId:string,actor:ThreadMember,method:string,path:string,input:unknown):Promise<Response> {
+    const socket=this.computerSocket(computerId);if(!socket)return jsonError("This computer is offline.",503);
+    const id=crypto.randomUUID();const response=new Promise<Response>(resolve=>{const timer=setTimeout(()=>{this.pending.delete(id);resolve(jsonError("This computer did not answer.",504));},30_000);this.pending.set(id,{computerId,resolve,timer});});
+    socket.send(JSON.stringify({kind:"request",id,method,path,headers:{},actor,body:encodeWireBody(new TextEncoder().encode(JSON.stringify(input)).buffer)}));return response;
+  }
+  private async routeFor(userId:string,workspaceId:string,trigger:string) {
+    const org=(await this.ctx.storage.get<string>("organizationId"))!,store=new D1OrganizationStore(this.env.DB),service=new OrganizationService(store);
+    const workspace=await service.workspace(org,userId,workspaceId),teamIds:string[]=[];
+    for(const team of await store.teams(org))if((await store.teamMembers(org,team.id)).includes(userId))teamIds.push(team.id);
+    const row=await this.env.DB.prepare("SELECT rules FROM organization_routing WHERE organization_id=?").bind(org).first<{rules:string}>();
+    return resolveComputer(routingRuleSchema.array().parse(JSON.parse(row?.rules??"[]")),await this.computerService().list(org,userId),{workspaceId,origin:workspace.origin,teamIds,trigger});
+  }
+  private async startAgentThread(agentId:string,userId:string,workspaceId:string,prompt:string,trigger="agent") {
+    const org=(await this.ctx.storage.get<string>("organizationId"))!,agent=await this.scopedAgents(org).get(agentId,userId);
+    let choice=await this.routeFor(userId,workspaceId,trigger);
+    if(!choice.computerId && choice.hostedWorkspaceId){const settings=await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).settings(org,workspaceId);await this.hostedService().ensure(workspaceId,settings);choice=await this.routeFor(userId,workspaceId,trigger);}
+    if(!choice.computerId || !choice.workspaceId)throw Error("No eligible computer is available.");
+    const profile=await new D1AccountStore(this.env.DB).profile(userId),actor={id:userId,label:profile?.name??"Member"};
+    const memories=(await this.board.list("memories")).items.filter(m=>m.fields.agentId===agentId).map(m=>m.fields.content).join("\n");
+    const made=await this.dispatchComputer(choice.computerId,actor,"POST","/hub/threads",{workspaceId:choice.workspaceId,title:String(agent.fields.name),visibility:"private",hubInstructions:`${String(agent.fields.instructions??"")}\nAgent memories:\n${memories}`, ...(agent.fields.provider && agent.fields.provider!=="default"?{provider:agent.fields.provider,model:agent.fields.model}:{})});
+    if(!made.ok)throw Error("This agent's thread could not start.");const thread=threadSnapshotSchema.parse(await made.json());
+    await this.ctx.storage.put(`agent-run:${thread.id}`,{computerId:choice.computerId,userId,agentId,workspaceId,orchestrator:agent.fields.builtIn==="orchestrator",createdAt:Date.now()});
+    await this.threads.snapshot(choice.computerId,thread);
+    if(agent.fields.scope!=="personal")await this.dispatchComputer(choice.computerId,actor,"POST",`/hub/threads/${thread.id}/visibility`,{visibility:"open"});
+    const sent=await this.dispatchComputer(choice.computerId,actor,"POST",`/hub/threads/${thread.id}/message`,{text:prompt,messageId:`u-${crypto.randomUUID()}`});
+    if(!sent.ok)throw Error("This agent's message could not be sent.");
+    return {computerId:choice.computerId,threadId:thread.id,reason:choice.reason};
+  }
+  private async runAgent(agentId:string,userId:string,prompt:string,messageId:string) {
+    const key=`agent-start:${agentId}:${messageId}`;
+    if(this.agentStarts.has(key))return this.agentStarts.get(key);
+    const task=(async()=>{if(await this.ctx.storage.get(key))return;await this.ctx.storage.put(key,{phase:"starting"});
+      const org=(await this.ctx.storage.get<string>("organizationId"))!;
+      try{const agent=await this.scopedAgents(org).get(agentId,userId),visible=await new OrganizationService(new D1OrganizationStore(this.env.DB)).workspaces(org,userId);const workspace=agent.fields.scope==="workspace"?visible.find(w=>w.id===agent.fields.ownerId):visible[0];if(!workspace)throw Error("Add a workspace before starting this agent.");
+        const history=(await this.scopedAgents(org).conversation(agentId,userId)).slice(-30).map(m=>`${m.role}: ${m.text}`).join("\n");
+        const result=await this.startAgentThread(agentId,userId,workspace.id,history||prompt);await this.ctx.storage.put(key,{phase:"started",...result});
+      }catch{await this.appendAgentReply(agentId,`failure:${messageId}`,"This agent could not start; check your workspace and computer settings.","system");await this.ctx.storage.put(key,{phase:"failed"});}
+    })();this.agentStarts.set(key,task);try{return await task;}finally{this.agentStarts.delete(key);}
+  }
+  private async appendAgentReply(agentId:string,id:string,text:string,role="assistant") {
+    if(!await this.board.detail("agents",agentId))return;
+    await this.ctx.storage.transaction(async storage=>{const key=`agent-conversation:${agentId}`,messages=await storage.get<{id:string;role:string;text:string;at:number;actorId:string}[]>(key)??[];const next={id,role,text:text.slice(0,64000),at:Date.now(),actorId:agentId},index=messages.findIndex(m=>m.id===id);if(index<0)messages.push(next);else messages[index]=next;await storage.put(key,messages);});
+    for(const socket of this.ctx.getWebSockets())void this.sendOrganizationReset(socket);
+  }
   private scopedAgents(org:string) {return new ScopedAgents(this.board,new DurableBoardStorage(this.ctx.storage),new D1OrganizationStore(this.env.DB),org);}
 
   private async prewarmWorkspace(workspaceId:string):Promise<void> {
@@ -1285,6 +1364,7 @@ export class HubCoordinator {
     if (!id) {
       let input;
       try { input = JSON.parse(new TextDecoder().decode(payload)); } catch { return jsonError("Choose a workspace.", 400); }
+      if(input.hubInstructions!==undefined)return jsonError("This thread configuration is unavailable.",403);
       if (typeof input.workspaceId !== "string" || !await this.computerService().canUseWorkspace(target, actor.id, input.workspaceId)) return jsonError("This workspace is not available to you.", 404);
     }
     const requestId = crypto.randomUUID();

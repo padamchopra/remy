@@ -181,6 +181,9 @@ export function inProcessTicketMcpServer(
     version: "1",
     instructions: REMY_TOOL_INSTRUCTIONS,
     tools: [
+      ...["list_organization_computers","list_organization_workspaces"].map(action=>tool(action,"List organization resources visible to the person.",{},async()=>ok(JSON.stringify(await hubAgentTool(chatId,action))))),
+      ...["explain_routing","start_organization_thread","create_organization_ticket","handoff_organization_ticket","move_organization_thread"].map(action=>tool(action,"Act within the person's visible organization workspaces.",{workspaceId:z.string(),prompt:z.string().optional(),title:z.string().optional(),ticketId:z.string().optional(),agentId:z.string().optional(),threadId:z.string().optional(),computerId:z.string().optional()},async input=>{const result=await hubAgentTool(chatId,action,input) as {artifact?:ConvArtifact};return ok(JSON.stringify(result),result.artifact);})),
+
       tool("read_routing", "Read your organization’s routing rules.", {}, async () => ok(JSON.stringify(await hubAgentTool(chatId,"read_routing")))),
       tool("edit_routing", "Replace your organization’s ordered routing rules.", {rules:z.array(z.object({id:z.string(),name:z.string(),workspaceId:z.string().optional(),teamId:z.string().optional(),trigger:z.enum(["manual","ticket","routine","agent"]).optional(),target:z.object({computerId:z.string().optional(),class:z.enum(["hosted","darwin","linux"]).optional(),emulator:z.boolean().optional()})})).max(100)}, async (input) => ok(JSON.stringify(await hubAgentTool(chatId,"edit_routing",input)))),
       tool(
