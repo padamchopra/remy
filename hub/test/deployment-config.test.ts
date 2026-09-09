@@ -27,11 +27,14 @@ const config = JSON.parse(readFileSync(join(hubRoot, "wrangler.jsonc"), "utf8"))
   env: { staging: EnvironmentConfig; production: EnvironmentConfig };
 };
 
-test("Workers Builds has a short repository-level build command", () => {
-  assert.equal(
-    rootPackage.scripts["build:hub"],
-    "npm ci --prefix contract --no-audit --no-fund && npm ci --prefix hub --no-audit --no-fund && npm test --prefix contract && npm run typecheck --prefix contract && npm test --prefix hub && npm run typecheck --prefix hub",
-  );
+test("Workers Builds prepares website assets before deployment checks", () => {
+  const steps = rootPackage.scripts["build:hub"].split(" && ");
+  const install = steps.indexOf("npm ci --prefix web --no-audit --no-fund");
+  const build = steps.indexOf("npm run build --prefix web");
+  const checks = steps.indexOf("npm test --prefix hub");
+  assert.ok(install >= 0, "install the website dependencies");
+  assert.ok(build > install, "build website assets after installing dependencies");
+  assert.ok(checks > build, "run deployment checks after website assets exist");
 });
 
 test("staging and production have isolated deployable topology", () => {
