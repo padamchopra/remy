@@ -29,16 +29,21 @@ function Download({ large = false }: { large?: boolean }) {
   return <Button asChild size={large ? "lg" : "default"}><a href={download}><ArrowDownToLine data-icon="inline-start" />Download{large ? " for Mac" : ""}</a></Button>;
 }
 function Navigation() {
+  const [menuOpen, setMenuOpen] = useState(false);
   return <header className="site-header"><nav aria-label="Main navigation" className="site-nav">
     <a className="wordmark" href="/">Remy<span className="brand-dot" /></a>
     <div className="nav-links"><a href="/docs/">Docs</a><a href="/changelog/">Changelog</a><a href="/#features">Features</a></div>
     <div className="nav-actions"><a className="github-link" href={repo} aria-label="Remy on GitHub"><Github /></a><Download /></div>
-    <Collapsible className="mobile-navigation"><CollapsibleTrigger asChild><Button variant="outline" size="icon" aria-label="Open navigation"><Menu /></Button></CollapsibleTrigger><CollapsibleContent className="mobile-links"><a href="/docs/">Docs</a><a href="/changelog/">Changelog</a><a href="/#features">Features</a><a href={download}>Download for Mac</a></CollapsibleContent></Collapsible>
+    <Collapsible className="mobile-navigation" open={menuOpen} onOpenChange={setMenuOpen}><CollapsibleTrigger asChild><Button variant="outline" size="icon" aria-label="Open navigation"><Menu /></Button></CollapsibleTrigger><CollapsibleContent className="mobile-links" onClick={() => setMenuOpen(false)}><a href="/docs/">Docs</a><a href="/changelog/">Changelog</a><a href="/#features">Features</a><a href={download}>Download for Mac</a></CollapsibleContent></Collapsible>
   </nav></header>;
 }
-function DemoFrame({ scene = "threads", compact = false, surface = false }: { scene?: string; compact?: boolean; surface?: boolean }) {
+function DemoFrame({ scene = "threads", compact = false, surface = false, eager = false }: { scene?: string; compact?: boolean; surface?: boolean; eager?: boolean }) {
   const host = useRef<HTMLDivElement>(null);
-  const [ready, setReady] = useState(false);
+  const [ready, setReady] = useState(eager);
+  const frame = useRef<HTMLIFrameElement>(null);
+  const latestScene = useRef(scene);
+  latestScene.current = scene;
+  const [initialScene] = useState(scene);
   const [width, setWidth] = useState(0);
   const canvasWidth = compact ? 390 : surface ? 760 : 1360;
   const canvasHeight = compact ? 680 : surface ? 500 : 720;
@@ -51,15 +56,24 @@ function DemoFrame({ scene = "threads", compact = false, surface = false }: { sc
     observer.observe(element);
     return () => { resize.disconnect(); observer.disconnect(); };
   }, []);
-  const src = `/demo/index.html?scene=${scene}${compact ? "&compact=1" : ""}${surface ? "&surface=1" : ""}`;
+  const sendScene = () => frame.current?.contentWindow?.postMessage({ type: "remy-preview-scene", scene: latestScene.current }, location.origin);
+  useEffect(() => { sendScene(); }, [scene]);
+  useEffect(() => {
+    const receive = (event: MessageEvent) => {
+      if (event.origin === location.origin && event.source === frame.current?.contentWindow && event.data?.type === "remy-preview-ready") sendScene();
+    };
+    window.addEventListener("message", receive);
+    return () => window.removeEventListener("message", receive);
+  }, []);
+  const src = `/demo/index.html?scene=${initialScene}${compact ? "&compact=1" : ""}${surface ? "&surface=1" : ""}`;
   return <div className={compact ? "phone-demo" : "desktop-demo"}>
-    <div ref={host} className="demo-viewport" inert style={{ height: width * canvasHeight / canvasWidth, "--demo-scale": width / canvasWidth } as CSSProperties}>
-      {ready && width > 0 ? <iframe key={src} src={src} title={compact ? "Remy browser demo in a narrow viewport" : surface ? "Remy feature preview" : "Remy workspace preview"} style={{ width: canvasWidth, height: canvasHeight }} sandbox="allow-scripts allow-same-origin allow-forms" tabIndex={-1} /> : <div className="demo-placeholder" />}
+    <div ref={host} className="demo-viewport" inert style={{ aspectRatio: `${canvasWidth} / ${canvasHeight}`, "--demo-scale": width / canvasWidth } as CSSProperties}>
+      {ready && width > 0 ? <iframe ref={frame} onLoad={sendScene} src={src} title={compact ? "Remy browser demo in a narrow viewport" : surface ? "Remy feature preview" : "Remy workspace preview"} style={{ width: canvasWidth, height: canvasHeight }} sandbox="allow-scripts allow-same-origin allow-forms" tabIndex={-1} /> : <div className="demo-placeholder" aria-hidden="true"><div className="preview-shell-sidebar" /><div className="preview-shell-content"><span /><span /><span /><span /></div></div>}
     </div>
   </div>;
 }
 function FeatureTabs({ value, onChange, children, label = "Explore Remy features" }: { value: string; onChange: (value: string) => void; children: ReactNode; label?: string }) {
-  return <Tabs className="feature-tabs" value={value} onValueChange={onChange}><TabsList variant="line" aria-label={label}>{features.map((feature) => <TabsTrigger key={feature.id} value={feature.id}><feature.icon aria-hidden="true" /><span>{feature.tab}</span></TabsTrigger>)}</TabsList><TabsContent value={value}>{children}</TabsContent></Tabs>;
+  return <Tabs className="feature-tabs" value={value} onValueChange={onChange}><TabsList variant="line" aria-label={label}>{features.map((feature) => <TabsTrigger key={feature.id} value={feature.id}><feature.icon aria-hidden="true" /><span>{feature.tab}</span></TabsTrigger>)}</TabsList><TabsContent value={value} forceMount>{children}</TabsContent></Tabs>;
 }
 function Home() {
   const [scene, setScene] = useState("threads");
@@ -67,7 +81,7 @@ function Home() {
   const selected = features.find((item) => item.id === feature)!;
   return <main>
     <section className="hero" aria-labelledby="hero-title"><p className="eyebrow"><span />Free. Local. Built around your agents.</p><h1 id="hero-title">Your agents,<br className="mobile-break" /> within reach.</h1><p className="hero-description">Run Claude Code, Codex, and Cursor on your own machines.<br className="desktop-break" /> Keep every thread, worktree, and review together. Pick up from anywhere.</p><div className="hero-actions"><Download large /><Button asChild variant="outline" size="lg"><a href={repo}><Github data-icon="inline-start" />View on GitHub</a></Button></div><p className="fine-print">Also in your browser and on iPhone</p></section>
-    <section className="hero-preview" aria-label="Try Remy"><FeatureTabs value={scene} onChange={setScene}><DemoFrame scene={scene} /></FeatureTabs><div className="demo-caption"><span>Real Remy interface. Sample workspace.</span><Button asChild variant="ghost" size="sm"><a href={`/demo/?scene=${scene}`}>Try the live demo<ArrowUpRight data-icon="inline-end" /></a></Button></div></section>
+    <section className="hero-preview" aria-label="Try Remy"><FeatureTabs value={scene} onChange={setScene}><DemoFrame scene={scene} eager /></FeatureTabs><div className="demo-caption"><span>Real Remy interface. Sample workspace.</span><Button asChild variant="ghost" size="sm"><a href={`/demo/?scene=${scene}`}>Try the live demo<ArrowUpRight data-icon="inline-end" /></a></Button></div></section>
     <section className="site-section explorer" id="features"><h2>From first prompt to finished work.</h2><FeatureTabs value={feature} onChange={setFeature} label="Explore the workbench"><div className="explorer-layout"><div><selected.icon className="feature-icon" /><h3>{selected.title}</h3><p>{selected.text}</p><a className="text-link" href={`/docs/#${selected.id}`}>Explore {selected.id}<ArrowUpRight /></a></div><DemoFrame scene={feature} surface /></div></FeatureTabs></section>
     <section className="site-section providers"><h2>Your agents. Your existing setup.</h2><p>Use the providers already installed on your Mac.<br />Pick the provider and model for each thread.</p><div className="provider-list">{[["claude", "Claude Code"], ["codex", "Codex"], ["cursor", "Cursor"]].map(([id, label]) => <a key={id} href="/docs/#providers"><ProviderMark provider={id} className="size-7" /><span>{label}</span></a>)}</div></section>
     <section className="site-section mobile-section"><div><p className="eyebrow">PICK UP WHERE YOU LEFT OFF</p><h2>Step away.<br />Stay in the loop.</h2><p>Your Mac keeps working. Open Remy on your iPhone or in a browser to follow a thread, answer a question, or send the next prompt.</p><p>Pair your devices over your private Tailscale network.</p><Button asChild variant="outline"><a href="/docs/#pairing">Set up remote access<ArrowUpRight data-icon="inline-end" /></a></Button><p className="fine-print">Remy’s browser interface, on a smaller screen.<br />The native iPhone app also connects to your Mac.</p></div><DemoFrame compact /></section>

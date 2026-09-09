@@ -31,6 +31,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
   observe(page);
   await page.goto(url, { waitUntil: 'networkidle' });
+  await page.evaluate(() => document.fonts.ready);
   assert.equal(await page.evaluate(() => scrollY), 0, 'preview must not steal focus');
   await page.screenshot({ path: `${artifacts}/desktop.png` });
   const keyboardTabs = page.getByRole('tablist', { name: 'Explore Remy features', exact: true });
@@ -53,6 +54,7 @@ try {
   const phone = await browser.newPage({ ...devices['iPhone 13'], deviceScaleFactor: 1 });
   observe(phone);
   await phone.goto(url, { waitUntil: 'networkidle' });
+  await phone.evaluate(() => document.fonts.ready);
   await phone.screenshot({ path: `${artifacts}/mobile.png` });
   for (const tablist of await phone.getByRole('tablist').all()) {
     for (const tab of await tablist.getByRole('tab').all()) {
@@ -67,7 +69,7 @@ try {
   for (const [name, scene] of [['Worktrees', 'worktrees'], ['Review', 'review'], ['Agents', 'agents'], ['Threads', 'threads']]) {
     await topTabs.getByRole('tab', { name, exact: true }).click();
     assert.equal(await topTabs.getByRole('tab', { name, exact: true }).getAttribute('aria-selected'), 'true');
-    await phone.locator(`.hero-preview iframe[src*="scene=${scene}"]`).waitFor();
+    await phone.frameLocator(".hero-preview iframe").locator(`html[data-preview-scene="${scene}"]`).waitFor();
   }
   await phone.goto(url, { waitUntil: 'networkidle' });
   const touch = await phone.context().newCDPSession(phone);
@@ -86,6 +88,9 @@ try {
   assert.ok(await phone.locator('.site-footer').evaluate((element) => element.getBoundingClientRect().top < innerHeight), 'touch scrolling must reach the footer');
   assert.equal(await phone.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'mobile page must not overflow');
   await phone.goto(url);
+  await phone.getByRole('button', { name: 'Open navigation' }).click();
+  await phone.locator('.mobile-links').getByRole('link', { name: 'Features', exact: true }).click();
+  await phone.locator('.mobile-links').waitFor({ state: 'hidden' });
   await phone.getByRole('button', { name: 'Open navigation' }).click();
   await phone.locator('.mobile-links').getByRole('link', { name: 'Docs', exact: true }).click();
   await phone.getByRole('heading', { name: 'Connect your devices' }).waitFor();

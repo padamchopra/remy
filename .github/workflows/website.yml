@@ -38,6 +38,7 @@ jobs:
           trap 'kill "$server_pid"' EXIT
           for attempt in {1..30}; do curl --silent --fail http://127.0.0.1:5180/ > /dev/null && break; sleep 1; done
           node web/scripts/website-check.mjs
+          node web/scripts/website-performance.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:

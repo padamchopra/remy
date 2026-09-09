@@ -1,6 +1,6 @@
 import { useStore } from "@/state/store";
 import { PROVIDERS } from "@/lib/providers";
-import type { Chat, ChatDetail, ConvEntry, ConvDiffLine, Server, Workspace } from "@/state/types";
+import type { Chat, ChatDetail, ConvEntry, ConvDiffLine, Server, Workspace, Agent, Routine } from "@/state/types";
 
 export const scenes = ["threads", "worktrees", "review", "agents"] as const;
 export type Scene = typeof scenes[number];
@@ -13,6 +13,14 @@ export const workspace: Workspace = { id: "demo-workspace", serverId: "demo-mac"
   { path: "/workspace/acme", branch: "main", isMain: true, dirty: false },
   { path: "/workspace/acme/.remy/onboarding", branch: "improve-onboarding", isMain: false, dirty: true },
 ] };
+export const sampleAgent: Agent = {
+  id: "demo-agent", serverId: "demo-mac", name: "Review agent", handle: "review", role: "A second pair of eyes on your changes.",
+  instructions: "Review changes for correctness and clear, maintainable code.", provider: "claude", permissionMode: "auto", autoStart: false, handoffTo: [], gitIdentity: "default",
+};
+const sampleRoutines: Routine[] = [
+  { id: "demo-morning", name: "Morning pull request review", cadence: "weekdays", hour: 9, minute: 0 },
+  { id: "demo-weekly", name: "Weekly dependency check", cadence: "weekly", hour: 10, minute: 0, weekday: 1 },
+].map((routine) => ({ ...routine, cadence: routine.cadence as Routine["cadence"], serverId: "demo-mac", agentId: sampleAgent.id, prompt: routine.name, enabled: true, schedulerDeviceId: "demo-mac", runs: 0, nextRunAt: Date.now() + 86_400_000, createdAt: timestamp, updatedAt: timestamp }));
 export const sampleDiff: ConvDiffLine[] = [
   { kind: "ctx", text: "export async function pairComputer(request) {" },
   { kind: "ctx", text: "  const identity = await verifyIdentity(request);" },
@@ -81,6 +89,7 @@ export function resetDemo() {
   for (const timer of replyTimers.values()) clearTimeout(timer);
   replyTimers.clear();
   useStore.setState({ servers, chats: structuredClone(baseChats), workspaces: [workspace], details: initialDetails(),
+    agents: [sampleAgent], routines: structuredClone(sampleRoutines),
     catalogLoading: false, loading: false, connected: true, openIds: [], detailLoading: {}, historyLoading: {},
     providers: PROVIDERS.map((provider) => ({ ...provider, installed: true })),
     openChat: async () => {}, closeChat: () => {}, readChat: async () => {}, loadBoard: async () => {},
