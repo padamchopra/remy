@@ -1,3 +1,4 @@
+import { AutomaticUpdateNotices } from "@/components/AutomaticUpdate";
 import { lazy, Suspense, useCallback, useEffect, useRef, useMemo, useState, type ComponentProps } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -792,6 +793,7 @@ export function App() {
         />
       </Deferred>
       {/* Wherever you are: another machine is waiting on your answer. */}
+      <AutomaticUpdateNotices />
       <PairRequestDialog />
       <Palette
         open={paletteOpen}

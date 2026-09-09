@@ -349,6 +349,10 @@ export const useStore = create<State>((set, get) => ({
         pushing.delete(serverId);
         return;
       }
+      if (frame.type === "settings") {
+        refreshTopics(serverId, ["settings"]);
+        return;
+      }
       if (frame.type === "chats") {
         void get().refreshServer(serverId);
         return;

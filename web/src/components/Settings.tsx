@@ -1,3 +1,4 @@
+import { AutomaticUpdateField } from "./AutomaticUpdate";
 import { HubComputers } from "./HubComputers";
 import {
   closestCenter,
@@ -1756,6 +1757,8 @@ function DeviceCard({
           homeDeviceId={homeDeviceId}
           homeName={homeName}
         />
+        <ItemSeparator />
+        <AutomaticUpdateField server={server} />
         {!server.local && server.online && (
           <>
             <ItemSeparator />

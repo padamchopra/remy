@@ -61,6 +61,8 @@ test("a Remy capability reaches orchestration without reaching administration", 
   assert.equal(isRemyToolRoute("POST", "/workspaces/one/worktrees/close"), false);
   assert.equal(isRemyToolRoute("GET", "/projects/one/environments"), false);
   assert.equal(isRemyToolRoute("PATCH", "/server/settings"), false);
+  assert.equal(isRemyToolRoute("POST", "/server/automatic-update"), false);
+  assert.equal(isRemyToolRoute("PATCH", "/server/app-update"), false);
   // The inbox is the person's, not an agent's: an agent may read the roster
   // but may not open somebody's conversation with one, or mark it read.
   assert.equal(isRemyToolRoute("GET", "/agents"), true);

@@ -52,3 +52,44 @@ test("a browser connection cannot register itself as an updater", async () => {
   updates.attachAppUpdateHost(socket as unknown as WebSocket, new URLSearchParams("client=browser&version=9.9.9"));
   assert.equal(updates.appUpdateStatus(0).supported, false);
 });
+
+test("automatic installation rechecks activity and prevents new thread starts during handoff", async () => {
+  const updates = await import("./app-update.js");
+  const socket = new FakeSocket();
+  let busy = 0;
+  let enabled = true;
+  updates.configureAutomaticUpdates({ enabled: () => enabled, busy: () => busy + updates.pendingChatStarts, changed: () => {} });
+  updates.attachAppUpdateHost(socket as unknown as WebSocket,
+    new URLSearchParams("client=desktop&updates=1&automaticUpdates=1&version=0.1.43"));
+  updates.syncAutomaticUpdates();
+  const command = JSON.parse(socket.sent.at(-1)!);
+  assert.equal(command.action, "download-automatic");
+  assert.equal(updates.reportAutomaticUpdate({ requestId: "unrelated", state: "ready" }), false);
+  updates.reportAutomaticUpdate({ requestId: command.requestId, state: "ready" });
+  updates.syncAutomaticUpdates();
+  const deadline = updates.automaticUpdateStatus().deadline;
+  busy = 1;
+  assert.throws(() => updates.automaticUpdateAction("relaunch", deadline));
+  assert.equal(updates.automaticUpdateStatus().phase, "waiting");
+  busy = 0;
+  updates.syncAutomaticUpdates();
+  updates.automaticUpdateAction("relaunch", updates.automaticUpdateStatus().deadline);
+  assert.equal(JSON.parse(socket.sent.at(-1)!).action, "install-automatic");
+  assert.throws(() => updates.assertAppNotRestarting(), /relaunching/);
+  busy = 1;
+  assert.throws(() => updates.reportAutomaticUpdate({ requestId: command.requestId, state: "installing" }), /settle/);
+  updates.assertAppNotRestarting();
+  enabled = false;
+  socket.emit("close");
+  updates.syncAutomaticUpdates();
+});
+
+test("pending asynchronous sends count as busy until their thread state is established", async () => {
+  const updates = await import("./app-update.js");
+  let release!: () => void;
+  const pending = updates.withAppUpdateGuard(() => new Promise<void>((resolve) => { release = resolve; }));
+  assert.equal(updates.pendingChatStarts, 1);
+  release();
+  await pending;
+  assert.equal(updates.pendingChatStarts, 0);
+});

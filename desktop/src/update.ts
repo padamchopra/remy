@@ -10,7 +10,7 @@ export type UpdateProgress = { received: number; total: number };
 
 let configured = false;
 let downloaded = false;
-let downloading = false;
+let pendingDownload: Promise<void> | undefined;
 let lastProgressAt = 0;
 
 function broadcast(channel: string, payload: unknown): void {
@@ -41,11 +41,15 @@ function configure(): void {
 /// Pulls the zip from the GitHub feed. The UI still reads release notes from
 /// the API; the bytes come from `latest-mac.yml` so the installer is the one
 /// electron-updater knows how to apply.
-export async function downloadUpdate(): Promise<void> {
+export function downloadUpdate(): Promise<void> {
+  if (downloaded) return Promise.resolve();
+  if (!pendingDownload) pendingDownload = fetchUpdate().finally(() => { pendingDownload = undefined; });
+  return pendingDownload;
+}
+
+async function fetchUpdate(): Promise<void> {
   if (!app.isPackaged) throw new Error("Updates install from the shipped Remy app.");
   configure();
-  if (downloading) return;
-  downloading = true;
   downloaded = false;
   lastProgressAt = 0;
   try {
@@ -58,8 +62,6 @@ export async function downloadUpdate(): Promise<void> {
     if (caught instanceof Error && caught.message === "You're on the latest version.") throw caught;
     console.warn("remy: update download failed", caught);
     throw new Error("Couldn't download the update.");
-  } finally {
-    downloading = false;
   }
 }
 

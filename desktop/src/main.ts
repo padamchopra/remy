@@ -65,13 +65,13 @@ function syncLiveTopics(): void {
   connection?.setTopics([...topics].sort());
 }
 
-function appUpdateRequest(payload: unknown): { requestId: string } | undefined {
+function appUpdateRequest(payload: unknown): { requestId: string; action: string } | undefined {
   if (!payload || typeof payload !== "object") return undefined;
   const value = payload as { type?: unknown; action?: unknown; requestId?: unknown };
-  if (value.type !== "app-update" || value.action !== "install-latest" || typeof value.requestId !== "string") {
+  if (value.type !== "app-update" || !["install-latest", "download-automatic", "install-automatic"].includes(String(value.action)) || typeof value.requestId !== "string") {
     return undefined;
   }
-  return { requestId: value.requestId };
+  return { requestId: value.requestId, action: String(value.action) };
 }
 
 async function reportRemoteUpdate(
@@ -90,10 +90,34 @@ async function reportRemoteUpdate(
   }
 }
 
-async function runRemoteUpdate(serverId: string, requestId: string): Promise<void> {
+async function runRemoteUpdate(serverId: string, requestId: string, action: string): Promise<void> {
   if (remoteUpdates.has(requestId)) return;
   remoteUpdates.add(requestId);
   try {
+    if (action !== "install-latest") {
+      const report = (state: string, error?: string) => connection!.request(serverId, "/server/app-update", {
+        method: "PATCH", body: { requestId, state, ...(error ? { error } : {}) },
+      });
+      try {
+        if (action === "download-automatic") {
+          try { await downloadUpdate(); }
+          catch (error) {
+            if (error instanceof Error && error.message === "You're on the latest version.") {
+              await report("current");
+              return;
+            }
+            throw error;
+          }
+          await report("ready");
+        } else {
+          await report("installing");
+          installUpdate();
+        }
+      } catch (error) {
+        await report("failed", error instanceof Error ? error.message : "Remy could not update; try again.");
+      }
+      return;
+    }
     await reportRemoteUpdate(serverId, requestId, "downloading");
     await downloadUpdate();
     await reportRemoteUpdate(serverId, requestId, "installing");
@@ -189,8 +213,15 @@ async function wireIpc(): Promise<void> {
       const requested = appUpdateRequest(payload);
       const target = connection?.configs().find((server) => server.id === serverId);
       if (requested && target?.builtin) {
-        void runRemoteUpdate(serverId, requested.requestId);
+        void runRemoteUpdate(serverId, requested.requestId, requested.action);
         return;
+      }
+      const update = payload as { type?: string; status?: { phase?: string } } | null;
+      if (target?.builtin && update?.type === "automatic-update" && update.status?.phase === "countdown") {
+        if (BrowserWindow.getAllWindows().length === 0) createWindow();
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed()) { if (window.isMinimized()) window.restore(); window.showInactive(); }
+        }
       }
       send("mc:push", serverId, payload);
     });
