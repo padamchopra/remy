@@ -12,6 +12,7 @@ DerivedData/
 
 # Desktop build output
 web/dist/
+web/dist-website/
 desktop/dist/
 desktop/build/
 desktop/release/

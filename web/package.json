@@ -15,7 +15,9 @@
     "perf:terminal": "npm run build:perf && node scripts/terminal-perf.mjs",
     "build:perf": "tsc --noEmit && vite build",
     "perf:test": "node --test scripts/composer-draft.test.mjs scripts/perf-fixture.test.mjs scripts/shared-read.test.mjs scripts/terminal-perf-fixture.test.mjs scripts/thread-entry-merge.test.mjs scripts/thread-workbench.test.mjs scripts/warm-cache.test.mjs",
-    "live-check": "node scripts/live-check.mjs"
+    "live-check": "node scripts/live-check.mjs",
+    "dev:website": "vite --config vite.website.config.ts",
+    "build:website": "tsc -p tsconfig.website.json && vite build --config vite.website.config.ts"
   },
   "dependencies": {
     "@blobatar/react": "^2.5.0",

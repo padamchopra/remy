@@ -83,6 +83,25 @@ fold, board log, lamport, event or DM. **Tasks** is the board section and a
 fine — the app says "this machine" — and so is worktree, which is a git word
 anyone using worktrees already has.
 
+## Keeping the website current
+
+Assess website impact for every feature, behavior change, removal, and fix. Update affected public content in the same change, or record a brief reason in the PR when no website update is needed. This is a review convention, not an automated check.
+
+| What changes | What to update |
+|---|---|
+| A major, broadly useful capability changes why someone chooses Remy | Consider the homepage's feature showcase or gallery; update relevant guides and release notes. |
+| A smaller user-visible feature, improvement, or meaningful fix | Add a concise changelog entry and update affected documentation; do not add a homepage showcase by default. |
+| Installation, pairing, supported providers or platforms, availability, pricing, or security behavior | Correct every affected claim, download link, setup guide, FAQ, and screenshot, including on the homepage regardless of change size. |
+| Refactoring, tests, tooling, or dependency maintenance with no user-visible effect | No public website entry is needed. |
+
+The website lives in `web/website/`; build it with `npm run build:website`. Product previews import the app’s components and styles with sample state through the website-only transport. Keep those imports shared; do not replace them with screenshots or copied product markup. Update sample scenarios when the behavior they demonstrate changes, and run `node web/scripts/website-check.mjs` and `node web/scripts/website-performance.mjs` against the built site. Feature selection must update the mounted preview’s sample state without reloading its document; preserve the startup handshake and verify first and repeat switches.
+
+The homepage is a curated product story, not a release feed. Promote a capability only when it enables a distinct, important use case, benefits a broad audience, and can be demonstrated clearly. Prefer refreshing an existing section over adding another. A small addition to an existing capability usually belongs in its guide or release notes.
+
+The changelog is one supporting surface; keep feature guides, setup documentation, FAQs, and download information accurate too. Describe the user benefit, group related changes, and link to details rather than reproducing commits. Keep unreleased work explicitly unreleased; use real release versions and dates only when confirmed. Never advertise planned or gated capabilities as generally available.
+
+Check removals and changed defaults for stale promises. Screenshots and demos must match the behavior they illustrate and use safe sample content. Keep local Remy and optional Remy for Teams availability distinct. Verify links and review affected desktop and mobile layouts before shipping website changes. Test real touch gestures through the page, including over embedded previews; `scrollTo` and viewport resizing alone do not prove that a phone can scroll. Keep the app’s viewport and scroll-lock rules inside the demo, and let the marketing document own page scrolling.
+
 ## Checks
 
 ```sh

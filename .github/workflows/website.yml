@@ -1,0 +1,48 @@
+name: Website
+on:
+  pull_request:
+    paths:
+      - 'web/**'
+      - 'contract/**'
+      - 'package.json'
+      - '.github/workflows/website.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'contract/**'
+      - '.github/workflows/website.yml'
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            contract/package-lock.json
+            web/package-lock.json
+      - run: npm --prefix contract ci
+      - run: npm --prefix web ci
+      - run: npm run build:website
+      - run: npx playwright-core install --with-deps chromium
+        working-directory: web
+      - name: Check the built website
+        run: |
+          python3 -m http.server 5180 --bind 127.0.0.1 --directory web/dist-website &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          for attempt in {1..30}; do curl --silent --fail http://127.0.0.1:5180/ > /dev/null && break; sleep 1; done
+          node web/scripts/website-check.mjs
+          node web/scripts/website-performance.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: website-preview
+          path: |
+            web/dist-website
+            /tmp/remy-pr-artifacts/website
