@@ -6,7 +6,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "keep_vars": true,
-  "assets": { "directory": "../web/dist", "binding": "ASSETS", "not_found_handling": "single-page-application", "run_worker_first": ["/api/*", "/health", "/invite/*"] },
+  "assets": { "directory": "../web/dist", "binding": "ASSETS", "not_found_handling": "single-page-application", "run_worker_first": true },
   "observability": {
     "enabled": true,
     "logs": {
@@ -43,10 +43,12 @@
         {
           "pattern": "tryremy.dev",
           "custom_domain": true
-        }
+        },
+        { "pattern": "app.tryremy.dev", "custom_domain": true }
       ],
       "vars": {
         "ENVIRONMENT": "production",
+        "WEB_APP_URL": "https://app.tryremy.dev",
         "GITHUB_CLIENT_ID": "Ov23liJidz9ZFqAvM6vu",
         "GOOGLE_CLIENT_ID": "649335458708-1thafkf1p0402mo125marsbchqq5eifk.apps.googleusercontent.com",
         "MINIMUM_DAEMON_VERSION": "0.1.0"

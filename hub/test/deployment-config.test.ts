@@ -30,7 +30,7 @@ const config = JSON.parse(readFileSync(join(hubRoot, "wrangler.jsonc"), "utf8"))
 test("Workers Builds prepares website assets before deployment checks", () => {
   const steps = rootPackage.scripts["build:hub"].split(" && ");
   const install = steps.indexOf("npm ci --prefix web --no-audit --no-fund");
-  const build = steps.indexOf("npm run build --prefix web");
+  const build = steps.indexOf("npm run build:hub --prefix web");
   const checks = steps.indexOf("npm test --prefix hub");
   assert.ok(install >= 0, "install the website dependencies");
   assert.ok(build > install, "build website assets after installing dependencies");
@@ -46,7 +46,7 @@ test("staging and production have isolated deployable topology", () => {
   assert.equal(production.vars.ENVIRONMENT, "production");
   assert.equal(production.name, "remy-prod");
   assert.equal(production.workers_dev, false);
-  assert.deepEqual(production.routes, [{ pattern: "tryremy.dev", custom_domain: true }]);
+  assert.deepEqual(production.routes, [{ pattern: "tryremy.dev", custom_domain: true }, { pattern: "app.tryremy.dev", custom_domain: true }]);
   assert.notEqual(staging.name, production.name);
   assert.notEqual(staging.d1_databases[0]?.database_id, production.d1_databases[0]?.database_id);
   for (const environment of [staging, production]) {

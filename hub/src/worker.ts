@@ -56,6 +56,7 @@ import { repositoryOrigin, OrganizationError, OrganizationService } from "./orga
 
 export interface Env extends ApplePushConfig {
   ASSETS?: Fetcher;
+  WEB_APP_URL?: string;
   HOSTED_CONTROL_URL?: string;
   HOSTED_CONTROL_TOKEN?: SecretsStoreSecret;
   HOSTED_IMAGE?: string;
@@ -205,6 +206,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       return Response.json({ error: "Use your organization’s single sign-on.", providerId: policy.providerId }, { status: 403 });
     }
   }
+  if (env.WEB_APP_URL && url.origin !== new URL(env.WEB_APP_URL).origin && /^\/api\/auth\/callback\/(google|github)$/.test(url.pathname)) return Response.redirect(new URL(`${url.pathname}${url.search}`, env.WEB_APP_URL), 307);
   if (url.pathname.startsWith("/api/auth/")) {
     return (await (dependencies.betterAuth ?? authFor)(env)).handler(request);
   }
@@ -246,8 +248,15 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     || url.pathname.startsWith("/api/organizations/")
     || url.pathname.startsWith("/api/connections/");
   if (!protectedRoute) {
-    if (request.method === "GET" && /^\/invite\/[^/]+$/.test(url.pathname)) return Response.redirect(new URL(`/?invite=${encodeURIComponent(decodeURIComponent(url.pathname.slice(8)))}`, url.origin), 302);
-    if (env.ASSETS && request.method === "GET" && !url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
+    const appOrigin = env.WEB_APP_URL ? new URL(env.WEB_APP_URL).origin : url.origin;
+    if (request.method === "GET" && url.origin !== appOrigin && (url.pathname === "/app" || url.pathname.startsWith("/app/"))) return Response.redirect(new URL(`${url.pathname.slice(4) || "/"}${url.search}`, appOrigin), 302);
+    if (request.method === "GET" && url.pathname === "/" && url.origin !== appOrigin && (url.searchParams.has("signin") || url.searchParams.has("invite"))) return Response.redirect(new URL(`/${url.search}`, appOrigin), 302);
+    if (request.method === "GET" && /^\/invite\/[^/]+$/.test(url.pathname)) return Response.redirect(new URL(`/?invite=${encodeURIComponent(decodeURIComponent(url.pathname.slice(8)))}`, appOrigin), 302);
+    if (env.ASSETS && (request.method === "GET" || request.method === "HEAD") && !url.pathname.startsWith("/api/")) {
+      const assetUrl = new URL(request.url);
+      if (env.WEB_APP_URL && url.origin === appOrigin) assetUrl.pathname = `/app${url.pathname}`;
+      return env.ASSETS.fetch(new Request(assetUrl, request));
+    }
     return Response.json(hubErrorSchema.parse({ error: "Not found" }), { status: 404 });
   }
 

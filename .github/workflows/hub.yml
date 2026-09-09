@@ -27,7 +27,15 @@ jobs:
       - run: npm ci --prefix contract --no-audit --no-fund
       - run: npm ci --prefix hub --no-audit --no-fund
       - run: npm ci --prefix web --no-audit --no-fund
-      - run: npm run build --prefix web
+      - run: npm run build:hub --prefix web
+      - run: npx playwright-core install --with-deps chromium
+        working-directory: web
+      - name: Check public home and web app
+        run: |
+          python3 -m http.server 5180 --bind 127.0.0.1 --directory web/dist &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          node web/scripts/hub-website-check.mjs
       - run: npm test --prefix contract
       - run: npm run typecheck --prefix contract
       - run: npm test --prefix hub

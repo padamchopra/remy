@@ -1,5 +1,7 @@
 # Remy for Teams hub
 
+Production serves the public website at `/` and the authenticated web app at `https://app.tryremy.dev/`. `npm --prefix web run build:hub` assembles both into `web/dist`; the ordinary web build remains the desktop app build. Deployments build both surfaces before publishing. The Worker serves the packaged `app/` assets on the app hostname. Existing invitations, root sign-in returns, and `/app/` links redirect to that hostname. Google and GitHub retain their registered callbacks on `tryremy.dev/api/auth/callback/*`; the Worker forwards those callbacks to the app hostname before auth processing, keeping auth cookies host-only. The app origin is explicitly trusted by Better Auth.
+
 The optional hub connects people and Remy computers while local Remy remains a complete product with no hosted dependency. Production runs at `https://tryremy.dev` on Cloudflare Workers; the provider-neutral contract keeps a later self-hosted adapter possible. The production Worker has no public `workers.dev` route.
 
 Run every command below from `hub/`.

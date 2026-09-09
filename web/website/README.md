@@ -32,6 +32,10 @@ Feature tabs keep the same iframe document mounted and send validated, same-orig
 
 Keep sample state synchronized with shared types and behavior. Update guides and release notes proportionally to product changes, following `AGENTS.md`. Only significant, broadly useful capabilities earn homepage space.
 
+## Production
+
+The hub deployment builds this website at `https://tryremy.dev/` and the real app at `https://app.tryremy.dev/` with `npm --prefix web run build:hub`. Keep “Open Remy” pointed at the app subdomain. The Pages project below is for isolated previews.
+
 ## Cloudflare preview
 
 Use a separate Cloudflare Pages project; the Teams worker in `hub/` is independent.

@@ -40,7 +40,7 @@ const runCommand: RunCommand = (file, args) =>
 
 export async function deployHub(options: DeployOptions): Promise<void> {
   const run = options.run ?? runCommand;
-  await run("npm", ["--prefix", "../web", "run", "build"]);
+  await run("npm", ["--prefix", "../web", "run", "build:hub"]);
   await run(wrangler, ["d1", "migrations", "apply", "DB", "--remote", "--env", options.environment]);
   await run(wrangler, [
     "deploy",
