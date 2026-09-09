@@ -18,7 +18,14 @@ function observe(page) {
   });
 }
 async function swipe(session, x = 180, y = 540, distance = -420) {
-  await session.send('Input.synthesizeScrollGesture', { x, y, yDistance: distance, gestureSourceType: 'touch' });
+  await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+  const travel = Math.max(distance, 40 - y);
+  for (let step = 1; step <= 12; step++) {
+    await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y + travel * step / 12 }] });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await new Promise((resolve) => setTimeout(resolve, 200));
 }
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
