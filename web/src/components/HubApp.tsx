@@ -1,6 +1,3 @@
-const Connections = lazy(() => import("./HubConnections").then(m => ({default:m.HubConnections})));
-const Inbox = lazy(() => import("./HubInbox").then(m => ({default:m.HubInbox})));
-const Routing = lazy(() => import("./HubRouting").then(m => ({default:m.HubRouting})));
 import { lazy, useEffect, useState } from "react";
 import {
   Folder,
@@ -10,6 +7,7 @@ import {
   SquareKanban,
   Users,
   User,
+  LogOut,
 } from "lucide-react";
 import type { HubThread, Organization } from "@remy/contract";
 import type { HubRuntime } from "@/lib/hub-session";
@@ -62,7 +60,10 @@ import {
   EmptyTitle,
   EmptyDescription,
   EmptyContent,
+  EmptyMedia,
 } from "@/components/ui/empty";
+import { AppLoading } from "@/components/AppLoading";
+import { Spinner } from "@/components/ui/spinner";
 import { Deferred } from "@/components/Deferred";
 import { HubSignIn } from "./HubSignIn";
 const Threads = lazy(() => import("./HubThreads"));
@@ -71,6 +72,9 @@ const Computers = lazy(() =>
   import("./HubComputers").then((m) => ({ default: m.HubComputers })),
 );
 const OrganizationSettings = lazy(() => import("./HubOrganizationSettings"));
+const Connections = lazy(() => import("./HubConnections").then(m => ({default:m.HubConnections})));
+const Inbox = lazy(() => import("./HubInbox").then(m => ({default:m.HubInbox})));
+const Routing = lazy(() => import("./HubRouting").then(m => ({default:m.HubRouting})));
 
 export default function HubApp({ runtime }: { runtime: HubRuntime }) {
   const [route, setRoute] = useState<Route>(
@@ -162,12 +166,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
       offOrganization();
     };
   }, [organization?.id, profile?.id]);
-  if (!loaded)
-    return (
-      <p role="status" className="p-6">
-        Opening your organization…
-      </p>
-    );
+  if (!loaded) return <AppLoading />;
   if (signedOut) return <HubSignIn runtime={runtime} />;
   const section =
     route.name === "board" || route.name === "ticket"
@@ -232,7 +231,8 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
   return (
     <SidebarProvider>
       <Sidebar>
-        <SidebarHeader>
+        <SidebarHeader className="gap-3 p-4">
+          {organizations.length ? <>
           <Select
             value={organization?.id ?? ""}
             onValueChange={(id) => {
@@ -257,8 +257,24 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
             <Plus data-icon="inline-start" />
             Create organization
           </Button>
+          </> : <div className="flex h-9 items-center gap-2">
+            <span className="sidebar-identity">Remy</span>
+            <span className="text-xs text-muted-foreground">for Teams</span>
+          </div>}
         </SidebarHeader>
         <SidebarContent>
+          {!organizations.length && <Empty className="mx-3 flex-none items-start gap-4 border bg-background p-4 text-left md:p-4">
+            <EmptyHeader className="items-start text-left">
+              <EmptyMedia variant="icon"><Users /></EmptyMedia>
+              <EmptyTitle>No organization yet</EmptyTitle>
+              <EmptyDescription>Create an organization to work with your teammates.</EmptyDescription>
+            </EmptyHeader>
+            <EmptyContent className="items-stretch">
+              <Button size="sm" onClick={() => setCreate(true)}><Plus data-icon="inline-start" />Create organization</Button>
+              <p className="text-xs text-muted-foreground">Have an invitation? Open the link to join your team.</p>
+            </EmptyContent>
+          </Empty>}
+          {organization && <>
           <SidebarGroup className="shrink-0">
             <SidebarGroupContent>
               <SidebarMenu>
@@ -307,11 +323,16 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
+          </>}
         </SidebarContent>
-        <SidebarFooter>
-          <span className="truncate">{profile?.name}</span>
+        <SidebarFooter className="flex-row items-center gap-3 border-t p-4">
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted"><User className="size-4 text-muted-foreground" /></div>
+          <span className="min-w-0 flex-1 truncate text-sm">{profile?.name}</span>
           <Button
             variant="ghost"
+            size="icon-sm"
+            aria-label="Sign out"
+            title="Sign out"
             onClick={() =>
               void hubRequest("/api/sessions/current", "DELETE")
                 .then(() => {
@@ -322,7 +343,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                 .catch((e) => setError(apiError(e)))
             }
           >
-            Sign out
+            <LogOut />
           </Button>
         </SidebarFooter>
       </Sidebar>
@@ -339,6 +360,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
         {!organization ? (
           <Empty>
             <EmptyHeader>
+              <EmptyMedia variant="icon"><Users /></EmptyMedia>
               <EmptyTitle>
                 {organizations.length
                   ? "Choose an organization"
@@ -347,7 +369,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               <EmptyDescription>
                 {organizations.length
                   ? "Choose an organization you belong to from the sidebar."
-                  : "Invite your teammates and share your Tasks."}
+                  : "Invite your teammates and share your work."}
               </EmptyDescription>
             </EmptyHeader>
             <EmptyContent>
@@ -465,6 +487,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                 Cancel
               </Button>
               <Button type="submit" disabled={busy || !name.trim()}>
+                {busy && <Spinner data-icon="inline-start" />}
                 Create organization
               </Button>
             </DialogFooter>
