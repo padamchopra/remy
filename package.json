@@ -22,6 +22,8 @@
     "perf:runtime": "npm --prefix web run perf:runtime",
     "perf:terminal": "npm --prefix web run perf:terminal",
     "bundle": "npm --prefix web run bundle",
-    "live-check": "npm --prefix web run live-check"
+    "live-check": "npm --prefix web run live-check",
+    "dev:website": "npm --prefix web run dev:website",
+    "build:website": "npm --prefix web run build:website"
   }
 }

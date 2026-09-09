@@ -100,6 +100,7 @@ interface Bench {
   chats: Chat[];
   workbench: Workbench;
   wide: boolean;
+  autoFocus: boolean;
   browsers: ReturnType<typeof useSharedBrowsers>;
   terminalActive: Record<string, boolean>;
   setTerminalActive: (threadId: string, active: boolean) => void;
@@ -119,6 +120,7 @@ interface Bench {
 export function ThreadWorkbench({
   routeThread,
   focusedId,
+  autoFocus = true,
   onOpenThread,
   onOpenTicket,
   onOpenWorkspace,
@@ -126,6 +128,7 @@ export function ThreadWorkbench({
 }: {
   routeThread: Chat;
   focusedId?: string;
+  autoFocus?: boolean;
   onOpenThread: (id: string) => void;
   onOpenTicket: (key: string) => void;
   onOpenWorkspace: (workspaceId: string) => void;
@@ -230,6 +233,7 @@ export function ThreadWorkbench({
   }, [change]);
 
   const bench: Bench = {
+    autoFocus,
     parent,
     chats,
     workbench,
@@ -565,7 +569,7 @@ function Surface({ tab, visible, focused, bench }: { tab: WorkbenchTab; visible:
         key={chat.id}
         chat={chat}
         embedded
-        focused={focused}
+        focused={focused && bench.autoFocus}
         persona={agents.find((agent) => agent.id === chat.agentId && agent.serverId === chat.serverId)}
         codeReferences={bench.codeReferences[chat.id] ?? EMPTY_REFERENCES}
         onCodeReferencesChange={(references) => bench.setCodeReferences(chat.id, references)}

@@ -1,0 +1,6 @@
+html, body, #root { height: 100%; overflow: hidden; }
+#root { display: flex; flex-direction: column; }
+.demo-banner { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; height: 36px; padding: 0 14px; border-bottom: 1px solid var(--border); background: var(--sidebar); font-size: 11px; color: var(--muted-foreground); }
+.demo-app { min-height: 0; flex: 1; overflow: hidden; }
+.demo-app > [data-slot="sidebar"] { height: 100%; }
+.demo-app [data-slot="sidebar-container"] { position: absolute; top: 36px; bottom: 0; height: auto; }
