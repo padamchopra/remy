@@ -30,7 +30,7 @@ test("web build failure prevents migration, deployment and smoke check", async (
     /build rejected/,
   );
 
-  assert.deepEqual(commands, [["--prefix", "../web", "run", "build"]]);
+  assert.deepEqual(commands, [["--prefix", "../web", "run", "build:hub"]]);
   assert.equal(fetched, false);
 });
 

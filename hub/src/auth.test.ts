@@ -37,3 +37,10 @@ test("initializes both OAuth providers with ordinary production Worker secrets",
   await auth.$context;
   assert.deepEqual(Object.keys(auth.options.socialProviders ?? {}).sort(), ["github", "google"]);
 });
+
+test("trusts the app origin while retaining the registered callback origin and host-only cookies", () => {
+  const options = authOptionsFor({ BETTER_AUTH_URL: "https://remy.example", WEB_APP_URL: "https://app.remy.example", DB: {} as D1Database }, "test-secret-with-at-least-thirty-two-characters");
+  assert.equal(options.baseURL, "https://remy.example");
+  assert.deepEqual(options.trustedOrigins, ["https://app.remy.example"]);
+  assert.equal(options.advanced?.crossSubDomainCookies?.enabled, undefined);
+});

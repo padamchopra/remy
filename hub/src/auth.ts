@@ -5,7 +5,7 @@ import { magicLink } from "better-auth/plugins";
 import type { Env } from "./worker.js";
 
 export function authOptionsFor(
-  env: Pick<Env, "BETTER_AUTH_URL" | "DB" | "EMAILS" | "GITHUB_CLIENT_ID" | "GOOGLE_CLIENT_ID">,
+  env: Pick<Env, "BETTER_AUTH_URL" | "WEB_APP_URL" | "DB" | "EMAILS" | "GITHUB_CLIENT_ID" | "GOOGLE_CLIENT_ID">,
   authSecret: string,
   providerSecrets: { github?: string; google?: string } = {},
 ): BetterAuthOptions {
@@ -23,6 +23,7 @@ export function authOptionsFor(
   return {
     appName: "Remy",
     baseURL: env.BETTER_AUTH_URL,
+    trustedOrigins: env.WEB_APP_URL ? [new URL(env.WEB_APP_URL).origin] : [],
     database: env.DB,
     secret: authSecret,
     socialProviders,
@@ -69,7 +70,7 @@ export async function readOAuthSecret(secret: string | SecretsStoreSecret | unde
   return typeof secret === "string" ? secret : secret?.get();
 }
 
-export async function authFor(env: Pick<Env, "AUTH_SECRET" | "BETTER_AUTH_URL" | "DB" | "EMAILS" | "GITHUB_CLIENT_ID" | "GITHUB_CLIENT_SECRET" | "GOOGLE_CLIENT_ID" | "GOOGLE_CLIENT_SECRET">) {
+export async function authFor(env: Pick<Env, "AUTH_SECRET" | "BETTER_AUTH_URL" | "WEB_APP_URL" | "DB" | "EMAILS" | "GITHUB_CLIENT_ID" | "GITHUB_CLIENT_SECRET" | "GOOGLE_CLIENT_ID" | "GOOGLE_CLIENT_SECRET">) {
   const [authSecret, github, google] = await Promise.all([
     env.AUTH_SECRET.get(),
     readOAuthSecret(env.GITHUB_CLIENT_SECRET),

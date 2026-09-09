@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:hub": "npm run build && npm run build:website && node scripts/assemble-hub.mjs",
     "bundle": "node scripts/bundle.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",

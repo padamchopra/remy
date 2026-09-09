@@ -9,8 +9,10 @@ import { ProviderMark } from "@/components/ProviderMark";
 import "./ui.css";
 import "./style.css";
 
+if (location.pathname === "/" && location.hash.startsWith("#/")) location.replace(`https://app.tryremy.dev/${location.search}${location.hash}`);
+
 const repo = "https://github.com/padamchopra/remy";
-const webApp = "https://tryremy.dev/";
+const webApp = "https://app.tryremy.dev/";
 const download = `${repo}/releases/latest`;
 const features = [
   { id: "threads", tab: "Threads", title: "Keep every thread in view.", text: "Keep your threads in one view, see which ones need you, and pick up a conversation without losing your place.", icon: MessagesSquare },

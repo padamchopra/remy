@@ -5,3 +5,5 @@
 /demo/*
   Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; form-action 'none'; object-src 'none'; base-uri 'none'; frame-src 'none'; frame-ancestors 'self'
   X-Robots-Tag: noindex
+/app/*
+  Permissions-Policy: camera=(self), microphone=(self), geolocation=(self)
