@@ -33,9 +33,15 @@ try {
   await page.goto(url, { waitUntil: 'networkidle' });
   assert.equal(await page.evaluate(() => scrollY), 0, 'preview must not steal focus');
   await page.screenshot({ path: `${artifacts}/desktop.png` });
-  await page.getByRole('tab', { name: 'Review the work', exact: true }).first().click();
+  const keyboardTabs = page.getByRole('tablist', { name: 'Explore Remy features', exact: true });
+  await keyboardTabs.getByRole('tab', { name: 'Threads', exact: true }).focus();
+  await page.keyboard.press('ArrowRight');
+  await keyboardTabs.getByRole('tab', { name: 'Worktrees', exact: true, selected: true }).waitFor();
+  await page.keyboard.press('ArrowLeft');
+  await keyboardTabs.getByRole('tab', { name: 'Threads', exact: true, selected: true }).waitFor();
+  await page.getByRole('tab', { name: 'Review', exact: true }).first().click();
   await page.frameLocator('iframe[title="Remy workspace preview"]').getByText('Review this change and check that keyboard users', { exact: false }).waitFor();
-  await page.getByRole('tab', { name: 'Run parallel threads', exact: true }).first().click();
+  await page.getByRole('tab', { name: 'Threads', exact: true }).first().click();
   await page.locator('.explorer').scrollIntoViewIfNeeded();
   await page.frameLocator('.explorer iframe[title="Remy feature preview"]').getByText('Main checkout', { exact: true }).waitFor();
   await page.locator('.mobile-section').scrollIntoViewIfNeeded();
@@ -48,6 +54,22 @@ try {
   observe(phone);
   await phone.goto(url, { waitUntil: 'networkidle' });
   await phone.screenshot({ path: `${artifacts}/mobile.png` });
+  for (const tablist of await phone.getByRole('tablist').all()) {
+    for (const tab of await tablist.getByRole('tab').all()) {
+      assert.ok(await tab.evaluate((element) => {
+        const label = element.querySelector('span');
+        const box = element.getBoundingClientRect();
+        return box.left >= 0 && box.right <= innerWidth && box.height >= 44 && label.getBoundingClientRect().left >= box.left && label.getBoundingClientRect().right <= box.right;
+      }), 'every feature label must fit inside a visible touch target');
+    }
+  }
+  const topTabs = phone.getByRole('tablist', { name: 'Explore Remy features', exact: true });
+  for (const [name, scene] of [['Worktrees', 'worktrees'], ['Review', 'review'], ['Agents', 'agents'], ['Threads', 'threads']]) {
+    await topTabs.getByRole('tab', { name, exact: true }).click();
+    assert.equal(await topTabs.getByRole('tab', { name, exact: true }).getAttribute('aria-selected'), 'true');
+    await phone.locator(`.hero-preview iframe[src*="scene=${scene}"]`).waitFor();
+  }
+  await phone.goto(url, { waitUntil: 'networkidle' });
   const touch = await phone.context().newCDPSession(phone);
   await swipe(touch);
   assert.ok(await phone.evaluate(() => scrollY > 200), 'a finger swipe on the hero must scroll the page');
@@ -81,7 +103,7 @@ try {
   await phone.getByRole('combobox', { name: 'Sample thread' }).click();
   await phone.getByRole('option', { name: 'Review the keyboard fix' }).click();
   await phone.getByText('Review this change and check that keyboard users', { exact: false }).waitFor();
-  for (const width of [360, 768]) {
+  for (const width of [320, 360, 768]) {
     await phone.setViewportSize({ width, height: 844 });
     await phone.goto(url);
     await swipe(touch);
@@ -90,7 +112,7 @@ try {
   }
   assert.deepEqual(errors, [], 'no browser errors');
   assert.deepEqual(unsafeRequests, [], 'no API, WebSocket, or third-party requests');
-  console.log('Website checks passed: real touch scrolling over hero and previews through footer, 360/390/768px, mobile navigation, demo send/reset, scenes, FAQ and supporting pages.');
+  console.log('Website checks passed: real touch scrolling over hero and previews through footer, 320/360/390/768px, mobile navigation, demo send/reset, scenes, FAQ and supporting pages.');
 } finally {
   await browser.close();
 }

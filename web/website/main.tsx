@@ -12,10 +12,10 @@ import "./style.css";
 const repo = "https://github.com/padamchopra/remy";
 const download = `${repo}/releases/latest`;
 const features = [
-  { id: "threads", tab: "Run parallel threads", title: "Keep every thread in view.", text: "Keep your threads in one view, see which ones need you, and pick up a conversation without losing your place.", icon: MessagesSquare },
-  { id: "worktrees", tab: "Give each change space", title: "One change. One worktree.", text: "Start a thread in its own git worktree so independent changes can move forward side by side.", icon: GitBranch },
-  { id: "review", tab: "Review the work", title: "Stay close to the change.", text: "Read tool output, inspect edits, and keep your terminal and pull request beside the thread that made them.", icon: Check },
-  { id: "agents", tab: "Come back to your agents", title: "Give repeated work a home.", text: "Give an agent its own instructions and model in Inbox, then ask it to take on repeated work with a routine.", icon: Repeat2 },
+  { id: "threads", tab: "Threads", title: "Keep every thread in view.", text: "Keep your threads in one view, see which ones need you, and pick up a conversation without losing your place.", icon: MessagesSquare },
+  { id: "worktrees", tab: "Worktrees", title: "One change. One worktree.", text: "Start a thread in its own git worktree so independent changes can move forward side by side.", icon: GitBranch },
+  { id: "review", tab: "Review", title: "Stay close to the change.", text: "Read tool output, inspect edits, and keep your terminal and pull request beside the thread that made them.", icon: Check },
+  { id: "agents", tab: "Agents", title: "Give repeated work a home.", text: "Give an agent its own instructions and model in Inbox, then ask it to take on repeated work with a routine.", icon: Repeat2 },
 ];
 const faqs = [
   ["What do I need to run Remy?", "A Mac with Claude Code, Codex, or Cursor Agent installed. Keep it awake while your threads run. Add Tailscale when you want to connect from another device."],
@@ -59,7 +59,7 @@ function DemoFrame({ scene = "threads", compact = false, surface = false }: { sc
   </div>;
 }
 function FeatureTabs({ value, onChange, children, label = "Explore Remy features" }: { value: string; onChange: (value: string) => void; children: ReactNode; label?: string }) {
-  return <Tabs value={value} onValueChange={onChange}><TabsList aria-label={label}>{features.map((feature) => <TabsTrigger key={feature.id} value={feature.id}>{feature.tab}</TabsTrigger>)}</TabsList><TabsContent value={value}>{children}</TabsContent></Tabs>;
+  return <Tabs className="feature-tabs" value={value} onValueChange={onChange}><TabsList variant="line" aria-label={label}>{features.map((feature) => <TabsTrigger key={feature.id} value={feature.id}><feature.icon aria-hidden="true" /><span>{feature.tab}</span></TabsTrigger>)}</TabsList><TabsContent value={value}>{children}</TabsContent></Tabs>;
 }
 function Home() {
   const [scene, setScene] = useState("threads");
