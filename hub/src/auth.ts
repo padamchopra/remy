@@ -65,11 +65,15 @@ export function authOptionsFor(
   };
 }
 
+export async function readOAuthSecret(secret: string | SecretsStoreSecret | undefined): Promise<string | undefined> {
+  return typeof secret === "string" ? secret : secret?.get();
+}
+
 export async function authFor(env: Pick<Env, "AUTH_SECRET" | "BETTER_AUTH_URL" | "DB" | "EMAILS" | "GITHUB_CLIENT_ID" | "GITHUB_CLIENT_SECRET" | "GOOGLE_CLIENT_ID" | "GOOGLE_CLIENT_SECRET">) {
   const [authSecret, github, google] = await Promise.all([
     env.AUTH_SECRET.get(),
-    env.GITHUB_CLIENT_SECRET?.get(),
-    env.GOOGLE_CLIENT_SECRET?.get(),
+    readOAuthSecret(env.GITHUB_CLIENT_SECRET),
+    readOAuthSecret(env.GOOGLE_CLIENT_SECRET),
   ]);
   return betterAuth(authOptionsFor(env, authSecret, { ...(github ? { github } : {}), ...(google ? { google } : {}) }));
 }
