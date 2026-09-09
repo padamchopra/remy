@@ -34,6 +34,9 @@ try {
   await page.evaluate(() => document.fonts.ready);
   assert.equal(await page.evaluate(() => scrollY), 0, 'preview must not steal focus');
   await page.screenshot({ path: `${artifacts}/desktop.png` });
+  for (const section of ['.nav-actions', '.hero-actions', '.closing', '.site-footer']) {
+    assert.equal(await page.locator(section).getByRole('link', { name: 'Open Remy', exact: true }).first().getAttribute('href'), 'https://tryremy.dev/');
+  }
   const keyboardTabs = page.getByRole('tablist', { name: 'Explore Remy features', exact: true });
   await keyboardTabs.getByRole('tab', { name: 'Threads', exact: true }).focus();
   await page.keyboard.press('ArrowRight');
@@ -89,6 +92,7 @@ try {
   assert.equal(await phone.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'mobile page must not overflow');
   await phone.goto(url);
   await phone.getByRole('button', { name: 'Open navigation' }).click();
+  assert.equal(await phone.locator('.mobile-links').getByRole('link', { name: 'Open Remy', exact: true }).getAttribute('href'), 'https://tryremy.dev/');
   await phone.locator('.mobile-links').getByRole('link', { name: 'Features', exact: true }).click();
   await phone.locator('.mobile-links').waitFor({ state: 'hidden' });
   await phone.getByRole('button', { name: 'Open navigation' }).click();
