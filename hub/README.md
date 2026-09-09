@@ -40,7 +40,7 @@ Local secrets belong in `hub/.dev.vars` and are ignored by git. The migration te
 
 ## Accounts
 
-The Hub mounts Better Auth at `/api/auth` with magic-link, Google, GitHub, SAML, and OpenID Connect sign-in. OAuth client secrets and the mail-delivery credential belong in Cloudflare Secrets Store; never put them in Wrangler variables or tracked files.
+The Hub mounts Better Auth at `/api/auth` with magic-link, Google, GitHub, SAML, and OpenID Connect sign-in. OAuth client secrets may be Worker secrets or Secrets Store bindings; never put secret values in Wrangler variables or tracked files. Production OAuth client IDs are public identifiers tracked in `wrangler.jsonc`. `keep_vars` preserves additional dashboard variables during deployment. Email delivery requires a separately configured queue and delivery service.
 
 Web sign-in ends by exchanging Better Auth's short-lived callback session at `POST /api/sessions/web`. The response sets an HTTP-only `remy_session` cookie and removes the callback session. Phone, computer, and CLI clients use device authorization at `POST /api/device/authorization`, let the signed-in person approve its visible code at `POST /api/device/approve`, and poll `POST /api/device/token`. Native access tokens last 15 minutes and refresh tokens rotate on every use.
 

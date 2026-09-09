@@ -78,9 +78,9 @@ export interface Env extends ApplePushConfig {
   OBJECTS: R2Bucket;
   RELEASE: string;
   GITHUB_CLIENT_ID?: string;
-  GITHUB_CLIENT_SECRET?: SecretsStoreSecret;
+  GITHUB_CLIENT_SECRET?: string | SecretsStoreSecret;
   GOOGLE_CLIENT_ID?: string;
-  GOOGLE_CLIENT_SECRET?: SecretsStoreSecret;
+  GOOGLE_CLIENT_SECRET?: string | SecretsStoreSecret;
   MINIMUM_DAEMON_VERSION?: string;
 }
 
