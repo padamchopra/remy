@@ -194,7 +194,10 @@ export class Connection extends EventEmitter {
       url.searchParams.set("client", "desktop");
       url.searchParams.set("version", this.client.version);
       url.searchParams.set("arch", this.client.arch);
-      if (this.client.updates) url.searchParams.set("updates", "1");
+      if (this.client.updates) {
+        url.searchParams.set("updates", "1");
+        url.searchParams.set("automaticUpdates", "1");
+      }
       url.searchParams.set("browserHost", "1");
     }
     // `notify=0` subscribes to live state without becoming a notification

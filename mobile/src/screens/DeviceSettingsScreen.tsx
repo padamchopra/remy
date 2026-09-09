@@ -239,6 +239,13 @@ export function DeviceSettingsScreen({ server, onBack }: { server: Server; onBac
         })}
       </Section>
 
+      <Section title="Automatic updates">
+        <SwitchRow label="Update Remy automatically" value={settings.automaticUpdates === true}
+          disabled={settings.automaticUpdates === undefined}
+          onChange={(value) => void save({ automaticUpdates: value }, "automatic updates")} />
+        <Text style={type.caption}>Download updates and relaunch after your threads settle, with 30 seconds to snooze.</Text>
+      </Section>
+
       <Section title="Availability and notifications">
         <SwitchRow label="Notify this computer" value={settings.notifySelf === true} onChange={(value) => void save({ notifySelf: value }, "notifications")} />
         <SwitchRow

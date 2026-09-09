@@ -1,3 +1,4 @@
+import { withAppUpdateGuard } from "./app-update.js";
 import { getKv, setKv } from "./db.js";
 import type { ThreadMember } from "@remy/contract";
 import { randomUUID } from "node:crypto";
@@ -1529,7 +1530,7 @@ export async function sendChatMessage(
   messageId?: string,
   member?: ThreadMember,
 ): Promise<void> {
-  await mustGet(id).send(text, attachments, codeReferences, agentContext, messageId, member);
+  await withAppUpdateGuard(() => mustGet(id).send(text, attachments, codeReferences, agentContext, messageId, member));
 }
 
 export async function runChatEnvironmentCommand(

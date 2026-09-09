@@ -128,3 +128,20 @@ test("a bounded cursor replays its topics and a stale cursor resets", async () =
   assert.deepEqual(stale.sent[0]?.topics, ["sidebar"]);
   assert.equal(stale.sent.length, 1);
 });
+
+test("settings subscribers receive automatic updates locally, through peers, and after reconnect", async () => {
+  const notify = await import("./notify.js");
+  const client = new FakeSocket();
+  notify.attachNotifyStream(client as unknown as WebSocket, false, new URLSearchParams("scoped=1&topic=settings"));
+  const hello = client.sent[0];
+  notify.broadcast({ type: "settings" });
+  notify.broadcast({ type: "automatic-update", status: { phase: "countdown", deadline: 30_000 } });
+  assert.equal(client.sent.at(-1)?.type, "automatic-update");
+  notify.broadcastPeer("studio", { type: "automatic-update", status: { phase: "waiting" } });
+  assert.equal(client.sent.at(-1)?.type, "peer-frame");
+  const resumed = new FakeSocket();
+  notify.attachNotifyStream(resumed as unknown as WebSocket, false,
+    new URLSearchParams(`scoped=1&topic=settings&afterSequence=${hello.sequence}&streamId=${hello.streamId}`));
+  assert(resumed.sent.some((frame) => frame.type === "automatic-update"));
+  client.emit("close"); resumed.emit("close");
+});

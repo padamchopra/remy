@@ -1,3 +1,4 @@
+import { AutomaticUpdate } from "./automatic-update.js";
 import { randomUUID } from "node:crypto";
 import type { WebSocket } from "ws";
 
@@ -16,6 +17,7 @@ interface UpdateHost {
   socket: WebSocket;
   version: string;
   arch?: string;
+  automatic: boolean;
 }
 
 interface UpdateAttempt {
@@ -41,12 +43,15 @@ export function attachAppUpdateHost(socket: WebSocket, params: URLSearchParams):
   const version = clean(params.get("version"), 40);
   if (!version) return;
   const arch = clean(params.get("arch"), 20);
-  const next = { socket, version, ...(arch ? { arch } : {}) };
+  const next = { socket, version, automatic: params.get("automaticUpdates") === "1", ...(arch ? { arch } : {}) };
+  host = undefined;
+  syncAutomaticUpdates();
   host = next;
   if (attempt?.state === "installing" && attempt.fromVersion !== version) attempt = undefined;
   socket.on("close", () => {
     if (host?.socket !== socket) return;
     host = undefined;
+    syncAutomaticUpdates();
     if (attempt?.state === "starting" || attempt?.state === "downloading") {
       attempt = { ...attempt, state: "failed", error: "Remy closed before the update was installed." };
     }
@@ -54,10 +59,12 @@ export function attachAppUpdateHost(socket: WebSocket, params: URLSearchParams):
   socket.on("error", () => {
     if (host?.socket !== socket) return;
     host = undefined;
+    syncAutomaticUpdates();
     if (attempt?.state === "starting" || attempt?.state === "downloading") {
       attempt = { ...attempt, state: "failed", error: "Remy disconnected before the update was installed." };
     }
   });
+  syncAutomaticUpdates();
 }
 
 export function appUpdateStatus(busyThreads: number): AppUpdateStatus {
@@ -74,6 +81,7 @@ export function appUpdateStatus(busyThreads: number): AppUpdateStatus {
 /// The caller may be a paired machine, but it never receives a download URL or
 /// a shell command; the target app chooses and installs its own architecture.
 export function requestAppUpdate(busyThreads: number): AppUpdateStatus {
+  if (automatic.status.phase !== "idle" && automatic.status.phase !== "failed") throw new Error("An automatic update is already pending.");
   if (!host || host.socket.readyState !== host.socket.OPEN) {
     throw new Error("Open Remy on this device to update it.");
   }
@@ -105,4 +113,71 @@ export function reportAppUpdate(input: Record<string, unknown>, busyThreads: num
       : {}),
   };
   return appUpdateStatus(busyThreads);
+}
+
+let automaticRequestId: string | undefined;
+let automaticOptions: { enabled: () => boolean; busy: () => number; changed: () => void } | undefined;
+let installingAt = 0;
+const automatic = new AutomaticUpdate({
+  now: Date.now,
+  changed: () => automaticOptions?.changed(),
+  download: () => {
+    automaticRequestId = randomUUID();
+    host?.socket.send(JSON.stringify({ type: "app-update", action: "download-automatic", requestId: automaticRequestId }));
+  },
+  install: () => {
+    installingAt = Date.now();
+    host?.socket.send(JSON.stringify({ type: "app-update", action: "install-automatic", requestId: automaticRequestId }));
+  },
+});
+
+export function configureAutomaticUpdates(options: NonNullable<typeof automaticOptions>): void {
+  automaticOptions = options;
+}
+
+export function syncAutomaticUpdates(): void {
+  if (!automaticOptions) return;
+  if (automatic.status.phase === "installing" && Date.now() - installingAt > 60_000) {
+    automatic.fail("Remy could not relaunch; try updating again.");
+  }
+  automatic.tick(automaticOptions.enabled(), Boolean(host?.automatic && host.socket.readyState === host.socket.OPEN), automaticOptions.busy() > 0 || Boolean(attempt && attempt.state !== "failed"));
+}
+
+export function automaticUpdateStatus() {
+  return { enabled: automaticOptions?.enabled() ?? false, supported: Boolean(host?.automatic), ...automatic.status };
+}
+
+export function automaticUpdateAction(action: unknown, deadline: unknown): void {
+  syncAutomaticUpdates();
+  if (typeof deadline !== "number") throw new Error("That update countdown has ended.");
+  if (action === "snooze") automatic.snooze(deadline);
+  else if (action === "relaunch") automatic.relaunch(deadline);
+  else throw new Error("Choose when Remy should relaunch.");
+}
+
+export function reportAutomaticUpdate(input: Record<string, unknown>): boolean {
+  if (input.requestId !== automaticRequestId || !automaticRequestId) return false;
+  syncAutomaticUpdates();
+  if (input.state === "ready" || input.state === "current") automatic.downloaded(input.state === "ready");
+  else if (input.state === "failed") automatic.fail(typeof input.error === "string" ? input.error.slice(0, 240) : "Remy could not update; try again.");
+  else if (input.state === "installing") {
+    if (automatic.status.phase !== "installing" || !automaticOptions?.enabled() || automaticOptions.busy() > 0) {
+      automatic.fail("Remy will update when your threads settle.");
+      throw new Error("Remy will update when your threads settle.");
+    }
+  } else throw new Error("That update state is not valid.");
+  return true;
+}
+
+export function assertAppNotRestarting(): void {
+  if (automatic.status.phase === "installing" && Date.now() - installingAt < 60_000) {
+    throw new Error("Remy is relaunching to update; try again in a moment.");
+  }
+}
+
+export let pendingChatStarts = 0;
+export async function withAppUpdateGuard<T>(run: () => Promise<T>): Promise<T> {
+  assertAppNotRestarting();
+  pendingChatStarts++;
+  try { return await run(); } finally { pendingChatStarts--; }
 }

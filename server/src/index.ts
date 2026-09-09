@@ -10,7 +10,7 @@ import { AgentStartupError, AgentUnavailableError, agentKind, inferAgent, type A
 import { createAgent, deleteAgent, getAgent, listAgents, seedPresetAgents, seedRemyAgent, updateAgent } from "./agents.js";
 import { forgetMemory, listMemories, saveMemory } from "./agent-memories.js";
 import { deliverAnnouncements } from "./announcements.js";
-import { appUpdateStatus, reportAppUpdate, requestAppUpdate } from "./app-update.js";
+import { pendingChatStarts, automaticUpdateStatus, automaticUpdateAction, configureAutomaticUpdates, syncAutomaticUpdates, reportAutomaticUpdate, appUpdateStatus, reportAppUpdate, requestAppUpdate } from "./app-update.js";
 import { localAnalytics } from "./analytics.js";
 import { threadAnalytics, threadPerformance } from "./thread-metrics.js";
 import {
@@ -368,7 +368,7 @@ function syncActiveTicketThreads(): void {
 }
 
 function activeChatCount(): number {
-  return listAllChats().filter((chat) => chat.state === "working" || chat.state === "needs_input").length;
+  return pendingChatStarts + listAllChats().filter((chat) => chat.state === "working" || chat.state === "needs_input").length;
 }
 
 const server = createServer(async (req, res) => {
@@ -512,6 +512,18 @@ const server = createServer(async (req, res) => {
     if (url.pathname === "/server/update" && req.method === "POST") {
       return json(res, 202, startServerUpdate());
     }
+    if (url.pathname === "/server/automatic-update" && req.method === "GET") {
+      return json(res, 200, automaticUpdateStatus());
+    }
+    if (url.pathname === "/server/automatic-update" && req.method === "POST") {
+      const body = await readJson(req);
+      try {
+        automaticUpdateAction(body.action, body.deadline);
+        return json(res, 200, automaticUpdateStatus());
+      } catch (error) {
+        return json(res, 409, { error: (error as Error).message });
+      }
+    }
     if (url.pathname === "/server/app-update" && req.method === "GET") {
       return json(res, 200, appUpdateStatus(activeChatCount()));
     }
@@ -524,7 +536,9 @@ const server = createServer(async (req, res) => {
     }
     if (url.pathname === "/server/app-update" && req.method === "PATCH") {
       try {
-        return json(res, 200, reportAppUpdate(await readJson(req), activeChatCount()));
+        const body = await readJson(req);
+        if (reportAutomaticUpdate(body)) return json(res, 200, automaticUpdateStatus());
+        return json(res, 200, reportAppUpdate(body, activeChatCount()));
       } catch (error) {
         return json(res, 409, { error: (error as Error).message });
       }
@@ -589,6 +603,8 @@ const server = createServer(async (req, res) => {
         if (!agent) return json(res, 404, { error: "no such agent" });
       }
       const settings = patchSettings(body);
+      syncAutomaticUpdates();
+      broadcast({ type: "settings", topics: ["settings"] });
       syncSleepAssertion();
       // Turning the schedule off has to stop the timer now, not at its next tick.
       syncRepoUpdateSchedule();
@@ -2738,6 +2754,13 @@ server.on("upgrade", (req, socket, head) => {
 // Loopback-only. External reach comes solely through `tailscale serve`, which
 // terminates TLS and restricts access to the tailnet — the process is never
 // exposed on the LAN or any public interface.
+configureAutomaticUpdates({
+  enabled: () => config.automaticUpdates,
+  busy: activeChatCount,
+  changed: () => broadcast({ type: "automatic-update", topics: ["settings"], status: automaticUpdateStatus() }),
+});
+setInterval(syncAutomaticUpdates, 1_000).unref();
+
 server.listen(config.port, "127.0.0.1", () => {
   console.log(`remy server listening on 127.0.0.1:${config.port}`);
   startTailnetExposureReconciler();

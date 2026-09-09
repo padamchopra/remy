@@ -204,3 +204,12 @@ test("survives a round trip through the database", async () => {
   assert.equal(reloaded.publicSettings().worktreeRoot, "/vol/trees");
   assert.equal(reloaded.publicSettings().defaultModel, "haiku");
 });
+
+
+test("automatic updates are opt-in and reject non-boolean settings", () => {
+  assert.equal(publicSettings().automaticUpdates, false);
+  assert.equal(patchSettings({ automaticUpdates: true }).automaticUpdates, true);
+  assert.throws(() => patchSettings({ automaticUpdates: "false" }), /Choose whether/);
+  assert.equal(publicSettings().automaticUpdates, true);
+  assert.equal(patchSettings({ automaticUpdates: false }).automaticUpdates, false);
+});

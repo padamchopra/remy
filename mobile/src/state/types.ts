@@ -453,6 +453,7 @@ export interface PullRequestMonitoringPolicy {
 /// older Mac may not have is optional, so a missing one reads as "it never
 /// said" rather than as a value the phone then writes back.
 export interface ServerSettings {
+  automaticUpdates?: boolean;
   preventSleep: "off" | "whileBusy" | "always";
   preventSleepSupported?: boolean;
   defaultCheckout: "main" | "worktree";

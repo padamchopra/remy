@@ -456,6 +456,7 @@ export interface ChatDetail {
 /// values. Mirrors `PublicSettings` in `server/src/config.ts`.
 export interface ServerSettings {
   hubMode: boolean;
+  automaticUpdates?: boolean;
   preventSleep: "off" | "whileBusy" | "always";
   defaultCheckout: "main" | "worktree";
   worktreeBase: "remote" | "local";
