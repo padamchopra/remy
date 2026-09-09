@@ -252,7 +252,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     if (request.method === "GET" && url.origin !== appOrigin && (url.pathname === "/app" || url.pathname.startsWith("/app/"))) return Response.redirect(new URL(`${url.pathname.slice(4) || "/"}${url.search}`, appOrigin), 302);
     if (request.method === "GET" && url.pathname === "/" && url.origin !== appOrigin && (url.searchParams.has("signin") || url.searchParams.has("invite"))) return Response.redirect(new URL(`/${url.search}`, appOrigin), 302);
     if (request.method === "GET" && /^\/invite\/[^/]+$/.test(url.pathname)) return Response.redirect(new URL(`/?invite=${encodeURIComponent(decodeURIComponent(url.pathname.slice(8)))}`, appOrigin), 302);
-    if (env.ASSETS && request.method === "GET" && !url.pathname.startsWith("/api/")) {
+    if (env.ASSETS && (request.method === "GET" || request.method === "HEAD") && !url.pathname.startsWith("/api/")) {
       const assetUrl = new URL(request.url);
       if (env.WEB_APP_URL && url.origin === appOrigin) assetUrl.pathname = `/app${url.pathname}`;
       return env.ASSETS.fetch(new Request(assetUrl, request));
