@@ -100,7 +100,7 @@ The homepage is a curated product story, not a release feed. Promote a capabilit
 
 The changelog is one supporting surface; keep feature guides, setup documentation, FAQs, and download information accurate too. Describe the user benefit, group related changes, and link to details rather than reproducing commits. Keep unreleased work explicitly unreleased; use real release versions and dates only when confirmed. Never advertise planned or gated capabilities as generally available.
 
-Check removals and changed defaults for stale promises. Screenshots and demos must match the behavior they illustrate and use safe sample content. Keep local Remy and optional Remy for Teams availability distinct. Verify links and review affected desktop and mobile layouts before shipping website changes.
+Check removals and changed defaults for stale promises. Screenshots and demos must match the behavior they illustrate and use safe sample content. Keep local Remy and optional Remy for Teams availability distinct. Verify links and review affected desktop and mobile layouts before shipping website changes. Test real touch gestures through the page, including over embedded previews; `scrollTo` and viewport resizing alone do not prove that a phone can scroll. Keep the app’s viewport and scroll-lock rules inside the demo, and let the marketing document own page scrolling.
 
 ## Checks
 

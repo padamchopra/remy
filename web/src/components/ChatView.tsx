@@ -136,7 +136,8 @@ import { referenceLabel } from "@/lib/pull-request-review";
 import { workingToolGroupId } from "@/lib/working-tool";
 import { rowAt, virtualLayout, virtualRange, type VirtualLayout, type VirtualRange } from "@/lib/virtual-list";
 import { useStore } from "@/state/store";
-import type { Agent, ArchivedThread, Chat, ChatApproval, ChatCodeReference, ChatQuestionRequest, ConvArtifact, ConvDiffLine, ConvEntry } from "@/state/types";
+import { ThreadDiff as Diff } from "@/components/ThreadDiff";
+import type { Agent, ArchivedThread, Chat, ChatApproval, ChatCodeReference, ChatQuestionRequest, ConvArtifact, ConvEntry } from "@/state/types";
 
 interface ThreadCheckpoint {
   id: string;
@@ -1950,26 +1951,6 @@ function toolGroupSummary(entries: ConvEntry[]): string {
   return summary.charAt(0).toUpperCase() + summary.slice(1);
 }
 
-function Diff({ lines }: { lines: ConvDiffLine[] }) {
-  return (
-    <div className="min-w-0 max-w-full overflow-x-auto rounded-md border border-border/60 bg-background font-mono text-[11px] leading-5">
-      {lines.map((line, index) => (
-        <div
-          key={index}
-          className={cn(
-            "px-2 whitespace-pre",
-            line.kind === "add" && "bg-success/12 text-success-foreground",
-            line.kind === "del" && "bg-destructive/10 text-destructive",
-            line.kind === "ctx" && "text-muted-foreground",
-          )}
-        >
-          {line.kind === "add" ? "+" : line.kind === "del" ? "-" : " "}
-          {line.text}
-        </div>
-      ))}
-    </div>
-  );
-}
 
 function ApprovalCard({
   approval,

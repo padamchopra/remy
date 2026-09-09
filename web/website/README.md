@@ -21,11 +21,11 @@ node web/scripts/website-check.mjs
 
 ## Shared product preview
 
-`demo/main.tsx` imports `AppSidebar`, `ThreadWorkbench`, and `ChatView` directly from the app. `ui.css` includes the app's styles. Do not copy their markup into marketing components or replace the preview with an image.
+`demo/main.tsx` imports `AppSidebar`, `ThreadWorkbench`, `ChatView`, `WorkspaceWorktrees`, and `ThreadDiff` directly from the app. `ui.css` includes the app's styles. Do not copy their markup into marketing components or replace the preview with an image.
 
-`demo/state.ts` provides sample threads and in-memory actions. Messages return a clearly labeled canned reply; no provider executes work. Reset restores the sample conversations. The narrow layout uses the same `ChatView` with a sample-thread picker. Feature tabs select illustrative conversations, not running worktrees or routines.
+`demo/state.ts` provides sample threads and in-memory actions. Messages return a clearly labeled canned reply; no provider executes work. Reset restores the sample conversations. The narrow layout uses the same `ChatView` with a sample-thread picker. Feature previews include the shared worktree list and extracted thread diff renderer as well as sample conversations; no real worktrees or routines execute.
 
-The website Vite config substitutes `demo/transport.ts` for the app transport and fails the build if the live transport enters the bundle. The demo's Content Security Policy also blocks network connections. The iframe keeps app styles and focus separate from the marketing page. New shared components may need explicit sample actions; unsupported actions must not gain access to real computers.
+The website Vite config substitutes `demo/transport.ts` for the app transport and fails the build if the live transport enters the bundle. The demo's Content Security Policy also blocks network connections. The landing-page iframes are inert, scaled component previews so touch gestures scroll the website. The live demo link opens the interactive app view on its own page. Marketing CSS explicitly restores document scrolling after importing app styles; never inherit the app’s `overflow: hidden` on the website body. The iframe keeps app styles and focus separate from the marketing page. New shared components may need explicit sample actions; unsupported actions must not gain access to real computers.
 
 Keep sample state synchronized with shared types and behavior. Update guides and release notes proportionally to product changes, following `AGENTS.md`. Only significant, broadly useful capabilities earn homepage space.
 

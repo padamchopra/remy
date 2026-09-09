@@ -1,6 +1,6 @@
 import { useStore } from "@/state/store";
 import { PROVIDERS } from "@/lib/providers";
-import type { Chat, ChatDetail, ConvEntry, Server, Workspace } from "@/state/types";
+import type { Chat, ChatDetail, ConvEntry, ConvDiffLine, Server, Workspace } from "@/state/types";
 
 export const scenes = ["threads", "worktrees", "review", "agents"] as const;
 export type Scene = typeof scenes[number];
@@ -9,12 +9,49 @@ const servers: Server[] = [
   { id: "demo-mac", name: "MacBook Pro", code: "MAC", url: "", online: true, local: true, icon: "laptop" },
   { id: "demo-studio", name: "Mac mini", code: "MINI", url: "", online: true, icon: "monitor" },
 ];
-const workspace: Workspace = { id: "demo-workspace", serverId: "demo-mac", name: "acme", path: "/workspace/acme", worktrees: [
+export const workspace: Workspace = { id: "demo-workspace", serverId: "demo-mac", name: "acme", path: "/workspace/acme", worktrees: [
   { path: "/workspace/acme", branch: "main", isMain: true, dirty: false },
   { path: "/workspace/acme/.remy/onboarding", branch: "improve-onboarding", isMain: false, dirty: true },
 ] };
+export const sampleDiff: ConvDiffLine[] = [
+  { kind: "ctx", text: "export async function pairComputer(request) {" },
+  { kind: "ctx", text: "  const identity = await verifyIdentity(request);" },
+  { kind: "ctx", text: "  const owner = await tailscaleOwner(identity);" },
+  { kind: "del", text: "  return requestConfirmation(identity);" },
+  { kind: "add", text: "  if (owner.matches && identity.verified) {" },
+  { kind: "add", text: "    return approvePairing(identity);" },
+  { kind: "add", text: "  }" },
+  { kind: "add", text: "  return requestConfirmation(identity);" },
+  { kind: "ctx", text: "}" },
+  { kind: "ctx", text: "" },
+  { kind: "ctx", text: "describe('computer pairing', () => {" },
+  { kind: "add", text: "  it('connects your verified Mac', async () => {" },
+  { kind: "add", text: "    const result = await pairComputer(sameOwner);" },
+  { kind: "add", text: "    expect(result.status).toBe('approved');" },
+  { kind: "add", text: "  });" },
+  { kind: "ctx", text: "" },
+  { kind: "add", text: "  it('confirms a different owner', async () => {" },
+  { kind: "add", text: "    const result = await pairComputer(otherOwner);" },
+  { kind: "add", text: "    expect(result.status).toBe('pending');" },
+  { kind: "add", text: "  });" },
+  { kind: "ctx", text: "});" },
+];
+export const reviewDiff: ConvDiffLine[] = [
+  { kind: "ctx", text: "function finishMenuAction(selectedThread) {" },
+  { kind: "ctx", text: "  closeMenu();" },
+  { kind: "add", text: "  selectedThread.focus();" },
+  { kind: "ctx", text: "}" },
+  { kind: "ctx", text: "" },
+  { kind: "ctx", text: "describe('thread menu', () => {" },
+  { kind: "add", text: "  it('returns focus to the thread', async () => {" },
+  { kind: "add", text: "    await menu.open();" },
+  { kind: "add", text: "    await keyboard.press('Escape');" },
+  { kind: "add", text: "    expect(selectedThread).toHaveFocus();" },
+  { kind: "add", text: "  });" },
+  { kind: "ctx", text: "});" },
+];
 const examples: { title: string; prompt: string; reply: string; tool: string; output: string }[] = [
-  { title: "Improve the pairing flow", prompt: "Make it easier to connect my other Mac. Keep the confirmation for computers with a different owner.", reply: "Both paths are covered. Your other Mac can connect directly; a computer with a different owner still asks you to confirm the code.", tool: "Read", output: "Checked the ownership and confirmation paths." },
+  { title: "Improve the pairing flow", prompt: "Make it easier to connect my other Mac. Keep the confirmation for computers with a different owner.", reply: "Both pairing paths are covered.\n\n- Your verified Mac connects directly.\n- A different owner still confirms the six-digit code.\n- The connection stays on your private network.\n\n**Validation**\n\nAll 18 pairing checks pass. The change is ready for review.", tool: "Read", output: "Checked the ownership and confirmation paths." },
   { title: "Build the onboarding screen", prompt: "Build a clearer welcome screen in a separate worktree so the other changes can keep moving.", reply: "The welcome screen is ready on **improve-onboarding**. Your main checkout is untouched, and the new flow explains how to open your first workspace.", tool: "Bash", output: "Created branch improve-onboarding\nWorking in /workspace/acme/.remy/onboarding\nAll checks passed." },
   { title: "Review the keyboard fix", prompt: "Review this change and check that keyboard users can still reach every action.", reply: "The fix keeps focus on the selected thread when the menu closes. Tab, Enter, and Escape all work, and the regression test passes.", tool: "Edit", output: "Updated keyboard navigation and its regression test." },
   { title: "Plan the morning review", prompt: "Help me set up a weekday review of the open pull requests.", reply: "You can give your review agent this routine in **Inbox**: “Review open pull requests every weekday at 9:00.” Pick the computers it can use in your preferred device order.", tool: "Read", output: "Reviewed the repository contribution guide." },
@@ -47,6 +84,7 @@ export function resetDemo() {
     catalogLoading: false, loading: false, connected: true, openIds: [], detailLoading: {}, historyLoading: {},
     providers: PROVIDERS.map((provider) => ({ ...provider, installed: true })),
     openChat: async () => {}, closeChat: () => {}, readChat: async () => {}, loadBoard: async () => {},
+    async loadWorkspaceWorktrees() { return structuredClone(workspace.worktrees); },
     async sendMessage(id, text) {
       const detail = useStore.getState().details[id];
       if (!detail || detail.state === "working") return;
