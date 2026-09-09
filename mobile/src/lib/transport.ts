@@ -387,12 +387,12 @@ export const transport: Transport = {
 
   async probe(pairing) {
     const target = { ...pairing, url: originOf(pairing.url) };
-    const health = await fetchPath<{ ok?: boolean }>(target, "/health");
+    const health = await fetchPath<{ ok?: boolean }>(target, "/health", { timeoutMs: 8_000 });
     if (health.ok !== true) throw new Error("Can't reach that computer. Check Tailscale and try again.");
     let name = pairing.name || hostLabel(target.url);
     let deviceId = pairing.deviceId;
     try {
-      const listed = await fetchPath<{ deviceId?: string; name?: string }>(target, "/peers");
+      const listed = await fetchPath<{ deviceId?: string; name?: string }>(target, "/peers", { timeoutMs: 5_000 });
       if (listed.name?.trim()) name = listed.name.trim();
       if (listed.deviceId?.trim()) deviceId = listed.deviceId.trim();
     } catch {

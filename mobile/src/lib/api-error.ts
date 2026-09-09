@@ -11,6 +11,9 @@ export function apiError(error: unknown): string {
 
 export function pairingError(error: unknown): string {
   if (statusOf(error) === 401) return "Scan a new pairing QR and try again.";
+  if (error instanceof Error && error.name === "AbortError") {
+    return "Your computer did not answer; check Tailscale on both devices and try again.";
+  }
   const message = apiError(error);
   if (/network request failed|failed to fetch|load failed/i.test(message)) {
     return "Open Tailscale on this iPhone and try again.";

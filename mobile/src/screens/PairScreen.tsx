@@ -59,7 +59,7 @@ export function PairScreen({
           <Camera size={18} color={color.foreground} />
           <View style={styles.cardText}>
             <Text style={type.heading}>Scan the pairing QR</Text>
-            <Text style={type.caption}>Settings → Devices on the computer, then copy the link as a QR.</Text>
+            <Text style={type.caption}>Open Settings → Devices on your computer to find its QR code.</Text>
           </View>
         </Pressable>
 
