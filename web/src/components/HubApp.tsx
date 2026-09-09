@@ -8,7 +8,9 @@ import {
   Users,
   User,
   LogOut,
+  ChevronsUpDown,
 } from "lucide-react";
+import remyMark from "@/assets/remy-mark.png";
 import type { HubThread, Organization } from "@remy/contract";
 import type { HubRuntime } from "@/lib/hub-session";
 import {
@@ -64,6 +66,14 @@ import {
 } from "@/components/ui/empty";
 import { AppLoading } from "@/components/AppLoading";
 import { Spinner } from "@/components/ui/spinner";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 import { Deferred } from "@/components/Deferred";
 import { HubSignIn } from "./HubSignIn";
 const Threads = lazy(() => import("./HubThreads"));
@@ -257,23 +267,30 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
             <Plus data-icon="inline-start" />
             Create organization
           </Button>
-          </> : <div className="flex h-9 items-center gap-2">
-            <span className="sidebar-identity">Remy</span>
-            <span className="text-xs text-muted-foreground">for Teams</span>
+          </> : <div className="flex h-9 items-center gap-2.5">
+            <img src={remyMark} alt="" className="size-7 shrink-0 rounded-lg" />
+            <div className="flex min-w-0 flex-col">
+              <span className="text-sm font-semibold tracking-tight">Remy</span>
+              <span className="text-xs text-muted-foreground">for Teams</span>
+            </div>
           </div>}
         </SidebarHeader>
         <SidebarContent>
-          {!organizations.length && <Empty className="mx-3 flex-none items-start gap-4 border bg-background p-4 text-left md:p-4">
-            <EmptyHeader className="items-start text-left">
-              <EmptyMedia variant="icon"><Users /></EmptyMedia>
-              <EmptyTitle>No organization yet</EmptyTitle>
-              <EmptyDescription>Create an organization to work with your teammates.</EmptyDescription>
-            </EmptyHeader>
-            <EmptyContent className="items-stretch">
-              <Button size="sm" onClick={() => setCreate(true)}><Plus data-icon="inline-start" />Create organization</Button>
-              <p className="text-xs text-muted-foreground">Have an invitation? Open the link to join your team.</p>
-            </EmptyContent>
-          </Empty>}
+          {!organizations.length && (
+            <SidebarGroup className="shrink-0 px-3 pt-3">
+              <SidebarGroupLabel>Organizations</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton onClick={() => setCreate(true)}>
+                      <Plus />
+                      <span>Create organization</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          )}
           {organization && <>
           <SidebarGroup className="shrink-0">
             <SidebarGroupContent>
@@ -325,26 +342,38 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           </SidebarGroup>
           </>}
         </SidebarContent>
-        <SidebarFooter className="flex-row items-center gap-3 border-t p-4">
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted"><User className="size-4 text-muted-foreground" /></div>
-          <span className="min-w-0 flex-1 truncate text-sm">{profile?.name}</span>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Sign out"
-            title="Sign out"
-            onClick={() =>
-              void hubRequest("/api/sessions/current", "DELETE")
-                .then(() => {
-                  setOrganizations([]);
-                  setThreads([]);
-                  setSignedOut(true);
-                })
-                .catch((e) => setError(apiError(e)))
-            }
-          >
-            <LogOut />
-          </Button>
+        <SidebarFooter className="p-3">
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <SidebarMenuButton size="lg" aria-label="Account menu">
+                    <Avatar size="sm">
+                      <AvatarFallback>{profile?.name.trim().charAt(0).toUpperCase() || <User />}</AvatarFallback>
+                    </Avatar>
+                    <span className="min-w-0 flex-1 truncate">{profile?.name}</span>
+                    <ChevronsUpDown className="text-muted-foreground" />
+                  </SidebarMenuButton>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="top" align="start" className="w-(--radix-dropdown-menu-trigger-width)">
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem onSelect={() =>
+                      void hubRequest("/api/sessions/current", "DELETE")
+                        .then(() => {
+                          setOrganizations([]);
+                          setThreads([]);
+                          setSignedOut(true);
+                        })
+                        .catch((e) => setError(apiError(e)))
+                    }>
+                      <LogOut />
+                      Sign out
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </SidebarMenuItem>
+          </SidebarMenu>
         </SidebarFooter>
       </Sidebar>
       <SidebarInset className="h-svh min-w-0 overflow-hidden">
@@ -376,6 +405,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               <Button onClick={() => setCreate(true)}>
                 Create organization
               </Button>
+              {!organizations.length && <p className="text-xs text-muted-foreground">To join your team, open your invitation link.</p>}
             </EmptyContent>
           </Empty>
         ) : (
