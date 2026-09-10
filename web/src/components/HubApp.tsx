@@ -10,7 +10,6 @@ import {
   LogOut,
   ChevronsUpDown,
 } from "lucide-react";
-import remyMark from "@/assets/remy-mark.png";
 import type { HubThread, Organization } from "@remy/contract";
 import type { HubRuntime } from "@/lib/hub-session";
 import {
@@ -241,8 +240,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
   return (
     <SidebarProvider>
       <Sidebar>
-        <SidebarHeader className="gap-3 p-4">
-          {organizations.length ? <>
+        {organizations.length > 0 && <SidebarHeader className="gap-3 p-4">
           <Select
             value={organization?.id ?? ""}
             onValueChange={(id) => {
@@ -267,14 +265,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
             <Plus data-icon="inline-start" />
             Create organization
           </Button>
-          </> : <div className="flex h-9 items-center gap-2.5">
-            <img src={remyMark} alt="" className="size-7 shrink-0 rounded-lg" />
-            <div className="flex min-w-0 flex-col">
-              <span className="text-sm font-semibold tracking-tight">Remy</span>
-              <span className="text-xs text-muted-foreground">for Teams</span>
-            </div>
-          </div>}
-        </SidebarHeader>
+        </SidebarHeader>}
         <SidebarContent>
           {!organizations.length && (
             <SidebarGroup className="shrink-0 px-3 pt-3">
