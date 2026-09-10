@@ -385,3 +385,24 @@ html.electron {
 .compose-box button[aria-label="Send"] {
   border-radius: 9px;
 }
+
+/* Keep startup placeholders quiet while the app and organization load. */
+.app-loading [data-slot="skeleton"] {
+  position: relative;
+  overflow: hidden;
+  animation: none;
+}
+.app-loading [data-slot="skeleton"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, color-mix(in oklch, var(--background) 65%, transparent), transparent);
+  transform: translateX(-100%);
+  animation: app-loading-shimmer 1.8s ease-in-out infinite;
+}
+@keyframes app-loading-shimmer {
+  to { transform: translateX(100%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-loading [data-slot="skeleton"]::after { animation: none; }
+}

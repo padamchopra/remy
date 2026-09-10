@@ -267,7 +267,7 @@ export type AccountSession = z.infer<typeof accountSessionSchema>;
 
 export const organizationRoleSchema = z.enum(["owner", "admin", "member"]);
 export type OrganizationRole = z.infer<typeof organizationRoleSchema>;
-export const organizationSchema = z.object({ id: z.string().min(1), name: z.string().min(1), role: organizationRoleSchema, createdAt: z.number().int(), updatedAt: z.number().int() });
+export const organizationSchema = z.object({ personal: z.boolean().optional(), id: z.string().min(1), name: z.string().min(1), role: organizationRoleSchema, createdAt: z.number().int(), updatedAt: z.number().int() });
 export type Organization = z.infer<typeof organizationSchema>;
 export const organizationMemberSchema = z.object({ id: z.string().min(1), organizationId: z.string().min(1), userId: z.string().min(1), role: organizationRoleSchema, createdAt: z.number().int(), updatedAt: z.number().int() });
 export type OrganizationMember = z.infer<typeof organizationMemberSchema>;
@@ -347,6 +347,7 @@ export const hubRoutes = {
   sessions: { method: "GET", path: "/api/sessions", response: z.object({ sessions: z.array(accountSessionSchema) }) },
   startDeviceAuthorization: { method: "POST", path: "/api/device/authorization", response: deviceAuthorizationSchema },
   refreshSession: { method: "POST", path: "/api/sessions/refresh", response: tokenPairSchema },
+  personal: { method: "GET", path: "/api/personal", response: z.object({ personal: organizationSchema }) },
   organizations: { method: "GET", path: "/api/organizations", response: z.object({ organizations: z.array(organizationSchema) }) },
   organizationMembers: { method: "GET", path: "/api/organizations/:organizationId/members", response: z.object({ members: z.array(organizationMemberSchema) }) },
   organizationTeams: { method: "GET", path: "/api/organizations/:organizationId/teams", response: z.object({ teams: z.array(organizationTeamSchema) }) },

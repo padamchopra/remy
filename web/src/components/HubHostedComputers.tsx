@@ -1,3 +1,4 @@
+import { usePersonalHub } from "@/lib/hub-scope";
 import { useEffect, useState } from "react";
 import {
   hostedSettingsSchema,
@@ -31,6 +32,7 @@ export function HubHostedComputers({
   organizationId: string;
   admin: boolean;
 }) {
+  const isPersonal = usePersonalHub();
   const workspaces = useHubResource<{ workspaces: HubWorkspace[] }>(
     organizationId,
     "/workspaces",
@@ -148,7 +150,7 @@ export function HubHostedComputers({
             <SelectContent>
               <SelectGroup>
                 <SelectItem value="organization">
-                  Organization defaults
+                  {isPersonal ? "Personal defaults" : "Organization defaults"}
                 </SelectItem>
                 {workspaces.value?.workspaces.map((w) => (
                   <SelectItem key={w.id} value={w.id}>
@@ -159,7 +161,7 @@ export function HubHostedComputers({
             </SelectContent>
           </Select>
           <FieldDescription>
-            Each workspace inherits your organization’s defaults until you
+            Each workspace inherits your defaults until you
             change them.
           </FieldDescription>
         </Field>
@@ -356,9 +358,9 @@ export function HubHostedComputers({
             }}
           >
             <Field>
-              <FieldLabel>Organization model key</FieldLabel>
+              <FieldLabel>Default model key</FieldLabel>
               <Select value={keyName} onValueChange={setKeyName}>
-                <SelectTrigger aria-label="Organization model key">
+                <SelectTrigger aria-label="Default model key">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -371,7 +373,7 @@ export function HubHostedComputers({
               <FieldDescription>
                 {names.includes(keyName)
                   ? "Your key is configured."
-                  : "Add your organization’s API key to run hosted threads."}
+                  : "Add your API key to run hosted threads."}
               </FieldDescription>
             </Field>
             <Input

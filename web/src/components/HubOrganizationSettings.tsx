@@ -1,3 +1,4 @@
+import { usePersonalHub } from "@/lib/hub-scope";
 import { useEffect, useState } from "react";
 import { User, Users, Folder } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -70,6 +71,7 @@ export default function HubOrganizationSettings({
   kind: "members" | "teams" | "workspaces";
   role: string;
 }) {
+  const isPersonal = usePersonalHub();
   const members = useHubResource<{ members: HubMember[] }>(
     organizationId,
     "/members",
@@ -140,7 +142,9 @@ export default function HubOrganizationSettings({
           access: { userIds: ids, teamIds: [] },
         });
       } else {
-        void hubRequest(`${base}/hosted/${item.id}/prewarm`, "POST").catch(() => undefined);
+        void hubRequest(`${base}/hosted/${item.id}/prewarm`, "POST").catch(
+          () => undefined,
+        );
         const value = await hubRequest<HubWorkspace>(
           `${base}/workspaces/${item.id}`,
         );
@@ -165,7 +169,11 @@ export default function HubOrganizationSettings({
           "POST",
           { ...(edit.name ? { email: edit.name } : {}), role: inviteRole },
         );
-        setInvite(result.token ? `${window.location.origin}/?invite=${encodeURIComponent(result.token)}` : "");
+        setInvite(
+          result.token
+            ? `${window.location.origin}/?invite=${encodeURIComponent(result.token)}`
+            : "",
+        );
         setInvited(true);
       } else if (kind === "workspaces") {
         await hubRequest(
@@ -212,7 +220,9 @@ export default function HubOrganizationSettings({
         <FieldLabel>{title}</FieldLabel>
         <FieldDescription>
           {kind === "workspaces"
-            ? "Choose who can work in each workspace."
+            ? isPersonal
+              ? "Add the repositories you work in."
+              : "Choose who can work in each workspace."
             : "Manage the people you work with."}
         </FieldDescription>
       </Field>
@@ -237,7 +247,13 @@ export default function HubOrganizationSettings({
               : "Add workspace"}
         </Button>
       )}
-      {invited && <p role="status">{invite ? "Your invitation link is ready." : "Your invitation is sent."}</p>}
+      {invited && (
+        <p role="status">
+          {invite
+            ? "Your invitation link is ready."
+            : "Your invitation is sent."}
+        </p>
+      )}
       {invite && (
         <Field>
           <FieldLabel htmlFor="invite-link">Invitation link</FieldLabel>
@@ -344,7 +360,9 @@ export default function HubOrganizationSettings({
             <DialogDescription>
               {kind === "members"
                 ? "Send an invitation to your organization."
-                : "Choose a name and who can use it."}
+                : isPersonal
+                  ? "Choose a name and repository for your workspace."
+                  : "Choose a name and who can use it."}
             </DialogDescription>
           </DialogHeader>
           {edit && (
@@ -400,18 +418,20 @@ export default function HubOrganizationSettings({
                         }
                       />
                     </Field>
-                    <Field orientation="horizontal">
-                      <Checkbox
-                        id="restrict-workspace"
-                        checked={edit.restricted}
-                        onCheckedChange={(v) =>
-                          setEdit({ ...edit, restricted: v === true })
-                        }
-                      />
-                      <FieldLabel htmlFor="restrict-workspace">
-                        Restrict to selected members and teams
-                      </FieldLabel>
-                    </Field>
+                    {!isPersonal && (
+                      <Field orientation="horizontal">
+                        <Checkbox
+                          id="restrict-workspace"
+                          checked={edit.restricted}
+                          onCheckedChange={(v) =>
+                            setEdit({ ...edit, restricted: v === true })
+                          }
+                        />
+                        <FieldLabel htmlFor="restrict-workspace">
+                          Restrict to selected members and teams
+                        </FieldLabel>
+                      </Field>
+                    )}
                   </>
                 )}
                 {(kind === "teams" ||
@@ -454,7 +474,7 @@ export default function HubOrganizationSettings({
             <AlertDialogDescription>
               {kind === "members"
                 ? "This person loses access to your organization."
-                : "This removes it from your organization."}
+                : "This removes it from your account."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

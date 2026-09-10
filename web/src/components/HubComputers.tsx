@@ -1,3 +1,4 @@
+import { HubPersonalContext, usePersonalHub } from "@/lib/hub-scope";
 import { HubHostedComputers } from "./HubHostedComputers";
 import { HubBoardSync } from "./HubBoardSync";
 import { apiError } from "@/lib/api-error";
@@ -76,10 +77,15 @@ type Options = {
   teams: OrganizationTeam[];
 };
 export function HubComputers({ organizationId }: { organizationId?: string }) {
+  const personalContext = usePersonalHub();
   const local = useStore((s) => s.servers.find((server) => server.local));
   const [registration, setRegistration] = useState<Registration | null>(null);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [org, setOrg] = useState(organizationId ?? "");
+  const isPersonal =
+    personalContext ||
+    organizations.find((item) => item.id === org)?.personal === true ||
+    !org;
   const [computers, setComputers] = useState<ComputerSummary[]>([]);
   const [threads, setThreads] = useState<HubThread[]>([]);
   const [options, setOptions] = useState<Options>({
@@ -111,8 +117,15 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
       .catch((e) => setError(apiError(e)));
   }, [local?.id, organizationId]);
   useEffect(() => {
-    void hubRequest<{ organizations: Organization[] }>("/api/organizations")
-      .then((value) => setOrganizations(value.organizations))
+    void Promise.all([
+      hubRequest<{ organizations: Organization[] }>("/api/organizations"),
+      hubRequest<{ personal: Organization }>("/api/personal"),
+    ])
+      .then(([value, account]) => {
+        setOrganizations([account.personal, ...value.organizations]);
+        if (!organizationId)
+          setOrg((current) => current || account.personal.id);
+      })
       .catch(() => undefined);
   }, []);
   useEffect(() => {
@@ -172,217 +185,245 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
     }
   };
   return (
-    <section
-      className="@container flex min-w-0 flex-col gap-4"
-      aria-label="Organization computers"
-    >
-      <Field>
-        <FieldLabel>Organization computers</FieldLabel>
-        <FieldDescription>Choose who can use each computer.</FieldDescription>
-      </Field>
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        {organizations.length > 0 && (
-          <Select
-            value={org}
-            onValueChange={(value) => {
-              setOrg(value);
-              window.location.hash = formatLocation({
-                route: {
-                  name: "settings",
-                  tab: "devices",
-                  organizationId: value,
-                },
-              });
-            }}
-          >
-            <SelectTrigger
-              aria-label="Organization"
-              className="w-full max-w-56"
-            >
-              <SelectValue placeholder="Choose an organization" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {organizations.map((o) => (
-                  <SelectItem key={o.id} value={o.id}>
-                    {o.name}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        )}
-        {local && !registration && (
-          <Button variant="outline" onClick={() => setAttach(true)}>
-            Attach this Mac
-          </Button>
-        )}
-        {registration && (
-          <Button variant="outline" onClick={() => setRemoving("local")}>
-            Detach this Mac
-          </Button>
-        )}
-      </div>
-      {local && registration?.organizationId === org && options.role !== "member" && <HubBoardSync organizationId={org} computerId={registration.computerId} localId={local.id} />}
-      {error && (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
-      )}
-      {stale && (
-        <p role="status" className="text-sm text-muted-foreground">
-          You’re reading the last saved computer list.
-        </p>
-      )}
-      {!org && (
-        <Empty>
-          <EmptyHeader>
-            <EmptyTitle>No organization selected</EmptyTitle>
-            <EmptyDescription>
-              Choose your organization or attach this Mac.
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      )}
-      {org && !computers.length && !stale && <Empty><EmptyHeader><EmptyTitle>No computers yet</EmptyTitle><EmptyDescription>Open Remy on your Mac, then attach it to your organization in Computers settings.</EmptyDescription></EmptyHeader></Empty>}
-      {org && <HubHostedComputers key={org} organizationId={org} admin={options.role !== "member"} />}
-      <ItemGroup className="gap-3">
-        {computers.map((computer) => {
-          const Icon = deviceIcon(computer.icon as DeviceIconId);
-          const running = threads.filter(
-            (t) =>
-              t.computerId === computer.computerId &&
-              ["running", "working", "waiting", "needs_input"].includes(
-                String(t.detail.state),
-              ),
-          );
-          return (
-            <Item
-              key={computer.computerId}
-              variant="outline"
-              className="min-w-0"
-              data-computer-id={computer.computerId}
-            >
-              <ItemMedia variant="icon">
-                <Icon />
-              </ItemMedia>
-              <ItemContent className="min-w-0 basis-[calc(100%-3rem)] @min-[30rem]:basis-0">
-                <ItemTitle className="w-full whitespace-normal break-words">
-                  {computer.name}
-                </ItemTitle>
-                <ItemDescription>
-                  {computer.ownership === "personal"
-                    ? "Personal"
-                    : computer.ownership === "hosted"
-                      ? "Hosted"
-                      : "Organization"}{" "}
-                  · {computer.availability === "offline" ? "Offline" : "Online"}{" "}
-                  ·{" "}
-                  {computer.access.mode === "owner"
-                    ? "Only me"
-                    : computer.access.mode === "selected"
-                      ? "Selected members and teams"
-                      : "Everyone in your organization"}
-                </ItemDescription>
-                {running.map((thread) => (
-                  <Button
-                    key={thread.id}
-                    variant="link"
-                    className="h-auto justify-start whitespace-normal p-0 text-left"
-                    data-link
-                    onClick={() => openThread(thread)}
-                  >
-                    {String(thread.detail.title)} · {thread.access.owner.label}
-                  </Button>
-                ))}
-              </ItemContent>
-              {computer.canManage && (
-                <ItemActions className="min-w-0 shrink-0 flex-wrap">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={stale}
-                    onClick={() => setEditing(computer)}
-                  >
-                    Edit computer
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={stale}
-                    onClick={() => setRemoving(computer)}
-                  >
-                    Remove
-                  </Button>
-                </ItemActions>
-              )}
-            </Item>
-          );
-        })}
-      </ItemGroup>
-      {editing && (
-        <ComputerEditor
-          computer={editing}
-          options={options}
-          close={() => setEditing(undefined)}
-          save={async (patch) => {
-            await hubRequest(
-              `${hubThreadBase(org)}/computers/${editing.computerId}`,
-              "PATCH",
-              patch,
-            );
-            setEditing(undefined);
-          }}
-        />
-      )}
-      {attach && local && (
-        <AttachComputer
-          serverId={local.id}
-          org={org}
-          hubUrl={registration?.hubUrl}
-          isAdmin={options.role !== "member"}
-          close={() => setAttach(false)}
-          attached={(value) => {
-            setRegistration(value);
-            setOrg(value.organizationId);
-            setAttach(false);
-          }}
-        />
-      )}
-      <AlertDialog
-        open={!!removing}
-        onOpenChange={(open) => {
-          if (!open && !busy) setRemoving(undefined);
-        }}
+    <HubPersonalContext value={isPersonal}>
+      <section
+        className="@container flex min-w-0 flex-col gap-4"
+        aria-label="Computers"
       >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {removing === "local"
-                ? "Detach this Mac?"
-                : "Remove this computer?"}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              Its threads keep running on the computer, but your organization
-              loses access to them.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={busy}
-              onClick={(event) => {
-                event.preventDefault();
-                void remove();
+        <Field>
+          <FieldLabel>Computers</FieldLabel>
+          <FieldDescription>
+            {isPersonal
+              ? "Connect a computer to run your threads."
+              : "Choose who can use each computer."}
+          </FieldDescription>
+        </Field>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {!organizationId && organizations.length > 0 && (
+            <Select
+              value={org}
+              onValueChange={(value) => {
+                setOrg(value);
+                window.location.hash = formatLocation({
+                  route: {
+                    name: "settings",
+                    tab: "devices",
+                    organizationId: value,
+                  },
+                });
               }}
             >
-              Remove computer
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      {org && <HubNotifications organizationId={org} />}
-    </section>
+              <SelectTrigger aria-label="Account" className="w-full max-w-56">
+                <SelectValue placeholder="Choose an account" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {organizations.map((o) => (
+                    <SelectItem key={o.id} value={o.id}>
+                      {o.name}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          )}
+          {local && !registration && (
+            <Button variant="outline" onClick={() => setAttach(true)}>
+              Attach this Mac
+            </Button>
+          )}
+          {registration && (
+            <Button variant="outline" onClick={() => setRemoving("local")}>
+              Detach this Mac
+            </Button>
+          )}
+        </div>
+        {local &&
+          registration?.organizationId === org &&
+          options.role !== "member" && (
+            <HubBoardSync
+              organizationId={org}
+              computerId={registration.computerId}
+              localId={local.id}
+            />
+          )}
+        {error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        )}
+        {stale && (
+          <p role="status" className="text-sm text-muted-foreground">
+            You’re reading the last saved computer list.
+          </p>
+        )}
+        {!org && (
+          <Empty>
+            <EmptyHeader>
+              <EmptyTitle>Connect this Mac</EmptyTitle>
+              <EmptyDescription>
+                Attach this Mac to use your threads from the web.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        )}
+        {org && !computers.length && !stale && (
+          <Empty>
+            <EmptyHeader>
+              <EmptyTitle>No computers yet</EmptyTitle>
+              <EmptyDescription>
+                Open Remy on your Mac, then attach it from Computers settings.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        )}
+        {org && (
+          <HubHostedComputers
+            key={org}
+            organizationId={org}
+            admin={options.role !== "member"}
+          />
+        )}
+        <ItemGroup className="gap-3">
+          {computers.map((computer) => {
+            const Icon = deviceIcon(computer.icon as DeviceIconId);
+            const running = threads.filter(
+              (t) =>
+                t.computerId === computer.computerId &&
+                ["running", "working", "waiting", "needs_input"].includes(
+                  String(t.detail.state),
+                ),
+            );
+            return (
+              <Item
+                key={computer.computerId}
+                variant="outline"
+                className="min-w-0"
+                data-computer-id={computer.computerId}
+              >
+                <ItemMedia variant="icon">
+                  <Icon />
+                </ItemMedia>
+                <ItemContent className="min-w-0 basis-[calc(100%-3rem)] @min-[30rem]:basis-0">
+                  <ItemTitle className="w-full whitespace-normal break-words">
+                    {computer.name}
+                  </ItemTitle>
+                  <ItemDescription>
+                    {computer.ownership === "personal"
+                      ? "Personal"
+                      : computer.ownership === "hosted"
+                        ? "Hosted"
+                        : "Organization"}{" "}
+                    ·{" "}
+                    {computer.availability === "offline" ? "Offline" : "Online"}{" "}
+                    ·{" "}
+                    {isPersonal || computer.access.mode === "owner"
+                      ? "Only me"
+                      : computer.access.mode === "selected"
+                        ? "Selected members and teams"
+                        : "Everyone in your organization"}
+                  </ItemDescription>
+                  {running.map((thread) => (
+                    <Button
+                      key={thread.id}
+                      variant="link"
+                      className="h-auto justify-start whitespace-normal p-0 text-left"
+                      data-link
+                      onClick={() => openThread(thread)}
+                    >
+                      {String(thread.detail.title)} ·{" "}
+                      {thread.access.owner.label}
+                    </Button>
+                  ))}
+                </ItemContent>
+                {computer.canManage && (
+                  <ItemActions className="min-w-0 shrink-0 flex-wrap">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={stale}
+                      onClick={() => setEditing(computer)}
+                    >
+                      Edit computer
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={stale}
+                      onClick={() => setRemoving(computer)}
+                    >
+                      Remove
+                    </Button>
+                  </ItemActions>
+                )}
+              </Item>
+            );
+          })}
+        </ItemGroup>
+        {editing && (
+          <ComputerEditor
+            computer={editing}
+            options={options}
+            close={() => setEditing(undefined)}
+            save={async (patch) => {
+              await hubRequest(
+                `${hubThreadBase(org)}/computers/${editing.computerId}`,
+                "PATCH",
+                patch,
+              );
+              setEditing(undefined);
+            }}
+          />
+        )}
+        {attach && local && (
+          <AttachComputer
+            serverId={local.id}
+            org={org}
+            hubUrl={registration?.hubUrl}
+            isAdmin={!isPersonal && options.role !== "member"}
+            close={() => setAttach(false)}
+            attached={(value) => {
+              setRegistration(value);
+              setOrg(value.organizationId);
+              setAttach(false);
+            }}
+          />
+        )}
+        <AlertDialog
+          open={!!removing}
+          onOpenChange={(open) => {
+            if (!open && !busy) setRemoving(undefined);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                {removing === "local"
+                  ? "Detach this Mac?"
+                  : "Remove this computer?"}
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                Its threads keep running on the computer, but you lose access to
+                them here.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={busy}
+                onClick={(event) => {
+                  event.preventDefault();
+                  void remove();
+                }}
+              >
+                Remove computer
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+        {org && <HubNotifications organizationId={org} />}
+      </section>
+    </HubPersonalContext>
   );
 }
 
@@ -401,6 +442,7 @@ function ComputerEditor({
     access: ComputerAccess;
   }) => Promise<void>;
 }) {
+  const isPersonal = usePersonalHub();
   const [name, setName] = useState(computer.name);
   const [icon, setIcon] = useState(computer.icon);
   const [access, setAccess] = useState(computer.access);
@@ -423,9 +465,7 @@ function ComputerEditor({
       <DialogContent className="max-h-[85vh] overflow-auto">
         <DialogHeader>
           <DialogTitle>Edit computer</DialogTitle>
-          <DialogDescription>
-            Choose who can start and join its threads.
-          </DialogDescription>
+          <DialogDescription>Update its name and appearance.</DialogDescription>
         </DialogHeader>
         <form
           className="grid min-w-0 gap-4"
@@ -467,33 +507,35 @@ function ComputerEditor({
               </SelectContent>
             </Select>
           </Field>
-          <Field>
-            <FieldLabel>Who can use this computer</FieldLabel>
-            <Select
-              value={access.mode}
-              onValueChange={(mode: ComputerAccess["mode"]) =>
-                setAccess((old) => ({ ...old, mode }))
-              }
-            >
-              <SelectTrigger aria-label="Who can use this computer">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  {computer.ownerUserId && (
-                    <SelectItem value="owner">Only me</SelectItem>
-                  )}
-                  <SelectItem value="selected">
-                    Selected members and teams
-                  </SelectItem>
-                  <SelectItem value="organization">
-                    Everyone in your organization
-                  </SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </Field>
-          {access.mode === "selected" && (
+          {!isPersonal && (
+            <Field>
+              <FieldLabel>Who can use this computer</FieldLabel>
+              <Select
+                value={access.mode}
+                onValueChange={(mode: ComputerAccess["mode"]) =>
+                  setAccess((old) => ({ ...old, mode }))
+                }
+              >
+                <SelectTrigger aria-label="Who can use this computer">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {computer.ownerUserId && (
+                      <SelectItem value="owner">Only me</SelectItem>
+                    )}
+                    <SelectItem value="selected">
+                      Selected members and teams
+                    </SelectItem>
+                    <SelectItem value="organization">
+                      Everyone in your organization
+                    </SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </Field>
+          )}
+          {!isPersonal && access.mode === "selected" && (
             <>
               <Field>
                 <FieldLabel>Members</FieldLabel>
@@ -581,7 +623,8 @@ function AttachComputer({
   close: () => void;
   attached: (registration: Registration) => void;
 }) {
-  const [address, setAddress] = useState(hubUrl ?? window.location.origin);
+  const personalContext = usePersonalHub();
+  const [address, setAddress] = useState(hubUrl ?? "https://app.tryremy.dev");
   const [organization, setOrganization] = useState(org);
   const [ownership, setOwnership] = useState("personal");
   const [code, setCode] = useState("");
@@ -629,7 +672,7 @@ function AttachComputer({
           <DialogDescription>
             {code
               ? "Compare this code before approving your computer."
-              : "Connect this Mac to your organization."}
+              : "Connect this Mac to your Remy account."}
           </DialogDescription>
         </DialogHeader>
         <form
@@ -642,9 +685,7 @@ function AttachComputer({
           {!code ? (
             <>
               <Field>
-                <FieldLabel htmlFor="hub-address">
-                  Organization address
-                </FieldLabel>
+                <FieldLabel htmlFor="hub-address">Remy address</FieldLabel>
                 <Input
                   id="hub-address"
                   type="url"
@@ -652,42 +693,51 @@ function AttachComputer({
                   onChange={(e) => setAddress(e.target.value)}
                 />
               </Field>
-              <Field>
-                <FieldLabel htmlFor="hub-org">Organization</FieldLabel>
-                <Input
-                  id="hub-org"
-                  value={organization}
-                  onChange={(e) => setOrganization(e.target.value)}
-                />
-              </Field>
-              <Field>
-                <FieldLabel>Owner</FieldLabel>
-                <Select value={ownership} onValueChange={setOwnership}>
-                  <SelectTrigger aria-label="Computer owner">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      <SelectItem value="personal">You</SelectItem>
-                      {isAdmin && (
-                        <>
-                          <SelectItem value="organization">
-                            Your organization
-                          </SelectItem>
-                          <SelectItem value="hosted">
-                            Hosted by your organization
-                          </SelectItem>
-                        </>
-                      )}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-                <FieldDescription>
-                  {ownership === "personal"
-                    ? "Only you can use this Mac until you share access."
-                    : "Everyone in your organization can use this computer."}
-                </FieldDescription>
-              </Field>
+              {(!personalContext || !org) && (
+                <Field>
+                  <FieldLabel htmlFor="hub-org">
+                    Organization (optional)
+                  </FieldLabel>
+                  <Input
+                    id="hub-org"
+                    value={organization}
+                    onChange={(e) => setOrganization(e.target.value)}
+                  />
+                  <FieldDescription>
+                    Leave this empty to use your personal account.
+                  </FieldDescription>
+                </Field>
+              )}
+              {!personalContext && (
+                <Field>
+                  <FieldLabel>Owner</FieldLabel>
+                  <Select value={ownership} onValueChange={setOwnership}>
+                    <SelectTrigger aria-label="Computer owner">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="personal">You</SelectItem>
+                        {isAdmin && (
+                          <>
+                            <SelectItem value="organization">
+                              Your organization
+                            </SelectItem>
+                            <SelectItem value="hosted">
+                              Hosted by your organization
+                            </SelectItem>
+                          </>
+                        )}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <FieldDescription>
+                    {ownership === "personal"
+                      ? "Only you can use this Mac until you share access."
+                      : "Everyone in your organization can use this computer."}
+                  </FieldDescription>
+                </Field>
+              )}
             </>
           ) : (
             <p
@@ -711,7 +761,11 @@ function AttachComputer({
             >
               Cancel
             </Button>
-            <Button disabled={busy || !address || !organization}>
+            <Button
+              disabled={
+                busy || !address || (ownership !== "personal" && !organization)
+              }
+            >
               {code ? "Approve computer" : "Continue"}
             </Button>
           </DialogFooter>

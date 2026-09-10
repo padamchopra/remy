@@ -1,3 +1,4 @@
+import { MemoryBoard } from "../test/memory-board.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { OrganizationBoard, type BoardStorage } from "./organization-board.js";
@@ -68,4 +69,21 @@ test("built-ins seed once, isolate personal Remy, preserve rename and repair ins
   const current = await board.detail("agents", "orchestrator:org");
   assert.equal(current?.fields.name, "Studio coordinator");
   assert.equal(current?.fields.instructions, ORCHESTRATOR_INSTRUCTIONS);
+});
+
+
+test("a personal account seeds one private Remy with account routing tools", async () => {
+  const board = new OrganizationBoard(new MemoryBoard());
+  const store = { organization: async () => ({name:"Personal",personal:true}), members: async () => [{id:"owner",userId:"ada"}] } as unknown as OrganizationStore;
+  await seedHubAgents(board,store,"personal");
+  const agents=(await board.list("agents")).items;
+  assert.equal(agents.length,1);
+  assert.equal(agents[0]!.fields.name,"Remy");
+  assert.equal(agents[0]!.fields.scope,"personal");
+  assert.equal(agents[0]!.fields.ownerId,"ada");
+  assert.match(String(agents[0]!.fields.instructions),/no organization is required/);
+  assert.match(String(agents[0]!.fields.instructions),/edit_routing/);
+  const before=await board.versionVector();
+  await seedHubAgents(board,store,"personal");
+  assert.deepEqual(await board.versionVector(),before);
 });

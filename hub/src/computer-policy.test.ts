@@ -46,7 +46,7 @@ function database() {
     },
   } as unknown as D1Database;
   sqlite.exec(
-    "INSERT INTO organizations VALUES ('org','Release',1,1),('other','Other',1,1)",
+    "INSERT INTO organizations (id,name,createdAt,updatedAt) VALUES ('org','Release',1,1),('other','Other',1,1)",
   );
   for (const [user, role, org] of [
     ["ada", "owner", "org"],

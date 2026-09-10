@@ -63,7 +63,7 @@ export default defineConfig({
     // you want to see a change.
     hmr: false,
     proxy: {
-      ...(process.env.VITE_REMY_HUB_URL ? Object.fromEntries(["/api/organizations", "/api/device", "/api/auth", "/api/sessions", "/api/profile", "/api/invitations"].map((path) => [path, { target: process.env.VITE_REMY_HUB_URL, ws: true, changeOrigin: false }])) : {}),
+      ...(process.env.VITE_REMY_HUB_URL ? Object.fromEntries(["/api/personal", "/api/organizations", "/api/device", "/api/auth", "/api/sessions", "/api/profile", "/api/invitations"].map((path) => [path, { target: process.env.VITE_REMY_HUB_URL, ws: true, changeOrigin: false }])) : {}),
       "/api": {
         target: local.url,
         changeOrigin: true,

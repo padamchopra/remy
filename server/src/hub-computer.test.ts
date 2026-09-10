@@ -8,7 +8,7 @@ import type { ComputerCapabilities } from "@remy/contract";
 
 const state = mkdtempSync(join(tmpdir(), "remy-hub-computer-"));
 process.env.MC_CONFIG_DIR = state;
-const { HubComputerConnection } = await import("./hub-computer.js");
+const { HubComputerConnection, hubRegistrationScope } = await import("./hub-computer.js");
 
 test.after(() => rmSync(state, { recursive: true, force: true }));
 
@@ -44,4 +44,22 @@ test("the daemon reconnects outbound with a fresh signed authorization and capab
   assert.deepEqual(hellos.map((frame) => (frame as { kind: string }).kind), ["hello", "hello"]);
   assert.deepEqual((hellos[1] as { capabilities: ComputerCapabilities }).capabilities, capabilities);
   connection.stop();
+});
+
+
+test("personal computer authorization resolves its account on the server and keeps explicit organization registration", async t => {
+  const calls: {url:string; authorization:string|null}[] = [];
+  t.mock.method(globalThis, "fetch", async (input: string, init?: RequestInit) => {
+    calls.push({url: String(input), authorization: new Headers(init?.headers).get("authorization")});
+    return Response.json({personal: {id:"private-account",personal:true}});
+  });
+  assert.equal(await hubRegistrationScope("https://hub.example", "", "native-session", "personal"),"private-account");
+  assert.deepEqual(calls,[{url:"https://hub.example/api/personal",authorization:"Bearer native-session"}]);
+  assert.equal(await hubRegistrationScope("https://hub.example", "studio", "native-session", "personal"),"studio");
+  assert.equal(calls.length,1);
+  await assert.rejects(hubRegistrationScope("https://hub.example", "", "native-session", "organization"),/Choose an organization/);
+  t.mock.method(globalThis,"fetch",async()=>Response.json({personal:{id:"shared"}}));
+  await assert.rejects(hubRegistrationScope("https://hub.example", "", "native-session", "personal"));
+  t.mock.method(globalThis,"fetch",async()=>new Response(null,{status:401}));
+  await assert.rejects(hubRegistrationScope("https://hub.example", "", "expired", "personal"));
 });
