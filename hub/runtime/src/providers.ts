@@ -136,11 +136,6 @@ export class FlySpritesRuntime implements ComputerRuntimeProvider {
       if ((e as { statusCode?: number }).statusCode !== 404) throw e;
     }
     sprite ??= await this.client.createSprite(nameFor(input.computerId), {
-      config: {
-        cpus: input.settings.cpu,
-        ramMB: input.settings.memoryMiB,
-        region: input.settings.region || undefined,
-      },
       urlSettings: { auth: "sprite" },
     });
     await sprite.updateNetworkPolicy({

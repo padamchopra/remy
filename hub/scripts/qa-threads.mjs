@@ -126,7 +126,7 @@ await db.prepare("CREATE TABLE qa_emails (recipient TEXT, url TEXT)").run();
 const organizationId = "release-team";
 const now = Date.now();
 await db
-  .prepare("INSERT INTO organizations VALUES (?,?,?,?)")
+  .prepare("INSERT INTO organizations (id,name,createdAt,updatedAt) VALUES (?,?,?,?)")
   .bind(organizationId, "Release team", now, now)
   .run();
 const tokens = {};
