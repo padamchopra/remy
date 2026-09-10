@@ -779,7 +779,7 @@ export async function taskEnvironment(cwd: string, chatId?: string): Promise<Rec
     const stored=getKv<ReturnType<typeof encrypt>>(`taskEnvironment:${chatId}`);
     if(stored) {
       const values=JSON.parse(decrypt(stored)) as Record<string,string>;
-      cleartextCache.set(`task:${chatId}`,Object.values(values).filter(Boolean));
+      cleartextCache.set(`task:${chatId}`,[...new Set([...(cleartextCache.get(`task:${chatId}`)??[]),...Object.values(values).filter(Boolean)])]);
       return values;
     }
   }

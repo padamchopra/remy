@@ -85,7 +85,9 @@ export async function hostedCodexTokens(changed:()=>void):Promise<Response> {
   const work=(async()=>{
     const status=await hostedCodexAccountRequest("GET","/hub/codex-account",changed);
     if(!status.ok)return status;
-    if((await status.json()).phase!=="connected")return new Response(null,{status:204});
+    const phase=(await status.json()).phase;
+    if(phase==="error")return Response.json({error:"Reconnect Codex to continue."},{status:502});
+    if(phase!=="connected")return new Response(null,{status:204});
     try {
       const tokens=JSON.parse(readFileSync(join(process.env.CODEX_HOME!,"auth.json"),"utf8")).tokens;
       if(typeof tokens?.access_token!=="string" || typeof tokens?.account_id!=="string")throw Error();
