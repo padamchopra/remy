@@ -88,6 +88,7 @@ export interface CodexSessionOptions {
     env: Record<string, string>;
   };
   env?: NodeJS.ProcessEnv;
+  authTokens?: () => Promise<{accessToken:string;chatgptAccountId:string}|null>;
 }
 
 export interface CodexApprovalRequest {
@@ -307,6 +308,7 @@ export const codexAdapter: ProviderAdapter = {
 /// variable names, never their values. Those travel only in the child env.
 export function codexAppServerArgs(options: CodexSessionOptions): string[] {
   const args = ["app-server", "--stdio"];
+  if(process.env.REMY_HOSTED_TASK || options.authTokens)args.push("-c",'model_provider="openai"');
   if (options.mcpServer) {
     args.push("--config", `mcp_servers.remy.command=${JSON.stringify(options.mcpServer.command)}`);
     args.push("--config", `mcp_servers.remy.args=${JSON.stringify(options.mcpServer.args)}`);
@@ -377,7 +379,7 @@ export function createCodexSession(
 }
 
 class AppServerSession implements CodexSession {
-  private readonly hostedModelProvider = process.env.REMY_HOSTED_CODEX_PROVIDER;
+  private hostedModelProvider = process.env.REMY_HOSTED_CODEX_PROVIDER;
   private child: ChildProcessWithoutNullStreams;
   private nextId = 1;
   private requests = new Map<number | string, PendingRequest>();
@@ -440,6 +442,7 @@ class AppServerSession implements CodexSession {
         this.finish(active);
         return;
       }
+      await this.syncAccount();
       const permissionMode = overrides.permissionMode ?? this.options.permissionMode;
       const roots = [this.options.cwd, ...(this.options.additionalDirectories ?? [])];
       const permissions = codexPermissions(permissionMode, [this.options.cwd]);
@@ -488,12 +491,27 @@ class AppServerSession implements CodexSession {
     this.child.kill("SIGTERM");
   }
 
+  private externalAccount=false;
+  private async syncAccount() {
+    if(!process.env.REMY_HOSTED_TASK && !this.options.authTokens)return;
+    const tokens=await this.authTokens();
+    const previous=this.hostedModelProvider;
+    if(tokens){await this.request("account/login/start",{type:"chatgptAuthTokens",...tokens});this.externalAccount=true;this.hostedModelProvider="openai";}
+    else if(this.externalAccount){await this.request("account/logout",{});this.externalAccount=false;this.hostedModelProvider=process.env.REMY_HOSTED_CODEX_PROVIDER;}
+    if(this.threadId && previous!==this.hostedModelProvider)await this.request("thread/resume",{threadId:this.threadId,modelProvider:this.hostedModelProvider ?? "openai"});
+  }
+  private async authTokens() {
+    if(this.options.authTokens)return this.options.authTokens();
+    const {hostedTaskCodexTokens}=await import("../hub-computer.js");
+    return hostedTaskCodexTokens();
+  }
   private async initialize(): Promise<void> {
     await this.request("initialize", {
       clientInfo: { name: "remy", title: "Remy", version: "0.1.0" },
       capabilities: { experimentalApi: true },
     });
     this.notify("initialized", {});
+    await this.syncAccount();
     const roots = [this.options.cwd, ...(this.options.additionalDirectories ?? [])];
     const permissions = codexPermissions(this.options.permissionMode, [this.options.cwd]);
     const common = {
@@ -565,6 +583,11 @@ class AppServerSession implements CodexSession {
     const id = message.id!;
     const params = message.params ?? {};
     try {
+      if(message.method === "account/chatgptAuthTokens/refresh" && (process.env.REMY_HOSTED_TASK || this.options.authTokens)) {
+        const tokens=await this.authTokens();
+        if(!tokens)throw Error("Reconnect Codex to continue.");
+        this.write({id,result:tokens});return;
+      }
       if (message.method === "item/commandExecution/requestApproval") {
         const available = Array.isArray(params.availableDecisions) ? params.availableDecisions : [];
         const decision = await this.onApproval?.({

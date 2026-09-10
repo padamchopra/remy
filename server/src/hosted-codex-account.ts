@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CodexAccount } from "./codex-account.js";
 import { agentCommand } from "./agent.js";
@@ -76,4 +76,22 @@ export async function hostedCodexAccountRequest(
 export function closeHostedCodexAccount() {
   account?.close();
   account = undefined;
+}
+
+let tokenRequest:Promise<Response>|undefined;
+/// Only the authenticated computer relay calls this; refresh credentials stay here.
+export async function hostedCodexTokens(changed:()=>void):Promise<Response> {
+  if(tokenRequest)return (await tokenRequest).clone();
+  const work=(async()=>{
+    const status=await hostedCodexAccountRequest("GET","/hub/codex-account",changed);
+    if(!status.ok)return status;
+    if((await status.json()).phase!=="connected")return new Response(null,{status:204});
+    try {
+      const tokens=JSON.parse(readFileSync(join(process.env.CODEX_HOME!,"auth.json"),"utf8")).tokens;
+      if(typeof tokens?.access_token!=="string" || typeof tokens?.account_id!=="string")throw Error();
+      return Response.json({accessToken:tokens.access_token,chatgptAccountId:tokens.account_id},{headers:{"cache-control":"no-store"}});
+    }catch{return Response.json({error:"Reconnect Codex to continue."},{status:502});}
+  })();
+  tokenRequest=work;
+  try{return (await work).clone();}finally{if(tokenRequest===work)tokenRequest=undefined;}
 }

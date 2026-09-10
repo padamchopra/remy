@@ -173,3 +173,21 @@ test("Modal rotates before expiry even during active work and preserves computer
   await f.create().idle();
   assert.equal(f.counts().checkpoints, 1);
 });
+
+test("tasks in one workspace get separate computers and respect the concurrency limit", async()=>{
+  const f=fixture(), life=f.create();
+  const limited={...settings,maxComputers:2};
+  const [a,b]=await Promise.all([life.ensure("w",limited,"task-a"),life.ensure("w",limited,"task-b")]);
+  assert.notEqual(a.computerId,b.computerId);
+  assert.equal((await life.ensure("w",limited,"task-a")).computerId,a.computerId);
+  await assert.rejects(life.ensure("w",limited,"task-c"),/concurrency limit/);
+  f.tick(20*60_000);await life.idle();
+  await life.ensure("w",limited,"task-c");
+  const resumed=await f.create().ensure("w",limited,"task-a");
+  assert.equal(resumed.computerId,a.computerId);
+  assert.ok(resumed.runtime?.snapshot);
+  await life.remove(b.computerId);
+  assert.equal(await life.get("w","task-b"),undefined);
+  assert.ok(await life.get("w","task-a"));
+  await assert.rejects(life.ensure("another",limited,"task-a"),/another workspace/);
+});

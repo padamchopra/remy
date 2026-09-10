@@ -1,3 +1,4 @@
+import { setTaskEnvironment } from "./environments.js";
 import {
   canReadThread,
   canWriteThread,
@@ -94,10 +95,15 @@ export async function handleHubThreadRequest(
   const [, id, action] = match;
   try {
     if (!id && method === "POST") {
+      const taskKey=typeof input.hubTaskId==="string"?`hubTask:${organizationId}:${actor.id}:${input.hubTaskId}`:undefined;
+      const prior=taskKey?getKv<string>(taskKey):undefined;
+      if(prior){const snapshot=hubThreadSnapshot(prior,organizationId);if(snapshot)return Response.json(snapshot,{status:201});}
       const workspace = (await listWorkspaces()).find(
         (item) => item.id === input.workspaceId,
       );
       if (!workspace) return fail(404, "Choose a workspace on this computer.");
+      const existing=taskKey?getKv<string>(taskKey):undefined;
+      if(existing){const snapshot=hubThreadSnapshot(existing,organizationId);if(snapshot)return Response.json(snapshot,{status:201});}
       if (
         input.visibility !== undefined &&
         input.visibility !== "private" &&
@@ -115,6 +121,8 @@ export async function handleHubThreadRequest(
           effort: workspace.effort,
         },
       });
+      if(taskKey)setKv(taskKey,chat.id);
+      if(input.hubEnvironment!==undefined)setTaskEnvironment(chat.id,input.hubEnvironment);
       if(input.hubInbox===true)setKv(`hubInbox:${chat.id}`,true);
       if(typeof input.hubInstructions==="string")setKv(`hubPersona:${chat.id}`,input.hubInstructions.slice(0,64000));
       shareHubThread(
@@ -160,6 +168,7 @@ export async function handleHubThreadRequest(
       setKv(KEY, rows);
       broadcast({ type: "hub-thread", chatId: id });
     } else if (method === "POST" && action === "message") {
+      if(input.hubEnvironment!==undefined)setTaskEnvironment(id,input.hubEnvironment);
       if (
         typeof input.text !== "string" ||
         !input.text.trim() ||

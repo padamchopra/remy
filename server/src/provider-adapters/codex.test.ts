@@ -190,6 +190,8 @@ rl.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") return send({ id: message.id, result: { userAgent: "fake" } });
   if (message.method === "initialized") return;
+  if (message.method === "account/login/start") return send({id:message.id,result:{}});
+  if (message.id === "refresh-1") return complete(message.result?.chatgptAccountId === "account-test" ? "refreshed" : "refresh failed");
   if (message.method === "thread/start" || message.method === "thread/resume") {
     threadEffort = message.params.modelReasoningEffort;
     threadCwd = message.params.cwd;
@@ -202,6 +204,7 @@ rl.on("line", (line) => {
     const images = message.params.input.filter((item) => item.type === "image");
     send({ id: message.id, result: { turn: { id: active, status: "inProgress", items: [] } } });
     send({ method: "turn/started", params: { threadId: "thread-1", turn: { id: active, status: "inProgress", items: [] } } });
+    if (prompt === "refresh") return send({id:"refresh-1",method:"account/chatgptAuthTokens/refresh",params:{reason:"unauthorized",previousAccountId:"account-test"}});
     if (prompt === "approval") {
       send({ method: "item/started", params: { threadId: "thread-1", turnId: active, item: { type: "commandExecution", id: "command-1", command: "npm test", cwd: process.cwd(), processId: null, source: "agent", status: "inProgress", commandActions: [], aggregatedOutput: null, exitCode: null, durationMs: null, pluginId: null, scriptPath: null } } });
       return send({ id: "approval-1", method: "item/commandExecution/requestApproval", params: { threadId: "thread-1", turnId: active, itemId: "command-1", command: "npm test", cwd: process.cwd(), availableDecisions: ["accept", "acceptForSession", "decline"] } });
@@ -394,4 +397,17 @@ test("a resumed hosted thread uses the current account provider", async t => {
     });
     try { await session.run("provider").done; assert.equal(answer, provider); } finally { session.close(); }
   }
+});
+
+
+test("hosted Codex receives external account tokens and answers refresh requests", async()=>{
+  let calls=0;
+  const events:CodexEvent[]=[];
+  const session=createCodexSession({...base,command:fakeAppServer(),cwd:process.cwd(),authTokens:async()=>{calls++;return {accessToken:"disposable-token",chatgptAccountId:"account-test"};}},e=>events.push(e));
+  try{
+    await session.run("refresh").done;
+    assert.equal(calls,3);
+    assert.ok(JSON.stringify(events).includes("refreshed"));
+    assert.ok(!JSON.stringify(events).includes("disposable-token"));
+  }finally{session.close();}
 });

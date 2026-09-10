@@ -170,6 +170,7 @@ import {
   parseEnvironmentValues,
   selectEnvironment,
   setEnvironmentValues,
+  sharedEnvironmentAssignments,
 } from "./environments.js";
 import {
   createPullRequest,
@@ -1340,6 +1341,14 @@ const server = createServer(async (req, res) => {
       await syncProjectBindings();
       return json(res, 200, { projects: listProjects() });
     }
+    if (url.pathname === "/environments" && req.method === "GET") {
+      await syncProjectBindings();
+      return json(res, 200, {environments:listEnvironments("*"), assignments:sharedEnvironmentAssignments(), workspaces:listProjects().map(p=>({id:p.id,name:p.name}))});
+    }
+    if(parts[0]==="environments" && parts[1] && parts[2]==="assign" && req.method==="PUT") {
+      try {const input=await readJson(req);if(input.environmentId)selectEnvironment(decodeURIComponent(parts[1]),String(input.environmentId));else disableEnvironment(decodeURIComponent(parts[1]));broadcast({type:"environments"});return json(res,200,{ok:true});}catch{return json(res,400,{error:"Choose an available workspace and environment."});}
+    }
+    if (parts[0] === "environments") parts.splice(0, 1, "projects", "*", "environments");
     if (parts[0] === "projects" && parts[1] && parts[2] === "environments") {
       const projectId = decodeURIComponent(parts[1]);
       try {
@@ -1369,7 +1378,12 @@ const server = createServer(async (req, res) => {
         }
         const environmentId = parts[3] ? decodeURIComponent(parts[3]) : "";
         if (environmentId && parts.length === 4 && req.method === "PATCH") {
-          const environment = renameEnvironment(projectId, environmentId, (await readJson(req)).name);
+          const input=await readJson(req);
+          let environment = input.name===undefined ? listEnvironments(projectId).find(e=>e.id===environmentId) : renameEnvironment(projectId, environmentId, input.name);
+          if(!environment)throw Error("Choose an available environment.");
+          if(input.values!==undefined && (!input.values || typeof input.values!=="object" || Array.isArray(input.values)))throw Error("Add named environment values.");
+          if(input.values!==undefined)environment=setEnvironmentValues(projectId,environmentId,input.values as Record<string,string>);
+          if(typeof input.remove==="string"){deleteEnvironmentValue(projectId,environmentId,input.remove);environment=listEnvironments(projectId).find(e=>e.id===environmentId);}
           broadcast({ type: "environments", projectId });
           return json(res, 200, { environment });
         }

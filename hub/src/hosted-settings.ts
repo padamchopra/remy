@@ -57,6 +57,15 @@ export class HostedSettingsStore {
       ["encrypt", "decrypt"],
     );
   }
+  async seal(scope:string,value:string) {
+    const iv=crypto.getRandomValues(new Uint8Array(12));
+    const data=await crypto.subtle.encrypt({name:"AES-GCM",iv,additionalData:new TextEncoder().encode(scope)},await this.key(),new TextEncoder().encode(value));
+    return `${encode(iv)}.${encode(new Uint8Array(data))}`;
+  }
+  async unseal(scope:string,value:string) {
+    const [iv,data]=value.split(".");
+    return new TextDecoder().decode(await crypto.subtle.decrypt({name:"AES-GCM",iv:decode(iv),additionalData:new TextEncoder().encode(scope)},await this.key(),decode(data)));
+  }
   async setSecret(org: string, name: string, value: string | null) {
     if (value === null) {
       await this.db

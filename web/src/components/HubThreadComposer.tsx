@@ -20,6 +20,7 @@ export function HubThreadComposer({
   computers: ComputerSummary[];
   open: (computer: string, thread: string) => void;
 }) {
+  const [requestId,setRequestId]=useState(()=>crypto.randomUUID());
   const base = hubThreadBase(organizationId),
     [workspaces, setWorkspaces] = useState<
       { id: string; name: string; origin: string }[]
@@ -58,28 +59,17 @@ export function HubThreadComposer({
       cancelled = true;
     };
   }, [workspaceId, base]);
+  useEffect(()=>setRequestId(crypto.randomUUID()),[workspaceId,organizationId]);
   const workspace = workspaces.find((w) => w.id === workspaceId);
   const eligible = computers.filter(
     (c) =>
-      c.canUse &&
+      c.ownership !== "hosted" && c.canUse &&
       c.availability !== "offline" &&
       !c.updateRequired &&
       c.capabilities.workspaces.some(
         (w) => w.id === workspaceId || w.origin === workspace?.origin,
       ),
   );
-  useEffect(() => {
-    if (!title.trim() || !workspaceId || !preferenceLoaded) return;
-    const timer = setTimeout(() => {
-      void hubRequest(`${base}/routing/resolve`, "POST", {
-        workspaceId,
-        trigger: "manual",
-        usePreference: true,
-        prewarm: true,
-      }).catch(() => undefined);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [title, workspaceId, base, preferenceLoaded, selected]);
   return (
     <form
       className="flex w-full max-w-xl flex-col gap-3 rounded-lg border p-4"
@@ -106,18 +96,9 @@ export function HubThreadComposer({
               )!.id,
             };
           } else {
-            for (let attempt = 0; attempt < 60; attempt++) {
-              choice = await hubRequest(`${base}/routing/resolve`, "POST", {
-                workspaceId,
-                trigger: "manual",
-                usePreference: true,
-                prewarm: attempt === 0,
-              });
-              if (choice.computerId) break;
-              if (!choice.hostedWorkspaceId || attempt === 59)
-                throw Error(choice.reason ?? "This computer could not start.");
-              await new Promise((r) => setTimeout(r, 1000));
-            }
+            const thread = await hubRequest<{id:string;computerId:string}>(`${base}/threads`, "POST", {workspaceId, title:title.trim(), requestId});
+            open(thread.computerId, thread.id);
+            return;
           }
           if (!choice.computerId || !choice.workspaceId)
             throw Error(choice.reason ?? "Choose another computer.");

@@ -117,10 +117,7 @@ export function HubHostedComputers({
           }>(`${base}/${workspace}`);
           if (!current) return;
           setState(result.state);
-          if (data.available && data.settings.enabled) {
-            await hubRequest(`${base}/${workspace}/prewarm`, "POST");
-            if (current) setWatching(true);
-          }
+
         }
       })
       .catch((e) => {
@@ -184,7 +181,7 @@ export function HubHostedComputers({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Hosted computers</CardTitle>
+        <CardTitle>Cloud execution</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <Field>
@@ -316,6 +313,11 @@ export function HubHostedComputers({
                 </>
               )}
             </Field>
+            <Field>
+              <FieldLabel htmlFor="cloud-concurrency">Concurrent cloud computers</FieldLabel>
+              <Input id="cloud-concurrency" type="number" min={1} max={100} value={settings.maxComputers} disabled={!admin || busy || loading} onChange={e=>setSettings({...settings,maxComputers:Number(e.target.value)})} />
+              <FieldDescription>Each task gets a separate computer; idle computers sleep and keep their work for later.</FieldDescription>
+            </Field>
             <Collapsible open={customize} onOpenChange={setCustomize}>
               <CollapsibleTrigger asChild>
                 <Button type="button" variant="outline">
@@ -433,7 +435,7 @@ export function HubHostedComputers({
                     asleep: "Your computer is asleep.",
                     failed: state.error ?? "Your computer could not start.",
                   }[state.phase]
-                : "This workspace has no hosted computer yet."}
+                : "Computers start automatically when you start tasks."}
             </p>
             <Button
               className="self-start"
@@ -452,7 +454,7 @@ export function HubHostedComputers({
                 }
               }}
             >
-              Start computer
+              Prepare Codex connection
             </Button>
             {state && (
               <p className="text-sm text-muted-foreground">
