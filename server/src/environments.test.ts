@@ -141,3 +141,37 @@ test("runtime environments cannot publish version-control history", async () => 
   assert.equal(execFileSync("git", ["rev-parse", "HEAD"], { cwd: workspacePath, encoding: "utf8" }).trim(), before);
   assert.equal(execFileSync("git", ["show", ":commit.txt"], { cwd: workspacePath, encoding: "utf8" }), "[REDACTED]");
 });
+
+test("shared profiles apply to several workspace tasks without exposing stored values",async()=>{
+  const env=await import("./environments.js");
+  const second=createProject({name:"Second"});
+  const shared=createEnvironment("*","Shared development");
+  setEnvironmentValues("*",shared.id,{SERVICE_TOKEN:"shared-test-secret"});
+  selectEnvironment(project.id,shared.id);selectEnvironment(second.id,shared.id);
+  assert.equal((await env.taskEnvironment(workspacePath)).SERVICE_TOKEN,"shared-test-secret");
+  assert.ok(listEnvironments(second.id).find(e=>e.id===shared.id)?.active);
+  assert.ok(!JSON.stringify(listEnvironments("*")).includes("shared-test-secret"));
+  assert.throws(()=>setEnvironmentValues("*",shared.id,{REMY_HOSTED_TASK:"1"}),/valid variable/);
+  env.setTaskEnvironment("test-task",{values:{SERVICE_TOKEN:"task-test-secret"}});
+  assert.equal((await env.taskEnvironment(workspacePath,"test-task")).SERVICE_TOKEN,"task-test-secret");
+  assert.ok(!JSON.stringify(db.prepare("select value from kv where key=?").get("taskEnvironment:test-task")).includes("task-test-secret"));
+  env.setTaskEnvironment("test-task",null);
+  assert.deepEqual(await env.taskEnvironment(workspacePath,"test-task"),{});
+  env.deleteEnvironment("*",shared.id);
+  assert.equal(listEnvironments(second.id).some(e=>e.id===shared.id),false);
+});
+
+
+test("hub assignments refresh local tasks and clear cached values after removal",async()=>{
+  const env=await import("./environments.js");
+  const {projectForWorkspace}=await import("./projects.js");
+  const profile={id:"shared-hub",name:"Hub development",values:{HUB_VALUE:"first-value"},updatedAt:1};
+  await env.applyHubEnvironments("org-test",{workspaces:[{localId:"workspace-one",profile}]});
+  const bound=projectForWorkspace("workspace-one")!;
+  assert.equal((await env.taskEnvironment(workspacePath)).HUB_VALUE,"first-value");
+  await env.applyHubEnvironments("org-test",{workspaces:[{localId:"workspace-one",profile:{...profile,values:{HUB_VALUE:"second-value"},updatedAt:2}}]});
+  assert.equal((await env.taskEnvironment(workspacePath)).HUB_VALUE,"second-value");
+  await env.applyHubEnvironments("org-test",{workspaces:[]});
+  assert.deepEqual(await env.taskEnvironment(workspacePath),{});
+  assert.ok(!listEnvironments(bound.id).some(e=>e.id==="hub:org-test:shared-hub"));
+});

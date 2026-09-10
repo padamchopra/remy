@@ -189,11 +189,28 @@ export class HubComputerConnection {
     if (this.socket !== socket || socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify({ kind: "hello", boardSync: true, protocolVersion: COMPUTER_PROTOCOL_VERSION, daemonVersion: DAEMON_VERSION, capabilities }));
     this.introduced = true;
+    void this.syncEnvironments().catch(()=>{});
     void this.boardSync?.sync();
     this.syncThreads(socket);
     this.flushNotifications();
   }
 
+  private environmentSync?:Promise<void>;
+  private environmentSyncPending=false;
+  private async syncEnvironments():Promise<void> {
+    this.environmentSyncPending=true;
+    if(this.environmentSync)return this.environmentSync;
+    const work=(async()=>{
+      while(this.environmentSyncPending) {
+      this.environmentSyncPending=false;
+      const response=await fetch(new URL(`/api/organizations/${encodeURIComponent(this.registration.organizationId)}/computers/environments`,this.registration.hubUrl),{method:"POST",headers:{authorization:connectionAuthorization(this.registration.organizationId,this.registration.computerId,privateKey().privateKey)},signal:AbortSignal.timeout(10000),redirect:"error"});
+      if(!response.ok)throw Error("Your workspace environments could not sync.");
+      const {applyHubEnvironments}=await import("./environments.js");
+      await applyHubEnvironments(this.registration.organizationId,await response.json());
+      }
+    })();this.environmentSync=work;
+    try{await work;}finally{if(this.environmentSync===work)this.environmentSync=undefined;}
+  }
   private syncThreads(socket: WebSocket): void {
     if (!this.introduced || !this.threadRelay || this.syncingThreads) return;
     this.syncingThreads = true;
@@ -239,7 +256,7 @@ export class HubComputerConnection {
     const parsed = hubToComputerFrameSchema.safeParse(value);
     if (!parsed.success) { socket.close(1003, "Invalid hub frame."); return; }
     if (parsed.data.kind === "welcome") { this.threadRelay = parsed.data.threadRelay === true; this.notificationRelay = parsed.data.notifications === true; this.syncThreads(socket); this.flushNotifications(); }
-    if (parsed.data.kind === "board.changed") void this.boardSync?.sync();
+    if (parsed.data.kind === "board.changed") {void this.boardSync?.sync();void this.syncEnvironments().catch(()=>{});}
     if (parsed.data.kind === "notification.ack") { const id = parsed.data.id; setKv(NOTIFICATION_OUTBOX, (getKv<HubNotificationInput[]>(NOTIFICATION_OUTBOX) ?? []).filter((n) => n.id !== id)); }
     if (parsed.data.kind === "update_required") { this.stopped = true; socket.close(1008, "Update Remy to reconnect."); return; }
     if (parsed.data.kind === "agent.deleted") { const {deleteChat}=await import("./chat.js");const shared=new Set(hubThreadIds(this.registration.organizationId));for(const id of parsed.data.threadIds)if(shared.has(id))deleteChat(id); }
@@ -258,6 +275,12 @@ export class HubComputerConnection {
 
   private async proxy(socket: WebSocket, frame: Extract<HubToComputerFrame, { kind: "request" }>): Promise<void> {
     try {
+      if(frame.path==="/hub/codex-tokens" && frame.method==="POST") {
+        const {hostedCodexTokens}=await import("./hosted-codex-account.js");
+        const response=await hostedCodexTokens(()=>{if(this.socket?.readyState===WebSocket.OPEN)this.socket.send(JSON.stringify({kind:"account.changed"}));});
+        if(socket.readyState===WebSocket.OPEN)socket.send(JSON.stringify({kind:"response",id:frame.id,status:response.status,headers:{"content-type":"application/json","cache-control":"no-store"},body:base64url(await response.text())}));
+        return;
+      }
       if (frame.path.startsWith("/hub/codex-account")) {
         const { hostedCodexAccountRequest } = await import("./hosted-codex-account.js");
         const response = await hostedCodexAccountRequest(frame.method, frame.path, () => {
@@ -267,7 +290,7 @@ export class HubComputerConnection {
         return;
       }
       if (frame.path.startsWith("/hub/threads")) {
-        if (!frame.actor || frame.body.length > 128_000) throw new Error("Invalid thread request");
+        if (!frame.actor || frame.body.length > 256_000) throw new Error("Invalid thread request");
         const input = frame.body ? JSON.parse(Buffer.from(frame.body, "base64url").toString()) : {};
         const response = await handleHubThreadRequest(this.registration.organizationId, frame.actor, frame.method, frame.path, input, async (chatId, attachmentId) => {
           const url = new URL(`/api/organizations/${encodeURIComponent(this.registration.organizationId)}/computers/${encodeURIComponent(this.registration.computerId)}/thread-attachments/${chatId}/${attachmentId}`, this.registration.hubUrl);
@@ -347,3 +370,14 @@ export async function finishHubComputerAuthorization() {
 }
 
 export function syncHubBoard(): void { connection?.syncBoard(); }
+
+export async function hostedTaskCodexTokens():Promise<{accessToken:string;chatgptAccountId:string}|null> {
+  const registration=getKv<HubComputerRegistration>(REGISTRATION_KEY);
+  if(!registration || !process.env.REMY_HOSTED_TASK)throw Error("This task has no Codex connection.");
+  const response=await fetch(new URL(`/api/organizations/${encodeURIComponent(registration.organizationId)}/computers/codex-tokens`,registration.hubUrl),{method:"POST",headers:{authorization:connectionAuthorization(registration.organizationId,registration.computerId,privateKey().privateKey)},signal:AbortSignal.timeout(9000),redirect:"error"});
+  if(response.status===204)return null;
+  if(!response.ok)throw Error("Codex could not reconnect; check your connection in Settings.");
+  const tokens=await response.json() as {accessToken:string;chatgptAccountId:string};
+  if(typeof tokens.accessToken!=="string"||typeof tokens.chatgptAccountId!=="string")throw Error("Codex returned an invalid connection.");
+  return tokens;
+}

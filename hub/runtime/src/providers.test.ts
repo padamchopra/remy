@@ -14,7 +14,7 @@ test("Fly provisioning leaves resource allocation to Sprites", async () => {
   };
   await new FlySpritesRuntime(client as unknown as SpritesClient).provision({
     computerId: "sample", organizationId: "sample", image: "sample", archive: "sample", environment: {}, allowedDomains: [],
-    settings: { enabled: true, provider: "fly-sprites", cpu: 16, memoryMiB: 32768, region: "legacy-region", idleMinutes: 12 },
+    settings: { enabled: true, provider: "fly-sprites", cpu: 16, memoryMiB: 32768, region: "legacy-region", idleMinutes: 12, maxComputers: 5 },
   } satisfies ProvisionComputerInput);
   assert.deepEqual(options, { urlSettings: { auth: "sprite" } });
 });

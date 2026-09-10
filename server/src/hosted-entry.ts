@@ -7,11 +7,14 @@ delete process.env.REMY_HOSTED_BOOTSTRAP;
 const bootstrap = JSON.parse(raw) as {
   registration: Record<string, unknown> & { computerId: string; organizationId: string; hubUrl: string };
   privateKey: string;
+  taskId?:string;
   workspace: { id?: string; name: string; origin: string };
 };
 process.env.MC_CONFIG_DIR ??= "/data/remy";
 mkdirSync(process.env.MC_CONFIG_DIR, { recursive: true });
 mkdirSync("/workspace", { recursive: true });
+if(bootstrap.taskId)process.env.REMY_HOSTED_TASK="1";
+else delete process.env.REMY_HOSTED_TASK;
 process.env.CODEX_HOME = "/data/codex";
 process.env.CLAUDE_CONFIG_DIR = "/data/claude";
 mkdirSync(process.env.CODEX_HOME, { recursive: true });

@@ -36,7 +36,7 @@ Then open `http://127.0.0.1:5173`. That is the real app against your real folder
 
 Start a thread in a workspace, pick a model and how much the agent may do unasked, and send. A folder with git worktrees lets you branch on send rather than beforehand. Threads that stop to ask you something say so in the sidebar, so a machine working on four things at once has one queue instead of four windows.
 
-Workspace settings can hold named environments that sync across your paired devices. Values are encrypted on each machine and stay out of Claude, Codex, and Cursor themselves; an agent can run a separate, approval-gated command with the active environment, and Remy removes exact values from its output, changed text files, staged diffs, and commit messages before the agent continues. Encoded or transformed values cannot be recognised, so this is protection against accidental disclosure rather than a boundary against a hostile command.
+Settings → Environments lets you define reusable values and assign one environment to several workspaces. Tasks inherit the selected values on their execution computer, including local computers and optional hosted task computers. Values are encrypted at rest and management screens return names only. Providers and their commands can read assigned values. Remy redacts exact values from supported output paths, but encoded or transformed values are not recognised; this is not a boundary against a hostile command.
 
 `⌘K` gets you anywhere, and tells you which threads need you.
 

@@ -1,3 +1,4 @@
+import { taskEnvironment } from "./environments.js";
 import { withAppUpdateGuard } from "./app-update.js";
 import { getKv, setKv } from "./db.js";
 import type { ThreadMember } from "@remy/contract";
@@ -237,6 +238,7 @@ export function agentEnvironment(agent?: Agent): NodeJS.ProcessEnv {
 }
 
 interface ChatPrompt {
+  environment:Record<string,string>;
   text: string;
   attachments: ChatImageAttachment[];
 }
@@ -433,7 +435,7 @@ This is the agent's Inbox conversation. When the person signals that something s
     const agentText = [remembered, ticketContext, routineContext, referenceContext, agentContext, safeText]
       .filter(Boolean)
       .join("\n\n");
-    const agentPrompt: ChatPrompt = { text: agentText, attachments };
+    const agentPrompt: ChatPrompt = { text: agentText, attachments, environment:await taskEnvironment(this.record.cwd,this.record.id) };
     this.append({
       id: entryId,
       kind: "user",
@@ -580,11 +582,19 @@ This is the agent's Inbox conversation. When the person signals that something s
     }
   }
 
+  private environmentSignature = "";
   private async providerTurn(prompt: ChatPrompt): Promise<void> {
     const agent = this.record.agentId ? getAgent(this.record.agentId) : undefined;
     this.activePermissionMode = this.record.permissionMode;
     let run: ProviderRun;
     try {
+      const environment = prompt.environment;
+      const signature = JSON.stringify(environment);
+      if (this.providerSession && signature !== this.environmentSignature) {
+        this.providerSession.close();
+        this.providerSession = undefined;
+      }
+      this.environmentSignature = signature;
       if (!this.providerSession) {
         const adapter = providerAdapter(this.record.provider);
         let session!: ProviderSession;
@@ -628,7 +638,7 @@ This is the agent's Inbox conversation. When the person signals that something s
               agentId: this.record.agentId,
               dm: this.record.dm,
             }),
-            env: agentEnvironment(agent),
+            env: { ...agentEnvironment(agent), ...environment },
             entries: this.record.entries,
           },
           {

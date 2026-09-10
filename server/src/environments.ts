@@ -140,7 +140,7 @@ function decrypt(row: Pick<ValueRow, "ciphertext" | "iv" | "tag">): string {
 
 function environmentRows(projectId: string): EnvironmentRow[] {
   return db.prepare(
-    "select * from workspace_environments where project_id = ? order by name collate nocase, id",
+    "select * from workspace_environments where (project_id = ? or project_id = '*') order by name collate nocase, id",
   ).all(projectId) as unknown as EnvironmentRow[];
 }
 
@@ -158,14 +158,14 @@ function selection(projectId: string): SelectionRow | undefined {
 }
 
 function assertProject(projectId: string): void {
-  if (!getProject(projectId)) throw new Error("no such workspace");
+  if (projectId !== "*" && !getProject(projectId)) throw new Error("no such workspace");
 }
 
 function environment(id: string, projectId?: string): EnvironmentRow {
   const row = db.prepare("select * from workspace_environments where id = ? and deleted = 0").get(id) as
     | EnvironmentRow
     | undefined;
-  if (!row || (projectId && row.project_id !== projectId)) throw new Error("no such environment");
+  if (!row || (projectId && row.project_id !== projectId && row.project_id !== "*")) throw new Error("no such environment");
   return row;
 }
 
@@ -226,7 +226,7 @@ export function createEnvironment(projectId: string, askedName: unknown): Worksp
     db.prepare(
       "insert into workspace_environments (id, project_id, name, updated_at, device_id, deleted) values (?, ?, ?, ?, ?, 0)",
     ).run(id, projectId, name, at, deviceId);
-    if (needsSelection) {
+    if (needsSelection && projectId !== "*") {
       db.prepare(
         `insert into workspace_environment_selection (project_id, environment_id, updated_at, device_id)
          values (?, ?, ?, ?)
@@ -300,6 +300,9 @@ export function deleteEnvironment(projectId: string, environmentId: string): voi
        set deleted = 1, ciphertext = null, iv = null, tag = null, updated_at = ?, device_id = ?
        where environment_id = ?`,
     ).run(at, deviceId, row.id);
+    if (row.project_id === "*") {
+      db.prepare("update workspace_environment_selection set environment_id = '', updated_at = ?, device_id = ? where environment_id = ?").run(at, deviceId, row.id);
+    }
     if (active?.environment_id === row.id) {
       const next = environmentRows(projectId).find((candidate) => candidate.id !== row.id && candidate.deleted === 0);
       if (next) {
@@ -318,7 +321,7 @@ export function deleteEnvironment(projectId: string, environmentId: string): voi
 
 function variableName(value: unknown): string {
   const name = typeof value === "string" ? value.trim() : "";
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error(`${name || "a value"} is not a valid variable name`);
+  if (!validTaskVariable(name)) throw new Error(`${name || "a value"} is not a valid variable name`);
   return name;
 }
 
@@ -463,7 +466,8 @@ async function environmentForCwd(cwd: string): Promise<{
   environment: EnvironmentRow;
   values: Record<string, string>;
 }> {
-  const canonical = realpathSync(cwd);
+  let canonical: string;
+  try { canonical=realpathSync(cwd); } catch { canonical=resolve(cwd); }
   const workspaces = await listWorkspaces();
   const workspace = workspaces.find((candidate) => {
     const roots = [candidate.path, ...candidate.worktrees.map((worktree) => worktree.path)].map((path) => resolve(path));
@@ -767,4 +771,71 @@ export function mergeEnvironmentSync(input: unknown): number {
     }
   });
   return changed;
+}
+
+/// Supplies the assigned workspace values to a task on its execution computer.
+export async function taskEnvironment(cwd: string, chatId?: string): Promise<Record<string,string>> {
+  if (chatId) {
+    const stored=getKv<ReturnType<typeof encrypt>>(`taskEnvironment:${chatId}`);
+    if(stored) {
+      const values=JSON.parse(decrypt(stored)) as Record<string,string>;
+      cleartextCache.set(`task:${chatId}`,[...new Set([...(cleartextCache.get(`task:${chatId}`)??[]),...Object.values(values).filter(Boolean)])]);
+      return values;
+    }
+  }
+  try { return (await environmentForCwd(cwd)).values; }
+  catch (error) {
+    if (error instanceof Error && ["this workspace has no active environment", "this thread is not in a registered workspace"].includes(error.message)) return {};
+    throw error;
+  }
+}
+
+export function sharedEnvironmentAssignments() {
+  return db.prepare("select project_id as projectId, environment_id as environmentId from workspace_environment_selection where project_id != '*'").all();
+}
+
+/// Accepts only the environment delivered by an authenticated hub for this thread.
+export function setTaskEnvironment(chatId:string,input:unknown) {
+  const profile=input as {values?:unknown} | null;
+  const values=profile?.values ?? {};
+  if(!values || typeof values!=="object" || Array.isArray(values))throw Error("Your environment is invalid.");
+  const entries=Object.entries(values);
+  if(entries.length>200 || JSON.stringify(values).length>64000 || entries.some(([name,value])=>!validTaskVariable(name) || typeof value!=="string"))throw Error("Your environment is invalid.");
+  setKv(`taskEnvironment:${chatId}`,encrypt(JSON.stringify(values)));
+  cleartextCache.set(`task:${chatId}`,[...new Set([...(cleartextCache.get(`task:${chatId}`)??[]),...entries.map(([,value])=>String(value)).filter(Boolean)])]);
+}
+function validTaskVariable(name:string) {
+  return /^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(name) && !/^(?:__proto__$|constructor$|prototype$|MC_|REMY_|NODE_OPTIONS$|CODEX_HOME$|CLAUDE_CONFIG_DIR$)/.test(name);
+}
+
+export async function applyHubEnvironments(org:string,input:unknown) {
+  const rows=(input as {workspaces?:{localId:string;profile:{id:string;name:string;values:Record<string,string>;updatedAt:number}|null}[]})?.workspaces;
+  if(!Array.isArray(rows))throw Error("Your workspace environments could not sync.");
+  const {syncProjectBindings}=await import("./projects.js");await syncProjectBindings();
+  const previous=getKv<string[]>(`hubEnvironmentProjects:${org}`)??[];
+  const current:string[]=[];
+  const records:EnvironmentSyncRecord[]=[];
+  for(const entry of rows) {
+    const project=projectForWorkspace(entry.localId);if(!project)continue;
+    current.push(project.id);
+    const id=entry.profile?`hub:${org}:${entry.profile.id}`:"";
+    const at=nextTimestamp();
+    if(entry.profile) {
+      records.push({kind:"environment",projectId:"*",environmentId:id,name:entry.profile.name,updatedAt:at,deviceId:`hub:${org}`});
+      const oldNames=valueRows(id).map(v=>v.name);
+      for(const [name,value] of Object.entries(entry.profile.values)) {
+        if(!validTaskVariable(name)||typeof value!=="string")throw Error("Your environment contains an invalid value.");
+        records.push({kind:"value",projectId:"*",environmentId:id,name,value,updatedAt:at,deviceId:`hub:${org}`});
+      }
+      for(const name of oldNames)if(!(name in entry.profile.values))records.push({kind:"value",projectId:"*",environmentId:id,name,deleted:true,updatedAt:at,deviceId:`hub:${org}`});
+    }
+    const selected=selection(project.id)?.environment_id;
+    if(id || selected?.startsWith(`hub:${org}:`))records.push({kind:"selection",projectId:project.id,environmentId:id,updatedAt:at,deviceId:`hub:${org}`});
+  }
+  for(const projectId of previous)if(!current.includes(projectId)&&selection(projectId)?.environment_id.startsWith(`hub:${org}:`))records.push({kind:"selection",projectId,environmentId:"",updatedAt:nextTimestamp(),deviceId:`hub:${org}`});
+  const retained=new Set(rows.flatMap(entry=>entry.profile?[`hub:${org}:${entry.profile.id}`]:[]));
+  for(const row of environmentRows("*"))if(row.id.startsWith(`hub:${org}:`)&&!retained.has(row.id))records.push({kind:"environment",projectId:"*",environmentId:row.id,name:row.name,deleted:true,updatedAt:nextTimestamp(),deviceId:`hub:${org}`});
+  mergeEnvironmentSync(records);
+  setKv(`hubEnvironmentProjects:${org}`,current);
+  const {broadcast}=await import("./notify.js");broadcast({type:"environments"});
 }

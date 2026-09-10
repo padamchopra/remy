@@ -448,6 +448,7 @@ export const hostedSettingsSchema = z.object({
   region: z.string().regex(/^[a-z0-9-]{0,40}$/).default(""),
   cpu: z.number().min(0.25).max(16).default(1),
   memoryMiB: z.number().int().min(512).max(32768).default(2048),
+  maxComputers: z.number().int().min(1).max(100).default(5),
   idleMinutes: z.number().int().min(10).max(15).default(12),
 });
 export type HostedSettings = z.infer<typeof hostedSettingsSchema>;
@@ -460,6 +461,7 @@ export type HostedCodexAccount = {
   apiKeyConfigured: boolean;
 };
 export type HostedComputerState = {
+  taskId?: string;
   workspaceId: string; computerId: string; provider: HostedSettings["provider"];
   phase: "allocating" | "restoring" | "ready" | "checkpointing" | "asleep" | "failed";
   lastUsedAt: number; error?: string;

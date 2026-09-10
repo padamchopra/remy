@@ -6,6 +6,7 @@ import type {
   ProvisionComputerInput,
 } from "./computer-runtime.js";
 type State = HostedComputerState & {
+  taskTitle?:string;
   runtime?: ComputerRuntime;
   settings: HostedSettings;
   meteredAt: number;
@@ -30,19 +31,19 @@ export class HostedLifecycle {
     private readonly now: () => number = Date.now,
     private readonly connected: (id: string) => boolean = () => true,
   ) {}
-  private key(workspace: string) {
-    return `hosted:${workspace}`;
+  private key(workspace: string, taskId?: string) {
+    return taskId ? `hosted:task:${taskId}` : `hosted:${workspace}`;
   }
   async list() {
     return [
       ...(await this.storage.list<State>({ prefix: "hosted:" })).values(),
     ];
   }
-  async get(workspace: string) {
-    return this.storage.get<State>(this.key(workspace));
+  async get(workspace: string, taskId?: string) {
+    return this.storage.get<State>(this.key(workspace, taskId));
   }
   private async save(state: State) {
-    await this.storage.put(this.key(state.workspaceId), state);
+    await this.storage.put(this.key(state.workspaceId, state.taskId), state);
     return state;
   }
   private async meter(state: State) {
@@ -85,20 +86,30 @@ export class HostedLifecycle {
       if (this.running.get(workspace) === work) this.running.delete(workspace);
     }
   }
-  async ensure(workspaceId: string, settings: HostedSettings): Promise<State> {
-    return this.serial(workspaceId, () => this.wake(workspaceId, settings));
+  async ensure(workspaceId: string, settings: HostedSettings, taskId?: string, taskTitle?:string): Promise<State> {
+    return this.serial("allocation", async () => {
+      const current = await this.get(workspaceId, taskId);
+      if (current && current.workspaceId !== workspaceId) throw new Error("This task belongs to another workspace.");
+      const running = (await this.list()).filter(s => !!s.taskId && s.computerId !== current?.computerId && ["ready", "allocating", "restoring", "checkpointing"].includes(s.phase));
+      if (taskId && running.length >= settings.maxComputers && (!current || current.phase !== "ready"))
+        throw new Error("Your cloud concurrency limit is reached; wait for a computer to sleep or raise the limit.");
+      return this.wake(workspaceId, settings, taskId, taskTitle);
+    });
   }
   private async wake(
     workspaceId: string,
     settings: HostedSettings,
+    taskId?: string,
+    taskTitle?:string,
   ): Promise<State> {
     if (!settings.enabled)
       throw new Error("Enable hosted computers for this workspace.");
     const started = this.now();
-    const state =
-      (await this.get(workspaceId)) ??
+    const state: State =
+      (await this.get(workspaceId, taskId)) ??
       ({
         workspaceId,
+        ...(taskId ? { taskId,...(taskTitle?{taskTitle:taskTitle.slice(0,120)}:{}) } : {}),
         computerId: crypto.randomUUID(),
         provider: settings.provider,
         phase: "allocating",
@@ -140,18 +151,18 @@ export class HostedLifecycle {
       state.phase = "ready";
       state.meteredAt = this.now();
       return await this.save(state);
-    } catch {
+    } catch (cause) {
       state.phase = "failed";
       state.error = "This hosted computer could not start; try again.";
       await this.save(state);
-      throw new Error(state.error);
+      throw new Error(state.error, {cause});
     }
   }
   async activity(computerId: string, active: boolean, usefulResponse = false) {
     let state = (await this.list()).find((s) => s.computerId === computerId);
     if (!state) return;
-    return this.serial(state.workspaceId, async () => {
-      state = await this.get(state!.workspaceId);
+    return this.serial("allocation", async () => {
+      state = await this.get(state!.workspaceId, state!.taskId);
       if (!state) return;
       await this.meter(state);
       if (active && !state.active) state.promptAt = this.now();
@@ -166,8 +177,8 @@ export class HostedLifecycle {
   async remove(computerId: string) {
     let state = (await this.list()).find((s) => s.computerId === computerId);
     if (!state) return;
-    return this.serial(state.workspaceId, async () => {
-      state = await this.get(state!.workspaceId);
+    return this.serial("allocation", async () => {
+      state = await this.get(state!.workspaceId, state!.taskId);
       if (!state) return;
       await this.provider(state.provider).destroy(
         state.runtime ?? {
@@ -176,14 +187,14 @@ export class HostedLifecycle {
           providerReference: "",
         },
       );
-      await this.storage.delete(this.key(state.workspaceId));
+      await this.storage.delete(this.key(state.workspaceId, state.taskId));
       await this.storage.delete(`hosted-key:${computerId}`);
     });
   }
   async idle() {
     for (const entry of await this.list()) {
-      await this.serial(entry.workspaceId, async () => {
-        const state = await this.get(entry.workspaceId);
+      await this.serial("allocation", async () => {
+        const state = await this.get(entry.workspaceId, entry.taskId);
         if (!state) return;
         await this.meter(state);
         const rotate =
@@ -227,7 +238,7 @@ export class HostedLifecycle {
           await this.save(state);
           if (rotate && state.phase === "asleep") {
             try {
-              return await this.wake(state.workspaceId, state.settings);
+              return await this.wake(state.workspaceId, state.settings, state.taskId);
             } catch {
               return;
             }

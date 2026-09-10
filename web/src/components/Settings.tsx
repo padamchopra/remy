@@ -112,6 +112,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNod
 import type { AnalyticsTab } from "@/components/AnalyticsSettings";
 import { SETTINGS_SECTIONS, type SettingsTab } from "@/lib/settings-sections";
 
+const EnvironmentsSettings = lazy(() => import("./EnvironmentsSettings").then(m=>({default:m.EnvironmentsSettings})));
 const AnalyticsSettings = lazy(() => import("@/components/AnalyticsSettings").then((module) => ({
   default: module.AnalyticsSettings,
 })));
@@ -149,7 +150,7 @@ export function SettingsPane({
       <PaneHeader crumbs={[{ label: "Settings" }, { label: section.label }]} />
       <ScrollArea className="min-h-0 flex-1">
         <div className={cn("mx-auto flex w-full flex-col gap-6 px-5 py-6", tab === "analytics" ? "max-w-6xl" : "max-w-2xl")}>
-          {tab === "devices" ? (
+          {tab === "environments" ? (<Suspense fallback={<p>Reading environments…</p>}><EnvironmentsSettings organizationId={organizationId} /></Suspense>) : tab === "devices" ? (
             <DevicesPane organizationId={organizationId} />
           ) : tab === "version-control" ? (
             <VersionControlPane />

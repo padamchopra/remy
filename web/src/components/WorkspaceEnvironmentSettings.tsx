@@ -386,7 +386,7 @@ export function WorkspaceEnvironmentSettings({ workspace }: { workspace: Workspa
       <Field orientation="responsive" className="items-start">
         <FieldContent>
           <FieldLabel>Environment</FieldLabel>
-          <FieldDescription>Values sync between your devices and stay outside agent processes.</FieldDescription>
+          <FieldDescription>Your tasks use the selected values on this computer; shared environments are managed in Settings.</FieldDescription>
         </FieldContent>
         <CreateEnvironmentDialog onCreate={create} />
       </Field>
