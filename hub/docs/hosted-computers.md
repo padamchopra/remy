@@ -2,6 +2,10 @@
 
 WRK-15 and WRK-103–108 add one hosted computer per workspace. Organization defaults are overridden in Computers; an unset workspace inherits defaults. Hosting is disabled until an administrator enables it. Local Remy does not call or require this service.
 
+## Computer sizes
+
+Fly Sprites manages resources automatically; Remy does not send CPU, memory or region overrides to its create API. Modal offers Light (0.5 CPU, 1 GiB), Standard (1 CPU, 2 GiB) and Heavy (4 CPU, 8 GiB) starting points. Standard matches the existing defaults. Customize exposes Modal CPU, memory and region plus idle time for either provider. Presets only fill resource values; saved settings and workspace inheritance remain unchanged. Existing computers retain their allocation until a new allocation applies the settings.
+
 ## Deployment
 
 Apply migration 0009. Build `hub/runtime/Dockerfile` with the repository as its context. Run it behind HTTPS with `REMY_RUNTIME_TOKEN` (at least 32 random characters), and vendor credentials supplied through your deployment secret manager: Modal's supported token environment variables and/or `SPRITES_TOKEN`. The service defaults to loopback; its container binds its own service port, never the Remy computer's port 8420. Do not expose the service without TLS and the credential.
@@ -27,3 +31,7 @@ The browser QA covers defaults, workspace overrides/reset, member denial, key co
 Live Fly verification awaits a configured organization. A real model conversation and first-useful-response measurement await an organization API key. Modal rotates at 23 hours, before its 24-hour limit: it interrupts active turns, saves their provider transcripts, checkpoints and restores the same computer. Remy sends a visible continuation with a stable deduplication key; pending questions and approvals are requested again, never granted by the restart. This briefly interrupts work and does not preserve in-memory shells. Keep this change in draft until the live provider/model gates are resolved.
 
 A directory-only snapshot into a pre-warmed base would require a second allocation plus explicit reconstruction of SQLite, repository and provider transcript state. The measured full-filesystem restore is already 3.3 seconds and preserves all three together; retain filesystem restore until a directory prototype demonstrates a material improvement. This is an architectural evaluation, not a measured directory-snapshot comparison.
+
+## Preset price estimates
+
+Modal presets show approximate USD compute costs per running hour: Light $0.09, Standard $0.19 and Heavy $0.76. Custom values recalculate immediately. These use the [Modal Sandbox rates](https://modal.com/pricing) checked September 10, 2026: $0.00003942 per physical CPU core-second and $0.00000667 per GiB-second. Running time includes warm idle time; higher actual usage and region surcharges increase the cost. Storage and model charges are separate, and estimates exclude credits and taxes. Fly uses automatic resources rather than these presets.

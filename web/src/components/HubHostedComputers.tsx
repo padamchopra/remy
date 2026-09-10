@@ -8,7 +8,12 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { Field, FieldLabel, FieldDescription } from "@/components/ui/field";
+import {
+  Field,
+  FieldGroup,
+  FieldLabel,
+  FieldDescription,
+} from "@/components/ui/field";
 import {
   Select,
   SelectTrigger,
@@ -20,6 +25,41 @@ import {
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { useHubResource, type HubWorkspace } from "@/lib/hub-organization";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+
+// Modal Sandbox USD rates checked 2026-09-10: https://modal.com/pricing.
+const hourlyCompute = (cpu: number, memoryMiB: number) =>
+  ((cpu * 0.00003942 + (memoryMiB / 1024) * 0.00000667) * 3600).toFixed(2);
+
+const sizes = [
+  {
+    id: "light",
+    label: "Light",
+    cpu: 0.5,
+    memoryMiB: 1024,
+    description: "Small edits and occasional tasks.",
+  },
+  {
+    id: "standard",
+    label: "Standard",
+    cpu: 1,
+    memoryMiB: 2048,
+    description: "Recommended for everyday coding and tests.",
+  },
+  {
+    id: "heavy",
+    label: "Heavy",
+    cpu: 4,
+    memoryMiB: 8192,
+    description: "More room for large builds and demanding tasks.",
+  },
+] as const;
+
 type Response = {
   settings: HostedSettings;
   secretNames: string[];
@@ -38,6 +78,8 @@ export function HubHostedComputers({
     "/workspaces",
   );
   const [workspace, setWorkspace] = useState("");
+  const [customize, setCustomize] = useState(false);
+  const [customSize, setCustomSize] = useState(false);
   const [settings, setSettings] = useState<HostedSettings>(
     hostedSettingsSchema.parse({}),
   );
@@ -64,6 +106,8 @@ export function HubHostedComputers({
       .then(async (data) => {
         if (!current) return;
         setSettings(data.settings);
+        setCustomize(false);
+        setCustomSize(false);
         setNames(data.secretNames);
         setAvailable(data.available);
         if (workspace) {
@@ -132,6 +176,10 @@ export function HubHostedComputers({
       setBusy(false);
     }
   };
+  const size = sizes.find(
+    (size) =>
+      size.cpu === settings.cpu && size.memoryMiB === settings.memoryMiB,
+  );
   return (
     <Card>
       <CardHeader>
@@ -161,8 +209,7 @@ export function HubHostedComputers({
             </SelectContent>
           </Select>
           <FieldDescription>
-            Each workspace inherits your defaults until you
-            change them.
+            Each workspace inherits your defaults until you change them.
           </FieldDescription>
         </Field>
         {!available && (
@@ -171,111 +218,190 @@ export function HubHostedComputers({
           </p>
         )}
         <form
-          className="grid gap-4 sm:grid-cols-2"
+          className="flex flex-col gap-4"
           onSubmit={(e) => {
             e.preventDefault();
             void save({ settings });
           }}
         >
-          <Field orientation="horizontal" className="sm:col-span-2">
-            <Switch
-              id="hosted-enabled"
-              checked={settings.enabled}
-              disabled={!admin || busy || loading}
-              onCheckedChange={(enabled) =>
-                setSettings({ ...settings, enabled })
-              }
-            />
-            <FieldLabel htmlFor="hosted-enabled">
-              Allow hosted computers
-            </FieldLabel>
-          </Field>
-          <Field>
-            <FieldLabel>Provider</FieldLabel>
-            <Select
-              value={settings.provider}
-              disabled={!admin || busy || loading}
-              onValueChange={(provider) =>
-                setSettings({
-                  ...settings,
-                  provider: provider as HostedSettings["provider"],
-                })
-              }
-            >
-              <SelectTrigger aria-label="Hosted provider">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem value="fly-sprites">Fly Sprites</SelectItem>
-                  <SelectItem value="modal">Modal</SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="hosted-region">Region</FieldLabel>
-            <Input
-              id="hosted-region"
-              value={settings.region}
-              placeholder="Provider default"
-              disabled={!admin || busy || loading}
-              onChange={(e) =>
-                setSettings({ ...settings, region: e.target.value })
-              }
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="hosted-cpu">CPU cores</FieldLabel>
-            <Input
-              id="hosted-cpu"
-              type="number"
-              min={0.25}
-              max={16}
-              step={0.25}
-              value={settings.cpu}
-              disabled={!admin || busy || loading}
-              onChange={(e) =>
-                setSettings({ ...settings, cpu: Number(e.target.value) })
-              }
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="hosted-memory">Memory (MiB)</FieldLabel>
-            <Input
-              id="hosted-memory"
-              type="number"
-              min={512}
-              max={32768}
-              value={settings.memoryMiB}
-              disabled={!admin || busy || loading}
-              onChange={(e) =>
-                setSettings({ ...settings, memoryMiB: Number(e.target.value) })
-              }
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="hosted-idle">
-              Stay warm after work (minutes)
-            </FieldLabel>
-            <Input
-              id="hosted-idle"
-              type="number"
-              min={10}
-              max={15}
-              value={settings.idleMinutes}
-              disabled={!admin || busy || loading}
-              onChange={(e) =>
-                setSettings({
-                  ...settings,
-                  idleMinutes: Number(e.target.value),
-                })
-              }
-            />
-            <FieldDescription>
-              You pay for this time even when no thread is running.
-            </FieldDescription>
-          </Field>
+          <FieldGroup>
+            <Field orientation="horizontal" className="sm:col-span-2">
+              <Switch
+                id="hosted-enabled"
+                checked={settings.enabled}
+                disabled={!admin || busy || loading}
+                onCheckedChange={(enabled) =>
+                  setSettings({ ...settings, enabled })
+                }
+              />
+              <FieldLabel htmlFor="hosted-enabled">
+                Allow hosted computers
+              </FieldLabel>
+            </Field>
+            <Field>
+              <FieldLabel>Provider</FieldLabel>
+              <Select
+                value={settings.provider}
+                disabled={!admin || busy || loading}
+                onValueChange={(provider) =>
+                  setSettings({
+                    ...settings,
+                    provider: provider as HostedSettings["provider"],
+                  })
+                }
+              >
+                <SelectTrigger aria-label="Hosted provider">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem value="fly-sprites">Fly Sprites</SelectItem>
+                    <SelectItem value="modal">Modal</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field>
+              <FieldLabel>Computer size</FieldLabel>
+              {settings.provider === "fly-sprites" ? (
+                <FieldDescription>
+                  Fly Sprites manages your resources automatically.
+                </FieldDescription>
+              ) : (
+                <>
+                  <ToggleGroup
+                    type="single"
+                    variant="outline"
+                    aria-label="Computer size"
+                    className="grid w-full max-w-sm grid-cols-4 items-stretch"
+                    value={customSize ? "custom" : (size?.id ?? "custom")}
+                    disabled={!admin || busy || loading}
+                    onValueChange={(id) => {
+                      if (!id) return;
+                      if (id === "custom") {
+                        setCustomize(true);
+                        setCustomSize(true);
+                        return;
+                      }
+                      setCustomSize(false);
+                      const next = sizes.find((size) => size.id === id);
+                      if (next)
+                        setSettings({
+                          ...settings,
+                          cpu: next.cpu,
+                          memoryMiB: next.memoryMiB,
+                        });
+                    }}
+                  >
+                    {sizes.map((size) => (
+                      <ToggleGroupItem key={size.id} value={size.id} aria-label={size.label} className="h-auto flex-col gap-1 px-1 py-2">
+                        <span>{size.label}</span>
+                        <span className="text-xs font-normal">~${hourlyCompute(size.cpu, size.memoryMiB)}/hr</span>
+                      </ToggleGroupItem>
+                    ))}
+                    <ToggleGroupItem value="custom" className="h-auto">Custom</ToggleGroupItem>
+                  </ToggleGroup>
+                  <FieldDescription>
+                    {size?.description ?? "Your custom resource allocation."}{" "}
+                    {settings.cpu} CPU cores · {settings.memoryMiB / 1024} GiB memory.
+                  </FieldDescription>
+                  <FieldDescription role="status">
+                    About ${hourlyCompute(settings.cpu, settings.memoryMiB)} USD per running hour at your selected resources, including warm idle time.
+                  </FieldDescription>
+                  <FieldDescription>
+                    Extra usage and region surcharges cost more; storage and model charges are separate, before credits and taxes.{" "}
+                    <a href="https://modal.com/pricing" target="_blank" rel="noreferrer" className="underline underline-offset-4">Modal pricing</a>
+                  </FieldDescription>
+                </>
+              )}
+            </Field>
+            <Collapsible open={customize} onOpenChange={setCustomize}>
+              <CollapsibleTrigger asChild>
+                <Button type="button" variant="outline">
+                  Customize
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="pt-4">
+                <FieldGroup>
+                  {settings.provider === "modal" && (
+                    <>
+                      <Field>
+                        <FieldLabel htmlFor="hosted-region">Region</FieldLabel>
+                        <Input
+                          id="hosted-region"
+                          value={settings.region}
+                          placeholder="Provider default"
+                          disabled={!admin || busy || loading}
+                          onChange={(e) =>
+                            setSettings({ ...settings, region: e.target.value })
+                          }
+                        />
+                      </Field>
+                      <Field>
+                        <FieldLabel htmlFor="hosted-cpu">CPU cores</FieldLabel>
+                        <Input
+                          id="hosted-cpu"
+                          type="number"
+                          min={0.25}
+                          max={16}
+                          step={0.25}
+                          value={settings.cpu}
+                          disabled={!admin || busy || loading}
+                          onChange={(e) =>
+                            setSettings({
+                              ...settings,
+                              cpu: Number(e.target.value),
+                            })
+                          }
+                        />
+                      </Field>
+                      <Field>
+                        <FieldLabel htmlFor="hosted-memory">
+                          Memory (MiB)
+                        </FieldLabel>
+                        <Input
+                          id="hosted-memory"
+                          type="number"
+                          min={512}
+                          max={32768}
+                          value={settings.memoryMiB}
+                          disabled={!admin || busy || loading}
+                          onChange={(e) =>
+                            setSettings({
+                              ...settings,
+                              memoryMiB: Number(e.target.value),
+                            })
+                          }
+                        />
+                      </Field>
+                    </>
+                  )}
+                  <Field>
+                    <FieldLabel htmlFor="hosted-idle">
+                      Stay warm after work (minutes)
+                    </FieldLabel>
+                    <Input
+                      id="hosted-idle"
+                      type="number"
+                      min={10}
+                      max={15}
+                      value={settings.idleMinutes}
+                      disabled={!admin || busy || loading}
+                      onChange={(e) =>
+                        setSettings({
+                          ...settings,
+                          idleMinutes: Number(e.target.value),
+                        })
+                      }
+                    />
+                    <FieldDescription>
+                      You pay for this time even when no thread is running.
+                    </FieldDescription>
+                  </Field>
+                </FieldGroup>
+              </CollapsibleContent>
+            </Collapsible>
+          </FieldGroup>
           {admin && (
             <div className="flex items-end gap-2">
               <Button disabled={busy || loading} type="submit">
