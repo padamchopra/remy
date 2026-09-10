@@ -1109,6 +1109,11 @@ for (const stored of loadChats(MAX_ENTRIES)) {
   );
 }
 
+/// Applies changed account credentials on the next turn without interrupting active work.
+export function refreshProviderSessions(provider: ProviderId): void {
+  for (const chat of chats.values()) if (chat.record.provider === provider) chat.reconfigure();
+}
+
 /// Why chats cannot be used on this server, if they can't. Surfaced by the API
 /// so the app explains itself instead of showing an empty list.
 export function chatsUnavailable(): string | undefined {

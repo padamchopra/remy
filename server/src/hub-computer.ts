@@ -258,6 +258,14 @@ export class HubComputerConnection {
 
   private async proxy(socket: WebSocket, frame: Extract<HubToComputerFrame, { kind: "request" }>): Promise<void> {
     try {
+      if (frame.path.startsWith("/hub/codex-account")) {
+        const { hostedCodexAccountRequest } = await import("./hosted-codex-account.js");
+        const response = await hostedCodexAccountRequest(frame.method, frame.path, () => {
+          if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify({ kind: "account.changed" }));
+        });
+        if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ kind: "response", id: frame.id, status: response.status, headers: { "content-type": "application/json", "cache-control": "no-store" }, body: base64url(await response.text()) }));
+        return;
+      }
       if (frame.path.startsWith("/hub/threads")) {
         if (!frame.actor || frame.body.length > 128_000) throw new Error("Invalid thread request");
         const input = frame.body ? JSON.parse(Buffer.from(frame.body, "base64url").toString()) : {};

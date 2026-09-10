@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync, chmodSync } from "node:fs";
+import { mkdirSync, chmodSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
 const raw = process.env.REMY_HOSTED_BOOTSTRAP;
@@ -16,12 +16,9 @@ process.env.CODEX_HOME = "/data/codex";
 process.env.CLAUDE_CONFIG_DIR = "/data/claude";
 mkdirSync(process.env.CODEX_HOME, { recursive: true });
 mkdirSync(process.env.CLAUDE_CONFIG_DIR, { recursive: true });
-writeFileSync(
-  `${process.env.CODEX_HOME}/config.toml`,
-  'model_provider = "remy_openai"\n[model_providers.remy_openai]\nname = "OpenAI"\nbase_url = "https://api.openai.com/v1"\nwire_api = "responses"\nenv_key = "OPENAI_API_KEY"\nrequires_openai_auth = false\n',
-  { mode: 0o600 },
-);
 const { setKv, getKv } = await import("./db.js");
+const { configureHostedCodex } = await import("./hosted-codex-account.js");
+configureHostedCodex(process.env.CODEX_HOME, getKv<boolean>("hostedCodexConnected") === true);
 setKv("deviceId", bootstrap.registration.computerId);
 setKv("hubComputerPrivateKey", bootstrap.privateKey);
 setKv("hubComputerRegistration", bootstrap.registration);
