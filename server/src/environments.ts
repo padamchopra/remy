@@ -802,7 +802,7 @@ export function setTaskEnvironment(chatId:string,input:unknown) {
   const entries=Object.entries(values);
   if(entries.length>200 || JSON.stringify(values).length>64000 || entries.some(([name,value])=>!validTaskVariable(name) || typeof value!=="string"))throw Error("Your environment is invalid.");
   setKv(`taskEnvironment:${chatId}`,encrypt(JSON.stringify(values)));
-  cleartextCache.set(`task:${chatId}`,[...new Set([...(cleartextCache.get(`task:${chatId}`)??[]),...entries.map(([,value])=>String(value)).filter(Boolean))]);
+  cleartextCache.set(`task:${chatId}`,[...new Set([...(cleartextCache.get(`task:${chatId}`)??[]),...entries.map(([,value])=>String(value)).filter(Boolean)])]);
 }
 function validTaskVariable(name:string) {
   return /^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(name) && !/^(?:__proto__$|constructor$|prototype$|MC_|REMY_|NODE_OPTIONS$|CODEX_HOME$|CLAUDE_CONFIG_DIR$)/.test(name);
