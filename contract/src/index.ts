@@ -189,6 +189,7 @@ export type HubNotification = HubNotificationInput & { computerId: string; compu
 
 const proxyHeadersSchema = z.record(z.string(), z.string());
 export const computerToHubFrameSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("account.changed") }),
   z.object({ kind: z.literal("notification"), notification: hubNotificationInputSchema }),
   z.object({ kind: z.literal("thread.snapshot"), snapshot: threadSnapshotSchema }),
   z.object({ kind: z.literal("thread.manifest"), ids: z.array(z.string().uuid()) }),
@@ -450,6 +451,14 @@ export const hostedSettingsSchema = z.object({
   idleMinutes: z.number().int().min(10).max(15).default(12),
 });
 export type HostedSettings = z.infer<typeof hostedSettingsSchema>;
+export type HostedCodexAccount = {
+  phase: "signedOut" | "pending" | "connected" | "error";
+  email?: string;
+  userCode?: string;
+  verificationUrl?: string;
+  error?: string;
+  apiKeyConfigured: boolean;
+};
 export type HostedComputerState = {
   workspaceId: string; computerId: string; provider: HostedSettings["provider"];
   phase: "allocating" | "restoring" | "ready" | "checkpointing" | "asleep" | "failed";

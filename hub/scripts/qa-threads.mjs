@@ -1,3 +1,4 @@
+import { startHostedCodexFixture } from "./qa-codex-account.mjs";
 import { startConnectionProvider } from "./qa-connection-provider.mjs";
 import { createServer } from "node:http";
 import { builtinModules } from "node:module";
@@ -22,6 +23,8 @@ const temp = mkdtempSync(join(tmpdir(), "remy-thread-qa-"));
 for (const key of Object.keys(process.env))
   if (/^(MC_|REMY_)/.test(key)) delete process.env[key];
 process.env.MC_CONFIG_DIR = join(temp, "computer");
+const codexFixture = process.env.QA_CODEX_ACCOUNT ? await startHostedCodexFixture(temp, root) : undefined;
+if (codexFixture) { process.env.QA_HOSTED = "1"; process.env.QA_HOSTED_CONTROL = codexFixture.url; }
 const workspacePath = join(temp, "release-workspace");
 mkdirSync(workspacePath);
 execFileSync("git", ["init", "-q", workspacePath]);
@@ -108,6 +111,7 @@ const mf = new Miniflare(
   }),
 );
 const hubUrl = (await mf.ready).origin;
+codexFixture?.setHubUrl(hubUrl);
 if(process.env.QA_LINEAR)oauth?.bindHub(hubUrl);
 const db = await mf.getD1Database("DB");
 for (const file of readdirSync(join(root, "hub/migrations"))
@@ -326,6 +330,15 @@ const control = createServer(async (req, res) => {
   }
   const controlPath = new URL(req.url, "http://127.0.0.1");
   const askedThread = controlPath.searchParams.get("threadId") ?? thread.id;
+  if (codexFixture && controlPath.pathname.startsWith("/codex-")) {
+    if (controlPath.pathname === "/codex-approve") codexFixture.approve();
+    else if (controlPath.pathname === "/codex-fail") codexFixture.approve(false);
+    else if (controlPath.pathname === "/codex-disconnect") codexFixture.disconnect();
+    else if (controlPath.pathname === "/codex-reconnect") codexFixture.reconnect();
+    else if (controlPath.pathname === "/codex-restart") await codexFixture.restartAccount();
+    else { res.writeHead(404).end(); return; }
+    res.writeHead(204).end(); return;
+  }
   if(controlPath.pathname === "/linear") {res.setHeader("content-type","application/json");res.end(JSON.stringify({issues:[...(oauth?.linearIssues.values()??[])],comments:[...(oauth?.linearComments.values()??[])]}));return;}
   if(controlPath.pathname === "/linear-edit" && req.method==="POST") {try{let raw="";for await(const part of req)raw+=part;const input=JSON.parse(raw);await oauth.changeIssue(input.id,input.patch);res.writeHead(204);res.end();}catch{res.writeHead(400);res.end();}return;}
   if(controlPath.pathname === "/github") {res.setHeader("content-type","application/json");res.end(JSON.stringify({actions:oauth?.actions,comments:oauth?.comments}));return;}
@@ -384,6 +397,8 @@ console.log(
 );
 const cleanup = async () => {
   connection.stop();
+  codexFixture?.close();
+  if(codexFixture) await codexFixture.restartAccount();
   control.close();
   oauth?.close();
   await mf.dispose();

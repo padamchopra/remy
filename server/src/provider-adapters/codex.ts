@@ -377,6 +377,7 @@ export function createCodexSession(
 }
 
 class AppServerSession implements CodexSession {
+  private readonly hostedModelProvider = process.env.REMY_HOSTED_CODEX_PROVIDER;
   private child: ChildProcessWithoutNullStreams;
   private nextId = 1;
   private requests = new Map<number | string, PendingRequest>();
@@ -496,6 +497,7 @@ class AppServerSession implements CodexSession {
     const roots = [this.options.cwd, ...(this.options.additionalDirectories ?? [])];
     const permissions = codexPermissions(this.options.permissionMode, [this.options.cwd]);
     const common = {
+      ...(this.hostedModelProvider ? { modelProvider: this.hostedModelProvider } : {}),
       cwd: this.options.cwd,
       ...(this.options.model ? { model: this.options.model } : {}),
       ...(this.options.effort ? { modelReasoningEffort: this.options.effort } : {}),

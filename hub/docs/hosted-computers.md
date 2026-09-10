@@ -12,9 +12,19 @@ Apply migration 0009. Build `hub/runtime/Dockerfile` with the repository as its 
 
 Bind the hub's `HOSTED_CONTROL_TOKEN` Secret Store entry to the same credential. Set `HOSTED_CONTROL_URL`, `HOSTED_IMAGE` to the version-tagged GHCR computer image, and `HOSTED_ARCHIVE` to that release's Linux archive. The macOS release workflow publishes these independently after the DMG release. Vendor credentials and the control credential never reach a hosted computer.
 
-Administrators add organization model API keys in Computers. They are AES-GCM encrypted in D1 with organization-bound authenticated data and a key derived from AUTH_SECRET. Back up that secret: rotation requires re-encrypting the records. Reads return configured names only. Bootstrap injects keys into process environments; Codex's configuration refers to OPENAI_API_KEY without writing its value. Personal subscription sessions are not copied. A hostile process can deliberately write its own environment; filesystem snapshots are not a protection against that action.
+Administrators add organization model API keys in Computers. They are AES-GCM encrypted in D1 with organization-bound authenticated data and a key derived from AUTH_SECRET. Back up that secret: rotation requires re-encrypting the records. Reads return configured names only. Bootstrap injects keys into process environments; Codex's configuration refers to OPENAI_API_KEY without writing its value. An administrator can also connect Codex to ChatGPT on each hosted computer using the official device-code flow. Codex owns its tokens and refreshes them in `/data/codex`; Remy relays only the short-lived code and account status. A connected account takes precedence over the OpenAI API key for new Codex turns. Disconnecting returns new turns to the configured API key. Claude continues to use the Anthropic API key. A hostile process can deliberately write its own environment; filesystem snapshots are not a protection against that action.
 
 The provider enforces the outbound domain allowlist outside the guest. The computer carries its own Ed25519 identity, never an organization administration credential. The Node control service is trusted management infrastructure and must be isolated from guests.
+
+## Codex sign-in
+
+Select a workspace in Computers, start its hosted computer, then choose Connect Codex. Open OpenAI’s sign-in page and enter the displayed code. Device code login must be enabled in your ChatGPT security settings or workspace permissions. Cancel or retry an expired attempt from the same computer. A successful connection updates the open page without navigation; reconnecting performs a fresh account read.
+
+The connection belongs to the hosted computer, and its threads use that account, including threads started by other authorized workspace members. Only admins with access to the workspace can read or change the connection; computer capabilities cannot call these routes. Credentials never become an organization default, reach the renderer, or cross to another computer. Each hosted computer requires its own connection. `/data` checkpoints contain the Codex credential store: keep provider snapshots private and treat them as credentials. Removing the hosted computer removes its active storage through the existing provider lifecycle; provider-retained historical checkpoints follow that provider’s retention policy.
+
+The computer keeps one authentication app-server process while it runs. Pending codes expire locally and are lost on process restart; completed authentication survives in persistent storage. New turns use the updated connection; an already running turn is not interrupted. The outbound allowlist includes `auth.openai.com`, `chatgpt.com` and `ab.chatgpt.com`. Older computer images without the account handler must be upgraded before connecting.
+
+Official protocol: https://developers.openai.com/codex/app-server/#auth-endpoints. Headless sign-in: https://developers.openai.com/codex/auth/#login-on-headless-devices.
 
 ## Lifecycle and accounting
 

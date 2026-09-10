@@ -175,6 +175,7 @@ let turn = 0;
 let active;
 let threadEffort;
 let threadCwd;
+let modelProvider;
 const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
 const item = (id, text) => ({ type: "agentMessage", id, text, phase: null, memoryCitation: null, delivery: null });
 const complete = (text, status = "completed") => {
@@ -192,6 +193,7 @@ rl.on("line", (line) => {
   if (message.method === "thread/start" || message.method === "thread/resume") {
     threadEffort = message.params.modelReasoningEffort;
     threadCwd = message.params.cwd;
+    modelProvider = message.params.modelProvider;
     return send({ id: message.id, result: { thread: { id: "thread-1" } } });
   }
   if (message.method === "turn/start") {
@@ -218,6 +220,7 @@ rl.on("line", (line) => {
       complete("effort:" + threadEffort + ":" + message.params.modelReasoningEffort);
       return;
     }
+    if (prompt === "provider") { complete(modelProvider || "default"); return; }
     if (prompt === "cwd") {
       complete(JSON.stringify({ processCwd: process.cwd(), threadCwd, turnCwd: message.params.cwd }));
       return;
@@ -377,4 +380,18 @@ test("a missing Codex is a message rather than a hang", async () => {
   );
   await assert.rejects(session.run("hi").done, /could not be started|ENOENT/);
   session.close();
+});
+
+
+test("a resumed hosted thread uses the current account provider", async t => {
+  const previous = process.env.REMY_HOSTED_CODEX_PROVIDER;
+  t.after(() => { if (previous === undefined) delete process.env.REMY_HOSTED_CODEX_PROVIDER; else process.env.REMY_HOSTED_CODEX_PROVIDER = previous; });
+  for (const provider of ["openai", "remy_openai"]) {
+    process.env.REMY_HOSTED_CODEX_PROVIDER = provider;
+    let answer = "";
+    const session = createCodexSession({ ...base, command: fakeAppServer(), threadId: "existing-thread" }, event => {
+      if (event.type === "item.completed" && event.item.type === "agent_message") answer = event.item.text;
+    });
+    try { await session.run("provider").done; assert.equal(answer, provider); } finally { session.close(); }
+  }
 });

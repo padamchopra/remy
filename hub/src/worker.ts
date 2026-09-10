@@ -462,6 +462,19 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         await organizations.member(organizationId, identity.userId);
         return jsonError("Use the thread's own address.", 403);
       }
+      const hostedAccount = /^hosted\/([^/]+)\/codex(?:\/(start|cancel|logout))?$/.exec(tail);
+      if (hostedAccount) {
+        const member = await organizations.member(organizationId, identity.userId);
+        if (member.role === "member") return jsonError("Ask an admin to connect Codex.", 403);
+        if (identity.clientKind === "computer") return jsonError("Connect Codex from Remy.", 403);
+        if (request.headers.get("origin") && request.headers.get("origin") !== url.origin) return jsonError("Connect Codex from Remy.", 403);
+        const workspaceId = decodeURIComponent(hostedAccount[1]);
+        await organizations.workspace(organizationId, identity.userId, workspaceId);
+        if (!(request.method === "GET" && !hostedAccount[2]) && !(request.method === "POST" && hostedAccount[2])) return jsonError("This account action is unavailable.", 405);
+        return board().fetch(new Request(`https://internal/hosted-account/${encodeURIComponent(workspaceId)}${hostedAccount[2] ? `/${hostedAccount[2]}` : ""}`, {
+          method: request.method, headers: { "x-organization-id": organizationId, "x-user-id": identity.userId },
+        }));
+      }
       const hostedMatch = /^hosted(?:\/([^/]+)(?:\/(prewarm|settings))?)?$/.exec(tail);
       if (hostedMatch) {
         const member = await organizations.member(organizationId, identity.userId);
@@ -1019,6 +1032,19 @@ export class HubCoordinator {
     if(removeWorkspace && request.method === "DELETE") { const state = await this.hostedService().get(decodeURIComponent(removeWorkspace[1])); if(state) await this.hostedService().remove(state.computerId); return new Response(null,{status:204}); }
     const removeHosted=/^\/hosted-computers\/([^/]+)$/.exec(url.pathname);
     if(removeHosted && request.method==="DELETE") {try{await this.hostedService().remove(decodeURIComponent(removeHosted[1]));return Response.json({ok:true});}catch{return jsonError("This hosted computer could not be removed; try again.",502);}}
+    const hostedAccount = /^\/hosted-account\/([^/]+)(?:\/(start|cancel|logout))?$/.exec(url.pathname);
+    if (hostedAccount && org && user) {
+      const organizations = new OrganizationService(new D1OrganizationStore(this.env.DB));
+      if ((await organizations.member(org, user)).role === "member") return jsonError("Ask an admin to connect Codex.", 403);
+      await organizations.workspace(org, user, decodeURIComponent(hostedAccount[1]));
+      const state = await this.hostedService().get(decodeURIComponent(hostedAccount[1]));
+      if (!state || state.phase !== "ready") return jsonError("Start your computer to connect Codex.", 409);
+      if (!(request.method === "GET" && !hostedAccount[2]) && !(request.method === "POST" && hostedAccount[2])) return jsonError("This account action is unavailable.", 405);
+      if (request.method === "POST" && state.active && hostedAccount[2] !== "cancel") return jsonError("Wait for running threads to finish before changing your Codex connection.", 409);
+      const response = await this.dispatchComputer(state.computerId, { id: user, label: "Admin" }, request.method,
+        `/hub/codex-account${hostedAccount[2] ? `/${hostedAccount[2]}` : ""}`, {});
+      return new Response(response.body, { status: response.status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
+    }
     const hostedMatch=/^\/hosted\/([^/]+)$/.exec(url.pathname);
     if(hostedMatch && org){
       const workspace=decodeURIComponent(hostedMatch[1]);
@@ -1181,6 +1207,7 @@ export class HubCoordinator {
     }
     if (!attachment.ready) { socket.close(1008, "Introduce this computer first."); return; }
     if (this.computerSocket(attachment.computerId) !== socket) return;
+    if (frame.kind === "account.changed") { this.invalidateComputers(); return; }
     if (frame.kind === "notification") {
       const recipients = await this.notifications.raise(registeredOrg, attachment.computerId, frame.notification);
       if (!recipients) return;
@@ -1348,7 +1375,7 @@ export class HubCoordinator {
       await this.env.DB.prepare("INSERT INTO hosted_workspace_bindings(computer_id,organization_id,workspace_id) VALUES(?,?,?) ON CONFLICT(computer_id) DO NOTHING").bind(state.computerId,org,state.workspaceId).run();
       const actual=await this.computers.computer(org,state.computerId);
       const environment={...await settings.secrets(org),MC_CONFIG_DIR:"/data/remy",REMY_HOSTED_BOOTSTRAP:JSON.stringify({registration:{...actual,hubUrl:this.env.BETTER_AUTH_URL},privateKey:keys.privateKey,workspace:{id:workspace.id,name:workspace.name,origin:workspace.origin}})};
-      const domains=[new URL(this.env.BETTER_AUTH_URL).hostname,"api.anthropic.com","api.openai.com","github.com","api.github.com","objects.githubusercontent.com","release-assets.githubusercontent.com","registry.npmjs.org"];
+      const domains=[new URL(this.env.BETTER_AUTH_URL).hostname,"api.anthropic.com","api.openai.com","auth.openai.com","chatgpt.com","ab.chatgpt.com","github.com","api.github.com","objects.githubusercontent.com","release-assets.githubusercontent.com","registry.npmjs.org"];
       return {organizationId:org,computerId:state.computerId,settings:state.settings,image:this.env.HOSTED_IMAGE,archive:this.env.HOSTED_ARCHIVE??"",environment,allowedDomains:domains};
     }, async id=>{
       for(let attempt=0;attempt<300;attempt++){if(this.computerSocket(id))return;await new Promise(resolve=>setTimeout(resolve,100));}

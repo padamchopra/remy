@@ -1,3 +1,4 @@
+import { HubCodexAccount } from "./HubCodexAccount";
 import { usePersonalHub } from "@/lib/hub-scope";
 import { useEffect, useState } from "react";
 import {
@@ -475,6 +476,7 @@ export function HubHostedComputers({
             )}
           </>
         )}
+        {admin && workspace && <HubCodexAccount key={`${organizationId}:${workspace}`} organizationId={organizationId} workspaceId={workspace} ready={state?.phase === "ready"} />}
         {admin && !workspace && (
           <form
             className="flex flex-col gap-3 border-t pt-4"
