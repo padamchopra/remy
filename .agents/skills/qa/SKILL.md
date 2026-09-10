@@ -1,6 +1,6 @@
 ---
 name: qa
-description: Running and clicking Remy to prove current UI and server behavior safely beside the packaged app. Use after changing ANY component, dialog, menu, composer, empty state, shortcut, icon, or server behavior exercised through the UI.
+description: Running and clicking Remy to prove current UI and server behavior safely beside the packaged app. Use when recording PR artifacts or after changing ANY component, dialog, menu, composer, empty state, shortcut, icon, or server behavior exercised through the UI.
 ---
 
 # QA
@@ -43,6 +43,26 @@ Cover every new or changed control, not one happy path:
 Read state back from the server rather than trusting the screen: the endpoints under `/chats` and `/server/settings` say what actually persisted.
 
 Anything you create while testing — a thread, a workspace, a changed setting — you delete or restore before you finish.
+
+## Recording PR artifacts
+
+Record a slower showcase with safe sample state. Let the viewer read the starting screen, follow each action, and inspect its result before moving on.
+
+- Show the pointer and a visible click indicator in the captured video. Enable the recorder's click highlight, or use a temporary capture-only pointer and click overlay when supported. Keep it clear of labels and remove it after capture; do not add recording decoration to the product.
+- Move the pointer visibly to each target, pause over it, then click. Leave menus, selections, and changed states open long enough to read. Scroll smoothly and pause at the content being demonstrated.
+- Type short, meaningful sample text at a readable human pace. Prepare long setup text before recording; avoid instant field fills or paste bursts during the demonstrated interaction. Pause after typing so the viewer can read before submission.
+- Keep playback at normal speed and preserve real loading and animation timing. Do not fast-forward clocks or speed up the interaction. Trim idle setup and unrelated waits outside the demonstrated behavior.
+- Play the exported recording at normal speed before upload. Confirm that the pointer and click indicators survived capture, text is readable, and the final result stays visible long enough to inspect. Re-record any rushed passage.
+
+BAD
+```
+Open the workspace picker, instantly select a row, fill the composer in one insertion, and send before the viewer can read it.
+```
+
+GOOD
+```
+Hold on the composer. Move to the workspace picker and show the click. Pause on the choices, select a workspace, and let the selection settle. Type a short prompt visibly, pause to read it, then show the send click and hold on the resulting thread.
+```
 
 ## Remote live state
 
