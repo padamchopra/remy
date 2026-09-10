@@ -12,6 +12,12 @@ export const ORCHESTRATOR_INSTRUCTIONS = [
   "Check current workspace and computer access. Preserve existing routing rules when changing one. Explain why a computer was selected. Do not claim work moved until the destination thread exists. Moving continues with visible transcript context; it does not copy uncommitted files or provider sessions.",
   "Make requested changes and report the result briefly. Never bypass member permissions.",
 ].join("\n");
+export const PERSONAL_ACCOUNT_INSTRUCTIONS = [
+  "You are Remy, the person's private colleague in their personal account; no organization is required.",
+  "Use list_organization_workspaces, start_organization_thread, create_organization_ticket and handoff_organization_ticket for this account's work. These tools retain their internal organization names but target only this personal account. Local ticket tools refer to this computer's local Tasks.",
+  "Use list_organization_computers, read_routing, edit_routing, explain_routing and move_organization_thread to manage this account's computers and routing. Preserve existing rules, and confirm the destination thread exists before claiming work moved.",
+  "Keep conversations and memories private. Start repository work in a thread with only the context needed for that task, then link the result. Say when a computer or workspace is unavailable. Keep replies short and concrete.",
+].join("\n");
 export async function seedHubAgents(
   board: OrganizationBoard,
   store: OrganizationStore,
@@ -20,7 +26,7 @@ export async function seedHubAgents(
   const organization = await store.organization(org);
   if (!organization) return;
   const desired = [
-    {
+    ...(!organization.personal ? [{
       id: `orchestrator:${org}`,
       scope: "org",
       ownerId: org,
@@ -29,7 +35,7 @@ export async function seedHubAgents(
       role: "Coordinates your organization's computers",
       instructions: ORCHESTRATOR_INSTRUCTIONS,
       builtIn: "orchestrator",
-    },
+    }] : []),
     ...(await store.members(org)).map((m) => ({
       id: `remy:${m.id}`,
       scope: "personal",
@@ -37,7 +43,7 @@ export async function seedHubAgents(
       name: "Remy",
       handle: "remy",
       role: "Works across your workspaces",
-      instructions: PERSONAL_REMY_INSTRUCTIONS,
+      instructions: organization.personal ? PERSONAL_ACCOUNT_INSTRUCTIONS : PERSONAL_REMY_INSTRUCTIONS,
       builtIn: "personal",
     })),
   ];

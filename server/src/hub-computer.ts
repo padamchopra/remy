@@ -76,7 +76,20 @@ export function connectionAuthorization(organizationId: string, computerId: stri
   return `RemyComputer ${base64url(JSON.stringify(authorization))}`;
 }
 
+export async function hubRegistrationScope(hubUrl: string, organizationId: string, accessToken: string, ownership: string): Promise<string> {
+  if (organizationId) return organizationId;
+  if (ownership !== "personal") throw new Error("Choose an organization for a shared computer.");
+  const response = await fetch(new URL("/api/personal", hubUrl), {
+    headers: { authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(15_000), redirect: "error",
+  });
+  if (!response.ok) throw new Error("Your personal account could not be opened; try again.");
+  const result = await response.json() as { personal?: { id?: unknown; personal?: unknown } };
+  if (typeof result.personal?.id !== "string" || !result.personal.id || result.personal.personal !== true) throw new Error("Your personal account could not be opened; try again.");
+  return result.personal.id;
+}
+
 export async function registerHubComputer(hubUrl: string, organizationId: string, accessToken: string, ownership: "personal" | "organization" | "hosted" = "personal"): Promise<HubComputerRegistration> {
+  organizationId = await hubRegistrationScope(hubUrl, organizationId, accessToken, ownership);
   const keys = privateKey();
   const input = {
     computerId: deviceId,
@@ -307,10 +320,10 @@ export async function detachHubComputer(): Promise<void> {
 
 export async function beginHubComputerAuthorization(hubUrl: string, organizationId: string, ownership: "personal" | "organization" | "hosted") {
   const url = new URL(hubUrl);
-  if (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))) throw new Error("Enter a secure organization address.");
-  if (!organizationId || organizationId.length > 200) throw new Error("Choose your organization.");
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))) throw new Error("Enter a secure Remy address.");
+  if ((!organizationId && ownership !== "personal") || organizationId.length > 200) throw new Error("Choose your organization.");
   const response = await fetch(new URL("/api/device/authorization", url.origin), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientKind: "computer", clientName: config.deviceName || hostname() }), signal: AbortSignal.timeout(15000) });
-  if (!response.ok) throw new Error("This organization could not be reached; try again.");
+  if (!response.ok) throw new Error("Remy could not be reached; try again.");
   const value = await response.json() as { deviceCode: string; userCode: string; expiresIn: number };
   if (typeof value.deviceCode !== "string" || typeof value.userCode !== "string") throw new Error("Start computer authorization again.");
   setKv("hubPendingAuthorization", { hubUrl: url.origin, organizationId, ownership, deviceCode: value.deviceCode, expiresAt: Date.now() + value.expiresIn * 1000 });

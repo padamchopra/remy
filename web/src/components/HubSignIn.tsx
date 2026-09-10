@@ -52,7 +52,7 @@ export function HubSignIn({ runtime }: { runtime: HubRuntime }) {
         <CardHeader>
           <CardTitle>Sign in to Remy</CardTitle>
           <CardDescription>
-            Work with your organization from any computer.
+            Pick up your threads from any computer.
           </CardDescription>
         </CardHeader>
         <CardContent>

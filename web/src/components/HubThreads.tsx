@@ -1,3 +1,5 @@
+import { Skeleton } from "@/components/ui/skeleton";
+import { usePersonalHub } from "@/lib/hub-scope";
 import { organizationArtifactRoute } from "@/lib/artifact-route";
 import type { ConvArtifact } from "@/state/types";
 import { HubThreadComposer } from "./HubThreadComposer";
@@ -68,6 +70,7 @@ export default function HubThreads({
 }) {
   const transcript = useRef<HTMLDivElement>(null);
   const followsLatest = useRef(true);
+  const isPersonal = usePersonalHub();
   const [threads, setThreads] = useState<HubThread[]>([]);
   const [member, setMember] = useState<ThreadMember>();
   const [loaded, setLoaded] = useState(false);
@@ -154,7 +157,7 @@ export default function HubThreads({
   return (
     <section
       className="flex min-h-0 min-w-0 flex-1 flex-col"
-      aria-label="Team threads"
+      aria-label="Threads"
     >
       <header className="flex min-w-0 shrink-0 flex-wrap items-center gap-2 border-b p-4">
         <HubNotifications organizationId={organizationId} />
@@ -163,7 +166,7 @@ export default function HubThreads({
           data-link
           onClick={() => navigate({ name: "threads", organizationId })}
         >
-          Team threads
+          Threads
         </Button>
         {thread && (
           <div className="min-w-0 flex-1">
@@ -171,7 +174,7 @@ export default function HubThreads({
             <p className="text-xs text-muted-foreground">
               {thread.access.visibility === "private"
                 ? "Private"
-                : "Open to your organization"}
+                : isPersonal ? "Only you" : "Open to your organization"}
             </p>
           </div>
         )}
@@ -183,9 +186,7 @@ export default function HubThreads({
         </p>
       )}
       {!loaded ? (
-        <p role="status" className="p-4 text-sm text-muted-foreground">
-          Wait while your threads load.
-        </p>
+        <div role="status" aria-label="Loading threads" className="flex flex-col gap-4 p-6">{[1,2,3].map(n => <Skeleton key={n} className="h-12 w-full" />)}</div>
       ) : threadId && !thread ? (
         <Empty>
           <EmptyHeader>
@@ -208,9 +209,9 @@ export default function HubThreads({
               <span className="min-w-0 break-words">{item.detail.title}<span className="block text-xs text-muted-foreground">{computers.find((c) => c.computerId === item.computerId)?.name ?? "Computer unavailable"} · Started by {item.access.owner.label}{item.stale ? " · Offline" : ""}</span></span>
             </Button>
           ))}
-          {!threads.length && !computers.some((c) => c.canUse && c.availability !== "offline") && <Empty><EmptyHeader><EmptyTitle>Connect a computer</EmptyTitle><EmptyDescription>Your threads run on a computer you connect to your organization.</EmptyDescription></EmptyHeader><Button variant="outline" data-link onClick={() => navigate({ name: "settings", tab: "devices", organizationId })}>Open Computers</Button></Empty>}
+          {!threads.length && !computers.some((c) => c.canUse && c.availability !== "offline") && <Empty><EmptyHeader><EmptyTitle>Connect a computer</EmptyTitle><EmptyDescription>Connect your Mac or configure a hosted computer to run your threads.</EmptyDescription></EmptyHeader><Button variant="outline" data-link onClick={() => navigate({ name: "settings", tab: "devices", organizationId })}>Open Computers</Button></Empty>}
           {!threads.length && computers.some((c) => c.canUse && c.availability !== "offline") && <p className="text-sm text-muted-foreground">Choose a workspace to start a thread.</p>}
-          <HubThreadComposer organizationId={organizationId} computers={computers} open={open} />
+          {(threads.length > 0 || computers.some((c) => c.canUse && c.availability !== "offline")) && <HubThreadComposer organizationId={organizationId} computers={computers} open={open} />}
         </div>
       ) : (
         <>
@@ -234,7 +235,7 @@ export default function HubThreads({
                 Join thread
               </Button>
             )}
-            {member?.id === thread.access.owner.id && (
+            {!isPersonal && member?.id === thread.access.owner.id && (
               <Button
                 size="sm"
                 variant="ghost"

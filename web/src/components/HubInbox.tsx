@@ -1,3 +1,4 @@
+import { usePersonalHub } from "@/lib/hub-scope";
 import { HubAgentRoutines } from "./HubAgentRoutines";
 import { useEffect, useState } from "react";
 import type { BoardProjection } from "@remy/contract";
@@ -44,6 +45,7 @@ export function HubInbox({
   agentId?: string;
   choose: (id: string) => void;
 }) {
+  const isPersonal = usePersonalHub();
   const base = hubThreadBase(organizationId),
     [agents, setAgents] = useState<BoardProjection[]>([]),
     [messages, setMessages] = useState<Message[]>([]),
@@ -139,11 +141,11 @@ export function HubInbox({
       <div className="flex flex-wrap gap-6">
         <div className="flex w-56 shrink-0 flex-col gap-4">
           {[
-            ["org", "Organization"],
-            ["team", "Teams"],
+            ["org", isPersonal ? "Your agents" : "Organization"],
+            ...(!isPersonal ? [["team", "Teams"]] : []),
             ["workspace", "Workspaces"],
             ["personal", "Only you"],
-          ].map(([key, label]) => (
+          ].filter(([key]) => agents.some(a => (a.fields.scope ?? "org") === key)).map(([key, label]) => (
             <div key={key}>
               <h2 className="mb-2 text-sm text-muted-foreground">{label}</h2>
               {agents
@@ -207,9 +209,11 @@ export function HubInbox({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="personal">Only you</SelectItem>
-                  <SelectItem value="team">A team</SelectItem>
+                  {!isPersonal && <SelectItem value="team">A team</SelectItem>}
                   <SelectItem value="workspace">A workspace</SelectItem>
-                  <SelectItem value="org">Your organization</SelectItem>
+                  <SelectItem value="org">
+                    {isPersonal ? "Your account" : "Your organization"}
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </Field>
@@ -257,7 +261,7 @@ export function HubInbox({
                 }}
               >
                 <Input
-                  aria-label="Organization agent name"
+                  aria-label="Agent name"
                   name="name"
                   defaultValue={String(agent.fields.name)}
                   maxLength={120}
@@ -379,45 +383,53 @@ export function HubInbox({
             </form>
             {!agent.fields.builtIn && (
               <>
-                <h3>Share this agent</h3>
-                <p className="text-sm text-muted-foreground">
-                  Sharing includes this conversation and its memories.
-                </p>
-                {agent.fields.scope === "personal" && (
-                  <Select value={promotion} onValueChange={setPromotion}>
-                    <SelectTrigger aria-label="Share with team">
-                      <SelectValue placeholder="Choose a team" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {teams.map((t) => (
-                        <SelectItem key={t.id} value={t.id}>
-                          {t.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-                {["personal", "team"].includes(String(agent.fields.scope)) && (
-                  <Button
-                    variant="outline"
-                    disabled={agent.fields.scope === "personal" && !promotion}
-                    onClick={() =>
-                      attempt(() =>
-                        append(
-                          "agent",
-                          agent.id,
-                          "field",
-                          agent.fields.scope === "personal"
-                            ? { scope: "team", ownerId: promotion }
-                            : { scope: "org", ownerId: organizationId },
-                        ),
-                      )
-                    }
-                  >
-                    {agent.fields.scope === "personal"
-                      ? "Share with team"
-                      : "Share with organization"}
-                  </Button>
+                {!isPersonal && (
+                  <>
+                    <h3>Share this agent</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Sharing includes this conversation and its memories.
+                    </p>
+                    {agent.fields.scope === "personal" && (
+                      <Select value={promotion} onValueChange={setPromotion}>
+                        <SelectTrigger aria-label="Share with team">
+                          <SelectValue placeholder="Choose a team" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {teams.map((t) => (
+                            <SelectItem key={t.id} value={t.id}>
+                              {t.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                    {["personal", "team"].includes(
+                      String(agent.fields.scope),
+                    ) && (
+                      <Button
+                        variant="outline"
+                        disabled={
+                          agent.fields.scope === "personal" && !promotion
+                        }
+                        onClick={() =>
+                          attempt(() =>
+                            append(
+                              "agent",
+                              agent.id,
+                              "field",
+                              agent.fields.scope === "personal"
+                                ? { scope: "team", ownerId: promotion }
+                                : { scope: "org", ownerId: organizationId },
+                            ),
+                          )
+                        }
+                      >
+                        {agent.fields.scope === "personal"
+                          ? "Share with team"
+                          : "Share with organization"}
+                      </Button>
+                    )}
+                  </>
                 )}
                 <AlertDialog>
                   <AlertDialogTrigger asChild>

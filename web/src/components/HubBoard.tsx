@@ -1,3 +1,4 @@
+import { usePersonalHub } from "@/lib/hub-scope";
 import type { LinearBoardState } from "./HubLinearBoard";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useEffect, useState } from "react";
@@ -60,6 +61,7 @@ export default function HubBoard({
   ticketId?: string;
   navigate: (route: Route) => void;
 }) {
+  const isPersonal = usePersonalHub();
   const [items, setItems] = useState<BoardProjection[]>([]);
   const [stale, setStale] = useState(false);
   const [error, setError] = useState("");
@@ -453,7 +455,7 @@ export default function HubBoard({
           <EmptyHeader>
             <EmptyTitle>No tickets yet</EmptyTitle>
             <EmptyDescription>
-              Create a ticket to share work with your organization.
+              Create a ticket to plan your next piece of work.
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
@@ -547,7 +549,7 @@ export default function HubBoard({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectGroup>
-                      <SelectItem value="none">Organization</SelectItem>
+                      <SelectItem value="none">{isPersonal ? "No workspace" : "Organization"}</SelectItem>
                       {workspaces.value?.workspaces.map((w) => (
                         <SelectItem value={w.id} key={w.id}>
                           {w.name}

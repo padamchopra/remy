@@ -1,6 +1,6 @@
 export type OrganizationRole = "owner" | "admin" | "member";
 
-export type Organization = { id: string; name: string; createdAt: number; updatedAt: number };
+export type Organization = { personalOwnerId?: string; personal?: boolean; id: string; name: string; createdAt: number; updatedAt: number };
 export type Membership = { id: string; organizationId: string; userId: string; role: OrganizationRole; createdAt: number; updatedAt: number };
 export type OrganizationSummary = Organization & { role: OrganizationRole };
 export type OrganizationInvite = { id: string; organizationId: string; createdByUserId: string; email?: string; tokenHash: string; role: Exclude<OrganizationRole, "owner">; expiresAt: number; acceptedByUserId?: string; acceptedAt?: number; createdAt: number };
@@ -43,7 +43,7 @@ export interface OrganizationStore {
 }
 
 type Row = Record<string, unknown>;
-const organizationFrom = (row: Row): Organization => ({ id: String(row.id), name: String(row.name), createdAt: Number(row.createdAt), updatedAt: Number(row.updatedAt) });
+const organizationFrom = (row: Row): Organization => ({ ...(row.personal_owner_id ? { personalOwnerId: String(row.personal_owner_id), personal: true } : {}), id: String(row.id), name: String(row.name), createdAt: Number(row.createdAt), updatedAt: Number(row.updatedAt) });
 const membershipFrom = (row: Row): Membership => ({ id: String(row.id), organizationId: String(row.organization_id), userId: String(row.user_id), role: String(row.role) as OrganizationRole, createdAt: Number(row.createdAt), updatedAt: Number(row.updatedAt) });
 const teamFrom = (row: Row): OrganizationTeam => ({ id: String(row.id), organizationId: String(row.organization_id), name: String(row.name), createdAt: Number(row.created_at), updatedAt: Number(row.updated_at) });
 const workspaceFrom = (row: Row): OrganizationWorkspace => ({ id: String(row.id), organizationId: String(row.organization_id), name: String(row.name), origin: String(row.origin), restricted: Boolean(row.restricted), createdAt: Number(row.created_at), updatedAt: Number(row.updated_at) });
@@ -59,7 +59,7 @@ export class D1OrganizationStore implements OrganizationStore {
     ]);
   }
   async organizationsFor(userId: string) {
-    const result = await this.db.prepare("SELECT o.*,m.role FROM organizations o JOIN memberships m ON m.organization_id=o.id WHERE m.user_id=? ORDER BY lower(o.name),o.id").bind(userId).all<Row>();
+    const result = await this.db.prepare("SELECT o.*,m.role FROM organizations o JOIN memberships m ON m.organization_id=o.id WHERE m.user_id=? AND o.personal_owner_id IS NULL ORDER BY lower(o.name),o.id").bind(userId).all<Row>();
     return result.results.map((row) => ({ ...organizationFrom(row), role: String(row.role) as OrganizationRole }));
   }
   async membership(organizationId: string, userId: string) { const row = await this.db.prepare("SELECT * FROM memberships WHERE organization_id=? AND user_id=?").bind(organizationId, userId).first<Row>(); return row ? membershipFrom(row) : undefined; }

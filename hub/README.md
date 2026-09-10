@@ -52,6 +52,10 @@ An organization's verified domain may enforce its SSO provider. Enforcement bloc
 
 ## Organizations
 
+The hub opens into a private personal account without requiring an organization. `GET /api/personal` provisions one stable account-owned scope, while `/api/organizations` lists only optional shared organizations. Migration `0016_personal_spaces.sql` adds the ownership marker and constraints: personal scopes cannot accept invitations, add members or teams, transfer ownership, or be deleted through organization management. Existing coordinator, workspace, computer, board, and live-update routes use the scope ID and retain their authorization checks. Personal data remains private when its owner creates or joins an organization.
+
+A Mac can authorize with an empty organization ID and personal ownership. After approval, the daemon resolves `/api/personal` with its native session, registers in that scope, and saves the resulting ID for reconnection. Hosted computers use the same personal scope when the deployment has a runtime provider configured. Local Remy remains independent of the hub.
+
 A person may belong to any number of organizations as an owner, admin, or member. Every organization route authorizes the signed-in person against the organization ID in that request; a valid session cannot distinguish another organization's resource from a missing one.
 
 Owners and admins can invite people by email or a single-use link and manage named teams. Email invitations are delivered through the `EMAILS` queue and may be accepted only by the addressed verified account. Removing a member also removes that person's team memberships. An owner must transfer ownership before leaving.

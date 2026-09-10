@@ -1,3 +1,4 @@
+import { personalSpace } from "./personal-space.js";
 import {LinearBoard} from "./linear-board.js";
 import {linearFor} from "./linear-routes.js";
 import {linearRoute} from "./linear-routes.js";
@@ -242,6 +243,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     || url.pathname === "/api/sessions"
     || url.pathname === "/api/sessions/revoke-all"
     || url.pathname === "/api/profile"
+    || url.pathname === "/api/personal"
     || /^\/api\/sessions\/[^/]+$/.test(url.pathname)
     || url.pathname === "/api/invitations/accept"
     || url.pathname === "/api/organizations"
@@ -359,6 +361,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
   const linearBoardRoute=/^\/api\/organizations\/([^/]+)\/linear-board$/.exec(url.pathname);
   if(linearBoardRoute){const org=decodeURIComponent(linearBoardRoute[1]);return env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${org}`)).fetch(new Request("https://internal/linear/board",{method:request.method,headers:{"x-organization-id":org,"x-user-id":identity.userId,"content-type":"application/json"},...(request.method==="GET"?{}:{body:request.body})}));}
   try {
+    if (url.pathname === "/api/personal" && request.method === "GET") return Response.json({ personal: await personalSpace(env.DB, identity.userId) }, { headers: { "cache-control": "no-store" } });
     if (url.pathname === "/api/organizations" && request.method === "GET") return Response.json({ organizations: await organizations.list(identity.userId) });
     if (url.pathname === "/api/organizations" && request.method === "POST") {
       const input = await body<{ name?: string }>(request); const name = input?.name?.trim();

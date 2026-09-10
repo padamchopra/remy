@@ -1,3 +1,4 @@
+import { usePersonalHub } from "@/lib/hub-scope";
 import {HubLinearBoard} from "./HubLinearBoard";
 import {HubLinear} from "./HubLinear";
 import { HubGitHub } from "./HubGitHub";
@@ -44,6 +45,7 @@ export type ConnectionsState = {
 };
 
 export function HubConnections({ organizationId }: { organizationId: string }) {
+  const isPersonal = usePersonalHub();
   const {
     value,
     stale,
@@ -78,7 +80,7 @@ export function HubConnections({ organizationId }: { organizationId: string }) {
     >
       <h1 className="text-lg font-medium">Connections</h1>
       <p className="text-sm text-muted-foreground">
-        Connect your organization's tools and choose the account you use.
+        Connect your tools and choose the account you use.
       </p>
       {(error || readError) && <p role="alert">{error || readError}</p>}
       {stale && (
@@ -93,8 +95,8 @@ export function HubConnections({ organizationId }: { organizationId: string }) {
             <CardTitle>{provider.name}</CardTitle>
             <CardDescription>
               {provider.configured
-                ? "Your credentials stay with your organization."
-                : "Ask your administrator to configure this connection."}
+                ? "Your credentials are stored securely."
+                : "This connection needs configuration before you can use it."}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex min-w-0 flex-col gap-4">
@@ -114,7 +116,7 @@ export function HubConnections({ organizationId }: { organizationId: string }) {
                   <div className="min-w-0 flex-1">
                     <p>
                       {scope === "organization"
-                        ? "Organization account"
+                        ? isPersonal ? "Default account" : "Organization account"
                         : "Your account"}
                     </p>
                     <p className="whitespace-normal break-words text-sm text-muted-foreground">
