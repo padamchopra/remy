@@ -30,12 +30,16 @@ try{
  assert.equal(await p.getByLabel('CPU cores',{exact:true}).count(),0);
  await choose('Hosted provider','Modal');
  await click(p.getByRole('radio',{name:'Light',exact:true}));
+ await p.getByText('About $0.09 USD per running hour', {exact:false}).waitFor();
  await click(p.getByRole('radio',{name:'Heavy',exact:true}));
+ await p.getByText('About $0.76 USD per running hour', {exact:false}).waitFor();
  await click(p.getByRole('radio',{name:'Standard',exact:true}));
+ await p.getByText('About $0.19 USD per running hour', {exact:false}).waitFor();
  await p.screenshot({path:out+'/presets.png'});
  await click(p.getByRole('radio',{name:'Custom',exact:true}));
  const cpu=p.getByLabel('CPU cores',{exact:true});
  await click(cpu);await cpu.press('Meta+A');await cpu.pressSequentially('2',{delay:200});await p.waitForTimeout(900);
+ await p.getByText('About $0.33 USD per running hour', {exact:false}).waitFor();
  await save();assert.equal((await call('ada','/hosted')).body.settings.cpu,2);
  await click(button('Customize'));
  await choose('Hosted workspace','Website');

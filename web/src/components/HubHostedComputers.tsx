@@ -32,6 +32,10 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 
+// Modal Sandbox USD rates checked 2026-09-10: https://modal.com/pricing.
+const hourlyCompute = (cpu: number, memoryMiB: number) =>
+  ((cpu * 0.00003942 + (memoryMiB / 1024) * 0.00000667) * 3600).toFixed(2);
+
 const sizes = [
   {
     id: "light",
@@ -269,6 +273,7 @@ export function HubHostedComputers({
                     type="single"
                     variant="outline"
                     aria-label="Computer size"
+                    className="grid w-full max-w-sm grid-cols-4 items-stretch"
                     value={customSize ? "custom" : (size?.id ?? "custom")}
                     disabled={!admin || busy || loading}
                     onValueChange={(id) => {
@@ -289,15 +294,23 @@ export function HubHostedComputers({
                     }}
                   >
                     {sizes.map((size) => (
-                      <ToggleGroupItem key={size.id} value={size.id}>
-                        {size.label}
+                      <ToggleGroupItem key={size.id} value={size.id} aria-label={size.label} className="h-auto flex-col gap-1 px-1 py-2">
+                        <span>{size.label}</span>
+                        <span className="text-xs font-normal">~${hourlyCompute(size.cpu, size.memoryMiB)}/hr</span>
                       </ToggleGroupItem>
                     ))}
-                    <ToggleGroupItem value="custom">Custom</ToggleGroupItem>
+                    <ToggleGroupItem value="custom" className="h-auto">Custom</ToggleGroupItem>
                   </ToggleGroup>
                   <FieldDescription>
                     {size?.description ?? "Your custom resource allocation."}{" "}
-                    {settings.cpu} CPU · {settings.memoryMiB / 1024} GiB memory.
+                    {settings.cpu} CPU cores · {settings.memoryMiB / 1024} GiB memory.
+                  </FieldDescription>
+                  <FieldDescription role="status">
+                    About ${hourlyCompute(settings.cpu, settings.memoryMiB)} USD per running hour at your selected resources, including warm idle time.
+                  </FieldDescription>
+                  <FieldDescription>
+                    Extra usage and region surcharges cost more; storage and model charges are separate, before credits and taxes.{" "}
+                    <a href="https://modal.com/pricing" target="_blank" rel="noreferrer" className="underline underline-offset-4">Modal pricing</a>
                   </FieldDescription>
                 </>
               )}
