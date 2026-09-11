@@ -76,6 +76,8 @@ import {
   DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
 import { Deferred } from "@/components/Deferred";
+import { HubComputerApproval } from "./HubComputerApproval";
+import { HubInvitation } from "./HubInvitation";
 import { HubSignIn } from "./HubSignIn";
 const Threads = lazy(() => import("./HubThreads"));
 const Board = lazy(() => import("./HubBoard"));
@@ -109,6 +111,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
   const [create, setCreate] = useState(false);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [computerCode, setComputerCode] = useState(new URLSearchParams(window.location.search).get("computerCode"));
   const [invite, setInvite] = useState(
     new URLSearchParams(window.location.search).get("invite") ??
       (window.location.pathname.startsWith("/invite/")
@@ -524,6 +527,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               >
                 <Deferred open={section === "threads"}>
                   <Threads
+                    canManageWorkspaces={organization.role !== "member"}
                     organizationId={organization.id}
                     computerId={
                       route.name === "threads" ? route.computerId : undefined
@@ -634,7 +638,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                 })
                   .then(async (o) => {
                     await reload();
-                    navigate({ name: "board", organizationId: o.id });
+                    navigate({ name: "threads", organizationId: o.id });
                     setCreate(false);
                     setName("");
                   })
@@ -669,48 +673,24 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
             </form>
           </DialogContent>
         </Dialog>
-        <Dialog
-          open={!!invite}
-          onOpenChange={(v) => {
-            if (!v) setInvite(null);
-          }}
-        >
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Join your organization</DialogTitle>
-              <DialogDescription>
-                Accept your invitation to share work with your teammates.
-              </DialogDescription>
-            </DialogHeader>
-            {error && <p role="alert">{error}</p>}
-            <DialogFooter>
-              <Button
-                disabled={busy}
-                onClick={() => {
-                  setBusy(true);
-                  void hubRequest<{ organizationId: string }>(
-                    "/api/invitations/accept",
-                    "POST",
-                    { token: invite },
-                  )
-                    .then(async (result) => {
-                      setInvite(null);
-                      window.history.replaceState(null, "", "/");
-                      await reload();
-                      navigate({
-                        name: "board",
-                        organizationId: result.organizationId,
-                      });
-                    })
-                    .catch((e) => setError(apiError(e)))
-                    .finally(() => setBusy(false));
-                }}
-              >
-                Accept invitation
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        {computerCode && <HubComputerApproval code={computerCode} accountName={profile?.name ?? "your account"} close={() => {
+          setComputerCode(null);
+          const url = new URL(window.location.href);
+          url.searchParams.delete("computerCode");
+          window.history.replaceState(null, "", url);
+        }} />}
+        {invite && <HubInvitation key={invite} token={invite} close={() => {
+          setInvite(null);
+          const url = new URL(window.location.href);
+          url.searchParams.delete("invite");
+          if (url.pathname.startsWith("/invite/")) url.pathname = "/";
+          window.history.replaceState(null, "", url);
+        }} accepted={async (id) => {
+          setInvite(null);
+          window.history.replaceState(null, "", "/");
+          await reload();
+          navigate({ name: "threads", organizationId: id });
+        }} />}
       </SidebarProvider>
     </HubPersonalContext>
   );

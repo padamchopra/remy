@@ -1,6 +1,6 @@
 ---
 name: qa
-description: Running and clicking Remy to prove current UI and server behavior safely beside the packaged app. Use when recording PR artifacts or after changing ANY component, dialog, menu, composer, empty state, shortcut, icon, or server behavior exercised through the UI.
+description: Usability and behavior review in running Remy. Use when reviewing ANY user journey, recording PR artifacts, or changing a component, dialog, menu, composer, empty state, shortcut, icon, or server behavior exercised through the UI.
 ---
 
 # QA
@@ -8,6 +8,26 @@ description: Running and clicking Remy to prove current UI and server behavior s
 `ui` owns layout and keyboard. `content` owns the words. This skill owns proving the thing works in the running app.
 
 A snapshot of the default paint is not a test.
+
+## Review the user journey
+
+QA includes design and UX gaps. Walk the affected journey from its real entry point to a useful outcome, using only information and actions available in the interface. For onboarding, start signed out with no computers or workspaces and reach a first thread response. Exercise each supported setup path with its deployment-enabled authentication and prerequisites; a seeded account or local preview does not establish that hosted onboarding works.
+
+At each step, judge whether the purpose and next action are clear, the requested information is necessary, the hierarchy keeps the main action obvious, and loading, success and failure explain what happens next. Follow handoffs between the browser, desktop and external providers. Exercise missing prerequisites, cancellation and retry, including keyboard and narrow layouts.
+
+Record observed friction with its starting state, action, consequence and proposed fix. Missing actions, misleading copy, unnecessary decisions and inaccessible controls are findings even when requests succeed. Fix gaps within the authorized scope and repeat the affected journey. Ask for a product decision only when the resolution needs one; do not silently defer a usability finding because it is not a code defect.
+
+Distinguish observed behavior from code-based hypotheses and subjective alternatives. Record untested steps and their concrete blockers. A required journey that cannot complete or has unresolved usability blockers is not ready; passing builds, screenshots and component checks do not close it. This is a review convention, not an automated gate.
+
+BAD
+```text
+The sign-in buttons render, a seeded account creates a ticket, and the build passes. Onboarding passes.
+```
+
+GOOD
+```text
+Start with an empty account, follow the computer setup handoff, add a workspace and send a request. Report a missing next action as a usability finding, fix it, and repeat the flow. Keep an external sign-in step explicitly unverified if its provider cannot be exercised.
+```
 
 ## Getting a page in front of you
 

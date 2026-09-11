@@ -16,6 +16,22 @@ try {
   await page.goto(new URL("/app/", url).href, { waitUntil: 'networkidle' });
   await page.getByRole('button', { name: 'Continue with Google' }).waitFor();
   await page.getByRole('button', { name: 'Continue with GitHub' }).waitFor();
+  assert.equal(await page.getByRole('textbox').count(), 0, 'Social sign-in must not require an email');
+  const signIns = [];
+  await page.route('**/api/auth/sign-in/**', route => {
+    signIns.push({ path: new URL(route.request().url()).pathname, input: route.request().postDataJSON() });
+    return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Sign-in provider unavailable; try again.' }) });
+  });
+  await page.getByRole('button', { name: 'Continue with Google' }).click();
+  await page.getByText('Sign-in provider unavailable; try again.', { exact: true }).waitFor();
+  assert.equal(signIns[0].input.provider, 'google');
+  assert.equal('email' in signIns[0].input, false);
+  await page.getByRole('button', { name: 'Continue with single sign-on' }).click();
+  await page.getByLabel('Work email').fill('qa@example.test');
+  await page.getByLabel('Work email').press('Enter');
+  await page.getByText('Sign-in provider unavailable; try again.', { exact: true }).waitFor();
+  assert.equal(signIns.at(-1).path, '/api/auth/sign-in/sso');
+  assert.equal(signIns.some(request => request.path.endsWith('/magic-link')), false);
   assert.deepEqual(errors, []);
   console.log('Combined deployment checks passed: public home, /app/ sign-in, Google/GitHub controls.');
 } finally { await browser.close(); }

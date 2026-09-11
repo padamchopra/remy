@@ -63,3 +63,27 @@ test("personal computer authorization resolves its account on the server and kee
   t.mock.method(globalThis,"fetch",async()=>new Response(null,{status:401}));
   await assert.rejects(hubRegistrationScope("https://hub.example", "", "expired", "personal"));
 });
+
+test("account discovery keeps the approved credential in the daemon and retries without consuming the code twice", async t => {
+  const { beginHubComputerAuthorization, authorizedHubAccounts, finishHubComputerAuthorization } = await import("./hub-computer.js");
+  let polls = 0;
+  let failList = true;
+  const personal = { id: "personal", name: "Personal", role: "owner", personal: true };
+  const team = { id: "team", name: "Studio", role: "member" };
+  t.mock.method(globalThis, "fetch", async (input: string, init?: RequestInit) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/api/device/authorization") return Response.json({ deviceCode: "private-code", userCode: "VISIBLE", expiresIn: 600 });
+    if (url.pathname === "/api/device/token") { polls++; return Response.json({ accessToken: "private-token" }); }
+    assert.equal(new Headers(init?.headers).get("authorization"), "Bearer private-token");
+    if (url.pathname === "/api/personal") return Response.json({ personal });
+    if (failList) { failList = false; return new Response(null, { status: 503 }); }
+    return Response.json({ organizations: [team] });
+  });
+  assert.deepEqual(await beginHubComputerAuthorization("https://hub.example", "", "personal"), { userCode: "VISIBLE" });
+  await assert.rejects(authorizedHubAccounts(), /accounts could not load/);
+  assert.deepEqual(await authorizedHubAccounts(), [personal, team]);
+  assert.equal(polls, 1);
+  await assert.rejects(finishHubComputerAuthorization({ organizationId: "other", ownership: "personal" }), /account and computer owner/);
+  await assert.rejects(finishHubComputerAuthorization({ organizationId: "team", ownership: "organization" }), /account and computer owner/);
+  await assert.rejects(finishHubComputerAuthorization({ organizationId: "personal", ownership: "hosted" }), /account and computer owner/);
+});

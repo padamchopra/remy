@@ -14,13 +14,13 @@ Hosted requests carry the organization in their URL and the web session in an HT
 | Navigation | Hash routes preserve the selected organization. The last organization is remembered per account. Threads remain in the sidebar while other sections are open. |
 | Sign-out | Only the current session is revoked, its cookie expires, and the organization view is cleared. |
 
-The web UI exposes sign-in methods configured by the deployment. Real Google/GitHub/SSO round trips require those providers' credentials and domain setup. Tests exercise production magic-link handling with captured email delivery; they do not pretend to complete an external OAuth provider flow.
+The web UI exposes sign-in methods configured by the deployment. Google and GitHub do not ask for an email first; SSO reveals its own work-email form. Invitation preview requires a signed-in account and the same valid, unexpired, recipient-matching token as acceptance; acceptance revalidates it. New accounts and organizations open Threads with workspace and computer setup actions. A first request creates the thread and sends its initial message; a failed send can retry on the created thread. The composer stays available without an online computer so configured cloud execution can allocate one. Real Google/GitHub/SSO round trips require those providers' credentials and domain setup. Tests exercise production magic-link handling with captured email delivery; they do not pretend to complete an external OAuth provider flow.
 
 ## Build and verify
 
 `npm run build --prefix web` builds both modes. Hub CI builds it before validation; `hub/scripts/deploy.ts` builds it before applying migrations or deploying. A deployment serves the static assets and API from one origin.
 
-For isolated hosted QA, build the web and computer, then run `QA_HUB_WEB=1 QA_COMPUTER_POLICY=1 node hub/scripts/qa-threads.mjs`. This uses the production asset handler, hub, computer, and authentication implementation. Only provider responses, email delivery, and the QA secret-store binding are disposable adapters. The printed session file stays local and must not be uploaded.
+For isolated hosted QA, build the web and computer, then run `QA_HUB_WEB=1 QA_COMPUTER_POLICY=1 node hub/scripts/qa-threads.mjs`. This uses the production asset handler, hub, computer, and authentication implementation. Only provider responses, email delivery, and the QA secret-store binding are disposable adapters. The printed session file stays local and must not be uploaded. Run `QA_SESSION=<printed session file> node web/scripts/qa-hub-onboarding.mjs` for fresh-account setup, sign-in form behavior, invitation preview and first-request retry checks. The browser approval link from Attach this Mac preserves its code through sign-in; after explicit approval, return to the Mac, choose an account by name, and finish connecting. Account discovery uses the approved native credential inside the daemon; the renderer receives account names and roles, never that credential.
 
 ```sh
 QA_SESSION=<printed session file> node web/scripts/qa-hub-web.mjs

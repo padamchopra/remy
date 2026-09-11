@@ -3,7 +3,7 @@ import { appendHubBoard, configureHubBoard, hubBoardList, hubBoardState, importH
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { WebSocketServer } from "ws";
-import { syncHubBoard, beginHubComputerAuthorization, finishHubComputerAuthorization, detachHubComputer, hubComputerRegistration, registerHubComputerWithDeviceCode, startHubComputerConnection } from "./hub-computer.js";
+import { syncHubBoard, authorizedHubAccounts, beginHubComputerAuthorization, finishHubComputerAuthorization, detachHubComputer, hubComputerRegistration, registerHubComputerWithDeviceCode, startHubComputerConnection } from "./hub-computer.js";
 import { answerMentions } from "./mentions.js";
 import { config, patchSettings, publicSettings } from "./config.js";
 import { AgentStartupError, AgentUnavailableError, agentKind, inferAgent, type AgentKind } from "./agent.js";
@@ -455,8 +455,16 @@ const server = createServer(async (req, res) => {
       try { return json(res, 200, await beginHubComputerAuthorization(input.hubUrl, input.organizationId, input.ownership as "personal" | "organization" | "hosted")); }
       catch (error) { return json(res, 409, { error: (error as Error).message }); }
     }
+    if (req.method === "POST" && url.pathname === "/server/hub/authorize/accounts") {
+      try { return json(res, 200, { accounts: await authorizedHubAccounts() }); }
+      catch (error) { return json(res, 409, { error: (error as Error).message }); }
+    }
     if (req.method === "POST" && url.pathname === "/server/hub/authorize/complete") {
-      try { return json(res, 201, { registration: await finishHubComputerAuthorization() }); }
+      const input = await readJson(req);
+      const { organizationId, ownership } = input;
+      if (organizationId !== undefined && (typeof organizationId !== "string" || (ownership !== "personal" && ownership !== "organization" && ownership !== "hosted"))) return json(res, 400, { error: "Choose an account and computer owner." });
+      const choice: Parameters<typeof finishHubComputerAuthorization>[0] = typeof organizationId === "string" && (ownership === "personal" || ownership === "organization" || ownership === "hosted") ? { organizationId, ownership } : undefined;
+      try { return json(res, 201, { registration: await finishHubComputerAuthorization(choice) }); }
       catch (error) { return json(res, 409, { error: (error as Error).message }); }
     }
     if (req.method === "POST" && url.pathname === "/server/hub/computer") {

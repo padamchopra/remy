@@ -64,11 +64,18 @@ export class OrganizationService {
     await this.audit(organizationId, userId, "invite.created", "invite", invite.id, { role: input.role, delivery: input.email ? "email" : "link" });
     return { id: invite.id, organizationId, role: invite.role, expiresAt: invite.expiresAt, token: rawToken, ...(invite.email ? { email: invite.email } : {}) };
   }
-  async acceptInvite(userId: string, rawToken: string, verifiedEmails: string[]) {
+  async inspectInvite(rawToken: string, verifiedEmails: string[]) {
     const invite = await this.store.inviteByTokenHash(await tokenHash(rawToken)); const now = this.now();
     if (!invite || invite.acceptedAt || invite.expiresAt <= now) throw new OrganizationError(404, "Invitation not found.");
     if (invite.email && !verifiedEmails.some((email) => email.toLowerCase() === invite.email)) throw new OrganizationError(404, "Invitation not found.");
     if ((await this.store.organization(invite.organizationId))?.personalOwnerId) throw new OrganizationError(404, "Invitation not found.");
+    const organization = await this.store.organization(invite.organizationId);
+    if (!organization) throw new OrganizationError(404, "Invitation not found.");
+    return { invite, organizationName: organization.name };
+  }
+  async acceptInvite(userId: string, rawToken: string, verifiedEmails: string[]) {
+    const { invite } = await this.inspectInvite(rawToken, verifiedEmails);
+    const now = this.now();
     const membership: Membership = { id: crypto.randomUUID(), organizationId: invite.organizationId, userId, role: invite.role, createdAt: now, updatedAt: now };
     if (!await this.store.acceptInvite(invite.id, membership, userId, now)) throw new OrganizationError(404, "Invitation not found.");
     await this.audit(invite.organizationId, userId, "invite.accepted", "invite", invite.id);

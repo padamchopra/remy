@@ -214,3 +214,44 @@ test("workspace access accepts organization members, rejects foreign principals,
   assert.equal(updated.restricted, false);
   assert.deepEqual((await service.workspaces(org.id, "member")).map((entry) => entry.id), [workspace.id]);
 });
+
+test("invitation preview identifies the destination without accepting or exposing another recipient's invitation", async () => {
+  const store = new MemoryOrganizationStore();
+  let now = 1000;
+  const service = new OrganizationService(store, () => now, random);
+  const org = await service.create("owner", "Studio");
+  const invitation = await service.createInvite(org.id, "owner", { email: "ada@example.test", role: "member" });
+  const preview = await service.inspectInvite(invitation.token, ["ada@example.test"]);
+  assert.equal(preview.organizationName, "Studio");
+  assert.equal(preview.invite.createdByUserId, "owner");
+  assert.equal(store.invites[0].acceptedAt, undefined);
+  assert.equal(store.memberships.length, 1);
+  await assert.rejects(service.inspectInvite(invitation.token, ["other@example.test"]), /Invitation not found/);
+  await assert.rejects(service.inspectInvite("invalid", ["ada@example.test"]), /Invitation not found/);
+  now = invitation.expiresAt;
+  await assert.rejects(service.inspectInvite(invitation.token, ["ada@example.test"]), /Invitation not found/);
+  now = 1001;
+  await service.acceptInvite("ada", invitation.token, ["ada@example.test"]);
+  await assert.rejects(service.inspectInvite(invitation.token, ["ada@example.test"]), /Invitation not found/);
+});
+
+test("invitation preview route requires a session and returns only display metadata", async () => {
+  const store = new MemoryOrganizationStore();
+  const service = new OrganizationService(store, () => 1000, random);
+  const org = await service.create("owner", "Studio");
+  const invitation = await service.createInvite(org.id, "owner", { role: "admin" });
+  let authenticated = true;
+  const route = createRouteHandler({
+    accountStore: () => ({ profile: async (id: string) => ({ name: id === "owner" ? "Grace" : "Ada", verifiedEmails: [] }) }) as never,
+    accountService: () => ({ authenticate: async () => authenticated ? { sessionId: "session", userId: "ada", clientKind: "web" } : null }) as never,
+    organizationStore: () => store,
+    organizationService: () => service,
+  });
+  const request = () => new Request("https://hub.example/api/invitations/preview", { method: "POST", headers: { authorization: "Bearer session", "content-type": "application/json" }, body: JSON.stringify({ token: invitation.token }) });
+  const response = await route(request(), env());
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { organizationName: "Studio", inviterName: "Grace", role: "admin", accountName: "Ada" });
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  authenticated = false;
+  assert.equal((await route(request(), env())).status, 401);
+});

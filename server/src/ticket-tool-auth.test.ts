@@ -22,6 +22,8 @@ test("a Remy capability reaches orchestration without reaching administration", 
   assert.equal(isRemyToolRoute("POST", "/organization-tools/github_installation"), false);
   assert.equal(isRemyToolRoute("GET", "/organization-tools/github_action"), false);
   assert.equal(isRemyToolRoute("GET", "/board"), true);
+  assert.equal(isRemyToolRoute("POST", "/server/hub/authorize/accounts"), false);
+  assert.equal(isRemyToolRoute("POST", "/server/hub/authorize/complete"), false);
   assert.equal(isRemyToolRoute("POST", "/tickets/one/comment"), true);
   assert.equal(isRemyToolRoute("POST", "/tickets/one/status"), true);
   assert.equal(isRemyToolRoute("PATCH", "/tickets/one/comments/two"), false);

@@ -247,6 +247,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     || url.pathname === "/api/personal"
     || /^\/api\/sessions\/[^/]+$/.test(url.pathname)
     || url.pathname === "/api/invitations/accept"
+    || url.pathname === "/api/invitations/preview"
     || url.pathname === "/api/organizations"
     || url.pathname.startsWith("/api/organizations/")
     || url.pathname.startsWith("/api/connections/");
@@ -395,6 +396,14 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       const created=await organizations.create(identity.userId,name);
       await env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${created.id}`)).fetch(new Request("https://internal/organization/changed",{method:"POST",headers:{"x-organization-id":created.id}}));
       return Response.json(created,{status:201});
+    }
+    if (url.pathname === "/api/invitations/preview" && request.method === "POST") {
+      const input = await body<{ token?: string }>(request);
+      if (typeof input?.token !== "string" || !input.token) return jsonError("Open a valid invitation link.", 400);
+      const profile = await store.profile(identity.userId);
+      const { invite, organizationName } = await organizations.inspectInvite(input.token, profile?.verifiedEmails ?? []);
+      const inviter = await store.profile(invite.createdByUserId);
+      return Response.json({ organizationName, inviterName: inviter?.name ?? "An organization administrator", role: invite.role, accountName: profile?.name ?? "Your account" }, { headers: { "cache-control": "no-store" } });
     }
     if (url.pathname === "/api/invitations/accept" && request.method === "POST") {
       const input = await body<{ token?: string }>(request);
