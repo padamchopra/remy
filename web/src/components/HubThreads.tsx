@@ -62,8 +62,10 @@ export default function HubThreads({
   computerId,
   threadId,
   navigate,
+  canManageWorkspaces = false,
 }: {
   organizationId: string;
+  canManageWorkspaces?: boolean;
   computerId?: string;
   threadId?: string;
   navigate: (route: Route) => void;
@@ -209,9 +211,7 @@ export default function HubThreads({
               <span className="min-w-0 break-words">{item.detail.title}<span className="block text-xs text-muted-foreground">{computers.find((c) => c.computerId === item.computerId)?.name ?? "Computer unavailable"} · Started by {item.access.owner.label}{item.stale ? " · Offline" : ""}</span></span>
             </Button>
           ))}
-          {!threads.length && !computers.some((c) => c.canUse && c.availability !== "offline") && <Empty><EmptyHeader><EmptyTitle>Connect a computer</EmptyTitle><EmptyDescription>Connect your Mac or configure a hosted computer to run your threads.</EmptyDescription></EmptyHeader><Button variant="outline" data-link onClick={() => navigate({ name: "settings", tab: "devices", organizationId })}>Open Computers</Button></Empty>}
-          {!threads.length && computers.some((c) => c.canUse && c.availability !== "offline") && <p className="text-sm text-muted-foreground">Choose a workspace to start a thread.</p>}
-          {(threads.length > 0 || computers.some((c) => c.canUse && c.availability !== "offline")) && <HubThreadComposer organizationId={organizationId} computers={computers} open={open} />}
+          <HubThreadComposer key={organizationId} organizationId={organizationId} computers={computers} canManageWorkspaces={canManageWorkspaces} open={open} />
         </div>
       ) : (
         <>

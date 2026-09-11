@@ -1,3 +1,5 @@
+import { Skeleton } from "@/components/ui/skeleton";
+import { formatLocation } from "@/lib/route";
 import { HubCodexAccount } from "./HubCodexAccount";
 import { usePersonalHub } from "@/lib/hub-scope";
 import { useEffect, useState } from "react";
@@ -79,6 +81,7 @@ export function HubHostedComputers({
     "/workspaces",
   );
   const [workspace, setWorkspace] = useState("");
+  const [retry, setRetry] = useState(0);
   const [customize, setCustomize] = useState(false);
   const [customSize, setCustomSize] = useState(false);
   const [settings, setSettings] = useState<HostedSettings>(
@@ -129,7 +132,7 @@ export function HubHostedComputers({
     return () => {
       current = false;
     };
-  }, [path, base, workspace]);
+  }, [path, base, workspace, retry]);
   useEffect(() => {
     if (!workspace || !watching) return;
     let stopped = false;
@@ -178,12 +181,25 @@ export function HubHostedComputers({
     (size) =>
       size.cpu === settings.cpu && size.memoryMiB === settings.memoryMiB,
   );
+  if (loading) return <Skeleton className="h-48 w-full" aria-label="Loading cloud availability" />;
+  if (!available) return <Card>
+    <CardHeader><CardTitle>Cloud execution</CardTitle></CardHeader>
+    <CardContent className="flex flex-col gap-3">
+      <p role={error ? "alert" : "status"}>{error || "Cloud computers are unavailable; connect your Mac or ask your Remy administrator to enable hosting."}</p>
+      <Button variant="outline" onClick={() => setRetry((value) => value + 1)}>Check availability again</Button>
+      <Button asChild variant="link"><a href="https://tryremy.dev/docs/#web" target="_blank" rel="noreferrer">Read the setup guide</a></Button>
+    </CardContent>
+  </Card>;
   return (
     <Card>
       <CardHeader>
         <CardTitle>Cloud execution</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
+        {admin && workspaces.value && !workspaces.value.workspaces.length && <Field>
+          <FieldDescription>Add a workspace before preparing its cloud computer.</FieldDescription>
+          <Button data-link onClick={() => { window.location.hash = formatLocation({ route: { name: "workspaces", organizationId } }); }}>Add a workspace</Button>
+        </Field>}
         <Field>
           <FieldLabel>Settings for</FieldLabel>
           <Select

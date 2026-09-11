@@ -1,3 +1,4 @@
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { HubPersonalContext, usePersonalHub } from "@/lib/hub-scope";
 import { HubHostedComputers } from "./HubHostedComputers";
 import { HubBoardSync } from "./HubBoardSync";
@@ -117,6 +118,7 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
       .catch((e) => setError(apiError(e)));
   }, [local?.id, organizationId]);
   useEffect(() => {
+    if (local) return;
     void Promise.all([
       hubRequest<{ organizations: Organization[] }>("/api/organizations"),
       hubRequest<{ personal: Organization }>("/api/personal"),
@@ -127,9 +129,9 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
           setOrg((current) => current || account.personal.id);
       })
       .catch(() => undefined);
-  }, []);
+  }, [local?.id]);
   useEffect(() => {
-    if (!org) return;
+    if (!org || local) return;
     setError("");
     setComputers([]);
     setThreads([]);
@@ -152,7 +154,7 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
       off();
       offThreads();
     };
-  }, [org]);
+  }, [org, local?.id]);
   const openThread = (thread: HubThread) => {
     window.location.hash = formatLocation({
       route: {
@@ -267,17 +269,27 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
             </EmptyHeader>
           </Empty>
         )}
-        {org && !computers.length && !stale && (
+        {org && !local && !computers.length && !stale && (
           <Empty>
             <EmptyHeader>
-              <EmptyTitle>No computers yet</EmptyTitle>
+              <EmptyTitle>Connect your Mac</EmptyTitle>
               <EmptyDescription>
-                Open Remy on your Mac, then attach it from Computers settings.
+                In Remy on your Mac, open Settings → Computers and choose Attach this Mac.
               </EmptyDescription>
             </EmptyHeader>
+            {!local && <div className="flex flex-wrap justify-center gap-2">
+              <Button asChild><a href="https://github.com/padamchopra/remy/releases/latest" target="_blank" rel="noreferrer">Download for Mac</a></Button>
+              <Button asChild variant="outline"><a href="https://tryremy.dev/docs/#web" target="_blank" rel="noreferrer">Read the setup guide</a></Button>
+            </div>}
+            <p className="text-sm text-muted-foreground">Keep this page open while you connect your Mac.</p>
           </Empty>
         )}
-        {org && (
+        {org && computers.some((c) => c.canUse && c.availability !== "offline") && <Button data-link onClick={() => { window.location.hash = formatLocation({ route: { name: "threads", organizationId: org } }); }}>Continue to your threads</Button>}
+        {local && registration && <Field>
+          <FieldDescription>This Mac is connected to Remy on the web.</FieldDescription>
+          <Button asChild variant="outline"><a href={registration.hubUrl} target="_blank" rel="noreferrer">Open Remy on the web</a></Button>
+        </Field>}
+        {org && !local && (
           <HubHostedComputers
             key={org}
             organizationId={org}
@@ -380,7 +392,6 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
             serverId={local.id}
             org={org}
             hubUrl={registration?.hubUrl}
-            isAdmin={!isPersonal && options.role !== "member"}
             close={() => setAttach(false)}
             attached={(value) => {
               setRegistration(value);
@@ -421,7 +432,7 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-        {org && <HubNotifications organizationId={org} />}
+        {org && !local && <HubNotifications organizationId={org} />}
       </section>
     </HubPersonalContext>
   );
@@ -612,20 +623,20 @@ function AttachComputer({
   serverId,
   org,
   hubUrl,
-  isAdmin,
   close,
   attached,
 }: {
   serverId: string;
   org: string;
   hubUrl?: string;
-  isAdmin: boolean;
   close: () => void;
   attached: (registration: Registration) => void;
 }) {
-  const personalContext = usePersonalHub();
+  const [accounts, setAccounts] = useState<Organization[]>();
   const [address, setAddress] = useState(hubUrl ?? "https://app.tryremy.dev");
   const [organization, setOrganization] = useState(org);
+  const personalContext = !organization || organization === "personal" || (accounts ?? []).some((account) => account.id === organization && account.personal);
+  const selectedAdmin = (accounts ?? []).some((account) => account.id === organization && ["owner", "admin"].includes(account.role));
   const [ownership, setOwnership] = useState("personal");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -640,16 +651,20 @@ function AttachComputer({
           "/server/hub/authorize",
           {
             method: "POST",
-            body: { hubUrl: address, organizationId: organization, ownership },
+            body: { hubUrl: address, organizationId: organization === "personal" ? "" : organization, ownership },
           },
         );
         setCode(value.userCode);
+      } else if (!accounts) {
+        const result = await transport.request<{ accounts: Organization[] }>(serverId, "/server/hub/authorize/accounts", { method: "POST" });
+        setAccounts(result.accounts);
+        setOrganization(result.accounts.find((account) => account.id === org)?.id ?? result.accounts.find((account) => account.personal)?.id ?? "");
+        setOwnership("personal");
       } else {
-        await hubRequest("/api/device/approve", "POST", { userCode: code });
         const result = await transport.request<{ registration: Registration }>(
           serverId,
           "/server/hub/authorize/complete",
-          { method: "POST" },
+          { method: "POST", body: { organizationId: organization, ownership } },
         );
         attached(result.registration);
       }
@@ -670,8 +685,8 @@ function AttachComputer({
         <DialogHeader>
           <DialogTitle>Attach this Mac</DialogTitle>
           <DialogDescription>
-            {code
-              ? "Compare this code before approving your computer."
+            {accounts ? "Choose which account can use this Mac." : code
+              ? "Approve this code in your browser, then choose your account."
               : "Connect this Mac to your Remy account."}
           </DialogDescription>
         </DialogHeader>
@@ -682,33 +697,26 @@ function AttachComputer({
             void submit();
           }}
         >
-          {!code ? (
+          {!code || accounts ? (
             <>
-              <Field>
-                <FieldLabel htmlFor="hub-address">Remy address</FieldLabel>
-                <Input
-                  id="hub-address"
-                  type="url"
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                />
-              </Field>
-              {(!personalContext || !org) && (
-                <Field>
-                  <FieldLabel htmlFor="hub-org">
-                    Organization (optional)
-                  </FieldLabel>
-                  <Input
-                    id="hub-org"
-                    value={organization}
-                    onChange={(e) => setOrganization(e.target.value)}
-                  />
-                  <FieldDescription>
-                    Leave this empty to use your personal account.
-                  </FieldDescription>
-                </Field>
-              )}
-              {!personalContext && (
+              {accounts && <Field>
+                <FieldLabel>Account</FieldLabel>
+                <Select value={organization || "personal"} onValueChange={(id) => { setOrganization(id); setOwnership("personal"); }}>
+                  <SelectTrigger aria-label="Attach to account"><SelectValue placeholder="Choose an account" /></SelectTrigger>
+                  <SelectContent><SelectGroup>
+                    {!(accounts ?? []).some((account) => account.personal) && <SelectItem value="personal">Personal</SelectItem>}
+                    {(accounts ?? []).map((account) => <SelectItem key={account.id} value={account.id}>{account.personal ? "Personal" : account.name}</SelectItem>)}
+                  </SelectGroup></SelectContent>
+                </Select>
+              </Field>}
+              {!accounts && <Collapsible>
+                <CollapsibleTrigger asChild><Button type="button" variant="ghost">Advanced connection settings</Button></CollapsibleTrigger>
+                <CollapsibleContent className="pt-3"><Field>
+                  <FieldLabel htmlFor="hub-address">Remy address</FieldLabel>
+                  <Input id="hub-address" type="url" value={address} onChange={(e) => setAddress(e.target.value)} required />
+                </Field></CollapsibleContent>
+              </Collapsible>}
+              {accounts && !personalContext && (
                 <Field>
                   <FieldLabel>Owner</FieldLabel>
                   <Select value={ownership} onValueChange={setOwnership}>
@@ -718,7 +726,7 @@ function AttachComputer({
                     <SelectContent>
                       <SelectGroup>
                         <SelectItem value="personal">You</SelectItem>
-                        {isAdmin && (
+                        {selectedAdmin && (
                           <>
                             <SelectItem value="organization">
                               Your organization
@@ -740,12 +748,15 @@ function AttachComputer({
               )}
             </>
           ) : (
+            <>
             <p
               className="text-center font-mono text-2xl"
               aria-label="Computer authorization code"
             >
               {code}
             </p>
+            <Button asChild><a href={`${new URL(address).origin}/?computerCode=${encodeURIComponent(code)}`} target="_blank" rel="noreferrer">Approve in your browser</a></Button>
+            </>
           )}
           {error && (
             <p role="alert" className="text-sm text-destructive">
@@ -761,12 +772,13 @@ function AttachComputer({
             >
               Cancel
             </Button>
+            {code && <Button type="button" variant="outline" disabled={busy} onClick={() => { setCode(""); setAccounts(undefined); setError(""); }}>Start again</Button>}
             <Button
               disabled={
                 busy || !address || (ownership !== "personal" && !organization)
               }
             >
-              {code ? "Approve computer" : "Continue"}
+              {accounts ? "Finish connecting" : code ? "Choose account" : "Continue"}
             </Button>
           </DialogFooter>
         </form>

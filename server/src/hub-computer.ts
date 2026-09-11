@@ -349,7 +349,11 @@ export async function detachHubComputer(): Promise<void> {
   patchSettings({ hubMode: false });
 }
 
+type AuthorizedHubAccount = { id: string; name: string; role: string; personal?: boolean };
+let approvedAuthorization: { deviceCode: string; accessToken: string; expiresAt: number; accounts?: AuthorizedHubAccount[] } | undefined;
+
 export async function beginHubComputerAuthorization(hubUrl: string, organizationId: string, ownership: "personal" | "organization" | "hosted") {
+  approvedAuthorization = undefined;
   const url = new URL(hubUrl);
   if (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))) throw new Error("Enter a secure Remy address.");
   if ((!organizationId && ownership !== "personal") || organizationId.length > 200) throw new Error("Choose your organization.");
@@ -361,10 +365,43 @@ export async function beginHubComputerAuthorization(hubUrl: string, organization
   return { userCode: value.userCode };
 }
 
-export async function finishHubComputerAuthorization() {
+export async function authorizedHubAccounts(): Promise<AuthorizedHubAccount[]> {
+  const pending = getKv<{ hubUrl: string; deviceCode: string; expiresAt: number }>("hubPendingAuthorization");
+  if (!pending || pending.expiresAt <= Date.now()) throw new Error("Start computer authorization again.");
+  if (!approvedAuthorization || approvedAuthorization.deviceCode !== pending.deviceCode || approvedAuthorization.expiresAt <= Date.now()) {
+    const response = await fetch(new URL("/api/device/token", pending.hubUrl), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ deviceCode: pending.deviceCode }), signal: AbortSignal.timeout(15000), redirect: "error" });
+    if (response.status === 202) throw new Error("Approve this computer in your browser, then try again.");
+    if (response.status === 429) throw new Error("Wait a moment, then try again.");
+    if (!response.ok) throw new Error("Start computer authorization again.");
+    const token = await response.json() as { accessToken?: unknown };
+    if (typeof token.accessToken !== "string") throw new Error("Start computer authorization again.");
+    approvedAuthorization = { deviceCode: pending.deviceCode, accessToken: token.accessToken, expiresAt: pending.expiresAt };
+  }
+  const authorization = approvedAuthorization;
+  if (!authorization.accounts) {
+    const read = async (path: string) => {
+      const response = await fetch(new URL(path, pending.hubUrl), { headers: { authorization: `Bearer ${authorization.accessToken}` }, signal: AbortSignal.timeout(15000), redirect: "error" });
+      if (!response.ok) throw new Error("Your accounts could not load; try again.");
+      return response.json();
+    };
+    const [own, shared] = await Promise.all([read("/api/personal"), read("/api/organizations")]) as [{ personal: AuthorizedHubAccount }, { organizations: AuthorizedHubAccount[] }];
+    authorization.accounts = [own.personal, ...shared.organizations];
+  }
+  return authorization.accounts;
+}
+
+export async function finishHubComputerAuthorization(choice?: { organizationId: string; ownership: "personal" | "organization" | "hosted" }) {
   const pending = getKv<{ hubUrl: string; organizationId: string; ownership: "personal" | "organization" | "hosted"; deviceCode: string; expiresAt: number }>("hubPendingAuthorization");
   if (!pending || pending.expiresAt <= Date.now()) throw new Error("Start computer authorization again.");
-  await registerHubComputerWithDeviceCode(pending.hubUrl, pending.organizationId, pending.deviceCode, pending.ownership);
+  if (choice) {
+    const accounts = await authorizedHubAccounts();
+    const account = accounts.find((account) => account.id === choice.organizationId);
+    if (!account || (choice.ownership !== "personal" && (account.personal || !["owner", "admin"].includes(account.role)))) throw new Error("Choose an account and computer owner you can manage.");
+    await registerHubComputer(pending.hubUrl, choice.organizationId, approvedAuthorization!.accessToken, choice.ownership);
+  } else {
+    await registerHubComputerWithDeviceCode(pending.hubUrl, pending.organizationId, pending.deviceCode, pending.ownership);
+  }
+  approvedAuthorization = undefined;
   setKv("hubPendingAuthorization", null);
   return hubComputerRegistration();
 }
