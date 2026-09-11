@@ -549,6 +549,10 @@ export interface Agent {
   tint?: string;
   autoStart: boolean;
   handoffTo: string[];
+  /// Offered to every thread as a subagent it may delegate to.
+  delegable: boolean;
+  /// When to delegate to it, in the words the calling model reads.
+  delegateDescription?: string;
   /// Who this agent's commits credit: `default` follows the machine, `off`
   /// keeps your identity, and `author` credits the agent while you commit it.
   gitIdentity: "default" | "off" | "author";

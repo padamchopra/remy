@@ -324,8 +324,40 @@ export function AgentSettings({
         </Field>
       )}
 
+      {!locked && (
       <Field orientation="horizontal" className="items-center">
-        <FieldContent>
+        <FieldContent className="min-w-0">
+          <FieldLabel htmlFor="agent-delegable">Available as a subagent</FieldLabel>
+          <FieldDescription className="text-xs">
+            Lets a Claude thread hand part of its work to this agent.
+          </FieldDescription>
+        </FieldContent>
+        <Switch
+          id="agent-delegable"
+          checked={agent.delegable}
+          onCheckedChange={(next) => void save({ delegable: next }, "whether threads may delegate to it")}
+        />
+      </Field>
+      )}
+
+      {!locked && agent.delegable && (
+        <Field>
+          <FieldLabel htmlFor="agent-delegate-description">When to delegate to it</FieldLabel>
+          <FieldDescription className="text-xs">
+            Falls back to its role when you leave this empty.
+          </FieldDescription>
+          <Input
+            id="agent-delegate-description"
+            value={text("delegateDescription")}
+            placeholder={agent.role ?? agent.name}
+            onChange={(event) => setDraft((c) => ({ ...c, delegateDescription: event.target.value }))}
+            onBlur={commit("delegateDescription", "when to delegate to it")}
+          />
+        </Field>
+      )}
+
+      <Field orientation="horizontal" className="items-center">
+        <FieldContent className="min-w-0">
           <FieldLabel htmlFor="agent-autostart">Start unattended</FieldLabel>
           <FieldDescription className="text-xs">
             Lets the board run this agent when a ticket reaches Todo.
