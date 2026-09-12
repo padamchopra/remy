@@ -63,9 +63,11 @@ export default function HubThreads({
   threadId,
   navigate,
   canManageWorkspaces = false,
+  showNavigation = true,
 }: {
   organizationId: string;
   canManageWorkspaces?: boolean;
+  showNavigation?: boolean;
   computerId?: string;
   threadId?: string;
   navigate: (route: Route) => void;
@@ -161,15 +163,15 @@ export default function HubThreads({
       className="flex min-h-0 min-w-0 flex-1 flex-col"
       aria-label="Threads"
     >
-      <header className="flex min-w-0 shrink-0 flex-wrap items-center gap-2 border-b p-4">
-        <HubNotifications organizationId={organizationId} />
+      {(showNavigation || thread) && <header className="flex min-w-0 shrink-0 flex-wrap items-center gap-2 border-b p-4">
+        {showNavigation && <><HubNotifications organizationId={organizationId} />
         <Button
           variant="ghost"
           data-link
           onClick={() => navigate({ name: "threads", organizationId })}
         >
           Threads
-        </Button>
+        </Button></>}
         {thread && (
           <div className="min-w-0 flex-1">
             <p className="break-words">{thread.detail.title}</p>
@@ -180,7 +182,7 @@ export default function HubThreads({
             </p>
           </div>
         )}
-      </header>
+      </header>}
       {thread && <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2 text-xs text-muted-foreground"><Button variant="link" size="sm" data-link onClick={() => navigate({ name: "settings", tab: "devices", organizationId })}><ComputerIcon />{computer?.name ?? "Computer unavailable"}</Button><span className="min-w-0 break-words">Started by {thread.access.owner.label}</span></div>}
       {error && (
         <p role="alert" className="px-4 py-2 text-sm text-destructive">

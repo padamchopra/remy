@@ -15,6 +15,7 @@ import {
   SquarePen,
   Network,
   Plug,
+  Bell,
 } from "lucide-react";
 import type { HubThread, Organization } from "@remy/contract";
 import type { HubRuntime } from "@/lib/hub-session";
@@ -53,6 +54,7 @@ import {
   SidebarFooter,
   SidebarInset,
   SidebarTrigger,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import {
   Empty,
@@ -79,6 +81,7 @@ import { Deferred } from "@/components/Deferred";
 import { HubComputerApproval } from "./HubComputerApproval";
 import { HubInvitation } from "./HubInvitation";
 import { HubSignIn } from "./HubSignIn";
+import { HubNotifications } from "./HubNotifications";
 const Threads = lazy(() => import("./HubThreads"));
 const Board = lazy(() => import("./HubBoard"));
 const Computers = lazy(() =>
@@ -96,6 +99,21 @@ const Routing = lazy(() =>
   import("./HubRouting").then((m) => ({ default: m.HubRouting })),
 );
 
+function NotificationButton({ onClick }: { onClick: () => void }) {
+  const { setOpenMobile } = useSidebar();
+  return (
+    <SidebarMenuButton onClick={() => { setOpenMobile(false); onClick(); }}>
+      <Bell /><span>Notifications</span>
+    </SidebarMenuButton>
+  );
+}
+
+function SidebarNavigation({ route }: { route: Route }) {
+  const { setOpenMobile } = useSidebar();
+  useEffect(() => setOpenMobile(false), [route, setOpenMobile]);
+  return null;
+}
+
 export default function HubApp({ runtime }: { runtime: HubRuntime }) {
   const [route, setRoute] = useState<Route>(
     parseLocation(window.location.hash).route,
@@ -109,6 +127,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
   const [error, setError] = useState("");
   const [threads, setThreads] = useState<HubThread[]>([]);
   const [create, setCreate] = useState(false);
+  const [notificationsAccount, setNotificationsAccount] = useState<string>();
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [computerCode, setComputerCode] = useState(new URLSearchParams(window.location.search).get("computerCode"));
@@ -286,6 +305,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
   return (
     <HubPersonalContext value={isPersonal}>
       <SidebarProvider>
+        <SidebarNavigation route={route} />
         <Sidebar>
           <SidebarHeader className="flex-row items-center gap-1 px-3 py-3">
             <DropdownMenu>
@@ -442,6 +462,11 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           </SidebarContent>
           <SidebarFooter className="p-3">
             <SidebarMenu>
+              {organization && (
+                <SidebarMenuItem>
+                  <NotificationButton onClick={() => setNotificationsAccount(organization.id)} />
+                </SidebarMenuItem>
+              )}
               <SidebarMenuItem>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -490,7 +515,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
         <SidebarInset className="h-svh min-w-0 overflow-hidden">
           <header className="flex shrink-0 items-center gap-2 border-b p-3">
             <SidebarTrigger />
-            <span>{organization?.name ?? "Remy"}</span>
+            <h1 className="min-w-0 truncate">{links.find((link) => link.selected)?.label ?? "Remy"}</h1>
           </header>
           {error && (
             <p role="alert" className="px-4 py-2">
@@ -527,6 +552,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               >
                 <Deferred open={section === "threads"}>
                   <Threads
+                    showNavigation={false}
                     canManageWorkspaces={organization.role !== "member"}
                     organizationId={organization.id}
                     computerId={
@@ -621,6 +647,15 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
             </div>
           )}
         </SidebarInset>
+        {organization && (
+          <HubNotifications
+            key={organization.id}
+            organizationId={organization.id}
+            showTrigger={false}
+            open={notificationsAccount === organization.id}
+            onOpenChange={(open) => setNotificationsAccount(open ? organization.id : undefined)}
+          />
+        )}
         <Dialog open={create} onOpenChange={setCreate}>
           <DialogContent>
             <DialogHeader>

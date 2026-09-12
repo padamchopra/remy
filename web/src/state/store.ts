@@ -8,6 +8,7 @@ import { applyProjectIdentity } from "~/lib/projects";
 import { invalidateSharedResource, readSharedResource, seedSharedResource } from "~/lib/shared-read";
 import { byRank } from "~/lib/tickets";
 import { transport } from "~/lib/transport";
+import { isHostedRuntime } from "~/lib/hub-session";
 import { clearOptimisticUser, mergeEntryUpdates, registerOptimisticUser, uniqueEntries } from "~/lib/thread-entry-merge";
 import { readWarmCache, warmSnapshot, writeWarmCache } from "~/lib/warm-cache";
 import { fixtureChats, fixtureServers, fixtureWorkspaces } from "./fixture";
@@ -298,7 +299,7 @@ let refreshAgain = false;
 ///
 /// The transcripts go into `detailCache` oldest first, so the most recent one in
 /// the snapshot is the most recent one here too.
-const warm = useFixture ? undefined : readWarmCache();
+const warm = useFixture || isHostedRuntime() ? undefined : readWarmCache();
 for (const detail of [...(warm?.details ?? [])].reverse()) cacheDetail(detail);
 
 function detailKey(id: string, serverId: string): string {

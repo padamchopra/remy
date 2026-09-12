@@ -25,7 +25,7 @@ import {
   SelectGroup,
   SelectItem,
 } from "@/components/ui/select";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { useHubResource, type HubWorkspace } from "@/lib/hub-organization";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -182,20 +182,15 @@ export function HubHostedComputers({
       size.cpu === settings.cpu && size.memoryMiB === settings.memoryMiB,
   );
   if (loading) return <Skeleton className="h-48 w-full" aria-label="Loading cloud availability" />;
-  if (!available) return <Card>
-    <CardHeader><CardTitle>Cloud execution</CardTitle></CardHeader>
-    <CardContent className="flex flex-col gap-3">
+  if (!available) return <section aria-label="Cloud settings" className="flex max-w-xl flex-col gap-4">
+    <Field><FieldLabel>Cloud</FieldLabel><FieldDescription>Run threads without keeping your Mac online.</FieldDescription></Field>
       <p role={error ? "alert" : "status"}>{error || "Cloud computers are unavailable; connect your Mac or ask your Remy administrator to enable hosting."}</p>
       <Button variant="outline" onClick={() => setRetry((value) => value + 1)}>Check availability again</Button>
       <Button asChild variant="link"><a href="https://tryremy.dev/docs/#web" target="_blank" rel="noreferrer">Read the setup guide</a></Button>
-    </CardContent>
-  </Card>;
+  </section>;
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Cloud execution</CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
+    <section aria-label="Cloud settings" className="flex max-w-xl flex-col gap-6">
+      <Field><FieldLabel>Cloud</FieldLabel><FieldDescription>Run threads without keeping your Mac online.</FieldDescription></Field>
         {admin && workspaces.value && !workspaces.value.workspaces.length && <Field>
           <FieldDescription>Add a workspace before preparing its cloud computer.</FieldDescription>
           <Button data-link onClick={() => { window.location.hash = formatLocation({ route: { name: "workspaces", organizationId } }); }}>Add a workspace</Button>
@@ -552,7 +547,6 @@ export function HubHostedComputers({
         )}
         {saved && <p role="status">Your settings are saved.</p>}
         {error && <p role="alert">{error}</p>}
-      </CardContent>
-    </Card>
+    </section>
   );
 }
