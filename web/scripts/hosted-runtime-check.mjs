@@ -22,6 +22,8 @@ try {
       page.setDefaultTimeout(8000);
       const errors = [], unexpected = [], requests = [];
       let available = true;
+      let connected = false;
+      const computerName = returning ? "Studio-Mac-with-a-long-unbroken-name-for-release-and-preview-builds" : "Studio Mac";
       page.on("pageerror", error => errors.push(error.message));
       await page.routeWebSocket(/\/api\//, () => {});
       await page.route("**/api/**", route => {
@@ -36,7 +38,7 @@ try {
           "/api/organizations": { organizations: [team] },
           [base]: { organization: org },
           [`${base}/threads`]: { threads: [], cursor: 0, member: { id: "reader", role: "owner" } },
-          [`${base}/computers`]: { computers: [] },
+          [`${base}/computers`]: { computers: connected ? [{ computerId: "studio", name: computerName, icon: "laptop", ownership: "personal", availability: "offline", access: { mode: "owner" }, canUse: false, canManage: false }] : [] },
           [`${base}/computers/options`]: { role: "owner", members: [], teams: [] },
           [`${base}/hosted`]: { settings: { enabled: false, provider: "fly-sprites", region: "", cpu: 1, memoryMiB: 2048, maxComputers: 5, idleMinutes: 12 }, secretNames: [], available },
           [`${base}/workspaces`]: { workspaces: [], canManage: true },
@@ -56,12 +58,21 @@ try {
         assert.equal(await page.locator("main header").count(), 1, "Threads has one title bar");
         assert.equal(await page.locator("main").getByRole("button", { name: "Notifications", exact: true }).count(), 0);
         await page.getByRole("button", { name: "Set up a computer" }).click();
-        await page.getByText("Cloud execution", { exact: true }).waitFor();
+        await page.getByRole("region", { name: "Cloud settings", exact: true }).waitFor();
+        await page.getByRole("button", { name: "Add computer", exact: true }).click();
+        await page.getByRole("region", { name: "General computer settings" }).waitFor();
+        const download = page.getByRole("link", { name: "Download for Mac", exact: true });
+        const guide = page.getByRole("link", { name: "Read the setup guide", exact: true });
+        const downloadBox = await download.boundingBox(), guideBox = await guide.boundingBox();
+        assert.ok(Math.abs(downloadBox.width - guideBox.width) < 1, "Mac setup actions have equal widths");
+        await page.reload();
+        await page.getByRole("region", { name: "General computer settings" }).waitFor();
+        await page.getByRole("navigation", { name: "Computer settings" }).getByRole("button", { name: "Cloud", exact: true }).click();
         target.hash = `/settings/devices?organization=${org.id}`;
         await page.goto(target.href);
         for (const reload of [false, true]) {
           if (reload) await page.reload();
-          await page.getByText("Cloud execution", { exact: true }).waitFor();
+          await page.getByRole("region", { name: "Cloud settings", exact: true }).waitFor();
           await page.getByLabel("Hosted workspace").waitFor();
           assert.equal(await page.getByRole("button", { name: "Attach this Mac", exact: true }).count(), 0);
           if (mobile) await page.getByRole("button", { name: "Toggle Sidebar" }).click();
@@ -73,6 +84,17 @@ try {
           if (artifacts && returning && mobile && org.personal) await page.screenshot({ path: `${artifacts}/computers-phone.png` });
           assert.ok(await page.locator("section[aria-label=Computers]").evaluate(e => e.scrollWidth <= e.clientWidth), "Computers must fit the phone viewport");
         }
+        connected = true;
+        await page.reload();
+        await page.getByRole("navigation", { name: "Computer settings" }).getByRole("button", { name: computerName, exact: true }).click();
+        await page.locator('[data-computer-id="studio"]').waitFor();
+        assert.ok(await page.locator('section[aria-label="Computers"]').evaluate(e => e.scrollWidth <= e.clientWidth), "Long computer names fit the available width");
+        await page.reload();
+        await page.locator('[data-computer-id="studio"]').waitFor();
+        connected = false;
+        await page.reload();
+        await page.getByText("Computer unavailable", { exact: true }).waitFor();
+        await page.getByRole("button", { name: "Open Cloud", exact: true }).click();
         available = false;
         await page.reload();
         await page.getByRole("button", { name: "Check availability again" }).waitFor();
