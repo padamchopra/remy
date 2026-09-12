@@ -1,6 +1,7 @@
 import { codeFor, isDeviceIcon, loadAppearance, saveAppearance, type DeviceIconId } from "~/lib/devices";
 import { isTint, type TintId } from "~/lib/tints";
 import type { Server } from "~/state/types";
+import { isHostedRuntime } from "./hub-session";
 
 /// How the UI reaches a Remy server.
 ///
@@ -444,6 +445,7 @@ function proxyTransport(): LocalTransport {
   return {
     kind: "proxy",
     async servers() {
+      if (isHostedRuntime()) return [];
       // This preview talks to exactly one server — the one Vite is proxying.
       // List it even when /health is down so a blip looks like "offline", not
       // "nothing is paired".

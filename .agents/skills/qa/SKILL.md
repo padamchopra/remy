@@ -35,6 +35,9 @@ Choose the preview by what changed:
 
 - **UI only:** `npm run dev:web` serves the edited UI at `http://127.0.0.1:5173` against the packaged daemon and real database.
 - **Server behavior, or an occupied 5173:** `npm run qa:web` builds the current checkout and starts an isolated daemon and Vite on unused loopback ports. Open the URL it prints. Its temporary database includes a disposable sample workspace and ticket; add `-- --empty` when testing an empty state.
+- **Hosted web:** build with `npm run build:hub --prefix web` and use the isolated hosted setup in `hub/docs/web.md`. The local daemon preview does not exercise hosted runtime selection, account permissions, or cloud availability.
+
+Match the hosted fixture's asset routing and runtime configuration to the deployment configuration. Open its printed URL and confirm it reaches the authenticated app before running a journey; serving the public homepage or a development-only asset layout is not hosted app coverage.
 
 Probe `http://127.0.0.1:5173` before starting Vite. If it already responds, do not retry `npm run dev:web`: reuse it only for a UI-only change, and use `npm run qa:web` for current server code.
 
@@ -63,6 +66,24 @@ Cover every new or changed control, not one happy path:
 Read state back from the server rather than trusting the screen: the endpoints under `/chats` and `/server/settings` say what actually persisted.
 
 Anything you create while testing — a thread, a workspace, a changed setting — you delete or restore before you finish.
+
+## Regression tests
+
+For a behavior bug, reproduce the reported starting state in an executable test and observe it fail before applying the fix. Assert the useful outcome and the forbidden side effect at the boundary that failed; a rendered heading alone does not prove that the controls or requests are correct. Run the test after the fix and wire it into the relevant CI job. Read the workflow before claiming that an existing test runs automatically.
+
+For shared local and hosted UI, exercise runtime selection with both a fresh browser and saved state from an earlier session. Cover the affected personal and organization routes through navigation and direct reload, on desktop and a touch phone viewport. Confirm that hosted pages do not issue local APIs, and that available, unavailable, and retry states retain their intended actions. Search sibling consumers of the same runtime or cache before limiting the fix to one component.
+
+`web/scripts/hosted-runtime-check.mjs` is the built-app regression for this boundary, run by `.github/workflows/hub.yml`. Its controlled API responses prove client behavior; use the isolated hosted setup for real authentication and backend integration, and report external provider steps separately.
+
+BAD
+```text
+The sign-in screen loads in a fresh browser. The web tests pass.
+```
+
+GOOD
+```text
+Load Computers with a saved local computer in browser storage. Verify cloud setup and notifications, reload the account route, retry unavailable hosting, and reject any local computer API request. Keep this regression in CI alongside the fresh-profile case.
+```
 
 ## Recording PR artifacts
 

@@ -63,7 +63,6 @@ import { watchHubComputers } from "@/lib/hub-computers";
 import { formatLocation } from "@/lib/route";
 import { transport } from "@/lib/transport";
 import { useStore } from "@/state/store";
-import { HubNotifications } from "./HubNotifications";
 
 type Registration = {
   computerId: string;
@@ -432,7 +431,6 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-        {org && !local && <HubNotifications organizationId={org} />}
       </section>
     </HubPersonalContext>
   );
