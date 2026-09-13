@@ -1,9 +1,10 @@
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { HubPersonalContext, usePersonalHub } from "@/lib/hub-scope";
-import { HubHostedComputers } from "./HubHostedComputers";
+import { Deferred } from "./Deferred";
+import { Cloud, Plus, Settings2 } from "lucide-react";
 import { HubBoardSync } from "./HubBoardSync";
 import { apiError } from "@/lib/api-error";
-import { useEffect, useState } from "react";
+import { lazy, useEffect, useState } from "react";
 import type {
   ComputerAccess,
   ComputerSummary,
@@ -60,10 +61,15 @@ import {
 import { DEVICE_ICON_IDS, deviceIcon, type DeviceIconId } from "@/lib/devices";
 import { hubRequest, hubThreadBase, watchHubThreads } from "@/lib/hub-threads";
 import { watchHubComputers } from "@/lib/hub-computers";
-import { formatLocation } from "@/lib/route";
+import { formatLocation, parseLocation } from "@/lib/route";
 import { transport } from "@/lib/transport";
 import { useStore } from "@/state/store";
-import { HubNotifications } from "./HubNotifications";
+
+const HostedComputers = lazy(() => import("./HubHostedComputers").then((m) => ({ default: m.HubHostedComputers })));
+const computerPane = () => {
+  const route = parseLocation(window.location.hash).route;
+  return route.name === "settings" && route.tab === "devices" ? route.deviceId ?? "cloud" : "cloud";
+};
 
 type Registration = {
   computerId: string;
@@ -87,6 +93,7 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
     personalContext ||
     organizations.find((item) => item.id === org)?.personal === true ||
     !org;
+  const [computersLoaded, setComputersLoaded] = useState(false);
   const [computers, setComputers] = useState<ComputerSummary[]>([]);
   const [threads, setThreads] = useState<HubThread[]>([]);
   const [options, setOptions] = useState<Options>({
@@ -100,6 +107,16 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
   const [removing, setRemoving] = useState<ComputerSummary | "local">();
   const [attach, setAttach] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [pane, setPane] = useState(computerPane);
+  useEffect(() => {
+    const changed = () => setPane(computerPane());
+    window.addEventListener("hashchange", changed);
+    return () => window.removeEventListener("hashchange", changed);
+  }, []);
+  const choosePane = (deviceId: string) => {
+    setPane(deviceId);
+    window.location.hash = formatLocation({ route: { name: "settings", tab: "devices", organizationId: org, deviceId } });
+  };
   useEffect(() => {
     if (organizationId) setOrg(organizationId);
   }, [organizationId]);
@@ -134,11 +151,13 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
     if (!org || local) return;
     setError("");
     setComputers([]);
+    setComputersLoaded(false);
     setThreads([]);
     const off = watchHubComputers(
       org,
       (items, outdated) => {
         setComputers(items);
+        setComputersLoaded(true);
         setStale(outdated);
         if (!outdated) {
           setError("");
@@ -192,14 +211,14 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
         className="@container flex min-w-0 flex-col gap-4"
         aria-label="Computers"
       >
-        <Field>
+        {local && <Field>
           <FieldLabel>Computers</FieldLabel>
           <FieldDescription>
             {isPersonal
               ? "Connect a computer to run your threads."
               : "Choose who can use each computer."}
           </FieldDescription>
-        </Field>
+        </Field>}
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           {!organizationId && organizations.length > 0 && (
             <Select
@@ -269,35 +288,47 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
             </EmptyHeader>
           </Empty>
         )}
-        {org && !local && !computers.length && !stale && (
-          <Empty>
-            <EmptyHeader>
-              <EmptyTitle>Connect your Mac</EmptyTitle>
-              <EmptyDescription>
-                In Remy on your Mac, open Settings → Computers and choose Attach this Mac.
-              </EmptyDescription>
-            </EmptyHeader>
-            {!local && <div className="flex flex-wrap justify-center gap-2">
-              <Button asChild><a href="https://github.com/padamchopra/remy/releases/latest" target="_blank" rel="noreferrer">Download for Mac</a></Button>
-              <Button asChild variant="outline"><a href="https://tryremy.dev/docs/#web" target="_blank" rel="noreferrer">Read the setup guide</a></Button>
-            </div>}
-            <p className="text-sm text-muted-foreground">Keep this page open while you connect your Mac.</p>
-          </Empty>
-        )}
-        {org && computers.some((c) => c.canUse && c.availability !== "offline") && <Button data-link onClick={() => { window.location.hash = formatLocation({ route: { name: "threads", organizationId: org } }); }}>Continue to your threads</Button>}
         {local && registration && <Field>
           <FieldDescription>This Mac is connected to Remy on the web.</FieldDescription>
           <Button asChild variant="outline"><a href={registration.hubUrl} target="_blank" rel="noreferrer">Open Remy on the web</a></Button>
         </Field>}
-        {org && !local && (
-          <HubHostedComputers
-            key={org}
-            organizationId={org}
-            admin={options.role !== "member"}
-          />
-        )}
+        <div className={local ? "" : "grid min-w-0 gap-6 md:grid-cols-[12rem_minmax(0,1fr)]"}>
+          {!local && <nav aria-label="Computer settings" className="flex min-w-0 flex-wrap content-start gap-1 md:flex-col">
+            <Button variant={pane === "general" ? "secondary" : "ghost"} data-link aria-current={pane === "general" ? "page" : undefined} onClick={() => choosePane("general")} className="justify-start"><Settings2 />General</Button>
+            <Button variant={pane === "cloud" ? "secondary" : "ghost"} data-link aria-current={pane === "cloud" ? "page" : undefined} onClick={() => choosePane("cloud")} className="justify-start"><Cloud />Cloud</Button>
+            {computers.map((computer) => {
+              const Icon = deviceIcon(computer.icon as DeviceIconId);
+              return <Button key={computer.computerId} variant={pane === computer.computerId ? "secondary" : "ghost"} data-link aria-current={pane === computer.computerId ? "page" : undefined} onClick={() => choosePane(computer.computerId)} className="h-auto min-h-9 min-w-0 max-w-full justify-start whitespace-normal text-left"><Icon /><span className="min-w-0 break-words">{computer.name}</span></Button>;
+            })}
+            <Button variant="ghost" size="icon" data-link aria-label="Add computer" title="Add computer" onClick={() => choosePane("general")}><Plus /></Button>
+          </nav>}
+          <div className="min-w-0">
+            {!local && pane === "general" && <section aria-label="General computer settings" className="flex max-w-xl flex-col gap-6">
+              <Field>
+                <FieldLabel>General</FieldLabel>
+                <FieldDescription>Add your Mac to run threads using its workspaces and providers.</FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel>Connect a Mac</FieldLabel>
+                <FieldDescription>Install Remy on your Mac, then open Settings → Computers and choose Attach this Mac.</FieldDescription>
+                <div className="grid max-w-sm grid-cols-1 gap-2 sm:grid-cols-2">
+                  <Button asChild className="w-full"><a href="https://github.com/padamchopra/remy/releases/latest" target="_blank" rel="noreferrer">Download for Mac</a></Button>
+                  <Button asChild variant="outline" className="w-full"><a href="https://tryremy.dev/docs/#web" target="_blank" rel="noreferrer">Read the setup guide</a></Button>
+                </div>
+              </Field>
+              <FieldDescription>Your Mac appears in Computers after you connect it.</FieldDescription>
+            </section>}
+            {org && !local && <div className={pane === "cloud" ? "" : "hidden"}>
+              <Deferred open={pane === "cloud"}>
+                <HostedComputers key={org} organizationId={org} admin={options.role !== "member"} />
+              </Deferred>
+            </div>}
+            {!local && computersLoaded && !["general", "cloud"].includes(pane) && !computers.some((c) => c.computerId === pane) && <Empty>
+              <EmptyHeader><EmptyTitle>Computer unavailable</EmptyTitle><EmptyDescription>Choose another computer or add your Mac.</EmptyDescription></EmptyHeader>
+              <Button variant="outline" data-link onClick={() => choosePane("cloud")}>Open Cloud</Button>
+            </Empty>}
         <ItemGroup className="gap-3">
-          {computers.map((computer) => {
+          {computers.filter((computer) => local || pane === computer.computerId).map((computer) => {
             const Icon = deviceIcon(computer.icon as DeviceIconId);
             const running = threads.filter(
               (t) =>
@@ -372,6 +403,8 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
             );
           })}
         </ItemGroup>
+          </div>
+        </div>
         {editing && (
           <ComputerEditor
             computer={editing}
@@ -432,7 +465,6 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-        {org && !local && <HubNotifications organizationId={org} />}
       </section>
     </HubPersonalContext>
   );

@@ -27,6 +27,7 @@ test("hub workflow validates pull requests without repeating checks on main", ()
   assert.deepEqual(Object.keys(workflow.jobs), ["validate"]);
   const validateCommands = workflow.jobs.validate?.steps.flatMap((step) => (step.run ? [step.run] : []));
   assert.ok(validateCommands?.some(command => command.includes("hub-website-check.mjs")));
+  assert.ok(validateCommands?.some(command => command.includes("hosted-runtime-check.mjs")));
   assert.deepEqual(validateCommands?.filter(command => !command.includes("hub-website-check.mjs") && !command.includes("playwright-core install")), [
     "npm ci --prefix contract --no-audit --no-fund",
     "npm ci --prefix hub --no-audit --no-fund",

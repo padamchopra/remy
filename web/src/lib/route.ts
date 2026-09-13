@@ -71,7 +71,7 @@ function parseRoute(hash: string): AppLocation {
         tab,
         ...(tab === "devices" && params.get("organization") ? { organizationId: params.get("organization")! } : {}),
         ...(tab === "analytics" ? { analyticsTab } : {}),
-        ...(tab === "providers" && deviceId ? { deviceId } : {}),
+        ...((tab === "providers" || tab === "devices") && deviceId ? { deviceId } : {}),
       },
     };
   }
@@ -103,9 +103,9 @@ export function formatLocation({ route }: AppLocation): string {
             ? `/tickets/${encodeURIComponent(route.key)}`
             : route.name === "settings"
               ? `/settings/${route.tab}${
-                  route.tab === "devices" && route.organizationId ? `?organization=${encodeURIComponent(route.organizationId)}` : route.tab === "analytics" && route.analyticsTab === "usage"
+                  route.tab === "analytics" && route.analyticsTab === "usage"
                     ? "?tab=usage"
-                    : route.tab === "providers" && route.deviceId
+                    : (route.tab === "providers" || route.tab === "devices") && route.deviceId
                       ? `?device=${encodeURIComponent(route.deviceId)}`
                       : ""
                 }`

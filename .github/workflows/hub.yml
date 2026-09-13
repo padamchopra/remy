@@ -36,6 +36,7 @@ jobs:
           server_pid=$!
           trap 'kill "$server_pid"' EXIT
           node web/scripts/hub-website-check.mjs
+          node web/scripts/hosted-runtime-check.mjs
       - run: npm test --prefix contract
       - run: npm run typecheck --prefix contract
       - run: npm test --prefix hub

@@ -60,8 +60,10 @@ try {
   assert.equal(p.url().includes("computerCode"), false);
   await p.screenshot({ path: `${out}/first-workspace.png` });
   await click(p, "Set up a computer");
-  await p.getByText("Connect your Mac", { exact: true }).waitFor();
+  await click(p, "Add computer");
+  await p.getByText("Connect a Mac", { exact: true }).waitFor();
   assert.equal(await p.getByRole("link", { name: "Download for Mac" }).getAttribute("href"), "https://github.com/padamchopra/remy/releases/latest");
+  await click(p, "Cloud");
   await p.getByText("Cloud computers are unavailable; connect your Mac or ask your Remy administrator to enable hosting.").waitFor();
   await click(p, "Check availability again");
   await p.getByText("Cloud computers are unavailable; connect your Mac or ask your Remy administrator to enable hosting.").waitFor();

@@ -39,7 +39,7 @@ await build({
       const secrets = env => ({ ...env, ...(env.QA_CONNECTIONS ? {LINEAR_CLIENT_SECRET:{get:async()=>"disposable-secret"},GITHUB_CONNECTION_CLIENT_SECRET:{get:async()=>"disposable-secret"},GITHUB_WEBHOOK_SECRET:{get:async()=>"disposable-webhook"},LINEAR_WEBHOOK_SECRET:{get:async()=>"disposable-linear-webhook"}} : {}), AUTH_SECRET: { get: async () => "disposable-qa-secret-with-more-than-thirty-two-characters" }, HOSTED_CONTROL_TOKEN: { get: async () => env.QA_HOSTED_TOKEN || "disposable-runtime-credential-for-failure-check" } });
       export class HubCoordinator extends Coordinator { constructor(ctx,env) { super(ctx,secrets(env)); } }
       export default { ...worker, fetch(request, env, ctx) {
-        return worker.fetch(request, { ...secrets(env), BETTER_AUTH_URL: new URL(request.url).origin,
+        return worker.fetch(request, { ...secrets(env), BETTER_AUTH_URL: new URL(request.url).origin, WEB_APP_URL: new URL(request.url).origin,
           AUTH_SECRET: { get: async () => "disposable-qa-secret-with-more-than-thirty-two-characters" },
           EMAILS: { send: async (mail) => { await env.DB.prepare("INSERT INTO qa_emails (recipient,url) VALUES (?,?)").bind(mail.recipient,mail.url).run(); } }
         }, ctx);
@@ -88,7 +88,7 @@ const mf = new Miniflare(
     workers: [
       {
         name: "hub",
-        ...(process.env.QA_HUB_WEB === "1" ? { assets: { directory: join(root, "web/dist"), binding: "ASSETS", run_worker_first: ["/api/*", "/health", "/invite/*"], routerConfig: { has_user_worker: true }, assetConfig: { not_found_handling: "single-page-application" } } } : {}),
+        ...(process.env.QA_HUB_WEB === "1" ? { assets: { directory: join(root, "web/dist"), binding: "ASSETS", run_worker_first: true, routerConfig: { has_user_worker: true }, assetConfig: { not_found_handling: "single-page-application" } } } : {}),
         script: readFileSync(bundle, "utf8"),
         modules: true,
         compatibilityDate: "2026-09-04",

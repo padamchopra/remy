@@ -26,13 +26,21 @@ import { formatLocation } from "@/lib/route";
 const announced = new Set<string>();
 export function HubNotifications({
   organizationId,
+  open: controlledOpen,
+  onOpenChange,
+  showTrigger = true,
 }: {
   organizationId: string;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  showTrigger?: boolean;
 }) {
   const [items, setItems] = useState<HubNotification[]>([]);
   const [savingDevice, setSavingDevice] = useState<string>();
   const [error, setError] = useState("");
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const open = controlledOpen ?? ownOpen;
+  const setOpen = onOpenChange ?? setOwnOpen;
   const key = `remy.hub-notifications.${organizationId}`;
   const [enabled, setEnabled] = useState(
     () => localStorage.getItem(key) !== "off",
@@ -95,7 +103,7 @@ export function HubNotifications({
   }, [path]);
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
+      {showTrigger && <DialogTrigger asChild>
         <Button variant="outline" size="sm">
           <Bell />
           Notifications
@@ -103,7 +111,7 @@ export function HubNotifications({
             ? ` (${items.filter((item) => !item.readAt).length})`
             : ""}
         </Button>
-      </DialogTrigger>
+      </DialogTrigger>}
       <DialogContent className="max-h-[85vh] overflow-auto">
         <DialogHeader>
           <DialogTitle>Notifications</DialogTitle>
