@@ -29,6 +29,12 @@ test("comments do not revoke approval, but dismissal and changes requested do", 
   assert.equal(approvalFor(pull(), [review(3, "APPROVED"), review(2, "CHANGES_REQUESTED"), review(1, "DISMISSED")]).state, "success");
 });
 
+test("submission time wins over the order review drafts were created", () => {
+  const earlier = { ...review(20, "CHANGES_REQUESTED"), submitted_at: "2026-09-14T10:00:00Z" };
+  const later = { ...review(10, "APPROVED"), submitted_at: "2026-09-14T11:00:00Z" };
+  assert.equal(approvalFor(pull(), [earlier, later]).state, "success");
+});
+
 test("a reused login or PR author metadata cannot impersonate the owner", () => {
   const outsider = pull();
   outsider.user.login = "padamchopra";

@@ -7,7 +7,7 @@ function approvalFor(pull, reviews) {
   }
   const decision = reviews
     .filter((review) => review.user?.id === OWNER_ID && ["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(review.state))
-    .sort((a, b) => b.id - a.id)[0];
+    .sort((a, b) => (Date.parse(b.submitted_at) || 0) - (Date.parse(a.submitted_at) || 0) || b.id - a.id)[0];
   if (decision?.state === "APPROVED" && decision.commit_id === pull.head.sha) {
     return { state: "success", description: "padamchopra approved the latest commit." };
   }
