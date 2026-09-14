@@ -44,6 +44,7 @@ test("deployment migrates, deploys, then validates health", async () => {
       commands.push(args);
     },
     fetchHealth: async (input) => {
+      if (String(input) === "https://production.example/api/runtime") return Response.json({ auth: { magicLink: true } });
       assert.equal(String(input), "https://production.example/health");
       return Response.json({
         contractVersion: CONTRACT_VERSION,
@@ -83,4 +84,14 @@ test("deployment command failure prevents the smoke check", async () => {
     /deploy rejected/,
   );
   assert.equal(fetched, false);
+});
+
+
+test("production deployment fails its smoke check when email signup is hidden", async () => {
+  await assert.rejects(deployHub({
+    environment: "production", hubUrl: "https://production.example", release: "abc123", run: async () => {},
+    fetchHealth: async (input) => String(input).endsWith("/api/runtime")
+      ? Response.json({ auth: { magicLink: false } })
+      : Response.json({ contractVersion: CONTRACT_VERSION, environment: "production", release: "abc123", status: "ok", dependencies: { database: "ready", coordinator: "ready", objectStore: "ready", queue: "ready", secrets: "ready" } }),
+  }), /Production email signup is unavailable/);
 });

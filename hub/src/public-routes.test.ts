@@ -34,3 +34,18 @@ test("forwards registered OAuth callbacks to the host holding the state cookie",
     assert.equal(await callback.text(), "callback processed");
   }
 });
+
+
+test("finishes emailed verification on the app host before creating its session cookie", async () => {
+  const route = createRouteHandler({ betterAuth: async () => ({ handler: async () => new Response("verified") }) as never });
+  for (const endpoint of ["magic-link/verify", "verify-email"]) {
+    const path = `/api/auth/${endpoint}?token=sample-token&callbackURL=https%3A%2F%2Fapp.remy.example%2F`;
+    const response = await route(new Request(`https://remy.example${path}`), env);
+    assert.equal(response.status, 307);
+    assert.equal(response.headers.get("location"), `https://app.remy.example${path}`);
+    assert.equal(await (await route(new Request(response.headers.get("location")!), env)).text(), "verified");
+  }
+  const response = await route(new Request("https://remy.example/api/auth/sign-in/magic-link"), env);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("location"), null);
+});
