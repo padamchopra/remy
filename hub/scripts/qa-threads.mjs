@@ -41,7 +41,8 @@ await build({
       export default { ...worker, fetch(request, env, ctx) {
         return worker.fetch(request, { ...secrets(env), BETTER_AUTH_URL: new URL(request.url).origin, WEB_APP_URL: new URL(request.url).origin,
           AUTH_SECRET: { get: async () => "disposable-qa-secret-with-more-than-thirty-two-characters" },
-          EMAILS: { send: async (mail) => { await env.DB.prepare("INSERT INTO qa_emails (recipient,url) VALUES (?,?)").bind(mail.recipient,mail.url).run(); } }
+          EMAIL_FROM: "no-reply@remy.example",
+          EMAIL: { send: async (mail) => { const url = mail.text.split("\\n").find(line => line.startsWith("http")); if (!url) throw new Error("Missing email action"); await env.DB.prepare("INSERT INTO qa_emails (recipient,url) VALUES (?,?)").bind(mail.to,url).run(); return { messageId: "qa-delivered" }; } }
         }, ctx);
       } };
     ` : 'export { default, HubCoordinator } from "./hub/src/worker.ts";',

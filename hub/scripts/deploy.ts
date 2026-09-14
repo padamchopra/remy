@@ -58,6 +58,12 @@ export async function deployHub(options: DeployOptions): Promise<void> {
   if (health.environment !== options.environment) throw new Error("Hub smoke check reached the wrong environment");
   if (health.release !== options.release) throw new Error("Hub smoke check reached the wrong release");
   if (health.contractVersion !== CONTRACT_VERSION) throw new Error("Hub smoke check reached an incompatible contract");
+  if (options.environment === "production") {
+    const runtimeResponse = await (options.fetchHealth ?? fetch)(new URL("/api/runtime", options.hubUrl));
+    if (!runtimeResponse.ok) throw new Error("Production sign-in configuration is unavailable");
+    const runtime = await runtimeResponse.json() as { auth?: { magicLink?: boolean } };
+    if (runtime.auth?.magicLink !== true) throw new Error("Production email signup is unavailable");
+  }
 }
 
 const invokedPath = process.argv[1];
