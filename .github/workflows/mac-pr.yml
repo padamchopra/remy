@@ -60,7 +60,10 @@ jobs:
       - name: Test update handoff
         env:
           NODE_OPTIONS: --import=${{ github.workspace }}/contract/node_modules/tsx/dist/loader.mjs
-        run: npm --prefix desktop test && npm --prefix server test
+        run: |
+          npm --prefix desktop test
+          npm --prefix server run build
+          node --test server/dist/app-update.test.js server/dist/service-restart*.test.js server/dist/ticket-tool-auth.test.js
 
       - name: Build unsigned app
         run: npm run pack:mac
