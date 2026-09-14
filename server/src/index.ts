@@ -1,7 +1,8 @@
+import { readFileSync } from "node:fs";
 import {hubAgentTool} from "./hub-agent-tools.js";
 import { appendHubBoard, configureHubBoard, hubBoardList, hubBoardState, importHubBoard } from "./hub-board.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { WebSocketServer } from "ws";
 import { syncHubBoard, authorizedHubAccounts, beginHubComputerAuthorization, finishHubComputerAuthorization, detachHubComputer, hubComputerRegistration, registerHubComputerWithDeviceCode, startHubComputerConnection } from "./hub-computer.js";
 import { answerMentions } from "./mentions.js";
@@ -10,7 +11,7 @@ import { AgentStartupError, AgentUnavailableError, agentKind, inferAgent, type A
 import { createAgent, deleteAgent, getAgent, listAgents, seedPresetAgents, seedRemyAgent, updateAgent } from "./agents.js";
 import { forgetMemory, listMemories, saveMemory } from "./agent-memories.js";
 import { deliverAnnouncements } from "./announcements.js";
-import { pendingChatStarts, automaticUpdateStatus, automaticUpdateAction, configureAutomaticUpdates, syncAutomaticUpdates, reportAutomaticUpdate, appUpdateStatus, reportAppUpdate, requestAppUpdate } from "./app-update.js";
+import { prepareServiceRestart, pendingChatStarts, automaticUpdateStatus, automaticUpdateAction, configureAutomaticUpdates, syncAutomaticUpdates, reportAutomaticUpdate, appUpdateStatus, reportAppUpdate, requestAppUpdate } from "./app-update.js";
 import { localAnalytics } from "./analytics.js";
 import { threadAnalytics, threadPerformance } from "./thread-metrics.js";
 import {
@@ -372,6 +373,9 @@ function activeChatCount(): number {
   return pendingChatStarts + listAllChats().filter((chat) => chat.state === "working" || chat.state === "needs_input").length;
 }
 
+const serviceInstance = randomUUID();
+const serviceRelease = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version as string;
+
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -429,7 +433,17 @@ const server = createServer(async (req, res) => {
       return json(res,200,await hubAgentTool(scopedChatId,req.method==="GET"?"read_routing":"edit_routing",req.method==="PUT"?await readJson(req):{}));
     }
     if (req.method === "GET" && url.pathname === "/health") {
-      return json(res, 200, { ok: true });
+      return json(res, 200, { ok: true, release: serviceRelease, instance: serviceInstance });
+    }
+    if (req.method === "POST" && url.pathname === "/server/update/shutdown") {
+      const input = await readJson(req);
+      if (input.instance !== serviceInstance) return json(res, 409, { error: "Remy changed while updating; reopen Remy to try again." });
+      try { prepareServiceRestart(activeChatCount()); }
+      catch (error) { return json(res, 409, { error: (error as Error).message }); }
+      // The start guard stays closed until exit, including after the response
+      // is flushed. Orphaned copies retire themselves without PID guessing.
+      setTimeout(() => process.exit(0), 250);
+      return json(res, 202, { ok: true });
     }
     if (url.pathname.startsWith("/server/hub/board")) {
       const registration = hubComputerRegistration();

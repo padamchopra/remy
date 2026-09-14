@@ -169,7 +169,15 @@ export function reportAutomaticUpdate(input: Record<string, unknown>): boolean {
   return true;
 }
 
+let serviceRestarting = false;
+
+export function prepareServiceRestart(busyThreads: number): void {
+  if (busyThreads > 0 || pendingChatStarts > 0) throw new Error("Wait for your threads to finish, then reopen Remy to complete the update.");
+  serviceRestarting = true;
+}
+
 export function assertAppNotRestarting(): void {
+  if (serviceRestarting) throw new Error("Remy is relaunching to update; try again in a moment.");
   if (automatic.status.phase === "installing" && Date.now() - installingAt < 60_000) {
     throw new Error("Remy is relaunching to update; try again in a moment.");
   }

@@ -57,6 +57,11 @@ jobs:
       - name: Install
         run: npm run install:mac
 
+      - name: Test update handoff
+        env:
+          NODE_OPTIONS: --import=${{ github.workspace }}/contract/node_modules/tsx/dist/loader.mjs
+        run: npm --prefix desktop test && npm --prefix server test
+
       - name: Build unsigned app
         run: npm run pack:mac
 

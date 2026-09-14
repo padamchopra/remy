@@ -15,7 +15,7 @@ Media is not required for changes with no in-app behavior to show, such as CI, r
 
 Lead with required media, then use `## Summary`, `## Changes`, `## Review notes`, and `## Testing`, in that order. These are writing conventions, not an automated check.
 
-- **Media:** Put media tables at the very top of the body, before any heading, introduction, badge, or status note. Every image and video thumbnail belongs in a Markdown table with descriptive column headers, such as `Code review` and `Guided review`, or `Before` and `After` for a comparison. Use readable alt text and keep the table narrow enough to judge the media. Use the linked thumbnail Markdown that `agent-cli upload` returns for a video, so its preview can share a table with images and opens the original recording when clicked. Never collapse required media or add empty media placeholders.
+- **Media:** Put media tables at the very top of the body, before any heading, introduction, badge, or status note. Every image and video thumbnail belongs in a Markdown table with descriptive column headers, such as `Code review` and `Guided review`, or `Before` and `After` for a comparison. Use readable alt text and keep the table narrow enough to judge the media. Use GitHub user-attachments for media; preserve GitHub’s playable video attachment and use a labeled image table when a still preview helps. Never collapse required media or add empty media placeholders.
 - **Summary:** A short paragraph explaining the problem and the outcome, not an inventory of the implementation.
 - **Changes:** A few themed bullets describing what changes for the user or reviewer. Group related work rather than listing each file, commit, follow-up, or test.
 - **Review notes:** Only what could reverse an approval — a decision a reviewer might disagree with, a limitation, a missing verification, a breaking change, a migration, a rollout requirement. Why the code works is not a review note. Omit the section when there is nothing material to call out.
@@ -134,37 +134,17 @@ Do not turn terminal output, test results, configuration diffs, or API responses
 
 ## Publish
 
-Create the draft PR first. When media is required, upload the inspected files:
+Create the draft PR first, then attach the inspected files using the `github` CLI. Check `github --help` for the installed syntax and use its `--attach` option when available. If the installed CLI exposes only positional media arguments, use that supported equivalent:
 
 ```sh
-agent-cli upload /tmp/remy-pr-artifacts/branch/change.png
+github https://github.com/padamchopra/remy/pull/123 /tmp/remy-pr-artifacts/branch/change.png /tmp/remy-pr-artifacts/branch/change.mp4
 ```
 
-If `agent-cli` is unavailable, install it globally, then run the upload again:
+Use the actual draft PR URL. Upload the original recording and keep media out of git. The CLI appends GitHub user-attachments to the existing description; preserve those URLs when arranging the media above Summary. Keep GitHub’s native video attachment rather than adding external video markup or converting it to GIF.
 
-```sh
-npm -g i @choprapadam/agent-cli
-```
+If the CLI reports that GitHub is not signed in, run `github login` when the user can complete browser sign-in. Keep the PR in draft while attachment upload is blocked.
 
-Embed the returned image URLs in labeled tables at the top of the body. Append `?w=640` to raster image URLs for inline embeds.
-
-Upload video evidence in its original recorded format:
-
-```sh
-agent-cli upload /tmp/remy-pr-artifacts/branch/change.mp4
-```
-
-For a video, `agent-cli upload` also uploads a poster image and prints linked-image Markdown:
-
-```markdown
-[![Play change.mp4](https://agent-cli.padamchopra.me/media/{poster-token}?w=640)](https://agent-cli.padamchopra.me/media/{video-token})
-```
-
-Inspect the video and poster, then put that returned Markdown in the appropriate media-table cell. The thumbnail opens the original recording; never replace it with a text-only link or convert the video to GIF.
-
-Do not wrap an external `agent-cli` URL in a `<video>` tag because GitHub strips the tag from PR Markdown.
-
-Read the PR description back and confirm the section order, topmost media tables, linked video thumbnails, and collapsed supporting detail. Confirm that every media URL is present and resolves successfully, and that required review notes remain visible.
+Read the PR description back and confirm the section order, labeled image tables, playable video attachments, and collapsed supporting detail. Confirm that each attachment resolves and required review notes remain visible.
 
 When media is not required or explicitly waived, omit the media block; `## Testing` carries the reviewer-visible verification.
 
