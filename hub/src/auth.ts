@@ -2,16 +2,17 @@ import { sso } from "@better-auth/sso";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { magicLink } from "better-auth/plugins";
 
+import { sendAccountEmail } from "./email.js";
+
 import type { Env } from "./worker.js";
 
 export function authOptionsFor(
-  env: Pick<Env, "BETTER_AUTH_URL" | "WEB_APP_URL" | "DB" | "EMAILS" | "GITHUB_CLIENT_ID" | "GOOGLE_CLIENT_ID">,
+  env: Pick<Env, "BETTER_AUTH_URL" | "WEB_APP_URL" | "DB" | "EMAILS" | "EMAIL" | "EMAIL_FROM" | "GITHUB_CLIENT_ID" | "GOOGLE_CLIENT_ID">,
   authSecret: string,
   providerSecrets: { github?: string; google?: string } = {},
 ): BetterAuthOptions {
   const send = async (kind: "auth.magic-link" | "auth.verify-email" | "auth.change-email", recipient: string, url: string) => {
-    if (!env.EMAILS) throw new Error("Email delivery is not configured");
-    await env.EMAILS.send({ kind, recipient, url });
+    await sendAccountEmail(env, { kind, recipient, url });
   };
   const socialProviders: NonNullable<BetterAuthOptions["socialProviders"]> = {};
   if (env.GOOGLE_CLIENT_ID && providerSecrets.google) {
@@ -58,6 +59,8 @@ export function authOptionsFor(
     },
     plugins: [
       magicLink({
+        disableSignUp: false,
+        expiresIn: 300,
         storeToken: "hashed",
         sendMagicLink: async ({ email, url }) => send("auth.magic-link", email, url),
       }),
@@ -70,7 +73,7 @@ export async function readOAuthSecret(secret: string | SecretsStoreSecret | unde
   return typeof secret === "string" ? secret : secret?.get();
 }
 
-export async function authFor(env: Pick<Env, "AUTH_SECRET" | "BETTER_AUTH_URL" | "WEB_APP_URL" | "DB" | "EMAILS" | "GITHUB_CLIENT_ID" | "GITHUB_CLIENT_SECRET" | "GOOGLE_CLIENT_ID" | "GOOGLE_CLIENT_SECRET">) {
+export async function authFor(env: Pick<Env, "AUTH_SECRET" | "BETTER_AUTH_URL" | "WEB_APP_URL" | "DB" | "EMAILS" | "EMAIL" | "EMAIL_FROM" | "GITHUB_CLIENT_ID" | "GITHUB_CLIENT_SECRET" | "GOOGLE_CLIENT_ID" | "GOOGLE_CLIENT_SECRET">) {
   const [authSecret, github, google] = await Promise.all([
     env.AUTH_SECRET.get(),
     readOAuthSecret(env.GITHUB_CLIENT_SECRET),

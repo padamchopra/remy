@@ -1,3 +1,4 @@
+import { emailAvailable, sendAccountEmail, type AccountEmail } from "./email.js";
 import { EnvironmentStore } from "./environments.js";
 import { personalSpace } from "./personal-space.js";
 import {LinearBoard} from "./linear-board.js";
@@ -75,7 +76,9 @@ export interface Env extends ApplePushConfig {
   BETTER_AUTH_URL: string;
   COORDINATOR: DurableObjectNamespace;
   DB: D1Database;
-  EMAILS?: Queue<{ kind: "auth.magic-link" | "auth.verify-email" | "auth.change-email" | "organization.invite"; recipient: string; url: string }>;
+  EMAIL?: SendEmail;
+  EMAIL_FROM?: string;
+  EMAILS?: Queue<AccountEmail>;
   ENVIRONMENT: HubEnvironment;
   JOBS: Queue<UptimeCheckFrame | ConnectionJob>;
   OBJECTS: R2Bucket;
@@ -208,7 +211,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       return Response.json({ error: "Use your organization’s single sign-on.", providerId: policy.providerId }, { status: 403 });
     }
   }
-  if (env.WEB_APP_URL && url.origin !== new URL(env.WEB_APP_URL).origin && /^\/api\/auth\/callback\/(google|github)$/.test(url.pathname)) return Response.redirect(new URL(`${url.pathname}${url.search}`, env.WEB_APP_URL), 307);
+  if (env.WEB_APP_URL && url.origin !== new URL(env.WEB_APP_URL).origin && /^\/api\/auth\/(callback\/(google|github)|magic-link\/verify|verify-email)$/.test(url.pathname)) return Response.redirect(new URL(`${url.pathname}${url.search}`, env.WEB_APP_URL), 307);
   if (url.pathname.startsWith("/api/auth/")) {
     return (await (dependencies.betterAuth ?? authFor)(env)).handler(request);
   }
@@ -239,7 +242,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     return Response.json(result, { status });
   }
 
-  if (url.pathname === "/api/runtime" && request.method === "GET") return Response.json({ mode: "hub", auth: { magicLink: !!env.EMAILS, google: !!env.GOOGLE_CLIENT_ID && !!env.GOOGLE_CLIENT_SECRET, github: !!env.GITHUB_CLIENT_ID && !!env.GITHUB_CLIENT_SECRET, sso: true } }, { headers: { "cache-control": "no-store" } });
+  if (url.pathname === "/api/runtime" && request.method === "GET") return Response.json({ mode: "hub", auth: { magicLink: emailAvailable(env), google: !!env.GOOGLE_CLIENT_ID && !!env.GOOGLE_CLIENT_SECRET, github: !!env.GITHUB_CLIENT_ID && !!env.GITHUB_CLIENT_SECRET, sso: true } }, { headers: { "cache-control": "no-store" } });
   const protectedRoute = url.pathname === "/api/device/approve"
     || url.pathname === "/api/sessions"
     || url.pathname === "/api/sessions/revoke-all"
@@ -688,9 +691,9 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         const input = await body<{ email?: string; role?: "admin" | "member" }>(request);
         if (input?.role !== "admin" && input?.role !== "member") return jsonError("Choose admin or member access.", 400);
         if (input.email !== undefined && (!/^\S+@\S+\.\S+$/.test(input.email) || input.email.length > 254)) return jsonError("Enter a valid email address.", 400);
-        if (input.email && !env.EMAILS) return jsonError("Email invitations are unavailable.", 503);
+        if (input.email && !emailAvailable(env)) return jsonError("Email invitations are unavailable.", 503);
         const invite = await organizations.createInvite(organizationId, identity.userId, { ...(input.email ? { email: input.email } : {}), role: input.role });
-        if (input.email) { await env.EMAILS!.send({ kind: "organization.invite", recipient: input.email, url: `${url.origin}/?invite=${encodeURIComponent(invite.token)}` }); const { token: _, ...delivered } = invite; return Response.json(delivered, { status: 201 }); }
+        if (input.email) { await sendAccountEmail(env, { kind: "organization.invite", recipient: input.email, url: `${url.origin}/?invite=${encodeURIComponent(invite.token)}` }); const { token: _, ...delivered } = invite; return Response.json(delivered, { status: 201 }); }
         return Response.json(invite, { status: 201 });
       }
       if (tail === "teams" && request.method === "GET") return Response.json({ teams: await organizations.teams(organizationId, identity.userId) });

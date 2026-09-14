@@ -58,7 +58,7 @@ A Mac can authorize with an empty organization ID and personal ownership. After 
 
 A person may belong to any number of organizations as an owner, admin, or member. Every organization route authorizes the signed-in person against the organization ID in that request; a valid session cannot distinguish another organization's resource from a missing one.
 
-Owners and admins can invite people by email or a single-use link and manage named teams. Email invitations are delivered through the `EMAILS` queue and may be accepted only by the addressed verified account. Removing a member also removes that person's team memberships. An owner must transfer ownership before leaving.
+Owners and admins can invite people by email or a single-use link and manage named teams. Email invitations are delivered through the native `EMAIL` binding (or a configured `EMAILS` queue) and may be accepted only by the addressed verified account. Removing a member also removes that person's team memberships. An owner must transfer ownership before leaving.
 
 Deleting an organization is a two-step operation. `GET /api/organizations/:id/deletion-impact` returns the affected membership, team, outstanding invitation, and workspace counts; `DELETE /api/organizations/:id` requires the exact organization name. The deletion cascades through memberships, teams, team memberships, invitations, workspaces, access grants, Tasks data, domains, and SSO configuration. Audit events remain available for the later security log even after the organization is deleted.
 

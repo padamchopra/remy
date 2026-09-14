@@ -2,7 +2,7 @@
 
 Cloudflare serves the same Vite output that Electron packages. `/api/runtime` selects hosted mode before the window asks for local data. Electron and a local proxy remain local by default. Relative assets still work with `file://`; invitation links use the root URL, and legacy `/invite/:token` paths redirect there before serving the app.
 
-Hosted requests carry the organization in their URL and the web session in an HTTP-only, same-origin cookie. No computer or daemon bearer credential reaches the page. Magic links and social/SSO callbacks exchange the temporary Better Auth session for a revocable Remy session. The original invitation survives sign-in. Email invitations are delivered through the configured email queue; link invitations are returned only when no email recipient is supplied.
+Hosted requests carry the organization in their URL and the web session in an HTTP-only, same-origin cookie. No computer or daemon bearer credential reaches the page. Magic links and social/SSO callbacks exchange the temporary Better Auth session for a revocable Remy session. The original invitation survives sign-in. Account emails and invitations are delivered through the native `EMAIL` binding and `EMAIL_FROM` sender, with the `EMAILS` queue supported for other deployments; link invitations are returned only when no email recipient is supplied.
 
 | Path | Behavior |
 | --- | --- |
@@ -15,6 +15,14 @@ Hosted requests carry the organization in their URL and the web session in an HT
 | Sign-out | Only the current session is revoked, its cookie expires, and the organization view is cleared. |
 
 The web UI exposes sign-in methods configured by the deployment. Google and GitHub do not ask for an email first; SSO reveals its own work-email form. Invitation preview requires a signed-in account and the same valid, unexpired, recipient-matching token as acceptance; acceptance revalidates it. New accounts and organizations open Threads with workspace and computer setup actions. A first request creates the thread and sends its initial message; a failed send can retry on the created thread. The composer stays available without an online computer so configured cloud execution can allocate one. Real Google/GitHub/SSO round trips require those providers' credentials and domain setup. Tests exercise production magic-link handling with captured email delivery; they do not pretend to complete an external OAuth provider flow.
+
+## Email signup and delivery
+
+Personal accounts can sign up or sign in with an email link without Google, GitHub, or SSO. Better Auth creates a verified account when a new person follows the link; existing people resume their account. Links expire after five minutes and work once. Verified organization domains that enforce SSO still require their own provider.
+
+Production uses Cloudflare Email Sending with `EMAIL_FROM=no-reply@tryremy.dev` and an `EMAIL` send binding restricted to that sender. Onboard `tryremy.dev` with `wrangler email sending enable tryremy.dev`, then check `wrangler email sending settings tryremy.dev` and `wrangler email sending dns get tryremy.dev`. Email Sending must support arbitrary recipients; destination restrictions are unsuitable for public signup. The native binding is awaited before the form confirms the email was sent, and provider failures are returned without their raw payload.
+
+After deployment, check `/api/runtime` reports `auth.magicLink: true`, then use a fresh browser and a real inbox to complete signup and sign in again. Local QA captures the composed email at the native binding boundary; it proves the auth flow but not external delivery. Never publish sign-in URLs or captured mail as reviewer evidence.
 
 ## Build and verify
 

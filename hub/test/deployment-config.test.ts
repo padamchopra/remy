@@ -9,7 +9,8 @@ type EnvironmentConfig = {
   name: string;
   workers_dev?: boolean;
   routes?: Array<{ pattern: string; custom_domain: boolean }>;
-  vars: { ENVIRONMENT: string };
+  vars: { ENVIRONMENT: string; EMAIL_FROM?: string };
+  send_email?: Array<{ name: string; allowed_sender_addresses: string[] }>;
   d1_databases: Array<{ binding: string; database_id: string; database_name: string }>;
   durable_objects?: { bindings: Array<{ name: string; class_name: string }> };
   queues?: { producers: Array<{ binding: string; queue: string }>; consumers: Array<{ queue: string }> };
@@ -94,3 +95,10 @@ for (const environment of ["staging", "production"] as const) {
     assert.match(output, /Total Upload/);
   });
 }
+
+
+test("production enables email signup with a restricted native sender", () => {
+  const production = config.env.production;
+  assert.equal(production.vars.EMAIL_FROM, "no-reply@tryremy.dev");
+  assert.deepEqual(production.send_email, [{ name: "EMAIL", allowed_sender_addresses: [production.vars.EMAIL_FROM] }]);
+});

@@ -49,6 +49,7 @@
       "vars": {
         "ENVIRONMENT": "production",
         "WEB_APP_URL": "https://app.tryremy.dev",
+        "EMAIL_FROM": "no-reply@tryremy.dev",
         "GITHUB_CLIENT_ID": "Ov23liJidz9ZFqAvM6vu",
         "GOOGLE_CLIENT_ID": "649335458708-1thafkf1p0402mo125marsbchqq5eifk.apps.googleusercontent.com",
         "MINIMUM_DAEMON_VERSION": "0.1.0"
@@ -91,6 +92,7 @@
           }
         ]
       },
+      "send_email": [{ "name": "EMAIL", "allowed_sender_addresses": ["no-reply@tryremy.dev"] }],
       "secrets_store_secrets": [
         {
           "binding": "AUTH_SECRET",
