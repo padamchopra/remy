@@ -211,7 +211,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       return Response.json({ error: "Use your organization’s single sign-on.", providerId: policy.providerId }, { status: 403 });
     }
   }
-  if (env.WEB_APP_URL && url.origin !== new URL(env.WEB_APP_URL).origin && /^\/api\/auth\/callback\/(google|github)$/.test(url.pathname)) return Response.redirect(new URL(`${url.pathname}${url.search}`, env.WEB_APP_URL), 307);
+  if (env.WEB_APP_URL && url.origin !== new URL(env.WEB_APP_URL).origin && /^\/api\/auth\/(callback\/(google|github)|magic-link\/verify|verify-email)$/.test(url.pathname)) return Response.redirect(new URL(`${url.pathname}${url.search}`, env.WEB_APP_URL), 307);
   if (url.pathname.startsWith("/api/auth/")) {
     return (await (dependencies.betterAuth ?? authFor)(env)).handler(request);
   }
