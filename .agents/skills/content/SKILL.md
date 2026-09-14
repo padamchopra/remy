@@ -1,6 +1,6 @@
 ---
 name: content
-description: The words a person reads in Remy. Use when writing or changing ANY empty state, dialog, button, error, setting, label, or toast.
+description: Copywriting for Remy's app, website, and design mockups. Use when writing or reviewing ANY user-facing heading, description, label, button, message, or product tagline.
 ---
 
 # Content
@@ -14,6 +14,30 @@ A conversation is a **thread**. The API, the database, and the code still say ch
 The same goes for **workspace**: the code has a `project` — the repository, keyed on its origin so two machines share one board — but nobody adds a project, they add a folder. No label, menu, empty state or error says project. `AGENTS.md` has the rest of the table.
 
 Do not explain how the UI works, and do not mention servers or daemons unless someone has to pair a machine.
+
+## Natural copy in context
+
+Read the surrounding heading, controls, and destination before writing supporting text. Name the action or benefit the person cares about; do not assemble a sentence from the product's entity names.
+
+Reuse established product language when it fits the surface. The tagline in `web/website/main.tsx` is a reference for Remy's voice, not mandatory copy for every screen.
+
+For the sign-in form:
+
+BAD
+```
+Continue to your threads and your team.
+```
+
+GOOD
+```
+Your coding agents, within reach.
+```
+
+Read the complete sentence as something you would say to a person. Check that its verb makes sense with every noun it governs; familiar product words do not make an unnatural phrase clear.
+
+Supporting copy adds a useful benefit or expectation beyond the heading. Remove it when it adds neither. Keep account instructions accurate for both new and returning people, and mention Teams only when the distinction affects their choice.
+
+Apply the same copy review to Paper designs and other mockups as to shipped UI. Review the words in the rendered layout for awkward wrapping, repetition, and competing instructions. These are editorial conventions, not automated checks.
 
 ## Empty states
 
