@@ -1,5 +1,5 @@
 import { writeFile } from "node:fs/promises";
-import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir, hostname as osHostname } from "node:os";
 import { join } from "node:path";
@@ -229,7 +229,10 @@ async function wireIpc(): Promise<void> {
       send("mc:status", serverId, online, error),
     );
     ready.start();
-  }).catch((error) => console.error("remy: could not open connections", error));
+  }).catch((error) => {
+    console.error("remy: could not open connections", error);
+    dialog.showErrorBox("Remy could not connect", error instanceof Error ? error.message : "Reopen Remy to try again.");
+  });
 
   ipcMain.handle("app:info", () => ({
     version: app.getVersion(),

@@ -6,6 +6,7 @@
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/*.test.js",
     "start": "npm run build && electron .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pack:mac": "node scripts/stage-bundle.mjs && npm run build && node scripts/pack-mac.mjs"
@@ -28,7 +29,8 @@
     "appId": "me.padamchopra.Remy",
     "productName": "Remy",
     "files": [
-      "dist/**/*"
+      "dist/**/*",
+      "!dist/**/*.test.js"
     ],
     "extraResources": [
       {

@@ -1,3 +1,4 @@
+import { ensureServiceRelease, type ServiceHealth } from "./service-handoff";
 import { spawn, type ChildProcess, execFile as execFileCb } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -63,16 +64,27 @@ export function isLoopback(url: string): boolean {
   }
 }
 
-async function reachable(target: LocalTarget): Promise<boolean> {
+async function serviceHealth(target: LocalTarget): Promise<ServiceHealth | undefined> {
   const token = target.token || readHomeConfig()?.token || "";
   try {
     const response = await fetch(new URL("/health", target.url), {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(2_000),
     });
-    return response.ok;
-  } catch {
-    return false;
+    if (!response.ok) throw new Error("Remy could not verify this Mac; reopen Remy to try again.");
+    const health = await response.json() as ServiceHealth;
+    if (health.ok !== true) throw new Error("Remy could not verify this Mac; reopen Remy to try again.");
+    return health;
+  } catch (error) {
+    // Only a refused connection proves no process is listening; timeouts and
+    // authentication failures must never trigger a destructive replacement.
+    if ((error as { cause?: { code?: string } }).cause?.code === "ECONNREFUSED") return undefined;
+    throw error;
   }
+}
+
+async function reachable(target: LocalTarget): Promise<boolean> {
+  return Boolean(await serviceHealth(target));
 }
 
 let spawned: ChildProcess | undefined;
@@ -140,15 +152,6 @@ function launchAgentPath(): string {
   return join(homedir(), "Library", "LaunchAgents", `${LAUNCH_AGENT_LABEL}.plist`);
 }
 
-function launchAgentIsCurrent(serverDir: string, entry: string, release: string): boolean {
-  const plistPath = launchAgentPath();
-  try {
-    return readFileSync(plistPath, "utf8") === launchAgentDocument(serverDir, entry, release);
-  } catch {
-    return false;
-  }
-}
-
 async function installLaunchAgent(serverDir: string, entry: string, release: string): Promise<boolean> {
   const uid = process.getuid?.();
   if (uid === undefined) return false;
@@ -163,13 +166,10 @@ async function installLaunchAgent(serverDir: string, entry: string, release: str
     writeFileSync(plistPath, document);
   }
 
-  // This path is reached only when the local health check failed. Replacing a
-  // loaded but unhealthy job cannot interrupt live work, and refreshes an old
-  // plist after the app itself moved or updated.
+  // The listener is absent or has accepted the idle-only shutdown handoff.
   await execFile("launchctl", ["bootout", service]).catch(() => undefined);
   try {
     await execFile("launchctl", ["bootstrap", `gui/${uid}`, plistPath]);
-    await execFile("launchctl", ["kickstart", "-k", service]);
     return true;
   } catch (error) {
     console.warn("remy: could not install the background server", error);
@@ -218,19 +218,32 @@ export async function ensureLocalServer(
 ): Promise<LocalTarget> {
   if (!isLoopback(target.url)) return target;
   const entry = join(serverDir, "dist/index.js");
-  const online = await reachable(target);
   const release = options.release ?? "";
-  // A packaged update replaces the files under this same path. The running
-  // launch agent has already loaded the old files, so a healthy response is
-  // not enough to prove that the current release is serving the window.
-  const staleAgent = Boolean(
-    online
-    && options.persistent
-    && release
-    && !launchAgentIsCurrent(serverDir, entry, release),
-  );
-  if (online && !staleAgent) return { ...target, token: readHomeConfig()?.token || target.token };
-
+  if (options.persistent && release) {
+    if (!existsSync(entry)) throw new Error("Remy’s update is incomplete; reinstall Remy to try again.");
+    await ensureServiceRelease(release, {
+      health: () => serviceHealth(target),
+      shutdown: async (instance) => {
+        const response = await fetch(new URL("/server/update/shutdown", target.url), {
+          method: "POST",
+          headers: { Authorization: `Bearer ${target.token || readHomeConfig()?.token || ""}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ instance }),
+          signal: AbortSignal.timeout(5_000),
+        });
+        if (!response.ok) {
+          const result = await response.json() as { error?: string };
+          throw new Error(result.error || "Remy could not restart; reopen Remy to try again.");
+        }
+      },
+      stop: stopLaunchAgent,
+      install: async () => {
+        if (!await installLaunchAgent(serverDir, entry, release)) throw new Error("Remy could not start after updating; reopen Remy to try again.");
+      },
+      wait: () => new Promise((resolve) => setTimeout(resolve, 250)),
+    });
+    return { ...target, token: readHomeConfig()?.token || target.token };
+  }
+  if (await reachable(target)) return { ...target, token: readHomeConfig()?.token || target.token };
   if (!existsSync(entry)) {
     if (!existsSync(join(serverDir, "package.json"))) return target;
     await execFile("npm", ["run", "build"], { cwd: serverDir });
