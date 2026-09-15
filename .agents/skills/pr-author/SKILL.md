@@ -134,15 +134,19 @@ Do not turn terminal output, test results, configuration diffs, or API responses
 
 ## Publish
 
-Create the draft PR first, then attach the inspected files using the `github` CLI. Check `github --help` for the installed syntax and use its `--attach` option when available. If the installed CLI exposes only positional media arguments, use that supported equivalent:
+Use GitHub CLI's native `--attach` flag on `gh pr create`, `gh pr edit`, or `gh pr comment`. Check `gh --version` and `gh pr edit --help`; attachment support requires gh 2.99.0 or later. If the installed version lacks the flag, upgrade through its package manager and check again. An outdated installation is not evidence that GitHub CLI lacks uploads. Use the CLI for attachments; do not open Chrome or invoke a separate `github` uploader.
+
+Create the draft PR, then upload the inspected files with repeatable `--attach` flags. Use the actual PR URL and original media files; keep media out of git.
 
 ```sh
-github https://github.com/padamchopra/remy/pull/123 /tmp/remy-pr-artifacts/branch/change.png /tmp/remy-pr-artifacts/branch/change.mp4
+gh pr edit "$pr_url" --attach /tmp/remy-pr-artifacts/branch/change.png --attach /tmp/remy-pr-artifacts/branch/change.mp4
 ```
 
-Use the actual draft PR URL. Upload the original recording and keep media out of git. The CLI appends GitHub user-attachments to the existing description; preserve those URLs when arranging the media above Summary. Keep GitHub’s native video attachment rather than adding external video markup or converting it to GIF.
+Without a body flag, `gh pr edit --attach` appends attachments to the existing description. To position media in the required table, write the complete description to a body file with Markdown references to the local attachment paths, then pass both `--body-file` and the matching `--attach` flags. GitHub CLI replaces those local references with uploaded URLs and preserves their alt text. Preserve existing attachment URLs when editing; do not upload the same media again just to rearrange the body. Keep GitHub's playable video attachment rather than converting it to GIF.
 
-If the CLI reports that GitHub is not signed in, run `github login` when the user can complete browser sign-in. Keep the PR in draft while attachment upload is blocked.
+Uploads require repository push access and GitHub.com or GitHub Enterprise Cloud. Check `gh auth status` for authentication failures and use `gh auth login` when sign-in is needed. If an upgrade, authentication, or upload is blocked, report the concrete failure and keep the PR in draft; do not silently switch to browser uploads.
+
+Reference: [GitHub CLI attachment documentation](https://docs.github.com/en/github-cli/github-cli/attaching-files-with-github-cli).
 
 Read the PR description back and confirm the section order, labeled image tables, playable video attachments, and collapsed supporting detail. Confirm that each attachment resolves and required review notes remain visible.
 
