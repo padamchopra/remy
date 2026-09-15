@@ -83,12 +83,21 @@ export default function HubThreads({
   const [busy, setBusy] = useState(false);
   const [attachments, setAttachments] = useState<string[]>([]);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [computersLoaded, setComputersLoaded] = useState(false);
+  const [computerError, setComputerError] = useState("");
   const [computers, setComputers] = useState<ComputerSummary[]>([]);
   useEffect(() => {
     setThreads([]);
     setLoaded(false);
     setError("");
-    const offComputers = watchHubComputers(organizationId, setComputers, setError);
+    setComputers([]);
+    setComputersLoaded(false);
+    setComputerError("");
+    const offComputers = watchHubComputers(organizationId, (items, stale) => {
+      setComputers(items);
+      if (!stale) setComputersLoaded(true);
+      if (!stale) setComputerError("");
+    }, setComputerError);
     const offThreads = watchHubThreads(
       organizationId,
       (items, current) => {
@@ -213,7 +222,7 @@ export default function HubThreads({
               <span className="min-w-0 break-words">{item.detail.title}<span className="block text-xs text-muted-foreground">{computers.find((c) => c.computerId === item.computerId)?.name ?? "Computer unavailable"} · Started by {item.access.owner.label}{item.stale ? " · Offline" : ""}</span></span>
             </Button>
           ))}
-          <HubThreadComposer key={organizationId} organizationId={organizationId} computers={computers} canManageWorkspaces={canManageWorkspaces} open={open} />
+          <HubThreadComposer key={organizationId} organizationId={organizationId} computers={computers} computersLoaded={computersLoaded} computerError={computerError} canManageWorkspaces={canManageWorkspaces} open={open} />
         </div>
       ) : (
         <>

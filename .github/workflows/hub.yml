@@ -27,7 +27,9 @@ jobs:
       - run: npm ci --prefix contract --no-audit --no-fund
       - run: npm ci --prefix hub --no-audit --no-fund
       - run: npm ci --prefix web --no-audit --no-fund
+      - run: npm ci --prefix hub/runtime --no-audit --no-fund
       - run: npm run build:hub --prefix web
+      - run: node hub/scripts/check-runtime-bundle.mjs
       - run: npx playwright-core install --with-deps chromium
         working-directory: web
       - name: Check public home and web app
@@ -37,9 +39,9 @@ jobs:
           trap 'kill "$server_pid"' EXIT
           node web/scripts/hub-website-check.mjs
           node web/scripts/hosted-runtime-check.mjs
+          node --test web/scripts/hosted-preview.test.mjs
       - run: npm test --prefix contract
       - run: npm run typecheck --prefix contract
       - run: npm test --prefix hub
       - run: npm run typecheck --prefix hub
-      - run: npm ci --prefix hub/runtime --no-audit --no-fund
       - run: npm run typecheck --prefix hub/runtime

@@ -37,3 +37,11 @@ QA_SESSION=<printed session file> node web/scripts/qa-hub-web.mjs
 The test signs in two people, creates an organization, delivers and accepts an invitation, edits shared Tasks, restricts a workspace, grants and revokes team access live, changes roles, reloads deep links, switches organizations, and checks a narrow viewport. Capture authorization and invitation setup outside any reviewer recording.
 
 References: [Cloudflare asset routing](https://developers.cloudflare.com/workers/static-assets/binding/), [Better Auth sign-in](https://better-auth.com/docs/basic-usage), [SSO](https://better-auth.com/docs/plugins/sso).
+
+## Local hosted UI with a live account
+
+Run `npm run dev:hosted` and open `http://127.0.0.1:5174`. Choose **Sign in with Remy**, open **Approve in Remy**, compare the code, and approve it using your live account. Return to the preview and choose **Finish signing in**. This is live account data: actions persist in production.
+
+The preview uses the existing device-code authorization flow. Its access and refresh credentials stay in the Vite process memory, never in browser storage or URLs. Stopping Vite forgets them; signing out revokes the session. The session is named **Remy local web preview**. OAuth and email sign-in stay on the production origin.
+
+`PREVIEW_ORIGINS` is an exact comma-separated allowlist for bearer-authenticated preview requests, including live connections. Production currently permits only `http://127.0.0.1:5174`. Cookie authentication and OAuth trusted origins are unchanged. The loopback preview rejects foreign Origin, Host, and cross-site Fetch Metadata headers before attaching credentials. It forwards the browser Origin unchanged. Never expose this preview on a network interface or reuse a production browser cookie in it.

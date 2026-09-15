@@ -15,13 +15,25 @@ Local mode remains the default. Work for the hub must not make the local app, it
 
 Once: `npm run install:all` — server, web, desktop, mobile.
 
-For a UI-only change, run `npm run dev:web`, and open `http://127.0.0.1:5173`. It uses the packaged Remy daemon and your real state. If someone asks for the desktop app by name, leave that dev server running and start `npm run dev` in a second terminal.
+Choose the browser shell explicitly:
 
-For a server change, run `npm run qa:web` instead. It builds the current checkout, starts its daemon and Vite on unused loopback ports, and prints the URL. Its database and sample workspace are temporary and removed when the command stops. Use `npm run qa:web -- --empty` when the empty state is what you need to inspect, or `npm run qa:web -- --check` for a non-interactive startup and proxy check.
+| Request | Command | URL and data |
+| --- | --- | --- |
+| Mac app shell in a browser, local app UI | `npm run dev:mac-browser` | `http://127.0.0.1:5173`, real Mac daemon and local data |
+| Hosted web app, web shell, or local changes to `app.tryremy.dev` | `npm run dev:hosted` | `http://127.0.0.1:5174`, local UI with your live hosted account |
+| Electron desktop window | Run `npm run dev:mac-browser`, then `npm run dev` in another terminal | Mac shell inside Electron |
+
+`npm run dev:web` is a legacy alias for the Mac/local browser shell. It does not launch the hosted shell. Match the user's requested shell; a browser can display either. For a generic preview request, use the shell affected by the current work and state which one you opened. Never substitute the production website or sample QA state for a requested local hosted preview with live data.
+
+Hosted preview sign-in uses **Sign in with Remy → Approve in Remy → Finish signing in**. The production page is only the approval handoff; return to localhost to use the changed UI. Its actions affect the live account. Credentials stay in the local Vite process and are forgotten when it stops. The configured preview port is part of the backend's exact origin allowlist; do not rewrite Origin headers or turn off origin checks. `hub/docs/web.md` documents authentication and backend selection.
+
+Verify the opened shell, not only a responding port: the Mac shell shows local computers and workspace threads; the hosted shell shows account sign-in or personal/organization navigation. Keep the requested preview running for the user.
+
+For a local daemon change, run `npm run qa:web` instead. For hosted backend changes, use the isolated hosted setup in `hub/docs/web.md` for QA; use `dev:hosted` when the user asks to try the live-account web shell. It builds the current checkout, starts its daemon and Vite on unused loopback ports, and prints the URL. Its database and sample workspace are temporary and removed when the command stops. Use `npm run qa:web -- --empty` when the empty state is what you need to inspect, or `npm run qa:web -- --check` for a non-interactive startup and proxy check.
 
 The iPhone app is `cd mobile && npx expo run:ios`. It talks to the same daemon over Tailscale after you pair it from Settings → Devices.
 
-Vite talks to the same daemon as the DMG (`127.0.0.1:8420`) and the same database (`~/.remy/remy.db`), so threads, workspaces, settings and the token are the real ones. If Remy.app is already running, Vite attaches to that daemon rather than starting a second one.
+The Mac-shell Vite preview talks to the same daemon as the DMG (`127.0.0.1:8420`) and the same database (`~/.remy/remy.db`), so threads, workspaces, settings and the token are the real ones. If Remy.app is already running, Vite attaches to that daemon rather than starting a second one.
 
 The page does not live-reload. Refresh it to see a change: editing Remy while watching Remy meant every save yanked the window out from under whatever was on screen.
 
@@ -42,7 +54,7 @@ Skip `VITE_MC_FIXTURE=1`; that is fake data, not your real state.
 | `deploy/` | Optional launchd login item, provider hooks, `tailscale serve`, pairing QR. |
 | `.agents/skills/` | House rules. Read the one that covers what you are about to change. |
 
-`web/vite.config.ts` does more than it looks: it spawns the local daemon when none is up, proxies `/api` to it, and injects the bearer token from `~/.remy/remy.db` on each request so the token never reaches the page.
+`web/vite.config.ts` selects the preview backend. The Mac shell starts a local daemon when needed and proxies `/api` with the token from `~/.remy/remy.db`. The hosted shell uses `web/hosted-preview.ts` to proxy its approved hosted session. Neither credential reaches the page.
 
 ## Skills
 

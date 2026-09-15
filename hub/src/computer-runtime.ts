@@ -1,3 +1,4 @@
+import type { CloudConnection } from "./cloud-connection.js";
 import type { HostedSettings } from "@remy/contract";
 export type ComputerRuntime = {
   id: string;
@@ -40,6 +41,7 @@ export class HttpRuntimeProvider implements ComputerRuntimeProvider {
     private readonly endpoint: string,
     private readonly credential: () => Promise<string>,
     private readonly send: typeof fetch = (input, init) => fetch(input, init),
+    private readonly connection?: () => Promise<CloudConnection>,
   ) {
     const url = new URL(endpoint);
     if (url.protocol !== "https:" && url.hostname !== "127.0.0.1")
@@ -54,7 +56,7 @@ export class HttpRuntimeProvider implements ComputerRuntimeProvider {
           authorization: `Bearer ${await this.credential()}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify(input),
+        body: JSON.stringify({ ...(input as object), connection: this.connection ? await this.connection() : undefined }),
         signal: AbortSignal.timeout(180_000),
         redirect: "manual",
       },

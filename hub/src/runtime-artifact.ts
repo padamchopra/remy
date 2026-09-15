@@ -1,0 +1,1 @@
+export const runtimeArtifact = {"filename":"provider-runtime-d941ecf764ace49bead4511f52d998690f353c065278229ea67f028ddb5e048d.cjs","hash":"d941ecf764ace49bead4511f52d998690f353c065278229ea67f028ddb5e048d"};

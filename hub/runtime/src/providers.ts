@@ -18,6 +18,7 @@ export class ModalRuntime implements ComputerRuntimeProvider {
     private readonly client = new ModalClient(),
     private readonly appName = "remy-hosted-computers",
   ) {}
+  close() { this.client.close(); }
   async provision(input: ProvisionComputerInput) {
     return this.start(
       { id: input.computerId, provider: this.id, providerReference: "" },
@@ -128,6 +129,7 @@ export class FlySpritesRuntime implements ComputerRuntimeProvider {
   readonly id = "fly-sprites";
   readonly capabilities = { checkpoints: true, persistentFilesystem: true };
   constructor(private readonly client: SpritesClient) {}
+  close() {}
   async provision(input: ProvisionComputerInput): Promise<ComputerRuntime> {
     let sprite;
     try {
@@ -233,11 +235,10 @@ export class FlySpritesRuntime implements ComputerRuntimeProvider {
       .destroy();
   }
 }
-export function providers() {
-  return {
-    modal: new ModalRuntime(),
-    "fly-sprites": new FlySpritesRuntime(
-      new SpritesClient(process.env.SPRITES_TOKEN ?? ""),
-    ),
-  };
+export function providers(connection: { provider: string; token?: string; tokenId?: string; tokenSecret?: string }) {
+  if (connection.provider === "modal" && connection.tokenId && connection.tokenSecret)
+    return new ModalRuntime(new ModalClient({ tokenId: connection.tokenId, tokenSecret: connection.tokenSecret }));
+  if (connection.provider === "fly-sprites" && connection.token)
+    return new FlySpritesRuntime(new SpritesClient(connection.token));
+  throw new Error("Connect your cloud provider in Computers settings.");
 }

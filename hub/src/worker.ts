@@ -1,3 +1,8 @@
+import { routerConnectionSchema, routerModels } from "./router-connection.js";
+import { cloudComputerProvider } from "@remy/contract";
+import { managementCredential } from "./cloud-connection.js";
+import { cloudToggleSchema, cloudConnectionSchema, cloudConnectionKey, modelSecrets } from "./cloud-connection.js";
+import { allowedRequestOrigin } from "./request-origin.js";
 import { emailAvailable, sendAccountEmail, type AccountEmail } from "./email.js";
 import { EnvironmentStore } from "./environments.js";
 import { personalSpace } from "./personal-space.js";
@@ -60,6 +65,8 @@ import { repositoryOrigin, OrganizationError, OrganizationService } from "./orga
 export interface Env extends ApplePushConfig {
   ASSETS?: Fetcher;
   WEB_APP_URL?: string;
+  PREVIEW_ORIGINS?: string;
+  PROVIDER_RUNTIME?: DurableObjectNamespace;
   HOSTED_CONTROL_URL?: string;
   HOSTED_CONTROL_TOKEN?: SecretsStoreSecret;
   HOSTED_IMAGE?: string;
@@ -448,7 +455,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       const pushDevice = /^notifications\/devices\/([^/]+)$/.exec(tail);
       if (pushDevice && ["PATCH", "DELETE"].includes(request.method)) {
         await organizations.member(organizationId, identity.userId);
-        if (request.headers.get("origin") && request.headers.get("origin") !== url.origin) return jsonError("Open notifications in Remy.", 403);
+        if (!allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Open notifications in Remy.", 403);
         if (request.method === "DELETE") await env.DB.prepare("DELETE FROM member_push_devices WHERE organization_id=? AND user_id=? AND id=?").bind(organizationId, identity.userId, decodeURIComponent(pushDevice[1])).run();
         else {
           const input = await body<{ enabled?: boolean }>(request);
@@ -460,7 +467,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       }
       if (tail === "notifications" || tail === "notifications/live" || /^notifications\/[0-9a-f-]{36}\/read$/.test(tail)) {
         await organizations.member(organizationId, identity.userId);
-        if (request.method !== "GET" && request.headers.get("origin") && request.headers.get("origin") !== url.origin) return jsonError("Open notifications in Remy.", 403);
+        if (request.method !== "GET" && !allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Open notifications in Remy.", 403);
         return board().fetch(new Request(`https://internal/${tail}`, { method: request.method, headers: { "x-organization-id": organizationId, "x-user-id": identity.userId, "x-session-id": identity.sessionId, upgrade: request.headers.get("upgrade") ?? "" } }));
       }
       if (tail === "computers/options" && request.method === "GET") {
@@ -475,7 +482,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       const computerMatch = /^computers\/([^/]+)$/.exec(tail);
       if (computerMatch && ["PATCH", "DELETE"].includes(request.method)) {
         await organizations.member(organizationId, identity.userId);
-        if (request.headers.get("origin") && request.headers.get("origin") !== url.origin) return jsonError("Open this computer in Remy.", 403);
+        if (!allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Open this computer in Remy.", 403);
         const id = decodeURIComponent(computerMatch[1]);
         if (request.method === "DELETE") {
           const current=await computerStore.computer(organizationId,id);
@@ -504,7 +511,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       if (environmentPath) {
         const member=await organizations.member(organizationId,identity.userId);
         if(member.role==="member" || identity.clientKind==="computer")return jsonError("Ask an admin to manage environments.",403);
-        if(request.headers.get("origin") && request.headers.get("origin")!==url.origin)return jsonError("Manage environments in Remy.",403);
+        if(!allowedRequestOrigin(request, env.PREVIEW_ORIGINS))return jsonError("Manage environments in Remy.",403);
         const envs=new EnvironmentStore(env.DB,()=>env.AUTH_SECRET.get());
         const id=environmentPath[1]?decodeURIComponent(environmentPath[1]):undefined;
         try {
@@ -526,7 +533,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         const member = await organizations.member(organizationId, identity.userId);
         if (member.role === "member") return jsonError("Ask an admin to connect Codex.", 403);
         if (identity.clientKind === "computer") return jsonError("Connect Codex from Remy.", 403);
-        if (request.headers.get("origin") && request.headers.get("origin") !== url.origin) return jsonError("Connect Codex from Remy.", 403);
+        if (!allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Connect Codex from Remy.", 403);
         const workspaceId = decodeURIComponent(hostedAccount[1]);
         await organizations.workspace(organizationId, identity.userId, workspaceId);
         if (!(request.method === "GET" && !hostedAccount[2]) && !(request.method === "POST" && hostedAccount[2])) return jsonError("This account action is unavailable.", 405);
@@ -534,13 +541,64 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           method: request.method, headers: { "x-organization-id": organizationId, "x-user-id": identity.userId },
         }));
       }
+      if (["router-models", "router-connection"].includes(tail) && ["POST", "PUT", "DELETE"].includes(request.method)) {
+        const member=await organizations.member(organizationId,identity.userId);
+        if(member.role === "member" || identity.clientKind === "computer") return jsonError("Only an administrator can configure model access.",403);
+        if(!allowedRequestOrigin(request,env.PREVIEW_ORIGINS)) return jsonError("Configure model access from Remy.",403);
+        const store=new HostedSettingsStore(env.DB,()=>env.AUTH_SECRET.get());
+        if(tail === "router-connection" && request.method === "DELETE") await store.setSecret(organizationId,"model:router",null);
+        else {
+          const input=await body<{apiKey?:string;model?:string}>(request);
+          if(!input || typeof input.apiKey !== "string" || !input.apiKey.trim() || input.apiKey.length > 8192) return jsonError("Enter your Router API key.",400);
+          try {
+            const models=await routerModels(input.apiKey);
+            if(tail === "router-models" && request.method === "POST") return Response.json({models});
+            const parsed=routerConnectionSchema.safeParse(input);
+            if(request.method !== "PUT" || !parsed.success || !models.includes(parsed.data.model)) return jsonError("Choose a model available to your Router key.",400);
+            await store.setSecret(organizationId,"model:router",JSON.stringify(parsed.data));
+          } catch(e) {return jsonError(e instanceof Error ? e.message : "Router could not connect.",502);}
+        }
+        await board().fetch(new Request("https://internal/organization/changed",{method:"POST",headers:{"x-organization-id":organizationId}}));
+        return Response.json({saved:true});
+      }
+      if (tail === "cloud-connection/status" && request.method === "GET") {
+        await organizations.member(organizationId, identity.userId);
+        if (!env.PROVIDER_RUNTIME) return jsonError("Cloud connection service is unavailable.", 503);
+        const response = await env.PROVIDER_RUNTIME.get(env.PROVIDER_RUNTIME.idFromName("provider-management")).fetch(new Request("https://provider.internal/health", {
+          headers: { authorization: `Bearer ${await managementCredential(await env.AUTH_SECRET.get())}` },
+        }));
+        return new Response(response.body, { status: response.status, headers: { "content-type": "application/json" } });
+      }
+      if (tail === "cloud-connection" && ["PUT", "PATCH"].includes(request.method)) {
+        const member = await organizations.member(organizationId, identity.userId);
+        if (member.role === "member" || identity.clientKind === "computer") return jsonError("Ask an administrator to connect a cloud provider.", 403);
+        if (!allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Connect your cloud provider from Remy.", 403);
+        const input = await body(request);
+        const store = new HostedSettingsStore(env.DB, () => env.AUTH_SECRET.get());
+        if (request.method === "PATCH") {
+          const toggle = cloudToggleSchema.safeParse(input);
+          if (!toggle.success) return jsonError("Choose a cloud provider to enable or disable.", 400);
+          const saved = (await store.secrets(organizationId))[cloudConnectionKey(toggle.data.provider)];
+          if (!saved) return jsonError("Save this provider’s credentials first.", 409);
+          const connection = cloudConnectionSchema.parse(JSON.parse(saved));
+          await store.setSecret(organizationId, cloudConnectionKey(connection.provider), JSON.stringify({ ...connection, enabled: toggle.data.enabled }));
+        } else {
+          const parsed = cloudConnectionSchema.safeParse(input);
+          if (!parsed.success) return jsonError("Enter the credentials for your cloud provider.", 400);
+          const saved = (await store.secrets(organizationId))[cloudConnectionKey(parsed.data.provider)];
+          const enabled = saved ? cloudConnectionSchema.parse(JSON.parse(saved)).enabled : parsed.data.enabled;
+          await store.setSecret(organizationId, cloudConnectionKey(parsed.data.provider), JSON.stringify({ ...parsed.data, enabled }));
+        }
+        await board().fetch(new Request("https://internal/organization/changed", { method: "POST", headers: { "x-organization-id": organizationId } }));
+        return Response.json({ saved: true });
+      }
       const hostedMatch = /^hosted(?:\/([^/]+)(?:\/(prewarm|settings))?)?$/.exec(tail);
       if (hostedMatch) {
         const member = await organizations.member(organizationId, identity.userId);
         const workspaceId = hostedMatch[1] ? decodeURIComponent(hostedMatch[1]) : "";
         if (workspaceId) await organizations.workspace(organizationId, identity.userId, workspaceId);
         const settings = new HostedSettingsStore(env.DB, () => env.AUTH_SECRET.get());
-        if (request.method === "GET" && (!workspaceId || hostedMatch[2] === "settings")) return Response.json({ settings: await settings.settings(organizationId,workspaceId), secretNames: member.role !== "member" ? await settings.secretNames(organizationId) : [], available: !!env.HOSTED_CONTROL_URL && !!env.HOSTED_CONTROL_TOKEN && !!env.HOSTED_IMAGE });
+        if (request.method === "GET" && (!workspaceId || hostedMatch[2] === "settings")) return Response.json({ settings: await settings.settings(organizationId,workspaceId), secretNames: member.role !== "member" ? (await settings.secretNames(organizationId)).filter(name => !name.startsWith("cloud:") && !name.startsWith("model:")) : [], enabledProviders: await settings.enabledProviders(organizationId), routerConfigured: (await settings.secretNames(organizationId)).includes("model:router"), connections: (await settings.secretNames(organizationId)).filter(name => name.startsWith("cloud:")).map(name => name.slice(6)), available: !!env.HOSTED_IMAGE && (!!env.PROVIDER_RUNTIME || (!!env.HOSTED_CONTROL_URL && !!env.HOSTED_CONTROL_TOKEN)) });
         if (request.method === "PUT" && (!workspaceId || hostedMatch[2] === "settings")) {
           if (member.role === "member") return jsonError("Ask an admin to change hosted computers.",403);
           const input = await body<{settings?:unknown;secret?:{name?:unknown;value?:unknown}}>(request);
@@ -564,7 +622,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         await organizations.member(organizationId, identity.userId);
         const profile = await store.profile(identity.userId);
         const actor = threadMemberSchema.parse({ id: identity.userId, label: profile?.name || "Member" });
-        if (request.method !== "GET" && request.headers.get("origin") && request.headers.get("origin") !== url.origin) return jsonError("Open this thread in Remy.", 403);
+        if (request.method !== "GET" && !allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Open this thread in Remy.", 403);
         const computerId = /^computers\/([^/]+)\/threads/.exec(tail)?.[1];
         if (computerId) await computers.requireUse(organizationId, decodeURIComponent(computerId), identity.userId);
         const headers = new Headers({ "x-thread-member": encodeURIComponent(JSON.stringify(actor)), "x-thread-session": identity.sessionId, "x-organization-id": organizationId });
@@ -582,7 +640,8 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         const member=await organizations.member(organizationId,identity.userId);
         const stored=await env.DB.prepare("SELECT rules FROM organization_routing WHERE organization_id=?").bind(organizationId).first<{rules:string}>();
         const rules=routingRuleSchema.array().parse(JSON.parse(stored?.rules??"[]"));
-        if(tail==="routing" && request.method==="GET")return Response.json({rules,canEdit:member.role!=="member"});
+        const enabledProviders=await new HostedSettingsStore(env.DB,()=>env.AUTH_SECRET.get()).enabledProviders(organizationId);
+        if(tail==="routing" && request.method==="GET")return Response.json({rules,canEdit:member.role!=="member",enabledProviders});
         if(tail==="routing" && request.method==="PUT") {
           if(member.role==="member")return jsonError("Only an administrator can change routing.",403);
           const input=await body<{rules?:unknown}>(request);const parsed=routingRuleSchema.array().max(100).safeParse(input?.rules);
@@ -591,7 +650,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
             if(!rule.target.computerId && !rule.target.class)return jsonError("Choose a computer or computer type.",400);
             if(rule.workspaceId)await organizations.workspace(organizationId,identity.userId,rule.workspaceId);
             if(rule.teamId && !await organizationStore.team(organizationId,rule.teamId))return jsonError("Choose a team in your organization.",400);
-            if(rule.target.computerId && !await computerStore.computer(organizationId,rule.target.computerId))return jsonError("Choose a computer in your organization.",400);
+            if(rule.target.computerId && !(cloudComputerProvider(rule.target.computerId) ? enabledProviders.includes(cloudComputerProvider(rule.target.computerId)!) : await computerStore.computer(organizationId,rule.target.computerId)))return jsonError("Choose a computer in your organization.",400);
           }
           await env.DB.prepare("INSERT INTO organization_routing(organization_id,rules) VALUES(?,?) ON CONFLICT(organization_id) DO UPDATE SET rules=excluded.rules").bind(organizationId,JSON.stringify(parsed.data)).run();
           return Response.json({rules:parsed.data});
@@ -610,8 +669,8 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           const all=await computers.list(organizationId,identity.userId);
           if(tail==="routing/preference") {
             if(input.computerId) {
-              const choice=resolveComputer([],all,{workspaceId:workspace.id,origin:workspace.origin,teamIds:[],trigger:"manual",override:input.computerId});
-              if(!choice.computerId)return jsonError(choice.reason,409);
+              const choice=resolveComputer([],all,{workspaceId:workspace.id,origin:workspace.origin,teamIds:[],trigger:"manual",override:input.computerId,enabledProviders});
+              if(!choice.computerId && !choice.hostedProvider)return jsonError(choice.reason,409);
               await env.DB.prepare("INSERT INTO member_computer_preferences(organization_id,user_id,workspace_id,computer_id) VALUES(?,?,?,?) ON CONFLICT(organization_id,user_id,workspace_id) DO UPDATE SET computer_id=excluded.computer_id").bind(organizationId,identity.userId,workspace.id,input.computerId).run();
             }else await env.DB.prepare("DELETE FROM member_computer_preferences WHERE organization_id=? AND user_id=? AND workspace_id=?").bind(organizationId,identity.userId,workspace.id).run();
             return Response.json({ok:true});
@@ -619,9 +678,9 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           const teams=await organizationStore.teams(organizationId),teamIds:string[]=[];
           for(const team of teams)if((await organizationStore.teamMembers(organizationId,team.id)).includes(identity.userId))teamIds.push(team.id);
           const preference=input.usePreference?await env.DB.prepare("SELECT computer_id FROM member_computer_preferences WHERE organization_id=? AND user_id=? AND workspace_id=?").bind(organizationId,identity.userId,workspace.id).first<{computer_id:string}>():null;
-          const choice=resolveComputer(rules,all,{workspaceId:workspace.id,origin:workspace.origin,teamIds,trigger:input.trigger??"manual",...(preference?{override:preference.computer_id}:{})});
+          const choice=resolveComputer(rules,all,{workspaceId:workspace.id,origin:workspace.origin,teamIds,trigger:input.trigger??"manual",enabledProviders,...(preference?{override:preference.computer_id}:{})});
           if(choice.hostedWorkspaceId && input.prewarm) {
-            const response=await board().fetch(new Request(`https://internal/hosted/${workspace.id}`,{method:"POST",headers:{"x-organization-id":organizationId}}));
+            const response=await board().fetch(new Request(`https://internal/hosted/${workspace.id}`,{method:"POST",headers:{"x-organization-id":organizationId},body:JSON.stringify({provider:choice.hostedProvider})}));
             if(!response.ok)return response;
           }
           return Response.json(choice);
@@ -1081,7 +1140,8 @@ export class HubCoordinator {
         const parsed=routingRuleSchema.array().max(100).safeParse(input.input?.rules);
         if(!parsed.success)return jsonError("Choose valid routing rules.",400);
         const organizations=new D1OrganizationStore(this.env.DB);
-        for(const r of parsed.data)if((!r.target.computerId && !r.target.class) || (r.target.computerId && !await this.computers.computer(org,r.target.computerId)) || (r.workspaceId && !await organizations.workspace(org,r.workspaceId)) || (r.teamId && !await organizations.team(org,r.teamId)))return jsonError("Choose routing within your organization.",400);
+        const enabledProviders=await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).enabledProviders(org);
+        for(const r of parsed.data)if((!r.target.computerId && !r.target.class) || (r.target.computerId && !(cloudComputerProvider(r.target.computerId) ? enabledProviders.includes(cloudComputerProvider(r.target.computerId)!) : await this.computers.computer(org,r.target.computerId))) || (r.workspaceId && !await organizations.workspace(org,r.workspaceId)) || (r.teamId && !await organizations.team(org,r.teamId)))return jsonError("Choose routing within your organization.",400);
         await this.env.DB.prepare("INSERT INTO organization_routing(organization_id,rules) VALUES(?,?) ON CONFLICT(organization_id) DO UPDATE SET rules=excluded.rules").bind(org,JSON.stringify(parsed.data)).run();
       }else if(input?.action!=="read_routing")return jsonError("This agent tool is unavailable.",403);
       const row=await this.env.DB.prepare("SELECT rules FROM organization_routing WHERE organization_id=?").bind(org).first<{rules:string}>();
@@ -1119,7 +1179,8 @@ export class HubCoordinator {
       const workspace=decodeURIComponent(hostedMatch[1]);
       const safe=(state:Awaited<ReturnType<HostedLifecycle["get"]>>)=>state?{workspaceId:state.workspaceId,computerId:state.computerId,provider:state.provider,phase:state.phase,lastUsedAt:state.lastUsedAt,error:state.error,usage:state.usage,timing:state.timing}:null;
       if(request.method==="POST") {
-        const settings=await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).settings(org,workspace);
+        const input=await body<{provider?:"fly-sprites"|"modal"}>(request);
+        const settings=await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSettings(org,workspace,input?.provider);
         if(!settings.enabled) return jsonError("Enable hosted computers for this workspace.",409);
         this.ctx.waitUntil(this.hostedService().ensure(workspace,settings).catch(()=>undefined).finally(()=>this.invalidateComputers()));
         await this.scheduleAlarm(Date.now()+60_000);
@@ -1379,19 +1440,21 @@ export class HubCoordinator {
     const id=crypto.randomUUID();const response=new Promise<Response>(resolve=>{const timer=setTimeout(()=>{this.pending.delete(id);resolve(jsonError("This computer did not answer.",504));},30_000);this.pending.set(id,{computerId,resolve,timer});});
     socket.send(JSON.stringify({kind:"request",id,method,path,headers:{},actor,body:encodeWireBody(new TextEncoder().encode(JSON.stringify(input)).buffer)}));return response;
   }
-  private async routeFor(userId:string,workspaceId:string,trigger:string) {
+  private async routeFor(userId:string,workspaceId:string,trigger:string,override?:string|null) {
     const org=(await this.ctx.storage.get<string>("organizationId"))!,store=new D1OrganizationStore(this.env.DB),service=new OrganizationService(store);
     const workspace=await service.workspace(org,userId,workspaceId),teamIds:string[]=[];
     for(const team of await store.teams(org))if((await store.teamMembers(org,team.id)).includes(userId))teamIds.push(team.id);
     const row=await this.env.DB.prepare("SELECT rules FROM organization_routing WHERE organization_id=?").bind(org).first<{rules:string}>();
-    return resolveComputer(routingRuleSchema.array().parse(JSON.parse(row?.rules??"[]")),await this.computerService().list(org,userId),{workspaceId,origin:workspace.origin,teamIds,trigger});
+    const enabledProviders=await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).enabledProviders(org);
+    const preference=await this.env.DB.prepare("SELECT computer_id FROM member_computer_preferences WHERE organization_id=? AND user_id=? AND workspace_id=?").bind(org,userId,workspaceId).first<{computer_id:string}>();
+    return resolveComputer(routingRuleSchema.array().parse(JSON.parse(row?.rules??"[]")),await this.computerService().list(org,userId),{workspaceId,origin:workspace.origin,teamIds,trigger,enabledProviders,...(override !== undefined ? (override ? {override} : {}) : trigger === "manual" && preference ? {override:preference.computer_id} : {})});
   }
-  private async taskComputer(userId:string, workspaceId:string, trigger:string, taskId:string, title?:string) {
+  private async taskComputer(userId:string, workspaceId:string, trigger:string, taskId:string, title?:string, override?:string|null) {
     const org = (await this.ctx.storage.get<string>("organizationId"))!;
-    let choice = await this.routeFor(userId, workspaceId, trigger);
+    let choice = await this.routeFor(userId, workspaceId, trigger,override);
     const target = choice.computerId ? await this.computers.computer(org, choice.computerId) : undefined;
     if (choice.hostedWorkspaceId || target?.ownership === "hosted") {
-      const settings = await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).settings(org,workspaceId);
+      const settings = await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSettings(org,workspaceId,choice.hostedProvider);
       const state = await this.hostedService().ensure(workspaceId,settings,taskId,title);
       const computer = await this.computers.computer(org,state.computerId);
       choice = {computerId:state.computerId,workspaceId:computer?.capabilities.workspaces[0]?.id ?? workspaceId,reason:"A separate computer for your task."};
@@ -1440,7 +1503,7 @@ export class HubCoordinator {
 
   private async prewarmWorkspace(workspaceId:string):Promise<void> {
     const org=await this.ctx.storage.get<string>("organizationId");if(!org || !await new D1OrganizationStore(this.env.DB).workspace(org,workspaceId))return;
-    const settings=await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).settings(org,workspaceId);
+    const settings=await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSettings(org,workspaceId);
     if(!settings.enabled)return;
     try{await this.hostedService().ensure(workspaceId,settings);}catch{}finally{this.invalidateComputers();await this.scheduleAlarm(Date.now()+60_000);}
   }
@@ -1449,8 +1512,15 @@ export class HubCoordinator {
     if(this.hosted) return this.hosted;
     const settings=new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get());
     this.hosted=new HostedLifecycle(new DurableBoardStorage(this.ctx.storage),id=>{
-      if(!this.env.HOSTED_CONTROL_URL || !this.env.HOSTED_CONTROL_TOKEN) throw new Error("Hosted computers are not configured.");
-      return new HttpRuntimeProvider(id,this.env.HOSTED_CONTROL_URL,()=>this.env.HOSTED_CONTROL_TOKEN!.get());
+      if(!this.env.PROVIDER_RUNTIME && (!this.env.HOSTED_CONTROL_URL || !this.env.HOSTED_CONTROL_TOKEN)) throw new Error("Hosted computers are not configured.");
+      return new HttpRuntimeProvider(id,this.env.HOSTED_CONTROL_URL ?? "https://provider.internal",
+        () => this.env.PROVIDER_RUNTIME ? this.env.AUTH_SECRET.get().then(managementCredential) : this.env.HOSTED_CONTROL_TOKEN!.get(),
+        this.env.PROVIDER_RUNTIME ? (input, init) => this.env.PROVIDER_RUNTIME!.get(this.env.PROVIDER_RUNTIME!.idFromName("provider-management")).fetch(new Request(input, init)) : undefined, async () => {
+        const org = (await this.ctx.storage.get<string>("organizationId"))!;
+        const saved = (await settings.secrets(org))[cloudConnectionKey(id)];
+        if (!saved) throw new Error("Connect your cloud provider in Computers settings.");
+        return cloudConnectionSchema.parse(JSON.parse(saved));
+      });
     }, async state=>{
       const org=(await this.ctx.storage.get<string>("organizationId"))!;
       const workspace=await new D1OrganizationStore(this.env.DB).workspace(org,state.workspaceId);
@@ -1463,8 +1533,8 @@ export class HubCoordinator {
       if(!await this.computers.computer(org,state.computerId)) await this.computers.register({...registration,lastSeenAt:null});
       await this.env.DB.prepare("INSERT INTO hosted_workspace_bindings(computer_id,organization_id,workspace_id) VALUES(?,?,?) ON CONFLICT(computer_id) DO NOTHING").bind(state.computerId,org,state.workspaceId).run();
       const actual=await this.computers.computer(org,state.computerId);
-      const environment={...await settings.secrets(org),MC_CONFIG_DIR:"/data/remy",REMY_HOSTED_BOOTSTRAP:JSON.stringify({registration:{...actual,hubUrl:this.env.BETTER_AUTH_URL},privateKey:keys.privateKey,...(state.taskId?{taskId:state.taskId}:{}),workspace:{id:workspace.id,name:workspace.name,origin:workspace.origin}})};
-      const domains=[new URL(this.env.BETTER_AUTH_URL).hostname,"api.anthropic.com","api.openai.com","auth.openai.com","chatgpt.com","ab.chatgpt.com","github.com","api.github.com","objects.githubusercontent.com","release-assets.githubusercontent.com","registry.npmjs.org"];
+      const environment={...modelSecrets(await settings.secrets(org)),MC_CONFIG_DIR:"/data/remy",REMY_HOSTED_BOOTSTRAP:JSON.stringify({registration:{...actual,hubUrl:this.env.BETTER_AUTH_URL},privateKey:keys.privateKey,...(state.taskId?{taskId:state.taskId}:{}),workspace:{id:workspace.id,name:workspace.name,origin:workspace.origin}})};
+      const domains=[new URL(this.env.BETTER_AUTH_URL).hostname,"api.anthropic.com","api.openai.com","api.router.com","auth.openai.com","chatgpt.com","ab.chatgpt.com","github.com","api.github.com","objects.githubusercontent.com","release-assets.githubusercontent.com","registry.npmjs.org"];
       return {organizationId:org,computerId:state.computerId,settings:state.settings,image:this.env.HOSTED_IMAGE,archive:this.env.HOSTED_ARCHIVE??"",environment,allowedDomains:domains};
     }, async id=>{
       for(let attempt=0;attempt<300;attempt++){if(this.computerSocket(id))return;await new Promise(resolve=>setTimeout(resolve,100));}
@@ -1576,14 +1646,15 @@ export class HubCoordinator {
     }
     if (url.pathname === "/threads" && request.method === "POST") {
       const org = request.headers.get("x-organization-id")!;
-      const input = await body<{workspaceId?: string; title?: string; requestId?: string}>(request);
+      const input = await body<{workspaceId?: string; title?: string; requestId?: string; computerId?:string|null}>(request);
       if (!input || typeof input.workspaceId !== "string" || typeof input.requestId !== "string" || !/^[0-9a-f-]{36}$/.test(input.requestId)) return jsonError("Choose a workspace and retry your thread.", 400);
       const workspace = await new OrganizationService(new D1OrganizationStore(this.env.DB)).workspace(org, actor.id, input.workspaceId);
+      if(input.computerId !== undefined && input.computerId !== null && typeof input.computerId !== "string") return jsonError("Choose a computer.",400);
       const key = `manual-task:${actor.id}:${input.requestId}`;
       const previous = await this.ctx.storage.get<{computerId:string; id:string}>(key);
       if (previous) return Response.json(previous,{status:201});
       try {
-        const choice = await this.taskComputer(actor.id, workspace.id, "manual", `${actor.id}:${input.requestId}`, input.title);
+        const choice = await this.taskComputer(actor.id, workspace.id, "manual", `${actor.id}:${input.requestId}`, input.title,input.computerId);
         const made = await this.dispatchComputer(choice.computerId, actor, "POST", "/hub/threads", {workspaceId:choice.workspaceId, hubTaskId:key, title:typeof input.title === "string" ? input.title.slice(0,200) : undefined});
         if (!made.ok) return made;
         const thread = threadSnapshotSchema.parse(await made.json());

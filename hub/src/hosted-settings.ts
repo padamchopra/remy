@@ -1,3 +1,4 @@
+import { cloudConnectionSchema } from "./cloud-connection.js";
 import { hostedSettingsSchema, type HostedSettings } from "@remy/contract";
 const encode = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
 const decode = (text: string) =>
@@ -26,6 +27,21 @@ export class HostedSettingsStore {
       ...JSON.parse(defaults?.settings ?? "{}"),
       ...JSON.parse(overrides?.settings ?? "{}"),
     });
+  }
+  async enabledProviders(org: string): Promise<HostedSettings["provider"][]> {
+    const secrets = await this.secrets(org);
+    return Object.entries(secrets).flatMap(([key, value]) => {
+      if (!key.startsWith("cloud:")) return [];
+      const parsed = cloudConnectionSchema.safeParse(JSON.parse(value));
+      return parsed.success && parsed.data.enabled ? [parsed.data.provider] : [];
+    });
+  }
+  async executionSettings(org: string, workspace: string, provider?: HostedSettings["provider"]): Promise<HostedSettings> {
+    const settings = await this.settings(org, workspace);
+    const enabled = await this.enabledProviders(org);
+    if (!enabled.length) throw new Error("Enable a cloud provider in Computers settings.");
+    if (provider && !enabled.includes(provider)) throw new Error("This cloud provider is disabled; choose another computer.");
+    return { ...settings, enabled: true, provider: provider ?? (enabled.includes(settings.provider) ? settings.provider : enabled.sort()[0]) };
   }
   async save(org: string, workspace: string, input: unknown) {
     if (input === null && workspace) {

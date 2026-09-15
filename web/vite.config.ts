@@ -1,3 +1,4 @@
+import { hostedPreview } from "./hosted-preview";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -9,6 +10,7 @@ import { ensureLocalServer, isLoopback, readHomeConfig, readLocalTarget, stopSpa
 const remyVersion = (JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string })
   .version;
 
+const preview = process.env.REMY_HOSTED_PREVIEW_URL ? hostedPreview(process.env.REMY_HOSTED_PREVIEW_URL) : undefined;
 const local = readLocalTarget();
 const deviceName = isLoopback(local.url)
   ? hostname().replace(/\.local$/, "")
@@ -35,7 +37,7 @@ function ensureRemyServer(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), ensureRemyServer()],
+  plugins: [react(), tailwindcss(), preview?.plugin ?? ensureRemyServer()],
   define: {
     "import.meta.env.VITE_REMY_PROXY_DEVICE": JSON.stringify(deviceName),
     "import.meta.env.VITE_REMY_VERSION": JSON.stringify(remyVersion),
@@ -62,7 +64,7 @@ export default defineConfig({
     // from under whatever was on screen on every save; reload it yourself when
     // you want to see a change.
     hmr: false,
-    proxy: {
+    proxy: preview ? { "/api": preview.proxy } : {
       ...(process.env.VITE_REMY_HUB_URL ? Object.fromEntries(["/api/personal", "/api/organizations", "/api/device", "/api/auth", "/api/sessions", "/api/profile", "/api/invitations"].map((path) => [path, { target: process.env.VITE_REMY_HUB_URL, ws: true, changeOrigin: false }])) : {}),
       "/api": {
         target: local.url,

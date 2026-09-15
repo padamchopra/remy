@@ -1,5 +1,6 @@
 export type HubRuntime = {
   mode: "hub";
+  preview?: boolean;
   auth: { magicLink: boolean; google: boolean; github: boolean; sso: boolean };
 };
 let hostedRuntime = false;

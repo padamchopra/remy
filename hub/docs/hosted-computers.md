@@ -1,16 +1,24 @@
 # Hosted computers
 
-Each automatic cloud task gets its own hosted computer and isolated filesystem. A workspace holds resource defaults and its optional Codex connection; it does not limit tasks to one computer. Organization defaults are overridden in Computers; an unset workspace inherits defaults. Hosting is disabled until an administrator enables it. Local Remy does not call or require this service.
+Each cloud thread gets its own computer and isolated filesystem. Enable one or both providers in Computers → Cloud, then choose **Cloud · Fly.io Sprites** or **Cloud · Modal** in the thread's computer picker or routing rules. The thread picker remembers your choice for that workspace. An explicitly selected disabled provider reports an error instead of silently choosing another provider. Local Remy does not require this service.
 
-## Computer sizes
+Cloud settings contain provider connections and model access. Workspace creation belongs in Workspaces; provider selection belongs with the work being started. Resource limits remain in the existing settings storage/API, with five concurrent task computers by default.
 
-Fly Sprites manages resources automatically; Remy does not send CPU, memory or region overrides to its create API. Modal offers Light (0.5 CPU, 1 GiB), Standard (1 CPU, 2 GiB) and Heavy (4 CPU, 8 GiB) starting points. Standard matches the existing defaults. Customize exposes Modal CPU, memory and region plus idle time for either provider. Presets only fill resource values; saved settings and workspace inheritance remain unchanged. Existing computers retain their allocation until a new allocation applies the settings.
+## Router.com (unreleased)
+
+Router.com is a model gateway, separate from the cloud computer provider. Configure its API key under Model access, load the models available to the key, and select a model. Model discovery uses `https://api.router.com/v1/models`; Codex uses Router's Responses API at `https://api.router.com/v1`. Remy stores the key encrypted and returns configured state only. New Router-configured cloud computers receive the key through their environment; Codex's configuration contains the environment-variable name, never the value.
+
+This integration requires deploying the new hub endpoints **and publishing a computer image/archive containing the Router changes in `server/`**. Image `0.1.97` does not include them. A real Router response remains unverified without a Router key. Existing active computers retain their startup configuration.
 
 ## Deployment
 
-Apply migrations through 0017. Build `hub/runtime/Dockerfile` with the repository as its context. Run it behind HTTPS with `REMY_RUNTIME_TOKEN` (at least 32 random characters), and vendor credentials supplied through your deployment secret manager: Modal's supported token environment variables and/or `SPRITES_TOKEN`. The service defaults to loopback; its container binds its own service port, never the Remy computer's port 8420. Do not expose the service without TLS and the credential.
+Apply database migrations through 0017. Install `hub/runtime` dependencies before `npm run build:hub --prefix web`. The build bundles the provider adapter as a content-hashed asset and generates its integrity manifest. `node hub/scripts/check-runtime-bundle.mjs` checks that the exact bundle starts and requires management authentication.
 
-Bind the hub's `HOSTED_CONTROL_TOKEN` Secret Store entry to the same credential. Set `HOSTED_CONTROL_URL`, `HOSTED_IMAGE` to the version-tagged GHCR computer image, and `HOSTED_ARCHIVE` to that release's Linux archive. The macOS release workflow publishes these independently after the DMG release. Vendor credentials and the control credential never reach a hosted computer.
+Production binds a private Cloudflare Container to the hub using the official Node image. It downloads and verifies the adapter bundle on startup and sleeps after five idle minutes. The hub derives its management credential from `AUTH_SECRET`; no public adapter route or shared vendor credentials are configured. Set `HOSTED_IMAGE` to the published version-tagged GHCR computer image and `HOSTED_ARCHIVE` to that release's Linux archive. The macOS release workflow publishes both.
+
+Users turn on Fly.io Sprites or Modal in Computers → Cloud, then save their own credentials to finish enabling the connection. Disabled provider cards stay collapsed. Both can be enabled together. The computer picker and routing rules choose placement for new threads; automatic placement uses an enabled connection. Existing computers retain their provider. Personal accounts own their connections; organization administrators manage shared organization connections. Credentials are encrypted in D1 and sent only to the private adapter for each operation, never into the guest environment.
+
+For a self-hosted hub, the standalone `hub/runtime/Dockerfile` remains supported. Run it behind HTTPS with `REMY_RUNTIME_TOKEN`, bind the same value as `HOSTED_CONTROL_TOKEN`, and configure `HOSTED_CONTROL_URL` instead of the private container binding. Do not expose that service without TLS and its management credential.
 
 Administrators add organization model API keys in Computers. They are AES-GCM encrypted in D1 with organization-bound authenticated data and a key derived from AUTH_SECRET. Back up that secret: rotation requires re-encrypting the records. Reads return configured names only. Bootstrap injects keys into process environments; Codex's configuration refers to OPENAI_API_KEY without writing its value. An administrator can also connect Codex to ChatGPT for each workspace using the official device-code flow. Codex owns its tokens and refreshes them in `/data/codex`; Remy relays the short-lived code and account status to the browser. Task computers receive short-lived access tokens through an authenticated hub broker; refresh tokens stay in the connection computer. A connected account takes precedence over the OpenAI API key for new Codex turns. Disconnecting returns new turns to the configured API key. Claude continues to use the Anthropic API key. A hostile process can deliberately write its own environment; filesystem snapshots are not a protection against that action.
 
@@ -36,15 +44,11 @@ Active and warm-idle milliseconds are separate from logical snapshot-byte millis
 
 The current release-built image passed an actual Modal V2 allocation, daemon health check, thread/workspace write, filesystem checkpoint, termination and restore. The restored thread ID/title and workspace contents matched. One disposable run measured 4.3 s allocation, 5.1 s checkpoint and 3.3 s restore. Reproduce with `REMY_TEST_IMAGE=<built image> npx tsx scripts/prove-modal.ts` from `hub/runtime`; it removes its own sandbox and snapshot in finally.
 
-The browser QA covers defaults, workspace overrides/reset, member denial, key configuration/removal without readback, explicit allocation failure, and mobile layout. Unit tests cover lifecycle serialization, metering, checkpoint failure and encryption isolation.
+The browser QA covers personal and organization settings, independent providers, immediate toggle feedback and failed-write rollback, Router model discovery and key removal, saved cloud choices, and desktop/mobile layout. Unit tests cover lifecycle serialization, metering, checkpoint failure and encryption isolation.
 
 Live Fly verification awaits a configured organization. A real model conversation and first-useful-response measurement await an organization API key. Modal rotates at 23 hours, before its 24-hour limit: it interrupts active turns, saves their provider transcripts, checkpoints and restores the same computer. Remy sends a visible continuation with a stable deduplication key; pending questions and approvals are requested again, never granted by the restart. This briefly interrupts work and does not preserve in-memory shells. Keep this change in draft until the live provider/model gates are resolved.
 
 A directory-only snapshot into a pre-warmed base would require a second allocation plus explicit reconstruction of SQLite, repository and provider transcript state. The measured full-filesystem restore is already 3.3 seconds and preserves all three together; retain filesystem restore until a directory prototype demonstrates a material improvement. This is an architectural evaluation, not a measured directory-snapshot comparison.
-
-## Preset price estimates
-
-Modal presets show approximate USD compute costs per running hour: Light $0.09, Standard $0.19 and Heavy $0.76. Custom values recalculate immediately. These use the [Modal Sandbox rates](https://modal.com/pricing) checked September 10, 2026: $0.00003942 per physical CPU core-second and $0.00000667 per GiB-second. Running time includes warm idle time; higher actual usage and region surcharges increase the cost. Storage and model charges are separate, and estimates exclude credits and taxes. Fly uses automatic resources rather than these presets.
 
 ## Workspace environments
 

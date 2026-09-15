@@ -32,12 +32,13 @@ test("hub workflow validates pull requests without repeating checks on main", ()
     "npm ci --prefix contract --no-audit --no-fund",
     "npm ci --prefix hub --no-audit --no-fund",
     "npm ci --prefix web --no-audit --no-fund",
+    "npm ci --prefix hub/runtime --no-audit --no-fund",
     "npm run build:hub --prefix web",
+    "node hub/scripts/check-runtime-bundle.mjs",
     "npm test --prefix contract",
     "npm run typecheck --prefix contract",
     "npm test --prefix hub",
     "npm run typecheck --prefix hub",
-    "npm ci --prefix hub/runtime --no-audit --no-fund",
     "npm run typecheck --prefix hub/runtime",
   ]);
 });

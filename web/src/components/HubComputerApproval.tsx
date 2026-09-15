@@ -13,10 +13,12 @@ import {
 } from "@/components/ui/dialog";
 
 export function HubComputerApproval({
+  preview = false,
   code,
   accountName,
   close,
 }: {
+  preview?: boolean;
   code: string;
   accountName: string;
   close: () => void;
@@ -34,12 +36,12 @@ export function HubComputerApproval({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            {approved ? "Return to your Mac" : "Approve your computer"}
+            {preview ? (approved ? "Return to your preview" : "Approve your preview") : (approved ? "Return to your Mac" : "Approve your computer")}
           </DialogTitle>
           <DialogDescription>
             {approved
-              ? "Choose your account in Remy on your Mac, then finish connecting."
-              : `Approve only if this code matches the one in Remy on your Mac; you’re signed in as ${accountName}.`}
+              ? (preview ? "Return to your local preview and choose Finish signing in." : "Choose your account in Remy on your Mac, then finish connecting.")
+              : preview ? `Approve only if this code matches your local preview; it can use your live account as ${accountName}.` : `Approve only if this code matches the one in Remy on your Mac; you’re signed in as ${accountName}.`}
           </DialogDescription>
         </DialogHeader>
         {!approved && (
@@ -73,7 +75,7 @@ export function HubComputerApproval({
                 }
               }}
             >
-              {busy && <Spinner data-icon="inline-start" />}Approve computer
+              {busy && <Spinner data-icon="inline-start" />}{preview ? "Approve preview" : "Approve computer"}
             </Button>
           )}
         </DialogFooter>

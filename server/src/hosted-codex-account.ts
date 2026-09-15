@@ -5,6 +5,11 @@ import { agentCommand } from "./agent.js";
 import { getKv, setKv } from "./db.js";
 
 export function configureHostedCodex(home: string, connected: boolean) {
+  if (process.env.RAMP_ROUTER_API_KEY && process.env.RAMP_ROUTER_MODEL) {
+    process.env.REMY_HOSTED_CODEX_PROVIDER = "remy_router";
+    writeFileSync(join(home,"config.toml"), 'model_provider = "remy_router"\n[model_providers.remy_router]\nname = "Router"\nbase_url = "https://api.router.com/v1"\nwire_api = "responses"\nenv_key = "RAMP_ROUTER_API_KEY"\nrequires_openai_auth = false\n', {mode:0o600});
+    return;
+  }
   process.env.REMY_HOSTED_CODEX_PROVIDER = connected ? "openai" : "remy_openai";
   writeFileSync(
     join(home, "config.toml"),

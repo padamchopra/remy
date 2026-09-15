@@ -103,6 +103,7 @@ const mf = new Miniflare(
         bindings: {
           ...(oauth?{QA_CONNECTIONS:true,GITHUB_APP_ID:"12",LINEAR_CLIENT_ID:"disposable-linear",GITHUB_CONNECTION_CLIENT_ID:"disposable-github"}:{}),
           ENVIRONMENT: "staging",
+          PREVIEW_ORIGINS: process.env.QA_PREVIEW_ORIGINS ?? "",
           RELEASE: "qa",
           BETTER_AUTH_URL: process.env.QA_PUBLIC_HUB_URL ?? "http://localhost",
           ...(process.env.QA_HOSTED ? { HOSTED_CONTROL_URL: process.env.QA_HOSTED_CONTROL ?? "http://127.0.0.1:9", HOSTED_IMAGE: process.env.QA_HOSTED_IMAGE ?? "qa-image", QA_HOSTED_TOKEN: process.env.QA_HOSTED_TOKEN ?? "" } : {}),
