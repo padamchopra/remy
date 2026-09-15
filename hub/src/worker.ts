@@ -1,3 +1,4 @@
+import { modelAccessIds, publicModelAccess, saveModelAccess, type ModelAccessId } from "./model-access.js";
 import { routerConnectionSchema, routerModels } from "./router-connection.js";
 import { cloudComputerProvider } from "@remy/contract";
 import { managementCredential } from "./cloud-connection.js";
@@ -541,22 +542,40 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           method: request.method, headers: { "x-organization-id": organizationId, "x-user-id": identity.userId },
         }));
       }
-      if (["router-models", "router-connection"].includes(tail) && ["POST", "PUT", "DELETE"].includes(request.method)) {
+      if (tail === "model-access" || tail.startsWith("model-access/")) {
+        const member=await organizations.member(organizationId,identity.userId);
+        const store=new HostedSettingsStore(env.DB,()=>env.AUTH_SECRET.get());
+        if(tail === "model-access" && request.method === "GET") return Response.json({providers:publicModelAccess(await store.secrets(organizationId))});
+        const id=tail.slice("model-access/".length) as ModelAccessId;
+        if(!modelAccessIds.includes(id) || request.method !== "PATCH") return jsonError("This model action is unavailable.",405);
+        if(member.role === "member" || identity.clientKind === "computer") return jsonError("Only an administrator can configure model access.",403);
+        if(!allowedRequestOrigin(request,env.PREVIEW_ORIGINS)) return jsonError("Configure model access from Remy.",403);
+        try {
+          const providers=await saveModelAccess(store,organizationId,id,await body(request));
+          await board().fetch(new Request("https://internal/organization/changed",{method:"POST",headers:{"x-organization-id":organizationId}}));
+          return Response.json({providers});
+        } catch {return jsonError("Your model access could not be saved; check your key and try again.",400);}
+      }
+      if (["router-models", "router-connection", "openrouter-models", "openrouter-connection"].includes(tail) && ["POST", "PUT", "DELETE"].includes(request.method)) {
+        const provider = tail.startsWith("openrouter-") ? "openrouter" : "router";
+        const label = provider === "openrouter" ? "OpenRouter" : "Router";
+        const secretName = `model:${provider}`;
+        if (tail === `${provider}-models` ? request.method !== "POST" : !["PUT", "DELETE"].includes(request.method)) return jsonError("This model action is unavailable.",405);
         const member=await organizations.member(organizationId,identity.userId);
         if(member.role === "member" || identity.clientKind === "computer") return jsonError("Only an administrator can configure model access.",403);
         if(!allowedRequestOrigin(request,env.PREVIEW_ORIGINS)) return jsonError("Configure model access from Remy.",403);
         const store=new HostedSettingsStore(env.DB,()=>env.AUTH_SECRET.get());
-        if(tail === "router-connection" && request.method === "DELETE") await store.setSecret(organizationId,"model:router",null);
+        if(tail === `${provider}-connection` && request.method === "DELETE") await store.setSecret(organizationId,secretName,null);
         else {
           const input=await body<{apiKey?:string;model?:string}>(request);
-          if(!input || typeof input.apiKey !== "string" || !input.apiKey.trim() || input.apiKey.length > 8192) return jsonError("Enter your Router API key.",400);
+          if(!input || typeof input.apiKey !== "string" || !input.apiKey.trim() || input.apiKey.length > 8192) return jsonError(`Enter your ${label} API key.`,400);
           try {
-            const models=await routerModels(input.apiKey);
-            if(tail === "router-models" && request.method === "POST") return Response.json({models});
+            const models=await routerModels(input.apiKey.trim(), fetch, provider);
+            if(tail === `${provider}-models` && request.method === "POST") return Response.json({models});
             const parsed=routerConnectionSchema.safeParse(input);
-            if(request.method !== "PUT" || !parsed.success || !models.includes(parsed.data.model)) return jsonError("Choose a model available to your Router key.",400);
-            await store.setSecret(organizationId,"model:router",JSON.stringify(parsed.data));
-          } catch(e) {return jsonError(e instanceof Error ? e.message : "Router could not connect.",502);}
+            if(request.method !== "PUT" || !parsed.success || !models.includes(parsed.data.model)) return jsonError(`Choose a model available to your ${label} key.`,400);
+            await store.setSecret(organizationId,secretName,JSON.stringify(parsed.data));
+          } catch(e) {return jsonError(e instanceof Error ? e.message : `${label} could not connect.`,502);}
         }
         await board().fetch(new Request("https://internal/organization/changed",{method:"POST",headers:{"x-organization-id":organizationId}}));
         return Response.json({saved:true});
@@ -598,7 +617,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         const workspaceId = hostedMatch[1] ? decodeURIComponent(hostedMatch[1]) : "";
         if (workspaceId) await organizations.workspace(organizationId, identity.userId, workspaceId);
         const settings = new HostedSettingsStore(env.DB, () => env.AUTH_SECRET.get());
-        if (request.method === "GET" && (!workspaceId || hostedMatch[2] === "settings")) return Response.json({ settings: await settings.settings(organizationId,workspaceId), secretNames: member.role !== "member" ? (await settings.secretNames(organizationId)).filter(name => !name.startsWith("cloud:") && !name.startsWith("model:")) : [], enabledProviders: await settings.enabledProviders(organizationId), routerConfigured: (await settings.secretNames(organizationId)).includes("model:router"), connections: (await settings.secretNames(organizationId)).filter(name => name.startsWith("cloud:")).map(name => name.slice(6)), available: !!env.HOSTED_IMAGE && (!!env.PROVIDER_RUNTIME || (!!env.HOSTED_CONTROL_URL && !!env.HOSTED_CONTROL_TOKEN)) });
+        if (request.method === "GET" && (!workspaceId || hostedMatch[2] === "settings")) return Response.json({ settings: await settings.settings(organizationId,workspaceId), secretNames: member.role !== "member" ? (await settings.secretNames(organizationId)).filter(name => !name.startsWith("cloud:") && !name.startsWith("model:") && !name.startsWith("access:")) : [], enabledProviders: await settings.enabledProviders(organizationId), routerConfigured: (await settings.secretNames(organizationId)).includes("model:router"), openrouterConfigured: (await settings.secretNames(organizationId)).includes("model:openrouter"), connections: (await settings.secretNames(organizationId)).filter(name => name.startsWith("cloud:")).map(name => name.slice(6)), available: !!env.HOSTED_IMAGE && (!!env.PROVIDER_RUNTIME || (!!env.HOSTED_CONTROL_URL && !!env.HOSTED_CONTROL_TOKEN)) });
         if (request.method === "PUT" && (!workspaceId || hostedMatch[2] === "settings")) {
           if (member.role === "member") return jsonError("Ask an admin to change hosted computers.",403);
           const input = await body<{settings?:unknown;secret?:{name?:unknown;value?:unknown}}>(request);
@@ -1449,10 +1468,15 @@ export class HubCoordinator {
     const preference=await this.env.DB.prepare("SELECT computer_id FROM member_computer_preferences WHERE organization_id=? AND user_id=? AND workspace_id=?").bind(org,userId,workspaceId).first<{computer_id:string}>();
     return resolveComputer(routingRuleSchema.array().parse(JSON.parse(row?.rules??"[]")),await this.computerService().list(org,userId),{workspaceId,origin:workspace.origin,teamIds,trigger,enabledProviders,...(override !== undefined ? (override ? {override} : {}) : trigger === "manual" && preference ? {override:preference.computer_id} : {})});
   }
-  private async taskComputer(userId:string, workspaceId:string, trigger:string, taskId:string, title?:string, override?:string|null) {
+  private async taskComputer(userId:string, workspaceId:string, trigger:string, taskId:string, title?:string, override?:string|null, modelChoice?:{provider?:string;model?:string}) {
     const org = (await this.ctx.storage.get<string>("organizationId"))!;
     let choice = await this.routeFor(userId, workspaceId, trigger,override);
     const target = choice.computerId ? await this.computers.computer(org, choice.computerId) : undefined;
+    if(target && target.ownership !== "hosted" && modelChoice?.provider && !target.capabilities.providers.some(p=>p.id===modelChoice.provider && (!modelChoice.model || p.models.includes(modelChoice.model)))) {
+      if(override)throw Error("This computer cannot run your selected model; choose another computer.");
+      const settings=await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSettings(org,workspaceId);
+      choice={reason:"A cloud computer can run your selected model.",hostedWorkspaceId:workspaceId,hostedProvider:settings.provider};
+    }
     if (choice.hostedWorkspaceId || target?.ownership === "hosted") {
       const settings = await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSettings(org,workspaceId,choice.hostedProvider);
       const state = await this.hostedService().ensure(workspaceId,settings,taskId,title);
@@ -1646,16 +1670,23 @@ export class HubCoordinator {
     }
     if (url.pathname === "/threads" && request.method === "POST") {
       const org = request.headers.get("x-organization-id")!;
-      const input = await body<{workspaceId?: string; title?: string; requestId?: string; computerId?:string|null}>(request);
+      const input = await body<{workspaceId?: string; title?: string; requestId?: string; computerId?:string|null; provider?:string; model?:string}>(request);
       if (!input || typeof input.workspaceId !== "string" || typeof input.requestId !== "string" || !/^[0-9a-f-]{36}$/.test(input.requestId)) return jsonError("Choose a workspace and retry your thread.", 400);
       const workspace = await new OrganizationService(new D1OrganizationStore(this.env.DB)).workspace(org, actor.id, input.workspaceId);
       if(input.computerId !== undefined && input.computerId !== null && typeof input.computerId !== "string") return jsonError("Choose a computer.",400);
+      if(input.provider !== undefined && !["claude","codex","cursor"].includes(input.provider))return jsonError("Choose a provider.",400);
+      if(input.model !== undefined && (typeof input.model !== "string" || input.model.length>512))return jsonError("Choose a model.",400);
+      const routed=/^remy:(router|openrouter|openai):(.+)$/.exec(input.model ?? "");
+      if(routed) {
+        const access=publicModelAccess(await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).secrets(org)).find(p=>p.id===routed[1]);
+        if(input.provider!=="codex" || !access?.enabled || (routed[1]!=="openai" && !access.models.includes(routed[2])))return jsonError("Choose an enabled provider and model.",400);
+      }
       const key = `manual-task:${actor.id}:${input.requestId}`;
       const previous = await this.ctx.storage.get<{computerId:string; id:string}>(key);
       if (previous) return Response.json(previous,{status:201});
       try {
-        const choice = await this.taskComputer(actor.id, workspace.id, "manual", `${actor.id}:${input.requestId}`, input.title,input.computerId);
-        const made = await this.dispatchComputer(choice.computerId, actor, "POST", "/hub/threads", {workspaceId:choice.workspaceId, hubTaskId:key, title:typeof input.title === "string" ? input.title.slice(0,200) : undefined});
+        const choice = await this.taskComputer(actor.id, workspace.id, "manual", `${actor.id}:${input.requestId}`, input.title,input.computerId,input);
+        const made = await this.dispatchComputer(choice.computerId, actor, "POST", "/hub/threads", {workspaceId:choice.workspaceId, hubTaskId:key, provider:input.provider, model:input.model, title:typeof input.title === "string" ? input.title.slice(0,200) : undefined});
         if (!made.ok) return made;
         const thread = threadSnapshotSchema.parse(await made.json());
         await this.threads.snapshot(choice.computerId, thread);

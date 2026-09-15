@@ -1,0 +1,34 @@
+name: OpenRouter runtime deployment
+on:
+  push:
+    branches: [padam/deploy-openrouter-20260915]
+permissions:
+  contents: write
+  packages: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and verify runtime
+        run: |
+          docker build -f hub/runtime/Dockerfile.computer --build-arg DAEMON_VERSION=0.1.97-openrouter.20260915 -t ghcr.io/padamchopra/remy-computer:openrouter-20260915 .
+          docker run --rm --entrypoint node ghcr.io/padamchopra/remy-computer:openrouter-20260915 --test /opt/remy/server/dist/hosted-models.test.js /opt/remy/server/dist/hosted-codex-account.test.js /opt/remy/server/dist/provider-adapters/codex.test.js /opt/remy/server/dist/hub-threads.test.js
+      - name: Publish runtime image and archive
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          image=ghcr.io/padamchopra/remy-computer:openrouter-20260915
+          docker push "$image"
+          container=$(docker create "$image")
+          mkdir -p "$RUNNER_TEMP/computer/opt" "$RUNNER_TEMP/computer/usr"
+          docker cp "$container:/opt/remy" "$RUNNER_TEMP/computer/opt/remy"
+          docker cp "$container:/usr/local" "$RUNNER_TEMP/computer/usr/local"
+          docker rm "$container"
+          tar -czf "$RUNNER_TEMP/remy-computer-linux.tar.gz" -C "$RUNNER_TEMP/computer" opt usr
+          gh release create cloud-openrouter-20260915 --target "$GITHUB_SHA" --prerelease --latest=false --title "OpenRouter cloud runtime" --notes "Cloud runtime for explicit provider selection and OpenRouter model access." "$RUNNER_TEMP/remy-computer-linux.tar.gz"

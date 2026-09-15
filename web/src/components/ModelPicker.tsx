@@ -56,18 +56,19 @@ function match(value: string, search: string, keywords?: string[]): number {
   return fields.some((entry) => entry.includes(query)) ? 1 : 0;
 }
 
-function useProviders(): Provider[] {
+function useProviders(override?: Provider[]): Provider[] {
   const providers = useStore((s) => s.providers);
   const loadProviders = useStore((s) => s.loadProviders);
 
   useEffect(() => {
+    if (override) return;
     void loadProviders().catch(() => {
       // The machine says elsewhere that it is unreachable; the built-in
       // catalogue is enough to paint the picker.
     });
-  }, [loadProviders]);
+  }, [loadProviders, override]);
 
-  return providers ?? PROVIDERS;
+  return override ?? providers ?? PROVIDERS;
 }
 
 function displayModel(model: ProviderModel): string {
@@ -88,6 +89,7 @@ export function ModelPicker({
   allowDefault,
   defaultChoice,
   onlyProvider,
+  catalogue,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -100,8 +102,9 @@ export function ModelPicker({
   defaultChoice?: ModelChoice;
   /// Keeps an existing thread on the provider that owns its transcript.
   onlyProvider?: string;
+  catalogue?: Provider[];
 }) {
-  const providers = useProviders();
+  const providers = useProviders(catalogue);
   const shownProviders = onlyProvider
     ? providers.filter((provider) => provider.id === onlyProvider)
     : providers;
@@ -112,7 +115,7 @@ export function ModelPicker({
   const saveSettings = useStore((s) => s.saveSettings);
   const off = allowOff && value.model === OFF;
   const inherited = allowDefault && value.provider === REMY_DEFAULT;
-  const favorites = new Set(settings?.favoriteModels ?? []);
+  const favorites = new Set(catalogue ? [] : settings?.favoriteModels ?? []);
   const [pending, setPending] = useState<ModelChoice>();
 
   const changeOpen = (next: boolean) => {
@@ -284,7 +287,7 @@ export function ModelPicker({
                 >
                   <ProviderMark provider={provider.id} />
                   <span className="min-w-0 truncate">{displayModel(model)}</span>
-                  {model.value && (
+                  {model.value && !catalogue && (
                     <Button
                       type="button"
                       variant="ghost"

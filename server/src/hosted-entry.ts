@@ -25,17 +25,16 @@ configureHostedCodex(process.env.CODEX_HOME, getKv<boolean>("hostedCodexConnecte
 setKv("deviceId", bootstrap.registration.computerId);
 setKv("hubComputerPrivateKey", bootstrap.privateKey);
 setKv("hubComputerRegistration", bootstrap.registration);
-if(process.env.RAMP_ROUTER_API_KEY && process.env.RAMP_ROUTER_MODEL) {
-  const {provider,rememberProviderModels}=await import("./providers.js");
-  const models=[{value:process.env.RAMP_ROUTER_MODEL,label:`Router · ${process.env.RAMP_ROUTER_MODEL}`}];
-  provider("codex")!.models=models;
-  rememberProviderModels("codex",models);
-}
+const {hostedGatewayModels}=await import("./hosted-models.js");
+const {provider,rememberProviderModels}=await import("./providers.js");
+const nativeModels=provider("codex")!.models;
+const models=[...nativeModels,...(process.env.OPENAI_API_KEY ? nativeModels.filter(m=>m.value).map(m=>({...m,value:`remy:openai:${m.value}`,label:`OpenAI · ${m.label}`})) : []),...hostedGatewayModels()];
+provider("codex")!.models=models;
+rememberProviderModels("codex",models);
 setKv("config", {
   ...getKv<Record<string, unknown>>("config"),
   hubMode: true,
-  defaultProvider: process.env.RAMP_ROUTER_API_KEY ? "codex" : process.env.ANTHROPIC_API_KEY ? "claude" : "codex",
-  ...(process.env.RAMP_ROUTER_API_KEY && process.env.RAMP_ROUTER_MODEL ? {defaultModel:process.env.RAMP_ROUTER_MODEL} : {}),
+  defaultProvider: process.env.ANTHROPIC_API_KEY ? "claude" : "codex",
   deviceName: `Hosted ${bootstrap.workspace.name}`,
 });
 if (bootstrap.workspace.id) {

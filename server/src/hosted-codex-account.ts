@@ -1,15 +1,10 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CodexAccount } from "./codex-account.js";
 import { agentCommand } from "./agent.js";
 import { getKv, setKv } from "./db.js";
 
 export function configureHostedCodex(home: string, connected: boolean) {
-  if (process.env.RAMP_ROUTER_API_KEY && process.env.RAMP_ROUTER_MODEL) {
-    process.env.REMY_HOSTED_CODEX_PROVIDER = "remy_router";
-    writeFileSync(join(home,"config.toml"), 'model_provider = "remy_router"\n[model_providers.remy_router]\nname = "Router"\nbase_url = "https://api.router.com/v1"\nwire_api = "responses"\nenv_key = "RAMP_ROUTER_API_KEY"\nrequires_openai_auth = false\n', {mode:0o600});
-    return;
-  }
   process.env.REMY_HOSTED_CODEX_PROVIDER = connected ? "openai" : "remy_openai";
   writeFileSync(
     join(home, "config.toml"),
@@ -18,6 +13,13 @@ export function configureHostedCodex(home: string, connected: boolean) {
       : 'model_provider = "remy_openai"\ncli_auth_credentials_store = "file"\n[model_providers.remy_openai]\nname = "OpenAI"\nbase_url = "https://api.openai.com/v1"\nwire_api = "responses"\nenv_key = "OPENAI_API_KEY"\nrequires_openai_auth = false\n',
     { mode: 0o600 },
   );
+  for(const [id,name,url,key] of [
+    ...(connected ? [["remy_openai","OpenAI","https://api.openai.com/v1","OPENAI_API_KEY"]] : []),
+    ["remy_router","Router.com","https://api.router.com/v1","RAMP_ROUTER_API_KEY"],
+    ["remy_openrouter","OpenRouter","https://openrouter.ai/api/v1","OPENROUTER_API_KEY"],
+  ]) {
+    if(process.env[key])appendFileSync(join(home,"config.toml"),`\n[model_providers.${id}]\nname = "${name}"\nbase_url = "${url}"\nwire_api = "responses"\nenv_key = "${key}"\nrequires_openai_auth = false\n`);
+  }
 }
 
 let account: CodexAccount | undefined;

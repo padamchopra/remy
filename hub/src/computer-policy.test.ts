@@ -423,3 +423,87 @@ test("hosted model keys are encrypted per organization and settings inherit expl
     assert.equal((await store.executionSettings('org','w')).provider,'modal');
   } finally {sqlite.close();}
 });
+
+test("OpenRouter routes enforce admin access and persist only encrypted credentials", async () => {
+  const {sqlite, db} = database();
+  const {createRouteHandler} = await import("./worker.js");
+  const {HostedSettingsStore} = await import("./hosted-settings.js");
+  let role = "owner", clientKind = "web", resets = 0;
+  const secret = "test-encryption-root-with-at-least-thirty-two-characters";
+  const route = createRouteHandler({
+    accountStore: () => ({}) as never,
+    accountService: () => ({authenticate: async () => ({userId:"user",sessionId:"session",clientKind})}) as never,
+    organizationStore: () => ({}) as never,
+    organizationService: () => ({member: async () => ({role})}) as never,
+  });
+  const env = {DB:db, AUTH_SECRET:{get:async () => secret}, BETTER_AUTH_URL:"https://hub.example", COORDINATOR:{idFromName:()=>({}),get:()=>({fetch:async()=>{resets++;return Response.json({ok:true});}})}} as never;
+  const call = (path:string, method:string, input?:unknown, origin="https://hub.example") => route(new Request(`https://hub.example/api/organizations/org/${path}`, {method,headers:{authorization:"Bearer test",origin,"content-type":"application/json"},...(input ? {body:JSON.stringify(input)} : {})}),env);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (url:unknown) => {
+    assert.equal(url,"https://openrouter.ai/api/v1/models/user");
+    return Response.json({data:[{id:"vendor/model"}]});
+  }) as typeof fetch;
+  try {
+    const input = {apiKey:"openrouter-private-test",model:"vendor/model"};
+    assert.equal((await call("openrouter-models","PUT",input)).status,405);
+    role="member";
+    assert.equal((await call("openrouter-connection","PUT",input)).status,403);
+    role="owner";clientKind="computer";
+    assert.equal((await call("openrouter-connection","PUT",input)).status,403);
+    clientKind="web";
+    assert.equal((await call("openrouter-connection","PUT",input,"https://foreign.example")).status,403);
+    assert.equal((await call("openrouter-connection","PUT",{...input,model:"missing"})).status,400);
+    assert.deepEqual(await (await call("openrouter-models","POST",{apiKey:input.apiKey})).json(),{models:["vendor/model"]});
+    assert.equal((await call("openrouter-connection","PUT",input)).status,200);
+    const store = new HostedSettingsStore(db,async()=>secret);
+    assert.deepEqual(await store.secretNames("org"),["model:openrouter"]);
+    assert.deepEqual(JSON.parse((await store.secrets("org"))["model:openrouter"]),input);
+    assert.ok(!JSON.stringify(sqlite.prepare("SELECT * FROM organization_secrets").all()).includes(input.apiKey));
+    const read = await (await call("hosted","GET")).json() as {openrouterConfigured:boolean};
+    assert.equal(read.openrouterConfigured,true);
+    assert.ok(!JSON.stringify(read).includes(input.apiKey));
+    assert.equal((await call("openrouter-connection","DELETE")).status,200);
+    assert.deepEqual(await store.secretNames("org"),[]);
+    assert.equal(resets,2);
+    role="member";
+    assert.equal((await call("model-access/openrouter","PATCH",{enabled:true,apiKey:input.apiKey})).status,403);
+    role="owner";clientKind="computer";
+    assert.equal((await call("model-access/openrouter","PATCH",{enabled:true,apiKey:input.apiKey})).status,403);
+    clientKind="web";
+    assert.equal((await call("model-access/openrouter","PATCH",{enabled:true,apiKey:input.apiKey},"https://foreign.example")).status,403);
+    assert.equal((await call("model-access/openrouter","PATCH",{enabled:true,apiKey:input.apiKey})).status,200);
+    assert.equal((await call("model-access/openrouter","PATCH",{enabled:false})).status,200);
+    const access=await (await call("model-access","GET")).json() as {providers:{id:string;configured:boolean;enabled:boolean}[]};
+    assert.equal(access.providers.find(p=>p.id==="openrouter")?.configured,true);
+    assert.equal(access.providers.find(p=>p.id==="openrouter")?.enabled,false);
+    assert.ok(!JSON.stringify(access).includes(input.apiKey));
+  } finally {globalThis.fetch=originalFetch;sqlite.close();}
+});
+
+test("model access toggles preserve encrypted keys and expose only enabled models to execution",async()=>{
+  const {sqlite,db}=database();
+  const {HostedSettingsStore}=await import("./hosted-settings.js");
+  const {saveModelAccess,publicModelAccess,modelEnvironment}=await import("./model-access.js");
+  const store=new HostedSettingsStore(db,async()=>"test-encryption-root-with-at-least-thirty-two-characters");
+  const before=globalThis.fetch;
+  globalThis.fetch=(async()=>Response.json({data:[{id:"vendor/model"}]})) as typeof fetch;
+  try {
+    await saveModelAccess(store,"org","openrouter",{enabled:true,apiKey:"private-openrouter-key"});
+    await saveModelAccess(store,"org","router",{enabled:true,apiKey:"private-router-key"});
+    await saveModelAccess(store,"org","openai",{enabled:true,apiKey:"private-openai-key"});
+    let secrets=await store.secrets("org");
+    assert.ok(modelEnvironment(secrets).OPENROUTER_API_KEY);
+    assert.ok(modelEnvironment(secrets).RAMP_ROUTER_API_KEY);
+    assert.ok(modelEnvironment(secrets).OPENAI_API_KEY);
+    await saveModelAccess(store,"org","openrouter",{enabled:false});
+    secrets=await store.secrets("org");
+    assert.equal(modelEnvironment(secrets).OPENROUTER_API_KEY,undefined);
+    assert.equal(JSON.parse(secrets["access:openrouter"]).apiKey,"private-openrouter-key");
+    assert.deepEqual(publicModelAccess(secrets).find(p=>p.id==="openrouter"),{id:"openrouter",enabled:false,configured:true,models:["vendor/model"]});
+    assert.ok(!JSON.stringify(publicModelAccess(secrets)).includes("private-"));
+    await saveModelAccess(store,"org","openrouter",{enabled:true});
+    assert.equal(modelEnvironment(await store.secrets("org")).OPENROUTER_API_KEY,"private-openrouter-key");
+    assert.ok(!JSON.stringify(sqlite.prepare("SELECT * FROM organization_secrets").all()).includes("private-"));
+    assert.deepEqual(await store.secrets("other"),{});
+  }finally{globalThis.fetch=before;sqlite.close();}
+});

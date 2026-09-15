@@ -22,7 +22,7 @@ export function HubCloudConnection({ organizationId, admin, onChange }: { organi
   if (!state) return resource.error ? <p role="alert">{resource.error}</p> : <Skeleton className="h-28 w-full" aria-label="Loading cloud providers" />;
   return <section className="flex flex-col gap-4" aria-label="Cloud connections">
     <div className="space-y-1"><h2 className="text-sm font-medium">Providers</h2><p className="text-sm text-muted-foreground">Run threads in your own cloud accounts.</p></div>
-    {resource.value && !resource.value.connections && <p role="status">Update the Remy service to save cloud connections.</p>}
+    {resource.value && !resource.value.connections && <p role="status" className="text-sm text-muted-foreground">Update the Remy service to save cloud connections.</p>}
     <div className="divide-y rounded-lg border">
     {providers.map(provider => <ProviderConnection key={provider.id} provider={provider} organizationId={organizationId} admin={admin} configured={!!state?.connections?.includes(provider.id)} enabled={!!state?.enabledProviders?.includes(provider.id)} supported={!!state?.connections} refresh={refresh} />)}
     </div>

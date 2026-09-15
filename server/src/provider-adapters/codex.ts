@@ -1,3 +1,4 @@
+import { hostedModelSelection } from "../hosted-models.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
@@ -308,7 +309,7 @@ export const codexAdapter: ProviderAdapter = {
 /// variable names, never their values. Those travel only in the child env.
 export function codexAppServerArgs(options: CodexSessionOptions): string[] {
   const args = ["app-server", "--stdio"];
-  if(process.env.REMY_HOSTED_TASK || options.authTokens)args.push("-c",'model_provider="openai"');
+  if(process.env.REMY_HOSTED_TASK || options.authTokens)args.push("-c", `model_provider=${JSON.stringify(hostedModelSelection(options.model).provider ?? process.env.REMY_HOSTED_CODEX_PROVIDER ?? "openai")}`);
   if (options.mcpServer) {
     args.push("--config", `mcp_servers.remy.command=${JSON.stringify(options.mcpServer.command)}`);
     args.push("--config", `mcp_servers.remy.args=${JSON.stringify(options.mcpServer.args)}`);
@@ -379,7 +380,7 @@ export function createCodexSession(
 }
 
 class AppServerSession implements CodexSession {
-  private hostedModelProvider = process.env.REMY_HOSTED_CODEX_PROVIDER;
+  private hostedModelProvider: string | undefined;
   private child: ChildProcessWithoutNullStreams;
   private nextId = 1;
   private requests = new Map<number | string, PendingRequest>();
@@ -396,6 +397,7 @@ class AppServerSession implements CodexSession {
     private onApproval?: (request: CodexApprovalRequest) => Promise<CodexApprovalDecision>,
     private onQuestion?: (request: CodexQuestionRequest) => Promise<Record<string, string[]>>,
   ) {
+    this.hostedModelProvider = hostedModelSelection(options.model).provider ?? process.env.REMY_HOSTED_CODEX_PROVIDER;
     this.child = spawn(options.command, codexAppServerArgs(options), {
       // Codex loads its own config before Remy can send the thread workspace.
       // Starting in a protected or vanished workspace makes that bootstrap fail,
@@ -442,11 +444,11 @@ class AppServerSession implements CodexSession {
         this.finish(active);
         return;
       }
-      await this.syncAccount();
+      await this.syncAccount(overrides.model ?? this.options.model);
       const permissionMode = overrides.permissionMode ?? this.options.permissionMode;
       const roots = [this.options.cwd, ...(this.options.additionalDirectories ?? [])];
       const permissions = codexPermissions(permissionMode, [this.options.cwd]);
-      const chosenModel = overrides.model ?? this.options.model;
+      const chosenModel = hostedModelSelection(overrides.model ?? this.options.model).model;
       const chosenEffort = overrides.effort ?? this.options.effort;
       const result = asRecord(await this.request("turn/start", {
         threadId: this.threadId,
@@ -492,8 +494,18 @@ class AppServerSession implements CodexSession {
   }
 
   private externalAccount=false;
-  private async syncAccount() {
-    if (process.env.RAMP_ROUTER_API_KEY && process.env.RAMP_ROUTER_MODEL) return;
+  private async syncAccount(model = this.options.model) {
+    const gateway=hostedModelSelection(model).provider;
+    if(gateway) {
+      const previous=this.hostedModelProvider;
+      this.hostedModelProvider=gateway;
+      if(this.threadId && previous!==gateway)await this.request("thread/resume",{threadId:this.threadId,modelProvider:gateway});
+      return;
+    }
+    if(this.hostedModelProvider === "remy_router" || this.hostedModelProvider === "remy_openrouter" || this.hostedModelProvider === "remy_openai") {
+      this.hostedModelProvider=process.env.REMY_HOSTED_CODEX_PROVIDER;
+      if(this.threadId)await this.request("thread/resume",{threadId:this.threadId,modelProvider:this.hostedModelProvider ?? "openai"});
+    }
     if(!process.env.REMY_HOSTED_TASK && !this.options.authTokens)return;
     const tokens=await this.authTokens();
     const previous=this.hostedModelProvider;
@@ -518,7 +530,7 @@ class AppServerSession implements CodexSession {
     const common = {
       ...(this.hostedModelProvider ? { modelProvider: this.hostedModelProvider } : {}),
       cwd: this.options.cwd,
-      ...(this.options.model ? { model: this.options.model } : {}),
+      ...(this.options.model ? { model: hostedModelSelection(this.options.model).model } : {}),
       ...(this.options.effort ? { modelReasoningEffort: this.options.effort } : {}),
       ...(this.options.developerInstructions ? { developerInstructions: this.options.developerInstructions } : {}),
       approvalPolicy: permissions.approvalPolicy,

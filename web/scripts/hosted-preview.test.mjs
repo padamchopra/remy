@@ -8,6 +8,7 @@ test('preview approval keeps credentials on the proxy and rejects foreign origin
  const upstream=createServer(async(req,res)=>{
   let raw=''; for await (const data of req) raw+=data;
   requests.push({path:req.url,headers:req.headers,body:raw});
+  if(req.url==='/api/unavailable') { req.socket.destroy(); return; }
   res.setHeader('content-type','application/json');
   if(req.url==='/api/device/authorization') res.end(JSON.stringify({deviceCode:'private-code',userCode:'ABCD-EFGH'}));
   else if(req.url==='/api/device/token') res.end(JSON.stringify({status:'approved',accessToken:'private-access',refreshToken:'private-refresh',expiresIn:3600}));
@@ -35,6 +36,9 @@ test('preview approval keeps credentials on the proxy and rejects foreign origin
    assert.equal(forwarded.headers.authorization,'Bearer private-access');
    assert.equal(forwarded.headers.origin,origin);
    assert.equal((await call('/api/profile','GET','https://evil.test')).status,403);
+   const failed=await call('/api/unavailable');
+   assert.equal(failed.status,502);
+   assert.deepEqual(await failed.json(),{error:'Could not connect to Remy; try again.'});
    await call('/api/sessions/current','DELETE');
    assert.equal((await call('/api/profile')).status,401);
   } finally {await actual.close();}

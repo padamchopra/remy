@@ -1,3 +1,4 @@
+import { hostedGatewayModels } from "./hosted-models.js";
 import { setTaskEnvironment } from "./environments.js";
 import {
   canReadThread,
@@ -110,6 +111,9 @@ export async function handleHubThreadRequest(
         input.visibility !== "open"
       )
         return fail(400, "Choose who can read this thread.");
+      if(typeof input.model === "string" && input.model.startsWith("remy:")) {
+        if(input.provider !== "codex" || !(hostedGatewayModels().some(model=>model.value===input.model) || input.model.startsWith("remy:openai:") && !!process.env.OPENAI_API_KEY)) return fail(400,"This model provider is unavailable on this computer.");
+      }
       const chat = createChat({
         cwd: workspace.path,
         title: typeof input.title === "string" ? input.title : undefined,

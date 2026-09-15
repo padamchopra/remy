@@ -411,3 +411,31 @@ test("hosted Codex receives external account tokens and answers refresh requests
     assert.ok(!JSON.stringify(events).includes("disposable-token"));
   }finally{session.close();}
 });
+
+test("cloud app-server retains its configured model gateway", () => {
+  const previous = process.env.REMY_HOSTED_CODEX_PROVIDER;
+  try {
+    process.env.REMY_HOSTED_CODEX_PROVIDER = "remy_openrouter";
+    const args = codexAppServerArgs({...base, authTokens: async () => null});
+    assert.ok(args.includes('model_provider="remy_openrouter"'));
+    assert.ok(!args.includes('model_provider="openai"'));
+  } finally {
+    if (previous === undefined) delete process.env.REMY_HOSTED_CODEX_PROVIDER;
+    else process.env.REMY_HOSTED_CODEX_PROVIDER = previous;
+  }
+});
+
+test("new and resumed threads keep their selected gateway despite other configured accounts",async()=>{
+  const names=["RAMP_ROUTER_API_KEY","OPENROUTER_API_KEY","OPENAI_API_KEY","REMY_HOSTED_CODEX_PROVIDER"];
+  const before=names.map(name=>process.env[name]);
+  try {
+    process.env.RAMP_ROUTER_API_KEY="router-test";process.env.OPENROUTER_API_KEY="openrouter-test";process.env.OPENAI_API_KEY="openai-test";process.env.REMY_HOSTED_CODEX_PROVIDER="openai";
+    for(const gateway of ["router","openrouter","openai"]) for(const threadId of [undefined,"existing-thread"]) {
+      let answer="",tokenCalls=0;
+      const session=createCodexSession({...base,command:fakeAppServer(),threadId,model:`remy:${gateway}:vendor/model`,authTokens:async()=>{tokenCalls++;return {accessToken:"private-token",chatgptAccountId:"account"};}},event=>{
+        if(event.type==="item.completed" && event.item.type==="agent_message")answer=event.item.text;
+      });
+      try{await session.run("provider").done;assert.equal(answer,`remy_${gateway}`);assert.equal(tokenCalls,0);}finally{session.close();}
+    }
+  }finally{names.forEach((name,i)=>{if(before[i]===undefined)delete process.env[name];else process.env[name]=before[i];});}
+});

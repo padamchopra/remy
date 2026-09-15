@@ -22,7 +22,9 @@ try {
       page.setDefaultTimeout(8000);
       const errors = [], unexpected = [], requests = [];
       let available = true;
-      let routerConfigured=false;
+      const modelEntries=["anthropic","openai","router","openrouter"].map(id=>({id,enabled:false,configured:false,models:[]}));
+      const savedKeys=new Map();
+      let threadInput;
       let hasWorkspace=false;
       let preference=null;
       let failToggle=false;
@@ -52,9 +54,20 @@ try {
           return route.fulfill({ json: { saved: true } });
         }
         if(path === `${base}/routing/preference`){if(route.request().method()==="POST")preference=route.request().postDataJSON().computerId;return route.fulfill({json:{computerId:preference}});}
-        if(path === `${base}/router-models`) return route.fulfill({json:{models:["test/model-a","test/model-b"]}});
-        if(path === `${base}/router-connection`){routerConfigured=route.request().method()==="PUT";return route.fulfill({json:{saved:true}});}
+        if(path===`${base}/hosted/repo/codex`)return route.fulfill({json:{phase:"disconnected"}});
+        if(path===`${base}/threads` && route.request().method()==="POST") {
+          threadInput=route.request().postDataJSON();
+          return route.fulfill({status:409,json:{error:"Preview request captured."}});
+        }
+        if(path.startsWith(`${base}/model-access/`)) {
+          const id=path.split("/").at(-1), patch=route.request().postDataJSON(), entry=modelEntries.find(p=>p.id===id);
+          assert.equal(route.request().method(),"PATCH");
+          entry.enabled=patch.enabled;
+          if(patch.apiKey){savedKeys.set(id,patch.apiKey);entry.configured=true;entry.models=["test/model-a","test/model-b"];}
+          return route.fulfill({json:{providers:modelEntries}});
+        }
         const responses = {
+          [`${base}/model-access`]: {providers:modelEntries},
           "/api/runtime": { mode: "hub", auth: { google: true } },
           "/api/profile": { id: "reader", name: "Reader" },
           "/api/personal": { personal },
@@ -63,7 +76,7 @@ try {
           [`${base}/threads`]: { threads: [], cursor: 0, member: { id: "reader", role: "owner" } },
           [`${base}/computers`]: { computers: connected ? [{ computerId: "studio", name: computerName, icon: "laptop", ownership: "personal", availability: online ? "online" : "offline", access: { mode: "owner" }, canUse: online, canManage: false, capabilities: { workspaces: [] } }] : [] },
           [`${base}/computers/options`]: { role: "owner", members: [], teams: [] },
-          [`${base}/hosted`]: { settings: { enabled: cloudEnabled, provider: "fly-sprites", region: "", cpu: 1, memoryMiB: 2048, maxComputers: 5, idleMinutes: 12 }, secretNames: [], routerConfigured, connections: [...connections], enabledProviders: [...enabledProviders], available },
+          [`${base}/hosted`]: { settings: { enabled: cloudEnabled, provider: "fly-sprites", region: "", cpu: 1, memoryMiB: 2048, maxComputers: 5, idleMinutes: 12 }, secretNames: [], connections: [...connections], enabledProviders: [...enabledProviders], available },
           [`${base}/workspaces`]: { workspaces: hasWorkspace?[{id:"repo",name:"Example",origin:"https://github.com/example/repo"}]:[], canManage: true },
           [`${base}/notifications`]: { notifications: [], devices: [] },
           [`${base}/environments`]: { environments: [], assignments: [], workspaces: [] },
@@ -72,6 +85,8 @@ try {
         return route.fulfill({ status: path in responses ? 200 : 404, json: responses[path] ?? { error: "Not found" } });
       });
       for (const org of [personal, team]) {
+        modelEntries.forEach(p=>{p.enabled=false;p.configured=false;p.models=[];});
+        savedKeys.clear();
         connected = false;
         enabledProviders.clear();
         requests.length = 0;
@@ -203,25 +218,26 @@ try {
         assert.equal(await page.getByRole("button", { name: "Add a workspace", exact: true }).count(), 0);
         assert.equal(await page.getByText("Automatic cloud computers", { exact: true }).count(), 0);
         const modelAccess = page.getByRole("region", {name:"Model access",exact:true});
-        assert.equal(await modelAccess.getByLabel("API key", {exact:true}).count(), 0);
-        await modelAccess.getByRole("button", {name:"Configure",exact:true}).first().click();
-        await modelAccess.getByLabel("API key", {exact:true}).fill("disposable-key");
-        await modelAccess.getByRole("button", {name:"Cancel",exact:true}).click();
-        assert.equal(await modelAccess.getByLabel("API key", {exact:true}).count(), 0);
-        await modelAccess.getByRole("button", {name:"Configure",exact:true}).last().click();
-        const routerForm=page.getByRole("form",{name:"Router connection",exact:true});
-        await routerForm.getByLabel("Router API key",{exact:true}).fill("disposable-router-key");
-        await routerForm.getByRole("button",{name:"Load models",exact:true}).click();
-        await routerForm.getByLabel("Router model",{exact:true}).click();
-        await page.getByRole("option",{name:"test/model-b",exact:true}).click();
-        await routerForm.getByRole("button",{name:"Save connection",exact:true}).click();
-        await routerForm.waitFor({state:"hidden"});
-        assert.equal(routerConfigured,true);
-        await modelAccess.getByRole("button",{name:"Manage",exact:true}).click();
-        assert.equal(await routerForm.getByLabel("Router API key",{exact:true}).inputValue(),"");
-        await routerForm.getByRole("button",{name:"Disconnect",exact:true}).click();
-        await routerForm.waitFor({state:"hidden"});
-        assert.equal(routerConfigured,false);
+        for(const [id,label] of [["anthropic","Anthropic"],["openai","OpenAI"],["router","Router.com"],["openrouter","OpenRouter"]]) {
+          const section=modelAccess.getByRole("region",{name:`${label} model access`,exact:true});
+          const toggle=section.getByRole("switch",{name:label,exact:true});
+          await toggle.click();
+          const field=section.getByRole("textbox",{name:`${label} API key`,exact:true});
+          await field.fill(`disposable-${id}-key`);
+          await page.waitForFunction(label=>!document.querySelector(`section[aria-label="${label} model access"] [aria-label="Saving key"]`),label);
+          await field.getAttribute("placeholder").then(async value=>{if(value!=="••••••••")await page.waitForFunction(label=>document.querySelector(`section[aria-label="${label} model access"] input`)?.getAttribute("placeholder")==="••••••••",label);});
+          assert.equal(savedKeys.get(id),`disposable-${id}-key`);
+          assert.equal(await section.getByRole("button").count(),0);
+          await toggle.click();
+          await page.waitForFunction(label=>!document.querySelector(`section[aria-label="${label} model access"] [aria-label="Saving key"]`),label);
+          assert.equal(savedKeys.get(id),`disposable-${id}-key`);
+          await toggle.click();
+          await page.waitForFunction(label=>!document.querySelector(`section[aria-label="${label} model access"] [aria-label="Saving key"]`),label);
+          assert.equal(await field.inputValue(),"");
+          assert.equal(await field.getAttribute("placeholder"),"••••••••");
+          await toggle.click();
+          await page.waitForFunction(label=>document.querySelector(`section[aria-label="${label} model access"] button[role="switch"]`)?.getAttribute("aria-checked")==="false",label);
+        }
         assert.ok(await page.locator('section[aria-label="Cloud settings"]').evaluate(e => e.scrollWidth <= e.clientWidth));
         if (artifacts && org.personal) await page.screenshot({path: `${artifacts}/cloud-configured-${mobile ? "phone" : "desktop"}.png`});
         if (mobile) await page.getByRole("button", { name: "Toggle Sidebar" }).click();
@@ -241,6 +257,7 @@ try {
         online = true;
         await page.reload();
         await page.getByRole("button", { name: "Add a workspace", exact: true }).waitFor();
+        modelEntries.filter(p=>p.id==="router" || p.id==="openrouter").forEach(p=>p.enabled=true);
         hasWorkspace=true;
         await page.reload();
         await page.getByRole("button",{name:"Choose a computer",exact:true}).click();
@@ -248,6 +265,17 @@ try {
         await page.getByRole("option",{name:"Cloud · Modal",exact:true}).click();
         await page.waitForFunction(()=>document.querySelector('[aria-label="Thread computer"]')?.getAttribute("disabled")===null);
         assert.equal(preference,"cloud:modal");
+        const composer=page.getByRole("form",{name:"New thread",exact:true});
+        await composer.getByRole("button",{name:"Choose a provider and model",exact:true}).click();
+        await page.getByPlaceholder("Search providers and models",{exact:true}).fill("OpenRouter");
+        await page.getByRole("option",{name:"test/model-b",exact:true}).click();
+        await composer.getByRole("button",{name:"OpenRouter · test/model-b",exact:true}).waitFor();
+        await composer.getByLabel("What would you like to work on?",{exact:true}).fill("Test selected model");
+        await composer.getByRole("button",{name:"Start thread",exact:true}).click();
+        await page.getByText("Preview request captured.",{exact:true}).waitFor();
+        assert.equal(threadInput.provider,"codex");
+        assert.equal(threadInput.model,"remy:openrouter:test/model-b");
+
         await page.reload();
         await page.getByRole("button",{name:"Choose a computer",exact:true}).click();
         await page.getByLabel("Thread computer",{exact:true}).getByText("Cloud · Modal",{exact:true}).waitFor();

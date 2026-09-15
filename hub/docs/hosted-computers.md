@@ -4,9 +4,17 @@ Each cloud thread gets its own computer and isolated filesystem. Enable one or b
 
 Cloud settings contain provider connections and model access. Workspace creation belongs in Workspaces; provider selection belongs with the work being started. Resource limits remain in the existing settings storage/API, with five concurrent task computers by default.
 
+## Model access (unreleased)
+
+Computers → Model access gives each provider its own key field. Keys autosave after typing pauses; disabling a provider retains its encrypted key and excludes it from new cloud computers. Re-enable it without entering the key again. Keys are never returned to the browser. Pending unsaved edits are cancelled when the section is disabled.
+
+Choose the provider and model when starting a thread. Anthropic, OpenAI, Router.com and OpenRouter remain independent; gateway connections do not override one another or ChatGPT. Model catalogs for gateways load when a key is saved. Cloud threads retain their explicit choice when resumed. Existing computers keep their startup credentials; newly allocated task computers receive the current enabled connections.
+
+OpenRouter uses its [Responses API](https://openrouter.ai/docs/api/api-reference/responses/create-responses). Both the hub and computer runtime must be updated before using this integration. Real model execution requires a valid key.
+
 ## Router.com (unreleased)
 
-Router.com is a model gateway, separate from the cloud computer provider. Configure its API key under Model access, load the models available to the key, and select a model. Model discovery uses `https://api.router.com/v1/models`; Codex uses Router's Responses API at `https://api.router.com/v1`. Remy stores the key encrypted and returns configured state only. New Router-configured cloud computers receive the key through their environment; Codex's configuration contains the environment-variable name, never the value.
+Router.com is a model gateway, separate from the cloud computer provider. Save its API key under Model access, then select a model when starting a thread. Model discovery uses `https://api.router.com/v1/models`; Codex uses Router's Responses API at `https://api.router.com/v1`. Remy stores the key encrypted and returns configured state only. New Router-configured cloud computers receive the key through their environment; Codex's configuration contains the environment-variable name, never the value.
 
 This integration requires deploying the new hub endpoints **and publishing a computer image/archive containing the Router changes in `server/`**. Image `0.1.97` does not include them. A real Router response remains unverified without a Router key. Existing active computers retain their startup configuration.
 

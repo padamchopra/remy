@@ -1,3 +1,6 @@
+import { ModelPicker } from "./ModelPicker";
+import { PROVIDERS, type ModelChoice, type Provider } from "@/lib/providers";
+import type { ModelAccessEntry } from "./HubModelAccess";
 import { CLOUD_COMPUTERS, cloudComputerProvider } from "@remy/contract";
 import { useEffect, useRef, useState } from "react";
 import type { ComputerSummary } from "@remy/contract";
@@ -101,6 +104,20 @@ export function HubThreadComposer({
     created.current = null;
     setError("");
   }, [workspaceId, organizationId]);
+  const codexAccount=useHubResource<{phase:string}>(organizationId,workspaceId ? `/hosted/${encodeURIComponent(workspaceId)}/codex` : null);
+  const modelAccess = useHubResource<{providers:ModelAccessEntry[]}>(organizationId,"/model-access");
+  const [modelChoice,setModelChoice]=useState<ModelChoice>({provider:"",model:""});
+  const [modelPickerOpen,setModelPickerOpen]=useState(false);
+  const cloudModels:Provider[]=(modelAccess.value?.providers ?? []).filter(p=>p.enabled && p.configured).map(p=>{
+    const runtime=PROVIDERS.find(v=>v.id===(p.id==="anthropic"?"claude":"codex"))!;
+    return {...runtime,id:p.id,label:({anthropic:"Anthropic",openai:"OpenAI",router:"Router.com",openrouter:"OpenRouter"} as Record<string,string>)[p.id],efforts:[],models:p.id==="router" || p.id==="openrouter" ? p.models.map(value=>({value,label:value})) : p.id==="openai" ? runtime.models.filter(m=>m.value) : runtime.models};
+  });
+  if(codexAccount.value?.phase==="connected")cloudModels.push({...PROVIDERS.find(p=>p.id==="codex")!,label:"ChatGPT"});
+  const usingCloud=!!cloudComputerProvider(selected) || selected==="automatic";
+  const modelCatalogue=usingCloud ? cloudModels : (computers.find(c=>c.computerId===selected)?.capabilities.providers ?? []).map(p=>({...PROVIDERS.find(v=>v.id===p.id)!,models:p.models.map(value=>({value,label:value || "Default"}))}));
+  const chosenProvider=modelCatalogue.find(p=>p.id===modelChoice.provider);
+  const choiceValid=chosenProvider?.models.some(m=>m.value===modelChoice.model);
+  const executionChoice=choiceValid ? {provider:modelChoice.provider==="anthropic"?"claude":["openai","router","openrouter"].includes(modelChoice.provider)?"codex":modelChoice.provider,model:["openai","router","openrouter"].includes(modelChoice.provider)?`remy:${modelChoice.provider}:${modelChoice.model}`:modelChoice.model} : {};
   const cloudConnections = useHubResource<{enabledProviders?: string[]}>(organizationId, "/hosted");
   const cloudOptions = CLOUD_COMPUTERS.filter(c => cloudConnections.value?.enabledProviders?.includes(c.provider));
   const workspace = workspaces.find((w) => w.id === workspaceId);
@@ -136,7 +153,8 @@ export function HubThreadComposer({
           busy ||
           !preferenceLoaded ||
           !message.trim() ||
-          catalogue.stale
+          catalogue.stale ||
+          (usingCloud && !choiceValid)
         )
           return;
         setBusy(true);
@@ -169,6 +187,7 @@ export function HubThreadComposer({
                 computerId: selected === "automatic" ? null : selected,
                 title: title.trim(),
                 requestId,
+                ...executionChoice,
               });
               created.current = { ...thread, message: firstMessage };
             }
@@ -180,6 +199,7 @@ export function HubThreadComposer({
                 "POST",
                 {
                   workspaceId: choice.workspaceId,
+                  ...executionChoice,
                   ...(title.trim() ? { title: title.trim() } : {}),
                 },
               );
@@ -249,6 +269,11 @@ export function HubThreadComposer({
               </SelectGroup>
             </SelectContent>
           </Select>
+        </Field>
+        <Field>
+          <FieldLabel>Model</FieldLabel>
+          <Button type="button" variant="outline" disabled={busy || !!created.current} onClick={()=>setModelPickerOpen(true)}>{choiceValid ? `${chosenProvider!.label} · ${chosenProvider!.models.find(m=>m.value===modelChoice.model)!.label}` : "Choose a provider and model"}</Button>
+          <ModelPicker open={modelPickerOpen} onOpenChange={setModelPickerOpen} value={modelChoice} onPick={setModelChoice} catalogue={modelCatalogue}/>
         </Field>
         <Collapsible open={optionsOpen} onOpenChange={setOptionsOpen}>
           <CollapsibleTrigger asChild>
@@ -344,7 +369,7 @@ export function HubThreadComposer({
           !workspace ||
           !preferenceLoaded ||
           !message.trim() ||
-          catalogue.stale
+          catalogue.stale || (usingCloud && !choiceValid)
         }
       >
         {created.current ? "Retry sending request" : "Start thread"}
