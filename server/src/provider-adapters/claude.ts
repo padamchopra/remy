@@ -32,6 +32,7 @@ import type {
   ProviderAdapter,
   ProviderApprovalDecision,
   ProviderAnswerOptions,
+  ProviderDelegate,
   ProviderHandlers,
   ProviderRun,
   ProviderSession,
@@ -114,6 +115,10 @@ class ClaudeAdapterSession implements ProviderSession {
       ...(options.effort ? { effort: options.effort as NonNullable<Options["effort"]> } : {}),
       ...(options.sessionId ? { resume: options.sessionId } : {}),
       includePartialMessages: true,
+      ...(options.delegates?.length ? { agents: claudeAgents(options.delegates) } : {}),
+      // Without this the SDK forwards only a subagent's tool calls, so a
+      // delegate's row in the Activity tab shows a status and nothing it said.
+      forwardSubagentText: true,
       ...(options.inProcessMcp ? { mcpServers: { remy: options.inProcessMcp as NonNullable<Options["mcpServers"]>[string] } } : {}),
       canUseTool: (name, input, callback) => this.permission(name, input, callback),
       ...(options.env ? { env: options.env } : {}),
@@ -403,6 +408,34 @@ function claudePermissionMode(mode: ProviderSessionOptions["permissionMode"]): P
 
 function sessionAllowRules(toolName: string): PermissionUpdate[] {
   return [{ type: "addRules", rules: [{ toolName }], behavior: "allow", destination: "session" }];
+}
+
+/// Claude's own subagents, which an agent handle must not quietly take over.
+/// A person naming an agent `explore` means to add one, not to replace the
+/// tool the model already reaches for.
+const CLAUDE_BUILT_IN_AGENTS = new Set([
+  "general-purpose",
+  "explore",
+  "plan",
+  "claude",
+  "statusline-setup",
+  "output-style-setup",
+]);
+
+/// Remy's agents as Claude subagent definitions, keyed by handle — the name a
+/// model delegates to. `permissionMode` is deliberately not carried across;
+/// see `ProviderDelegate`.
+export function claudeAgents(delegates: readonly ProviderDelegate[]): NonNullable<Options["agents"]> {
+  const agents: NonNullable<Options["agents"]> = {};
+  for (const delegate of delegates) {
+    if (CLAUDE_BUILT_IN_AGENTS.has(delegate.handle)) continue;
+    agents[delegate.handle] = {
+      description: delegate.description,
+      prompt: delegate.prompt,
+      ...(delegate.model ? { model: delegate.model } : {}),
+    };
+  }
+  return agents;
 }
 
 async function claudeAnswer(options: ProviderAnswerOptions, queryFactory: QueryFactory = query): Promise<string | undefined> {

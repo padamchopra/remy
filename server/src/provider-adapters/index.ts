@@ -14,6 +14,7 @@ export type {
   ProviderAdapter,
   ProviderApprovalDecision,
   ProviderApprovalRequest,
+  ProviderDelegate,
   ProviderEvent,
   ProviderHandlers,
   ProviderImage,

@@ -14,6 +14,24 @@ export interface ProviderMcpProcess {
   env: Record<string, string>;
 }
 
+/// One agent a thread may delegate to, in provider-neutral terms.
+///
+/// There is deliberately no permission mode here. A subagent runs inside its
+/// parent session, under the thread's own mode; carrying the agent's mode
+/// across would let an agent set to `bypassPermissions` widen what a thread
+/// running `auto` may do without anybody being asked.
+export interface ProviderDelegate {
+  /// The agent's handle. What the calling model names to delegate.
+  handle: string;
+  /// When to use this agent.
+  description: string;
+  /// The agent's instructions, as the subagent's system prompt.
+  prompt: string;
+  /// Already resolved for the thread's provider, so a model that provider
+  /// would refuse never reaches it. Empty inherits the thread's model.
+  model?: string;
+}
+
 export interface ProviderSessionOptions {
   command: string;
   cwd: string;
@@ -27,6 +45,9 @@ export interface ProviderSessionOptions {
   mcpProcess?: ProviderMcpProcess;
   env?: NodeJS.ProcessEnv;
   entries?: readonly ConvEntry[];
+  /// Agents this thread may delegate to. Providers without subagent
+  /// definitions ignore it rather than failing.
+  delegates?: readonly ProviderDelegate[];
 }
 
 export interface ProviderImage {
