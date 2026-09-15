@@ -1,3 +1,4 @@
+import { HubPreviewSignIn } from "./HubPreviewSignIn";
 import { useState } from "react";
 import { ArrowUpRight, Building2 } from "lucide-react";
 import remyMark from "@/assets/remy-mark.png";
@@ -16,6 +17,11 @@ import {
 } from "@/components/ui/field";
 
 export function HubSignIn({ runtime }: { runtime: HubRuntime }) {
+  if (runtime.preview) return <HubPreviewSignIn />;
+  return <AccountSignIn runtime={runtime} />;
+}
+
+function AccountSignIn({ runtime }: { runtime: HubRuntime }) {
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState<string>();

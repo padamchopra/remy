@@ -1,3 +1,4 @@
+import { CLOUD_COMPUTERS, cloudComputerProvider } from "@remy/contract";
 import { useEffect, useRef, useState } from "react";
 import type { ComputerSummary } from "@remy/contract";
 import { Button } from "@/components/ui/button";
@@ -29,11 +30,15 @@ import { hubRequest, hubThreadPath, hubThreadBase } from "@/lib/hub-threads";
 export function HubThreadComposer({
   organizationId,
   computers,
+  computersLoaded,
+  computerError,
   canManageWorkspaces,
   open,
 }: {
   organizationId: string;
   computers: ComputerSummary[];
+  computersLoaded: boolean;
+  computerError: string;
   canManageWorkspaces: boolean;
   open: (computer: string, thread: string) => void;
 }) {
@@ -96,6 +101,8 @@ export function HubThreadComposer({
     created.current = null;
     setError("");
   }, [workspaceId, organizationId]);
+  const cloudConnections = useHubResource<{enabledProviders?: string[]}>(organizationId, "/hosted");
+  const cloudOptions = CLOUD_COMPUTERS.filter(c => cloudConnections.value?.enabledProviders?.includes(c.provider));
   const workspace = workspaces.find((w) => w.id === workspaceId);
   const eligible = computers.filter(
     (c) =>
@@ -117,30 +124,7 @@ export function HubThreadComposer({
       />
     );
   if (!workspaces.length)
-    return (
-      <Empty>
-        <EmptyHeader>
-          <EmptyTitle>
-            {canManageWorkspaces
-              ? "Add your first workspace"
-              : "No workspaces available"}
-          </EmptyTitle>
-          <EmptyDescription>
-            {canManageWorkspaces
-              ? "Choose a repository, connect a computer, then send your first request."
-              : "Ask an organization administrator to add a workspace or give you access."}
-          </EmptyDescription>
-        </EmptyHeader>
-        {canManageWorkspaces && (
-          <Button data-link onClick={() => go("workspaces")}>
-            Add a workspace
-          </Button>
-        )}
-        <Button variant="link" data-link onClick={() => go("settings")}>
-          Set up a computer
-        </Button>
-      </Empty>
-    );
+    return <HubThreadSetup organizationId={organizationId} computers={computers} computersLoaded={computersLoaded} computerError={computerError} canManageWorkspaces={canManageWorkspaces} go={go} />;
   return (
     <form
       className="flex w-full max-w-xl flex-col gap-3 rounded-lg border p-4"
@@ -167,7 +151,7 @@ export function HubThreadComposer({
               reason?: string;
               hostedWorkspaceId?: string;
             } = {};
-            if (selected !== "automatic") {
+            if (selected !== "automatic" && !cloudComputerProvider(selected)) {
               const c = eligible.find((c) => c.computerId === selected);
               if (!c) throw Error("Choose another computer to continue.");
               choice = {
@@ -182,6 +166,7 @@ export function HubThreadComposer({
                 computerId: string;
               }>(`${base}/threads`, "POST", {
                 workspaceId,
+                computerId: selected === "automatic" ? null : selected,
                 title: title.trim(),
                 requestId,
               });
@@ -308,7 +293,8 @@ export function HubThreadComposer({
                     <SelectItem value="automatic">
                       Choose automatically
                     </SelectItem>
-                    {selected !== "automatic" &&
+                    {cloudOptions.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                    {selected !== "automatic" && !cloudOptions.some(c => c.id === selected) &&
                       !eligible.some((c) => c.computerId === selected) && (
                         <SelectItem value={selected} disabled>
                           {computers.find((c) => c.computerId === selected)
@@ -331,7 +317,7 @@ export function HubThreadComposer({
           </CollapsibleContent>
         </Collapsible>
       </FieldGroup>
-      {!computers.some((c) => c.canUse && c.availability !== "offline") && (
+      {!cloudOptions.length && !computers.some((c) => c.canUse && c.availability !== "offline") && (
         <p className="text-sm text-muted-foreground">
           Your request needs a connected Mac or configured cloud execution.
         </p>
@@ -373,5 +359,51 @@ export function HubThreadComposer({
         </Button>
       )}
     </form>
+  );
+}
+
+function HubThreadSetup({ organizationId, computers, computersLoaded, computerError, canManageWorkspaces, go }: {
+  organizationId: string;
+  computers: ComputerSummary[];
+  computersLoaded: boolean;
+  computerError: string;
+  canManageWorkspaces: boolean;
+  go: (name: "workspaces" | "settings") => void;
+}) {
+  const cloud = useHubResource<{ available: boolean; settings: { enabled: boolean }; enabledProviders?: string[] }>(organizationId, "/hosted");
+  const readyComputer = computers.some(c => c.canUse && c.availability !== "offline" && !c.updateRequired);
+  if (computerError || (!readyComputer && cloud.error))
+    return <p role="alert">{computerError || cloud.error}</p>;
+  if (!computersLoaded || (!readyComputer && !cloud.value))
+    return <Skeleton className="h-48 w-full max-w-xl" aria-label="Checking your computers" />;
+  const needsComputer = !readyComputer && !(cloud.value?.available && (cloud.value.enabledProviders?.length ?? 0) > 0);
+  if (needsComputer)
+    return (
+      <Empty>
+        <EmptyHeader>
+          <EmptyTitle>{computers.length ? "Your computer is unavailable" : "Set up your first computer"}</EmptyTitle>
+          <EmptyDescription>
+            {computers.length
+              ? "Check your computer’s connection and access before starting a thread."
+              : "Connect your Mac or configure cloud execution to run your threads."}
+          </EmptyDescription>
+        </EmptyHeader>
+        <Button data-link onClick={() => go("settings")}>
+          {computers.length ? "View computers" : "Set up a computer"}
+        </Button>
+      </Empty>
+    );
+  return (
+    <Empty>
+      <EmptyHeader>
+        <EmptyTitle>{canManageWorkspaces ? "Add your first workspace" : "No workspaces available"}</EmptyTitle>
+        <EmptyDescription>
+          {canManageWorkspaces
+            ? "Choose a repository for your first thread."
+            : "Ask an organization administrator to add a workspace or give you access."}
+        </EmptyDescription>
+      </EmptyHeader>
+      {canManageWorkspaces && <Button data-link onClick={() => go("workspaces")}>Add a workspace</Button>}
+    </Empty>
   );
 }

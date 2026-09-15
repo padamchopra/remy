@@ -1,3 +1,4 @@
+import { cloudComputerProvider, type HostedSettings } from "@remy/contract";
 import type { ComputerSummary, RoutingRule } from "@remy/contract";
 import { repositoryOrigin } from "./organizations.js";
 export type RoutingInput = {
@@ -6,6 +7,7 @@ export type RoutingInput = {
   teamIds: string[];
   trigger: string;
   override?: string;
+  enabledProviders?: string[];
 };
 export function resolveComputer(
   rules: RoutingRule[],
@@ -15,6 +17,7 @@ export function resolveComputer(
   computerId?: string;
   workspaceId?: string;
   hostedWorkspaceId?: string;
+  hostedProvider?: HostedSettings["provider"];
   reason: string;
 } {
   const eligible = computers.filter(
@@ -39,7 +42,14 @@ export function resolveComputer(
     )!.id,
     reason,
   });
+  const cloudChoice = (id: string) => {
+    const provider = cloudComputerProvider(id);
+    return provider && input.enabledProviders?.includes(provider)
+      ? { hostedWorkspaceId: input.workspaceId, hostedProvider: provider, reason: "Your selected cloud provider." }
+      : { reason: "Your cloud provider is disabled; choose another computer." };
+  };
   if (input.override) {
+    if (cloudComputerProvider(input.override)) return cloudChoice(input.override);
     const c = eligible.find((c) => c.computerId === input.override);
     return c
       ? result(c, "Your workspace preference.")
@@ -55,6 +65,7 @@ export function resolveComputer(
       (rule.trigger && rule.trigger !== input.trigger)
     )
       continue;
+    if (cloudComputerProvider(rule.target.computerId) && !rule.target.emulator) return cloudChoice(rule.target.computerId!);
     const c = eligible.find(
       (c) =>
         (!rule.target.computerId || c.computerId === rule.target.computerId) &&

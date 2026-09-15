@@ -487,3 +487,9 @@ export const hubRoutineSchema = z.object({
  timeZone:z.string().max(100).default("UTC").refine(value=>{try{new Intl.DateTimeFormat("en",{timeZone:value});return true;}catch{return false;}}),enabled:z.boolean().default(true),
 });
 export type HubRoutine = z.infer<typeof hubRoutineSchema>;
+
+export const CLOUD_COMPUTERS = [
+  { id: "cloud:fly-sprites", provider: "fly-sprites", name: "Cloud · Fly.io Sprites" },
+  { id: "cloud:modal", provider: "modal", name: "Cloud · Modal" },
+] as const;
+export const cloudComputerProvider = (id: string | undefined | null) => CLOUD_COMPUTERS.find(c => c.id === id)?.provider;

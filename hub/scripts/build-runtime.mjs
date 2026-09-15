@@ -1,0 +1,12 @@
+import { build } from 'esbuild';
+import { createHash } from 'node:crypto';
+import { writeFile, mkdir, readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+const root = fileURLToPath(new URL('../..', import.meta.url));
+const result = await build({ entryPoints: [root+'/hub/runtime/src/server.ts'], bundle:true, define:{'import.meta.url':'__runtimeUrl'}, banner:{js:"const __runtimeUrl=require('node:url').pathToFileURL(__filename).href;"}, platform:'node', format:'cjs', target:'node24', write:false, minify:true, plugins:[{name:'sprites-version',setup(b){b.onLoad({filter:/client-signals\.js$/},async a=>({contents:(await readFile(a.path,'utf8')).replace("const { version } = require('../package.json');","import pkg from '../package.json'; const {version} = pkg;"),loader:'js'}));}}] });
+const bytes=result.outputFiles[0].contents;
+const hash=createHash('sha256').update(bytes).digest('hex');
+const filename=`provider-runtime-${hash}.cjs`;
+await mkdir(root+'/web/dist/app/assets',{recursive:true});
+await writeFile(root+'/web/dist/app/assets/'+filename,bytes);
+await writeFile(root+'/hub/src/runtime-artifact.ts', `export const runtimeArtifact = ${JSON.stringify({filename,hash})};\n`);

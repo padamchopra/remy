@@ -58,7 +58,7 @@ test("staging and production have isolated deployable topology", () => {
 
 test("production binds every service and schedules its uptime check", () => {
   const production = config.env.production;
-  assert.deepEqual(production.durable_objects?.bindings, [{ name: "COORDINATOR", class_name: "HubCoordinator" }]);
+  assert.deepEqual(production.durable_objects?.bindings, [{ name: "COORDINATOR", class_name: "HubCoordinator" }, { name: "PROVIDER_RUNTIME", class_name: "ProviderContainer" }]);
   assert.deepEqual(production.r2_buckets, [
     { binding: "OBJECTS", bucket_name: "remy-hub-production-artifacts" },
   ]);

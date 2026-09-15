@@ -493,6 +493,7 @@ class AppServerSession implements CodexSession {
 
   private externalAccount=false;
   private async syncAccount() {
+    if (process.env.RAMP_ROUTER_API_KEY && process.env.RAMP_ROUTER_MODEL) return;
     if(!process.env.REMY_HOSTED_TASK && !this.options.authTokens)return;
     const tokens=await this.authTokens();
     const previous=this.hostedModelProvider;

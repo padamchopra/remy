@@ -24,6 +24,8 @@
     "bundle": "npm --prefix web run bundle",
     "live-check": "npm --prefix web run live-check",
     "dev:website": "npm --prefix web run dev:website",
-    "build:website": "npm --prefix web run build:website"
+    "build:website": "npm --prefix web run build:website",
+    "dev:mac-browser": "node scripts/dev-browser.mjs mac",
+    "dev:hosted": "node scripts/dev-browser.mjs hosted"
   }
 }

@@ -11,7 +11,7 @@ if (!configured || configured.length < 32)
     "Set a runtime management credential with at least 32 characters.",
   );
 const expected = createHash("sha256").update(`Bearer ${configured}`).digest();
-const adapters = providers();
+
 createServer(async (req, res) => {
   res.setHeader("content-type", "application/json");
   res.setHeader("cache-control", "no-store");
@@ -25,6 +25,9 @@ createServer(async (req, res) => {
   ) {
     res.writeHead(401).end('{"error":"Unauthorized"}');
     return;
+  }
+  if (req.method === "GET" && req.url === "/health") {
+    res.end(JSON.stringify({ status: "ready" })); return;
   }
   const match =
     /^\/v1\/(modal|fly-sprites)\/(provision|start|stop|checkpoint|destroy|prune)$/.exec(
@@ -44,6 +47,7 @@ createServer(async (req, res) => {
       }
     }
     const body = JSON.parse(raw) as ProvisionComputerInput & {
+      connection: { provider: string; token?: string; tokenId?: string; tokenSecret?: string };
       runtime: ComputerRuntime;
       input: ProvisionComputerInput;
     };
@@ -51,8 +55,10 @@ createServer(async (req, res) => {
     const id = input?.computerId ?? body.runtime?.id;
     if (typeof id !== "string" || !/^[0-9a-f-]{36}$/.test(id))
       throw new Error("Invalid computer.");
-    const adapter = adapters[match[1] as keyof typeof adapters];
+    if (body.connection?.provider !== match[1]) throw new Error("Invalid provider connection.");
+    const adapter = providers(body.connection);
     let result;
+    try {
     switch (match[2]) {
       case "provision":
         result = await adapter.provision(body);
@@ -77,6 +83,7 @@ createServer(async (req, res) => {
         break;
     }
     res.end(JSON.stringify(result));
+    } finally { adapter.close(); }
   } catch {
     res.writeHead(502).end('{"error":"Hosted computer operation failed."}');
   }

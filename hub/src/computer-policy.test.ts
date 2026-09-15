@@ -399,3 +399,27 @@ test("hosted model keys are encrypted per organization and settings inherit expl
     await store.setSecret('org','OPENAI_API_KEY',null);assert.deepEqual(await store.secretNames('org'),[]);
   }finally{sqlite.close();}
 });
+
+ test("cloud connections enable independently and placement uses an enabled provider", async () => {
+  const {sqlite,db}=database();
+  const {HostedSettingsStore}=await import('./hosted-settings.js');
+  const store=new HostedSettingsStore(db,async()=>"test-encryption-root-with-at-least-thirty-two-characters");
+  const fly={provider:'fly-sprites',enabled:true,token:'private-fly-token'};
+  const modal={provider:'modal',enabled:true,tokenId:'private-modal-id',tokenSecret:'private-modal-secret'};
+  try {
+    await store.setSecret('org','cloud:fly-sprites',JSON.stringify(fly));
+    await store.setSecret('org','cloud:modal',JSON.stringify(modal));
+    assert.deepEqual((await store.enabledProviders('org')).sort(),['fly-sprites','modal']);
+    assert.deepEqual(await store.enabledProviders('other'),[]);
+    await store.save('org','',{enabled:true,provider:'modal'});
+    assert.equal((await store.executionSettings('org','w')).provider,'modal');
+    await store.setSecret('org','cloud:modal',JSON.stringify({...modal,enabled:false}));
+    assert.deepEqual(await store.enabledProviders('org'),['fly-sprites']);
+    assert.equal((await store.executionSettings('org','w')).provider,'fly-sprites');
+    await store.setSecret('org','cloud:fly-sprites',JSON.stringify({...fly,enabled:false}));
+    await assert.rejects(store.executionSettings('org','w'),/Enable a cloud provider/);
+    await store.setSecret('org','cloud:modal',JSON.stringify(modal));
+    assert.deepEqual(await store.enabledProviders('org'),['modal']);
+    assert.equal((await store.executionSettings('org','w')).provider,'modal');
+  } finally {sqlite.close();}
+});

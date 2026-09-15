@@ -1,4 +1,4 @@
-import { lazy, useEffect, useState } from "react";
+import { lazy, useEffect, useRef, useState } from "react";
 import {
   Folder,
   Laptop,
@@ -10,6 +10,8 @@ import {
   LogOut,
   ChevronsUpDown,
   ChevronDown,
+  ChevronLeft,
+  Settings2,
   Check,
   Building2,
   SquarePen,
@@ -102,10 +104,15 @@ const Routing = lazy(() =>
 function NotificationButton({ onClick }: { onClick: () => void }) {
   const { setOpenMobile } = useSidebar();
   return (
-    <SidebarMenuButton onClick={() => { setOpenMobile(false); onClick(); }}>
+    <SidebarMenuButton tooltip="Notifications" aria-label="Notifications" onClick={() => { setOpenMobile(false); onClick(); }}>
       <Bell /><span>Notifications</span>
     </SidebarMenuButton>
   );
+}
+
+function MobileSidebarTrigger() {
+  const { isMobile } = useSidebar();
+  return isMobile ? <SidebarTrigger /> : null;
 }
 
 function SidebarNavigation({ route }: { route: Route }) {
@@ -118,6 +125,10 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
   const [route, setRoute] = useState<Route>(
     parseLocation(window.location.hash).route,
   );
+  const previousSurface = useRef<Route | undefined>(undefined);
+  useEffect(() => {
+    if (route.name !== "settings") previousSurface.current = route;
+  }, [route]);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [personal, setPersonal] = useState<Organization>();
   const [threadsLoaded, setThreadsLoaded] = useState(false);
@@ -238,6 +249,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
     isPersonal && ["members", "teams"].includes(requestedSection ?? "")
       ? "threads"
       : requestedSection;
+  const inSettings = route.name === "settings";
   const links: {
     label: string;
     icon: typeof Users;
@@ -306,11 +318,21 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
     <HubPersonalContext value={isPersonal}>
       <SidebarProvider>
         <SidebarNavigation route={route} />
-        <Sidebar>
-          <SidebarHeader className="flex-row items-center gap-1 px-3 py-3">
+        <Sidebar collapsible="icon">
+          {inSettings ? (
+            <SidebarHeader className="flex-row items-center px-3 py-3 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:px-2">
+              <SidebarMenu className="min-w-0 flex-1"><SidebarMenuItem>
+                <SidebarMenuButton tooltip="Back" aria-label="Back" data-link onClick={() => { const previous = previousSurface.current; navigate(previous && previous.organizationId === organizationId ? previous : { name: "threads", organizationId }); }}>
+                  <ChevronLeft /><span>Back</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem></SidebarMenu>
+              <SidebarTrigger className="shrink-0 group-data-[collapsible=icon]:order-first" />
+            </SidebarHeader>
+          ) : <SidebarHeader className="flex-row items-center gap-1 px-3 py-3 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:px-2">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <SidebarMenuButton
+                  tooltip="Choose personal or organization"
                   aria-label="Choose personal or organization"
                   className="min-w-0 flex-1"
                 >
@@ -370,32 +392,24 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
             >
               <SquarePen />
             </Button>
-          </SidebarHeader>
+            <SidebarTrigger className="shrink-0 group-data-[collapsible=icon]:order-first" />
+          </SidebarHeader>}
           <SidebarContent>
             {organization && (
               <>
-                {[
-                  links.slice(0, 4),
-                  links
-                    .slice(4)
-                    .filter(
-                      (link) =>
-                        !isPersonal ||
-                        !["Members", "Teams"].includes(link.label),
-                    ),
+                {[inSettings
+                  ? links.slice(4).filter(link => !isPersonal || !["Members", "Teams"].includes(link.label))
+                  : links.slice(0, 4)
                 ].map((group, index) => (
-                  <SidebarGroup key={index} className="shrink-0 px-3">
-                    {index === 1 && (
-                      <SidebarGroupLabel>
-                        {isPersonal ? "Settings" : "Organization"}
-                      </SidebarGroupLabel>
-                    )}
+                  <SidebarGroup key={index} className="shrink-0 px-3 group-data-[collapsible=icon]:px-2">
                     <SidebarGroupContent>
                       <SidebarMenu>
                         {group.map((link) => (
                           <SidebarMenuItem key={link.label}>
                             <SidebarMenuButton
                               className="text-muted-foreground data-[active=true]:text-foreground"
+                              tooltip={link.label}
+                              aria-label={link.label}
                               isActive={link.selected}
                               data-link
                               onClick={() => navigate(link.route)}
@@ -405,11 +419,14 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                             </SidebarMenuButton>
                           </SidebarMenuItem>
                         ))}
+                        {inSettings && <SidebarMenuItem>
+                          <NotificationButton onClick={() => setNotificationsAccount(organization.id)} />
+                        </SidebarMenuItem>}
                       </SidebarMenu>
                     </SidebarGroupContent>
                   </SidebarGroup>
                 ))}
-                <SidebarGroup className="shrink-0 px-3">
+                {!inSettings && <SidebarGroup className="shrink-0 px-3 group-data-[collapsible=icon]:px-2">
                   <SidebarGroupLabel>Recent threads</SidebarGroupLabel>
                   <SidebarGroupContent>
                     {!threadsLoaded && (
@@ -424,7 +441,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                       </div>
                     )}
                     {threadsLoaded && !threads.length && (
-                      <p className="px-2 py-2 text-xs text-muted-foreground">
+                      <p className="px-2 py-2 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
                         No threads yet
                       </p>
                     )}
@@ -435,6 +452,8 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                         >
                           <SidebarMenuButton
                             data-link
+                            tooltip={thread.detail.title}
+                            aria-label={thread.detail.title}
                             isActive={
                               route.name === "threads" &&
                               route.threadId === thread.id &&
@@ -456,21 +475,23 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                       ))}
                     </SidebarMenu>
                   </SidebarGroupContent>
-                </SidebarGroup>
+                </SidebarGroup>}
               </>
             )}
           </SidebarContent>
-          <SidebarFooter className="p-3">
+          <SidebarFooter className="p-3 group-data-[collapsible=icon]:px-2">
             <SidebarMenu>
               {organization && (
                 <SidebarMenuItem>
-                  <NotificationButton onClick={() => setNotificationsAccount(organization.id)} />
+                  <SidebarMenuButton tooltip="Settings" aria-label="Settings" data-link isActive={inSettings} onClick={() => navigate({ name: "settings", tab: "devices", organizationId })}>
+                    <Settings2 /><span>Settings</span>
+                  </SidebarMenuButton>
                 </SidebarMenuItem>
               )}
               <SidebarMenuItem>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <SidebarMenuButton size="lg" aria-label="Account menu">
+                    <SidebarMenuButton size="lg" tooltip="Account menu" aria-label="Account menu">
                       <Avatar size="sm">
                         <AvatarFallback>
                           {profile?.name.trim().charAt(0).toUpperCase() || (
@@ -514,7 +535,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
         </Sidebar>
         <SidebarInset className="h-svh min-w-0 overflow-hidden">
           <header className="flex shrink-0 items-center gap-2 border-b p-3">
-            <SidebarTrigger />
+            <MobileSidebarTrigger />
             <h1 className="min-w-0 truncate">{links.find((link) => link.selected)?.label ?? "Remy"}</h1>
           </header>
           {error && (
@@ -708,10 +729,11 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
             </form>
           </DialogContent>
         </Dialog>
-        {computerCode && <HubComputerApproval code={computerCode} accountName={profile?.name ?? "your account"} close={() => {
+        {computerCode && <HubComputerApproval preview={new URLSearchParams(window.location.search).get("preview") === "1"} code={computerCode} accountName={profile?.name ?? "your account"} close={() => {
           setComputerCode(null);
           const url = new URL(window.location.href);
           url.searchParams.delete("computerCode");
+          url.searchParams.delete("preview");
           window.history.replaceState(null, "", url);
         }} />}
         {invite && <HubInvitation key={invite} token={invite} close={() => {

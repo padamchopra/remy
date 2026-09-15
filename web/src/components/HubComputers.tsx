@@ -1,7 +1,7 @@
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { HubPersonalContext, usePersonalHub } from "@/lib/hub-scope";
 import { Deferred } from "./Deferred";
-import { Cloud, Plus, Settings2 } from "lucide-react";
+import { Cloud, Laptop, Plus } from "lucide-react";
 import { HubBoardSync } from "./HubBoardSync";
 import { apiError } from "@/lib/api-error";
 import { lazy, useEffect, useState } from "react";
@@ -292,24 +292,18 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
           <FieldDescription>This Mac is connected to Remy on the web.</FieldDescription>
           <Button asChild variant="outline"><a href={registration.hubUrl} target="_blank" rel="noreferrer">Open Remy on the web</a></Button>
         </Field>}
-        <div className={local ? "" : "grid min-w-0 gap-6 md:grid-cols-[12rem_minmax(0,1fr)]"}>
-          {!local && <nav aria-label="Computer settings" className="flex min-w-0 flex-wrap content-start gap-1 md:flex-col">
-            <Button variant={pane === "general" ? "secondary" : "ghost"} data-link aria-current={pane === "general" ? "page" : undefined} onClick={() => choosePane("general")} className="justify-start"><Settings2 />General</Button>
-            <Button variant={pane === "cloud" ? "secondary" : "ghost"} data-link aria-current={pane === "cloud" ? "page" : undefined} onClick={() => choosePane("cloud")} className="justify-start"><Cloud />Cloud</Button>
-            {computers.map((computer) => {
-              const Icon = deviceIcon(computer.icon as DeviceIconId);
-              return <Button key={computer.computerId} variant={pane === computer.computerId ? "secondary" : "ghost"} data-link aria-current={pane === computer.computerId ? "page" : undefined} onClick={() => choosePane(computer.computerId)} className="h-auto min-h-9 min-w-0 max-w-full justify-start whitespace-normal text-left"><Icon /><span className="min-w-0 break-words">{computer.name}</span></Button>;
-            })}
-            <Button variant="ghost" size="icon" data-link aria-label="Add computer" title="Add computer" onClick={() => choosePane("general")}><Plus /></Button>
+        <div className="flex min-w-0 flex-col gap-6">
+          {!local && <nav aria-label="Computer settings" className="flex min-w-0 flex-wrap items-center gap-1 border-b pb-3">
+            <Button size="sm" variant={pane === "cloud" ? "secondary" : "ghost"} data-link aria-current={pane === "cloud" ? "page" : undefined} onClick={() => choosePane("cloud")}><Cloud />Cloud</Button>
+            <Button size="sm" variant={pane !== "cloud" ? "secondary" : "ghost"} data-link aria-current={pane !== "cloud" ? "page" : undefined} onClick={() => choosePane("computers")}><Laptop />Connected</Button>
           </nav>}
           <div className="min-w-0">
             {!local && pane === "general" && <section aria-label="General computer settings" className="flex max-w-xl flex-col gap-6">
               <Field>
-                <FieldLabel>General</FieldLabel>
+                <FieldLabel>Connect a Mac</FieldLabel>
                 <FieldDescription>Add your Mac to run threads using its workspaces and providers.</FieldDescription>
               </Field>
               <Field>
-                <FieldLabel>Connect a Mac</FieldLabel>
                 <FieldDescription>Install Remy on your Mac, then open Settings → Computers and choose Attach this Mac.</FieldDescription>
                 <div className="grid max-w-sm grid-cols-1 gap-2 sm:grid-cols-2">
                   <Button asChild className="w-full"><a href="https://github.com/padamchopra/remy/releases/latest" target="_blank" rel="noreferrer">Download for Mac</a></Button>
@@ -323,12 +317,23 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
                 <HostedComputers key={org} organizationId={org} admin={options.role !== "member"} />
               </Deferred>
             </div>}
-            {!local && computersLoaded && !["general", "cloud"].includes(pane) && !computers.some((c) => c.computerId === pane) && <Empty>
+            {!local && computersLoaded && !["computers", "general", "cloud"].includes(pane) && !computers.some((c) => c.computerId === pane) && <Empty>
               <EmptyHeader><EmptyTitle>Computer unavailable</EmptyTitle><EmptyDescription>Choose another computer or add your Mac.</EmptyDescription></EmptyHeader>
-              <Button variant="outline" data-link onClick={() => choosePane("cloud")}>Open Cloud</Button>
+              <Button variant="outline" data-link onClick={() => choosePane("computers")}>View computers</Button>
             </Empty>}
+        {!local && pane === "computers" && !computersLoaded && !error && <p role="status" className="text-sm text-muted-foreground">Reading computers…</p>}
+        {!local && pane === "computers" && computersLoaded && computers.length === 0 && !error && !stale && <Empty className="py-12">
+          <EmptyHeader>
+            <EmptyTitle>No computers connected</EmptyTitle>
+            <EmptyDescription>Connect your Mac to run threads using its workspaces and providers.</EmptyDescription>
+          </EmptyHeader>
+          <Button data-link onClick={() => choosePane("general")}>Connect a Mac</Button>
+        </Empty>}
+        {!local && pane === "computers" && computersLoaded && computers.length > 0 && <div className="mb-4 flex justify-end">
+          <Button size="sm" variant="outline" data-link onClick={() => choosePane("general")}><Plus />Add computer</Button>
+        </div>}
         <ItemGroup className="gap-3">
-          {computers.filter((computer) => local || pane === computer.computerId).map((computer) => {
+          {computers.filter((computer) => local || pane === "computers" || pane === computer.computerId).map((computer) => {
             const Icon = deviceIcon(computer.icon as DeviceIconId);
             const running = threads.filter(
               (t) =>
@@ -349,7 +354,7 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
                 </ItemMedia>
                 <ItemContent className="min-w-0 basis-[calc(100%-3rem)] @min-[30rem]:basis-0">
                   <ItemTitle className="w-full whitespace-normal break-words">
-                    {computer.name}
+                    {!local && pane === "computers" ? <Button variant="link" data-link className="h-auto min-w-0 justify-start whitespace-normal p-0 text-left text-foreground" onClick={() => choosePane(computer.computerId)}>{computer.name}</Button> : computer.name}
                   </ItemTitle>
                   <ItemDescription>
                     {computer.ownership === "personal"

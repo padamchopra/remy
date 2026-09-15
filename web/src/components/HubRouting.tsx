@@ -1,3 +1,4 @@
+import { CLOUD_COMPUTERS } from "@remy/contract";
 import { useEffect, useState } from "react";
 import type { ComputerSummary, RoutingRule } from "@remy/contract";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
@@ -12,6 +13,7 @@ import {
   SelectItem,
 } from "@/components/ui/select";
 export function HubRouting({ organizationId }: { organizationId: string }) {
+  const [enabledProviders, setEnabledProviders] = useState<string[]>([]);
   const base = hubThreadBase(organizationId),
     [rules, setRules] = useState<RoutingRule[]>([]),
     [computers, setComputers] = useState<ComputerSummary[]>([]),
@@ -22,7 +24,7 @@ export function HubRouting({ organizationId }: { organizationId: string }) {
     [message, setMessage] = useState("");
   useEffect(() => {
     void Promise.all([
-      hubRequest<{ rules: RoutingRule[]; canEdit: boolean }>(`${base}/routing`),
+      hubRequest<{ rules: RoutingRule[]; canEdit: boolean; enabledProviders?: string[] }>(`${base}/routing`),
       hubRequest<{ computers: ComputerSummary[] }>(`${base}/computers`),
       hubRequest<{ workspaces: { id: string; name: string }[] }>(
         `${base}/workspaces`,
@@ -31,6 +33,7 @@ export function HubRouting({ organizationId }: { organizationId: string }) {
     ])
       .then(([r, c, w, t]) => {
         setRules(r.rules);
+        setEnabledProviders(r.enabledProviders ?? []);
         setCanEdit(r.canEdit);
         setComputers(c.computers);
         setWorkspaces(w.workspaces);
@@ -145,7 +148,8 @@ export function HubRouting({ organizationId }: { organizationId: string }) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="hosted">Hosted computer</SelectItem>
+                <SelectItem value="hosted">Cloud · Automatic</SelectItem>
+                {CLOUD_COMPUTERS.filter(c => enabledProviders.includes(c.provider)).map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
                 <SelectItem value="darwin">Any Mac</SelectItem>
                 <SelectItem value="linux">Any Linux computer</SelectItem>
                 {computers.map((c) => (
