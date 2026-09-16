@@ -564,6 +564,8 @@ try {
         assert.equal(threadInput.provider,"codex");
         assert.equal(threadInput.model,"remy:openrouter:test/model-b");
 
+        target.hash = `/threads?organization=${org.id}`;
+        await page.goto(target.href);
         await page.reload();
         await page.getByLabel("Thread computer",{exact:true}).getByText("Cloud · Modal",{exact:true}).waitFor();
         await composer.getByRole("button",{name:"Model",exact:true}).click();
