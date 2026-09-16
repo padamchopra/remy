@@ -48,6 +48,8 @@ The preview uses the existing device-code authorization flow. Its access and ref
 
 Thread submission opens a pending thread immediately. The first message stays visible while the computer starts. Startup and sending failures can be retried in place using the same request and message IDs. Pending starts survive refresh in the current browser tab for up to one day; they are scoped to the signed-in member and organization.
 
+Organization thread launches choose Organization or Private visibility in the composer. Automatic routing and explicit computer choices default to Organization only when they resolve to a Personal computer shared with that organization; every other launch defaults to Private. The person starting the thread can override that default before sending and change it later.
+
 Cloud checkout supports repositories imported with GitHub OAuth or a personal access token. Each cloud task uses the initiating member’s connection after checking current workspace access. GitHub credentials remain in the hub; computers receive only short-lived capabilities limited to their assigned repository and allowed branches. Existing GitHub App installations remain supported.
 
 General settings reuse the Mac avatar picker, notification preference, appearance row, and permission selector. Your avatar belongs to your signed-in account; presets and resized raster pictures use the existing profile image field. Changes notify your open organization sessions and reload after reconnect. Browser notification permission remains local to each browser. Web updates ship automatically; the app information row links to the Mac download instead of offering an in-app installer.
