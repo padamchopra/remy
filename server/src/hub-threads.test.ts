@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -55,6 +56,12 @@ test("thread reads, joins and mutations enforce both organization and member acc
     200,
   );
   assert.equal((await route(teammate, "GET")).status, 200);
+  assert.equal((await route(teammate,"POST","options",{permissionMode:"plan"})).status,403);
+  assert.equal((await route(owner,"POST","options",{permissionMode:"plan"})).status,200);
+  assert.equal(getChat(chat.id)?.permissionMode,"plan");
+  assert.equal((await route(owner,"POST","options",{permissionMode:"invalid"})).status,400);
+  assert.equal((await route(owner,"POST","options",{provider:"codex"})).status,400);
+
   assert.equal(
     (await route(teammate, "PATCH", "", { title: "Changed" })).status,
     403,
@@ -153,4 +160,41 @@ test("a retried prompt records its authenticated member once in durable storage"
     deleteChat(chat.id);
     restore();
   }
+});
+
+test("thread creation checks out the requested branch before creating and deduplicates retries", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { writeFileSync } = await import("node:fs");
+  const { addWorkspace } = await import("./workspaces.js");
+  const cwd = mkdtempSync(join(state,"branch-"));
+  const git=(...args: string[]) => execFileSync("git",args,{cwd,encoding:"utf8",stdio:["ignore","pipe","pipe"]}).trim();
+  git("init","-b","main");git("config","user.name","QA");git("config","user.email","qa@example.test");
+  writeFileSync(join(cwd,"file"),"main");git("add",".");git("commit","-m","Initial");git("branch","feature/selected");
+  const workspace=await addWorkspace("Branch QA",cwd);
+  const input={workspaceId:workspace.id,branch:"feature/selected",hubTaskId:"branch-qa",permissionMode:"plan"};
+  const response=await handleHubThreadRequest("org",owner,"POST","/hub/threads",input,noAttachment);
+  assert.equal(response.status,201);
+  assert.equal(git("branch","--show-current"),"feature/selected");
+  const thread=await response.json() as {id:string};
+  const {getChat}=await import("./chat.js");
+  assert.equal(getChat(thread.id)?.permissionMode,"plan");
+  git("checkout","main");
+  const retry=await handleHubThreadRequest("org",owner,"POST","/hub/threads",input,noAttachment);
+  assert.equal((await retry.json() as {id:string}).id,thread.id);
+  assert.equal(git("branch","--show-current"),"main");
+  const invalid=await handleHubThreadRequest("org",owner,"POST","/hub/threads",{workspaceId:workspace.id,branch:"missing"},noAttachment);
+  assert.notEqual(invalid.status,201);
+  deleteChat(thread.id);
+});
+
+
+test("thread snapshots retain the confirmed branch", async () => {
+  execFileSync("git", ["init", "-b", "feature/snapshot", state], {stdio: "pipe"});
+  execFileSync("git", ["-C", state, "-c", "user.name=QA", "-c", "user.email=qa@example.com", "commit", "--allow-empty", "-m", "Initial"], {stdio: "pipe"});
+  const {refreshHubThreadBranch} = await import("./hub-thread-branch.js");
+  await refreshHubThreadBranch(state);
+  const chat = createChat({cwd: state});
+  shareHubThread(chat.id, "org", owner, "manual");
+  assert.equal(hubThreadSnapshot(chat.id, "org")?.detail.branch, "feature/snapshot");
+  deleteChat(chat.id);
 });

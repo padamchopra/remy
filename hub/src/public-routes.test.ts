@@ -49,3 +49,28 @@ test("finishes emailed verification on the app host before creating its session 
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("location"), null);
 });
+
+
+test("repository OAuth callback reaches connection validation instead of the asset fallback", async () => {
+  let authenticated = false;
+  let stateReads = 0;
+  const callbackEnv = { ...env, BETTER_AUTH_URL: "https://remy.example", AUTH_SECRET: {get:async()=>"test-secret"}, DB: {
+    prepare: () => ({bind:()=>({first:async()=>{stateReads++;return null;}})}),
+  }} as unknown as Env;
+  const route = createRouteHandler({
+    accountService: () => ({authenticate:async()=>authenticated ? {userId:"reader"} : undefined}) as never,
+    betterAuth: async () => ({handler:async()=>new Response("sign-in callback")}) as never,
+  });
+  const path = "/api/auth/callback/github?code=test-code&state=remy-connection.test-state";
+  const handoff = await route(new Request(`https://remy.example${path}`), callbackEnv);
+  assert.equal(handoff.status, 307);
+  const request = new Request(handoff.headers.get("location")!);
+  assert.equal((await route(request, callbackEnv)).status, 401);
+  assert.equal(stateReads, 0);
+  authenticated = true;
+  const response = await route(request, callbackEnv);
+  assert.equal(response.status, 400);
+  assert.match((await response.json() as {error:string}).error, /expired/);
+  assert.equal(stateReads, 1);
+  assert.equal(await (await route(new Request("https://app.remy.example/api/auth/callback/github?state=signin"), callbackEnv)).text(), "sign-in callback");
+});

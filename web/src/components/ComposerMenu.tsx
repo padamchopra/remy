@@ -19,7 +19,9 @@ export function ComposerMenu({
   options,
   align = "start",
   disabled,
+  pending,
   title,
+  ariaLabel,
 }: {
   icon: LucideIcon;
   label: string;
@@ -28,11 +30,13 @@ export function ComposerMenu({
   options: readonly { value: string; label: string; icon?: LucideIcon }[];
   align?: "start" | "end";
   disabled?: boolean;
+  pending?: boolean;
   title?: string;
+  ariaLabel?: string;
 }) {
   if (disabled) {
     return (
-      <InputGroupText title={title} className="max-w-40 truncate">
+      <InputGroupText aria-label={ariaLabel} title={title} className="max-w-40 truncate">
         <Icon />
         {label}
       </InputGroupText>
@@ -42,7 +46,7 @@ export function ComposerMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <InputGroupButton title={title}>
+        <InputGroupButton aria-label={ariaLabel} title={title} disabled={pending} aria-busy={pending || undefined} className="disabled:opacity-100">
           <Icon />
           <span className="max-w-40 truncate">{label}</span>
           <ChevronDown />

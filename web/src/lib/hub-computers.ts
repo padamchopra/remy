@@ -1,3 +1,4 @@
+import { shareSubscription } from "./shared-subscription";
 import type { ComputerSummary } from "@remy/contract";
 import { HubRequestError, hubRequest, hubThreadBase } from "./hub-threads";
 
@@ -7,13 +8,10 @@ export function watchHubResource<T>(
   failed: (message: string) => void,
   livePath = `${path}/live`,
 ): () => void {
-  let socket: WebSocket | undefined;
-  let timer: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
   let value: T | undefined;
   let reading = false;
   let again = false;
-  let attempt = 0;
   const refresh = async () => {
     if (reading) {
       again = true;
@@ -33,48 +31,26 @@ export function watchHubResource<T>(
       if (e instanceof HubRequestError && [401, 403, 404].includes(e.status)) {
         changed(undefined, true);
         stopped = true;
-        socket?.close();
-        clearTimeout(timer);
       }
       failed(e instanceof Error ? e.message : "Reconnect to continue.");
     } finally {
       reading = false;
     }
   };
-  const connect = () => {
-    if (stopped) return;
-    const url = new URL(livePath, window.location.origin);
-    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(url);
-    socket = ws;
-    ws.onopen = () => {
-      attempt = 0;
-      void refresh();
-    };
-    ws.onmessage = () => {
-      if (socket === ws) void refresh();
-    };
-    ws.onerror = () => ws.close();
-    ws.onclose = (event) => {
-      if (stopped || socket !== ws) return;
-      if (value !== undefined) changed(value, true);
-      if (event.code === 1008) {
-        stopped = true;
-        value = undefined;
-        changed(undefined, true);
-        failed("Sign in again.");
-        return;
-      }
-      timer = setTimeout(connect, Math.min(30000, 500 * 2 ** attempt++));
-    };
-  };
   void refresh();
-  connect();
-  return () => {
-    stopped = true;
-    clearTimeout(timer);
-    socket?.close();
-  };
+  const unsubscribe = watchResourceChannel(livePath, (kind, code) => {
+    if (stopped) return;
+    if (kind === "open" || kind === "message") { void refresh(); return; }
+    if (value !== undefined) changed(value, true);
+    if (code === 1008) {
+      stopped = true;
+      value = undefined;
+      changed(undefined, true);
+      failed("Sign in again.");
+    }
+  }, failed);
+  return () => { stopped = true; unsubscribe(); };
+
 }
 
 export function watchHubComputers(
@@ -88,3 +64,26 @@ export function watchHubComputers(
     failed,
   );
 }
+
+const watchResourceChannel = shareSubscription<["open" | "message" | "close", number?]>((path, changed) => {
+  let socket: WebSocket | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let stopped = false;
+  let attempt = 0;
+  const connect = () => {
+    const url = new URL(path, window.location.origin);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(url);
+    socket = ws;
+    ws.onopen = () => { if (!stopped && socket === ws) { attempt = 0; changed("open"); } };
+    ws.onmessage = () => { if (!stopped && socket === ws) changed("message"); };
+    ws.onerror = () => ws.close();
+    ws.onclose = event => {
+      if (stopped || socket !== ws) return;
+      changed("close", event.code);
+      if (event.code !== 1008) timer = setTimeout(connect, Math.min(30000, 500 * 2 ** attempt++));
+    };
+  };
+  connect();
+  return () => { stopped = true; clearTimeout(timer); socket?.close(); };
+});

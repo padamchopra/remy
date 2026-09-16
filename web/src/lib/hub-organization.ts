@@ -6,18 +6,19 @@ import type {
   OrganizationTeam,
   OrganizationWorkspace,
 } from "@remy/contract";
-export type HubMember = OrganizationMember & { name: string };
+export type HubMember = OrganizationMember & { name: string; image?: string | null };
 export type HubWorkspace = OrganizationWorkspace & {
   access?: { userIds: string[]; teamIds: string[] };
 };
 export type HubPeople = { members: HubMember[]; teams: OrganizationTeam[] };
-export function useHubResource<T>(organizationId: string, path: string, livePath = "/live") {
+export function useHubResource<T>(organizationId: string, path: string | null, livePath = "/live") {
   const [value, setValue] = useState<T>();
   const [stale, setStale] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
     setValue(undefined);
     setError("");
+    if (!path) return;
     return watchHubResource<T>(
       `${hubThreadBase(organizationId)}${path}`,
       (next, outdated) => {

@@ -1,3 +1,4 @@
+import { HostedStartupError } from "./hosted-startup-error.js";
 import type { CloudConnection } from "./cloud-connection.js";
 import type { HostedSettings } from "@remy/contract";
 export type ComputerRuntime = {
@@ -34,6 +35,7 @@ export interface ComputerRuntimeProvider {
   destroy(runtime: ComputerRuntime): Promise<void>;
   prune?(runtime: ComputerRuntime): Promise<void>;
 }
+
 export class HttpRuntimeProvider implements ComputerRuntimeProvider {
   readonly capabilities = { checkpoints: true, persistentFilesystem: true };
   constructor(
@@ -61,8 +63,12 @@ export class HttpRuntimeProvider implements ComputerRuntimeProvider {
         redirect: "manual",
       },
     );
-    if (!response.ok)
-      throw new Error(`Hosted computer ${action} failed (${response.status}).`);
+    if (!response.ok) {
+      const failure = await response.json().catch(() => ({})) as {code?: string; error?: string};
+      if (failure.code === "runtime_operation_failed" && typeof failure.error === "string" && failure.error.length < 300)
+        throw new HostedStartupError(failure.error);
+      throw new HostedStartupError(`Cloud startup failed during ${action} (HTTP ${response.status}). Retry to continue.`);
+    }
     return (await response.json()) as ComputerRuntime;
   }
   provision(input: ProvisionComputerInput) {

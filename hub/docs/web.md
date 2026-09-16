@@ -45,3 +45,11 @@ Run `npm run dev:hosted` and open `http://127.0.0.1:5174`. Choose **Sign in with
 The preview uses the existing device-code authorization flow. Its access and refresh credentials stay in the Vite process memory, never in browser storage or URLs. Stopping Vite forgets them; signing out revokes the session. The session is named **Remy local web preview**. OAuth and email sign-in stay on the production origin.
 
 `PREVIEW_ORIGINS` is an exact comma-separated allowlist for bearer-authenticated preview requests, including live connections. Production currently permits only `http://127.0.0.1:5174`. Cookie authentication and OAuth trusted origins are unchanged. The loopback preview rejects foreign Origin, Host, and cross-site Fetch Metadata headers before attaching credentials. It forwards the browser Origin unchanged. Never expose this preview on a network interface or reuse a production browser cookie in it.
+
+Thread submission opens a pending thread immediately. The first message stays visible while the computer starts. Startup and sending failures can be retried in place using the same request and message IDs. Pending starts survive refresh in the current browser tab for up to one day; they are scoped to the signed-in member and organization.
+
+Cloud checkout supports repositories imported with GitHub OAuth or a personal access token. Each cloud task uses the initiating member’s connection after checking current workspace access. GitHub credentials remain in the hub; computers receive only short-lived capabilities limited to their assigned repository and allowed branches. Existing GitHub App installations remain supported.
+
+General settings reuse the Mac avatar picker, notification preference, appearance row, and permission selector. Your avatar belongs to your signed-in account; presets and resized raster pictures use the existing profile image field. Changes notify your open organization sessions and reload after reconnect. Browser notification permission remains local to each browser. Web updates ship automatically; the app information row links to the Mac download instead of offering an in-app installer.
+
+Account permission defaults require migration 0023 and a computer package with the updated hosted thread creation handler. Existing threads retain their permission levels. No saved preference means Ask.

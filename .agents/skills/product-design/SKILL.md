@@ -1,11 +1,33 @@
 ---
 name: product-design
-description: Product structure and ownership in Remy. Use before making ANY product decision that adds or changes a setting, default, integration, automation, agent behavior, entity relationship, or deletion behavior.
+description: Product structure, platform parity, and ownership in Remy. Use before making ANY product decision that changes a screen, control, setting, default, integration, automation, agent behavior, entity relationship, or deletion behavior.
 ---
 
 # Product design
 
 `ui` owns layout and interaction. `content` owns the words. `qa` owns proving the result. This skill owns the product model they express.
+
+## Web and desktop parity
+
+The hosted web app, desktop browser shell, and Mac app expose the same capabilities for the same concept by default. Match controls, navigation, editing, icon choices, defaults, and visual hierarchy. This applies to the web product, not the marketing website's page layout.
+
+Before designing or changing a surface, inspect its counterpart in the running app and source. Reuse shared components and interaction patterns; adapt the data source behind them when platforms reach the same capability differently. A missing endpoint, separate implementation, or unfinished integration is work to complete, not a platform exception.
+
+Allow a difference only when the capability genuinely depends on the platform or its role: attaching the current Mac requires the desktop app; a Mac download action belongs on the web. Name the concrete constraint for every exception. Missing credentials or an unavailable computer calls for a connection or availability state, not removal of a capability the platform can support.
+
+BAD
+```text
+Desktop: open workspace details in the main pane and select a repository image as its icon.
+Web: open an edit modal and offer only built-in icons because there is no local filesystem.
+```
+
+GOOD
+```text
+Both: open workspace details in the main pane with the same icon picker and Glyph/Image choices.
+Desktop reads images from the checkout; web reads them through an authorized repository or computer connection.
+```
+
+Verify the same user journey on both surfaces, including saved state after refresh. Report remaining differences and their actual platform constraints; do not call a shared-looking subset parity. This is a design and review requirement, not an automated check.
 
 ## Model the capability first
 

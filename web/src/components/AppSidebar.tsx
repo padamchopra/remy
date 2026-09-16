@@ -1,3 +1,4 @@
+import { ThreadSidebarRow } from "./ThreadSidebarRow";
 import { Fragment, memo, useCallback, useMemo, useRef, useState, type ComponentType } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -5,7 +6,6 @@ import {
   ChevronDown,
   ChevronLeft,
   GitBranch,
-  Pin,
   Settings2,
   SquarePen,
 } from "lucide-react";
@@ -481,6 +481,7 @@ function ThreadRow({
   onOpenWorkspace: (workspaceId: string) => void;
 }) {
   reportRender("thread-row", chat.id);
+  const avatar = useStore(s => s.settings?.avatar);
   const [contextOpen, setContextOpen] = useState(false);
   const tick = useTicker(Boolean(chat.workingSince));
   const DeviceIcon = deviceIcon(server?.icon);
@@ -489,23 +490,10 @@ function ThreadRow({
   const ticket = tickets.find((entry) => entry.threads.some((link) => link.chatId === chat.id));
 
   const row = (
-    <SidebarMenuButton
-      data-link
-      isActive={active}
-      className={cn("sidebar-thread h-auto flex-col items-stretch gap-1 px-2.5 py-2.5", threadRowHoverClass)}
-      onClick={onSelect}
-    >
-      <span className="flex min-w-0 items-center gap-1.5">
-        <span className="sidebar-thread-title min-w-0 flex-1 whitespace-normal break-words line-clamp-2">{chat.title}</span>
-        {chat.pinned && <Pin className="size-3 shrink-0 text-muted-foreground" aria-label="Pinned" />}
-        <span className={cn("flex shrink-0 items-center gap-1 text-[11px] font-normal tabular-nums text-muted-foreground", threadRowTimeClass)}>
-          {time}
-        </span>
-      </span>
-
-      {/* Status is readable without learning a colour legend. */}
-      <span className="sidebar-thread-context flex min-w-0 items-center gap-1.5 text-xs font-normal text-muted-foreground">
-        <ThreadStatus state={chat.state} />
+    <ThreadSidebarRow people={[{id: "you", label: "You", image: avatar}]} provider={chat.provider} model={chat.model} title={chat.title} active={active} pinned={chat.pinned}
+      time={time} state={chat.state} preview={chat.preview} onSelect={onSelect}
+      hideTimeOnHover
+      ticket={<>
         {ticket && (
           // A key, not a button: this row is already a button, and one inside
           // another is not markup a browser will honour. The click is stopped
@@ -528,9 +516,9 @@ function ThreadRow({
             {ticket.key}
           </span>
         )}
-        <span className="min-w-0 flex-1 truncate">{chat.preview ? plainText(chat.preview) : ""}</span>
+      </>}
+      marks={<>
         {workspace && <WorkspaceMark home={false} workspace={workspace} server={server} size="sm" />}
-        <ThreadModel provider={chat.provider} model={chat.model} label={false} className="shrink-0" />
         {server && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -538,9 +526,8 @@ function ThreadRow({
             </TooltipTrigger>
             <TooltipContent>{server.name}</TooltipContent>
           </Tooltip>
-        )}
-      </span>
-    </SidebarMenuButton>
+        )}      </>}
+    />
   );
 
   // The row is narrow and truncates; hovering says the whole of it — the full

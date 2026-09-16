@@ -4,7 +4,7 @@ WRK-21 and WRK-133–136 provide the shared connection broker. Settings → Conn
 
 Apply migration 0012. The hub uses its existing JOBS queue and scheduled trigger. Register provider client IDs as variables and client secrets/webhook secrets through Secret Store bindings:
 
-- GitHub App user authorization: GITHUB_CONNECTION_CLIENT_ID and GITHUB_CONNECTION_CLIENT_SECRET; GITHUB_WEBHOOK_SECRET for deliveries. These are distinct from sign-in credentials.
+- GitHub App user authorization: GITHUB_CONNECTION_CLIENT_ID and GITHUB_CONNECTION_CLIENT_SECRET; GITHUB_WEBHOOK_SECRET for deliveries. When these are absent, the repository picker reuses GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET from sign-in, with explicit repo consent and a separately validated connection state on the existing callback.
 - Linear: LINEAR_CLIENT_ID, LINEAR_CLIENT_SECRET and LINEAR_WEBHOOK_SECRET.
 - Callback: `https://<hub>/api/connections/<provider>/callback`.
 - Webhook: `https://<hub>/api/connections/<provider>/webhook`.
@@ -18,3 +18,10 @@ Refresh uses a D1 lease and generation check. A failed refresh asks the owner to
 The QA provider runs only in the separate test fixture. It replaces vendor OAuth endpoints while exercising the production broker, PKCE exchange, encrypted storage, current-member checks and live settings. Vendor consent and refresh still require configured OAuth applications; no live vendor result is claimed by that fixture.
 
 Provider references: [Linear OAuth](https://linear.app/developers/oauth-2-0-authentication), [Linear webhooks](https://linear.app/developers/webhooks), [GitHub App user authorization](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app).
+
+
+Workspace setup offers GitHub account authorization or a personal access token, followed by a paginated repository picker. Tokens are validated against GitHub and kept in the existing encrypted member connection; the picker never reads them back. Import rechecks repository access and reuses an existing canonical workspace without replacing other selections. A PAT connection does not configure GitHub App installations or webhooks; hosted Git still requires its existing installation setup.
+
+### Workspace images
+
+In workspace details, the icon picker can search PNG, JPEG, SVG, and WebP images in the GitHub repository’s default branch. Images must be smaller than 1 MB. The hosted app uses your connected GitHub account and checks your workspace access before reading files. The selected repository path is saved with the workspace; local uncommitted files are not available through GitHub.

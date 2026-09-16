@@ -178,3 +178,23 @@ test("hosted sessions reject foreign origins and sign out only the current sessi
   assert.equal(await service.authenticate(pair.accessToken), undefined);
   assert.ok(await service.authenticate(phone.accessToken));
 });
+
+test("profile avatar updates are owned by the authenticated user and broadcast to their memberships", async () => {
+  const store = new MemoryAccountStore();
+  for (const id of ["person-1", "person-2"]) store.profiles.set(id, { id, name:id, email:`${id}@example.com`, emailVerified:true, verifiedEmails:[] });
+  const service = new AccountService(store, () => 30_000, deterministicRandom());
+  const pair = await service.createSession("person-1", "web", "Web");
+  const route = createRouteHandler({accountStore:()=>store,accountService:()=>service});
+  const environment=env();
+  const notices:Request[]=[];
+  environment.DB={prepare:()=>({bind:(user:string)=>{assert.equal(user,"person-1");return {all:async()=>({results:[{organization_id:"org"}]})};}})} as never;
+  environment.COORDINATOR={idFromName:(name:string)=>name,get:()=>({fetch:async(request:Request)=>{notices.push(request);return Response.json({ok:true});}})} as never;
+  const patch=(image:unknown)=>route(new Request("https://hub.example/api/profile",{method:"PATCH",headers:{cookie:`remy_session=${pair.accessToken}`,origin:"https://hub.example","content-type":"application/json"},body:JSON.stringify({image,userId:"person-2"})}),environment);
+  assert.equal((await patch("preset:mint-crescent")).status,200);
+  assert.equal(store.profiles.get("person-1")?.image,"preset:mint-crescent");
+  assert.equal(store.profiles.get("person-2")?.image,undefined);
+  assert.equal(notices[0]?.headers.get("x-user-id"),"person-1");
+  assert.equal((await patch("data:image/svg+xml;base64,PHN2Zz4=")).status,400);
+  assert.equal((await patch(null)).status,200);
+  assert.equal(store.profiles.get("person-1")?.image,undefined);
+});

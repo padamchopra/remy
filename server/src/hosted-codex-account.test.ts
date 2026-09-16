@@ -57,9 +57,29 @@ test("Router uses its own endpoint and environment key", () => {
     assert.match(config,/https:\/\/api.router.com\/v1/);
     assert.match(config,/env_key = "RAMP_ROUTER_API_KEY"/);
     assert.ok(!config.includes("router-test-private-key"));
-    assert.equal(process.env.REMY_HOSTED_CODEX_PROVIDER,"remy_router");
+    assert.equal(process.env.REMY_HOSTED_CODEX_PROVIDER,"remy_openai");
   } finally {
     if(previousKey===undefined)delete process.env.RAMP_ROUTER_API_KEY;else process.env.RAMP_ROUTER_API_KEY=previousKey;
     if(previousModel===undefined)delete process.env.RAMP_ROUTER_MODEL;else process.env.RAMP_ROUTER_MODEL=previousModel;
+  }
+});
+
+test("OpenRouter coexists with connected accounts without writing its key to disk", () => {
+  const previousKey = process.env.OPENROUTER_API_KEY, previousModel = process.env.OPENROUTER_MODEL;
+  try {
+    process.env.OPENROUTER_API_KEY = "openrouter-private-test";
+    process.env.OPENROUTER_MODEL = "vendor/model";
+    configureHostedCodex(home, true);
+    const config = readFileSync(join(home, "config.toml"), "utf8");
+    assert.match(config, /https:\/\/openrouter.ai\/api\/v1/);
+    assert.match(config, /env_key = "OPENROUTER_API_KEY"/);
+    assert.equal(process.env.REMY_HOSTED_CODEX_PROVIDER, "openai");
+    assert.ok(!config.includes("openrouter-private-test"));
+    delete process.env.OPENROUTER_API_KEY;
+    configureHostedCodex(home, true);
+    assert.equal(process.env.REMY_HOSTED_CODEX_PROVIDER, "openai");
+  } finally {
+    if (previousKey === undefined) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = previousKey;
+    if (previousModel === undefined) delete process.env.OPENROUTER_MODEL; else process.env.OPENROUTER_MODEL = previousModel;
   }
 });

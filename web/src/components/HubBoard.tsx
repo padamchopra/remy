@@ -1,3 +1,4 @@
+import { EmptyState } from "@/components/EmptyState";
 import { usePersonalHub } from "@/lib/hub-scope";
 import type { LinearBoardState } from "./HubLinearBoard";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -32,10 +33,6 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
-  Empty,
-  EmptyHeader,
-  EmptyTitle,
-  EmptyDescription,
   EmptyContent,
 } from "@/components/ui/empty";
 import { watchHubResource } from "@/lib/hub-computers";
@@ -417,14 +414,7 @@ export default function HubBoard({
             </Card>
           </>
         ) : (
-          <Empty>
-            <EmptyHeader>
-              <EmptyTitle>This ticket is unavailable</EmptyTitle>
-              <EmptyDescription>
-                Ask a workspace member to check your access.
-              </EmptyDescription>
-            </EmptyHeader>
-          </Empty>
+          <EmptyState title="This ticket is unavailable" description="Ask a workspace member to check your access." />
         )
       ) : items.length ? (
         <div className="flex min-w-0 flex-col gap-4 overflow-x-auto md:flex-row">
@@ -451,17 +441,11 @@ export default function HubBoard({
             ))}
         </div>
       ) : (
-        <Empty>
-          <EmptyHeader>
-            <EmptyTitle>No tickets yet</EmptyTitle>
-            <EmptyDescription>
-              Create a ticket to plan your next piece of work.
-            </EmptyDescription>
-          </EmptyHeader>
+        <EmptyState title="No tickets yet" description="Create a ticket to plan your next piece of work.">
           <EmptyContent>
             <Button onClick={() => openEdit("new")}>Create ticket</Button>
           </EmptyContent>
-        </Empty>
+        </EmptyState>
       )}
       <Dialog
         open={!!editing}

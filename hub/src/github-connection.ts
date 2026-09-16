@@ -79,6 +79,61 @@ export class GitHubConnection {
       ? (undefined as T)
       : ((await response.json()) as T);
   }
+  async accessibleRepositories(org: string, user: string, page: number) {
+    await this.access(org, user, ["owner", "admin"]);
+    if (!Number.isSafeInteger(page) || page < 1 || page > 100)
+      throw new ConnectionError("Choose a valid repository page.");
+    const repositories = await this.api<Repository[]>(org, user, `/user/repos?per_page=100&sort=updated&page=${page}`);
+    return { repositories: repositories.map(({ id, name, full_name }) => ({ id, name, full_name })), nextPage: repositories.length === 100 ? page + 1 : null };
+  }
+  async importRepository(org: string, user: string, fullName: string) {
+    await this.access(org, user, ["owner", "admin"]);
+    if (!/^[\w.-]+\/[\w.-]+$/.test(fullName)) throw new ConnectionError("Choose a GitHub repository.");
+    const repo = await this.api<Repository>(org, user, `/repos/${fullName}`);
+    if (!repo.id || !repo.name || !/^[\w.-]+\/[\w.-]+$/.test(repo.full_name)) throw new ConnectionError("This repository is unavailable.");
+    const origin = repositoryOrigin(`https://github.com/${repo.full_name}.git`)!;
+    const existing = await this.store.workspaceByOrigin(org, origin);
+    const workspace = existing ? await this.organizations.workspace(org, user, existing.id) : await this.organizations.createWorkspace(org, user, {name: repo.name, origin});
+    await this.changed(org);
+    return { workspace };
+  }
+  async workspaceGitToken(org: string, user: string, workspaceId: string) {
+    const workspace = await this.organizations.workspace(org, user, workspaceId);
+    if (!/^github\.com\/[\w.-]+\/[\w.-]+$/.test(workspace.origin))
+      throw new ConnectionError("Choose a GitHub workspace.");
+    return this.connections.token(org, "github", user);
+  }
+  async workspaceBranches(org: string, user: string, workspaceId: string) {
+    const workspace = await this.organizations.workspace(org, user, workspaceId);
+    const repository = /^github\.com\/([\w.-]+\/[\w.-]+)$/.exec(workspace.origin)?.[1];
+    if (!repository) throw new ConnectionError("Choose a GitHub workspace.");
+    const repo = await this.api<{ default_branch: string }>(org, user, `/repos/${repository}`);
+    const branches: { name: string; current: boolean; checkout: null }[] = [];
+    for (let page = 1; page <= 20; page++) {
+      const rows = await this.api<{ name: string }[]>(org, user, `/repos/${repository}/branches?per_page=100&page=${page}`);
+      branches.push(...rows.map(row => ({ name: row.name, current: row.name === repo.default_branch, checkout: null })));
+      if (rows.length < 100) return { branches };
+    }
+    throw new ConnectionError("This repository has too many branches to list.");
+  }
+  async workspaceImage(org: string, user: string, workspaceId: string, path?: string, query = "") {
+    const workspace = await this.organizations.workspace(org, user, workspaceId);
+    const repository = /^github\.com\/([\w.-]+\/[\w.-]+)$/.exec(workspace.origin)?.[1];
+    if (!repository) throw new ConnectionError("Choose a GitHub workspace.");
+    const valid = (name: string) => !name.startsWith("/") && !name.includes("..") && !name.includes("\\") && /\.(png|jpe?g|svg|webp)$/i.test(name);
+    if (path !== undefined) {
+      if (!valid(path)) throw new ConnectionError("Choose an image in this repository.");
+      const file = await this.api<{ type: string; size: number; encoding: string; content: string }>(org, user, `/repos/${repository}/contents/${path.split("/").map(encodeURIComponent).join("/")}`);
+      if (file.type !== "file" || file.size > 1_000_000 || file.encoding !== "base64") throw new ConnectionError("Choose an image smaller than 1 MB.");
+      const extension = path.split(".").pop()!.toLowerCase();
+      const mime = extension === "svg" ? "image/svg+xml" : extension === "jpg" || extension === "jpeg" ? "image/jpeg" : `image/${extension}`;
+      return { mime, data: file.content.replace(/\s/g, "") };
+    }
+    const tree = await this.api<{ tree: { path: string; type: string; size?: number }[]; truncated?: boolean }>(org, user, `/repos/${repository}/git/trees/HEAD?recursive=1`);
+    const images = tree.tree.filter(file => file.type === "blob" && valid(file.path) && (file.size ?? 0) <= 1_000_000 && file.path.toLowerCase().includes(query.toLowerCase()));
+    images.sort((a, b) => Number(/icon|logo/i.test(b.path)) - Number(/icon|logo/i.test(a.path)) || a.path.localeCompare(b.path));
+    return { images: images.slice(0, 60).map(file => ({ path: file.path })), truncated: !!tree.truncated };
+  }
   async installations(org: string, user: string) {
     await this.access(org, user, ["owner", "admin"]);
     const all: Installation[] = [];

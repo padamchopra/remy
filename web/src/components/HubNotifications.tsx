@@ -1,3 +1,4 @@
+import { notificationsEnabled, notifyPermission } from "@/lib/notify";
 import { useEffect, useState } from "react";
 import type { HubNotification } from "@remy/contract";
 import { toast } from "sonner";
@@ -94,6 +95,10 @@ export function HubNotifications({
                 },
               },
             });
+          if (loaded && !item.readAt && !announced.has(id) && localStorage.getItem(key) !== "off" && document.hidden && notificationsEnabled() && notifyPermission() === "granted") {
+            const banner = new Notification(item.title, { body: item.message, tag: id });
+            banner.onclick = () => { window.focus(); void read(item).catch(e => setError(e.message)); banner.close(); };
+          }
           announced.add(id);
         }
         loaded = true;

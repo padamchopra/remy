@@ -255,3 +255,22 @@ test("invitation preview route requires a session and returns only display metad
   authenticated = false;
   assert.equal((await route(request(), env())).status, 401);
 });
+
+test("member portraits expose only display profile fields within the organization", async () => {
+  const store = new MemoryOrganizationStore();
+  const service = new OrganizationService(store, () => 1000, random);
+  const org = await service.create("user-1", "Studio");
+  const route = createRouteHandler({
+    accountStore: () => ({profile: async () => ({id: "user-1", name: "Ada", image: "preset:cobalt-cyclops", email: "private@example.com", verifiedEmails: ["private@example.com"]})}) as never,
+    accountService: () => ({authenticate: async () => ({sessionId: "session", userId: "user-1", clientKind: "web"})}) as never,
+    organizationStore: () => store,
+    organizationService: () => service,
+  });
+  const response = await route(new Request(`https://hub.example/api/organizations/${org.id}/members`, {headers: {authorization: "Bearer test-session"}}), env());
+  assert.equal(response.status, 200);
+  const {members} = await response.json() as {members: Record<string, unknown>[]};
+  assert.equal(members[0].image, "preset:cobalt-cyclops");
+  assert.equal(members[0].name, "Ada");
+  assert.equal("email" in members[0], false);
+  assert.equal("verifiedEmails" in members[0], false);
+});

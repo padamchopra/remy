@@ -28,9 +28,8 @@ export class OrganizationService {
     await this.store.appendAudit(event);
   }
   private async access(organizationId: string, userId: string, allowed?: OrganizationRole[]): Promise<Membership> {
-    const scope = await this.store.organization(organizationId);
+    const [scope, member] = await Promise.all([this.store.organization(organizationId), this.store.membership(organizationId, userId)]);
     if (scope?.personalOwnerId && scope.personalOwnerId !== userId) throw new OrganizationError(404, "Organization not found.");
-    const member = await this.store.membership(organizationId, userId);
     if (!member || (allowed && !allowed.includes(member.role))) throw new OrganizationError(404, "Organization not found.");
     return member;
   }
@@ -107,11 +106,13 @@ export class OrganizationService {
     await this.audit(organizationId, userId, "workspace.created", "workspace", workspace.id, { restricted: workspace.restricted });
     return { ...workspace, access };
   }
-  async updateWorkspace(organizationId: string, userId: string, workspaceId: string, patch: { name?: string; access?: WorkspaceAccess | null }) {
+  async updateWorkspace(organizationId: string, userId: string, workspaceId: string, patch: { name?: string; icon?: string; tint?: string; access?: WorkspaceAccess | null }) {
     await this.access(organizationId, userId, ["owner", "admin"]);
     if (!await this.store.workspace(organizationId, workspaceId)) throw new OrganizationError(404, "Workspace not found.");
+    if (patch.icon !== undefined && !["folder","code","terminal","git","globe","database","box","sparkles"].includes(patch.icon) && !(patch.icon.length <= 1024 && !patch.icon.startsWith("/") && !patch.icon.includes("..") && !patch.icon.includes("\\") && /\.(png|jpe?g|svg|webp)$/i.test(patch.icon))) throw new OrganizationError(400, "Choose a workspace icon.");
+    if (patch.tint !== undefined && !["zinc","red","orange","amber","green","teal","blue","violet","pink"].includes(patch.tint)) throw new OrganizationError(400, "Choose a workspace color.");
     const access = patch.access === undefined ? undefined : patch.access === null ? { teamIds: [], userIds: [] } : await this.workspaceAccessInput(organizationId, patch.access);
-    await this.store.updateWorkspace(organizationId, workspaceId, { ...(patch.name ? { name: patch.name } : {}), ...(patch.access !== undefined ? { restricted: patch.access !== null } : {}) }, this.now());
+    await this.store.updateWorkspace(organizationId, workspaceId, { ...(patch.icon !== undefined ? {icon:patch.icon} : {}), ...(patch.tint !== undefined ? {tint:patch.tint} : {}), ...(patch.name ? { name: patch.name } : {}), ...(patch.access !== undefined ? { restricted: patch.access !== null } : {}) }, this.now());
     if (access) await this.store.replaceWorkspaceAccess(organizationId, workspaceId, access);
     await this.audit(organizationId, userId, "workspace.updated", "workspace", workspaceId, { ...(patch.name ? { name: true } : {}), ...(patch.access !== undefined ? { access: patch.access === null ? "organization" : "restricted" } : {}) });
     return this.workspace(organizationId, userId, workspaceId);

@@ -63,7 +63,7 @@ export async function connectionRoute(
   userId: string,
 ): Promise<Response | undefined> {
   const url = new URL(request.url),
-    callback = /^\/api\/connections\/([a-z]+)\/callback$/.exec(url.pathname),
+    callback = /^\/api\/connections\/([a-z]+)\/callback$/.exec(url.pathname) ?? (isGitHubConnectionCallback(url) ? [url.pathname, "github"] : null),
     route = /^\/api\/organizations\/([^/]+)\/connections(?:\/([a-z]+))?$/.exec(
       url.pathname,
     );
@@ -132,4 +132,8 @@ export async function connectionRoute(
       { status: error instanceof ConnectionError ? error.status : 400 },
     );
   }
+}
+
+export function isGitHubConnectionCallback(url: URL) {
+  return url.pathname === "/api/auth/callback/github" && (url.searchParams.get("state") ?? "").startsWith("remy-connection.");
 }

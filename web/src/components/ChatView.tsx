@@ -1,3 +1,6 @@
+import { modelSwitch, speaker } from "@/lib/thread-message";
+import { BranchName } from "./BranchName";
+import { ReplyComposer, replyComposerFrame, replyComposerForm } from "./ReplyComposer";
 import { organizationArtifactRoute } from "@/lib/artifact-route";
 import { formatLocation } from "@/lib/route";
 import type { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, ReactNode, RefObject } from "react";
@@ -15,7 +18,6 @@ import {
 import { readComposerDraft, writeComposerDraft } from "@/lib/composer-draft";
 import {
   ArchiveRestore,
-  ArrowUp,
   ArrowUpRight,
   Check,
   ChevronDown,
@@ -25,9 +27,7 @@ import {
   Copy,
   FileCode2,
   Folder,
-  GitBranch,
   MessagesSquare,
-  Square,
   SquareKanban,
   Ticket as TicketIcon,
   Wrench,
@@ -44,7 +44,6 @@ import {
   AttachmentTitle,
 } from "@/components/ui/attachment";
 import { toast } from "sonner";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
@@ -59,9 +58,7 @@ import {
   ItemTitle,
 } from "@/components/ui/item";
 import {
-  InputGroup,
   InputGroupAddon,
-  InputGroupButton,
   InputGroupText,
 } from "@/components/ui/input-group";
 import {
@@ -114,7 +111,7 @@ import {
   type InlineImageComposerValue,
 } from "@/components/InlineImageComposer";
 import { ContextMeter } from "@/components/ContextMeter";
-import { AgentMark } from "@/components/AgentAvatar";
+import { ThreadMessageAvatar as AgentAvatar } from "./ThreadMessageAvatar";
 import { PaneHeader, type Crumb } from "@/components/PaneHeader";
 import { ModelPickerButton, useProvider } from "@/components/ModelPicker";
 import { ProviderMark } from "@/components/ProviderMark";
@@ -130,7 +127,6 @@ import { CLOUD_MODES, cloudModeOf, PERMISSIONS, permissionOf } from "@/lib/chat-
 import { deviceIcon } from "@/lib/devices";
 import { displayPath } from "@/lib/path";
 import { workspaceForPath } from "@/lib/projects";
-import { PROVIDERS } from "@/lib/providers";
 import { cn } from "@/lib/utils";
 import { referenceLabel } from "@/lib/pull-request-review";
 import { workingToolGroupId } from "@/lib/working-tool";
@@ -541,7 +537,7 @@ export function ChatView({
             </div>
           </ScrollFeed>
 
-          <div className="min-w-0 shrink-0 bg-linear-to-t from-background via-background to-transparent px-6 pt-2 pb-4">
+          <div className={replyComposerFrame}>
             {archived && (
               <Item
                 variant="outline"
@@ -570,13 +566,65 @@ export function ChatView({
             <form
           // The toolbar drops labels by how wide the composer is, not the
           // window: the sidebar takes a fixed slice, so the two differ.
-          className="@container mx-auto min-w-0 w-full max-w-[44rem]"
+          className={replyComposerForm}
           onSubmit={(event) => {
             event.preventDefault();
             void submit();
           }}
         >
-          <InputGroup className="compose-box compose-box-reply items-stretch">
+          <ReplyComposer
+            working={working}
+            onStop={() => void stop()}
+            canSend={!!(draft.text.trim() || codeReferences.length) && !draft.uploading && !busy && !archived}
+            controls={<>
+              {cloud ? (
+                <InputGroupText>Cursor Cloud default</InputGroupText>
+              ) : (
+                <ModelPickerButton
+                  variant="composer"
+                  value={{ provider: provider?.id ?? "claude", model: open?.model ?? "", effort: open?.effort ?? "" }}
+                  onlyProvider={provider?.id ?? "claude"}
+                  disabled={!open || Boolean(archived)}
+                  title={working ? "Applies to the next turn." : undefined}
+                  onPick={(next) =>
+                    void setOption(
+                      { model: next.model || null, effort: next.effort ?? null },
+                      "model",
+                    )
+                  }
+                />
+              )}
+              <ComposerMenu
+                icon={permission.icon}
+                label={permission.label}
+                value={permission.value}
+                disabled={!open || Boolean(archived)}
+                title={
+                  working
+                    ? "Applies to the next turn."
+                    : asks
+                      ? undefined
+                      : `${provider?.label ?? "This provider"} can't stop to ask, so Ask keeps it read-only.`
+                }
+                onChange={(value) => void setOption({ permissionMode: value }, "permission mode")}
+                options={cloud ? CLOUD_MODES : PERMISSIONS}
+              />
+            </>}
+            context={<>
+                {/* Where a thread runs is fixed when it starts, so these read
+                    rather than offer. */}
+                {!conversational && (
+                  <InputGroupText title={displayPath(chat.cwd)} className="hidden @3xl:flex">
+                    <DeviceIcon />
+                    {server?.name ?? "This machine"}
+                  </InputGroupText>
+                )}
+                {branch && (
+                  <BranchName branch={branch} />
+                )}
+                <ContextMeter context={open?.context} />
+            </>}
+          >
             <InlineImageComposer
               key={chat.id}
               ref={composerRef}
@@ -619,75 +667,7 @@ export function ChatView({
                 </AttachmentGroup>
               </InputGroupAddon>
             )}
-            {/* The controls share one strip while they fit. At the smallest
-                split-pane widths, the critical action cluster wraps intact
-                instead of spilling beyond the composer. */}
-            <InputGroupAddon align="block-end" className="min-w-0 flex-wrap gap-1">
-              {cloud ? (
-                <InputGroupText>Cursor Cloud default</InputGroupText>
-              ) : (
-                <ModelPickerButton
-                  variant="composer"
-                  value={{ provider: provider?.id ?? "claude", model: open?.model ?? "", effort: open?.effort ?? "" }}
-                  onlyProvider={provider?.id ?? "claude"}
-                  disabled={!open || Boolean(archived)}
-                  title={working ? "Applies to the next turn." : undefined}
-                  onPick={(next) =>
-                    void setOption(
-                      { model: next.model || null, effort: next.effort ?? null },
-                      "model",
-                    )
-                  }
-                />
-              )}
-              <ComposerMenu
-                icon={permission.icon}
-                label={permission.label}
-                value={permission.value}
-                disabled={!open || Boolean(archived)}
-                title={
-                  working
-                    ? "Applies to the next turn."
-                    : asks
-                      ? undefined
-                      : `${provider?.label ?? "This provider"} can't stop to ask, so Ask keeps it read-only.`
-                }
-                onChange={(value) => void setOption({ permissionMode: value }, "permission mode")}
-                options={cloud ? CLOUD_MODES : PERMISSIONS}
-              />
-
-              <div className="ml-auto flex shrink-0 items-center gap-1">
-                {/* Where a thread runs is fixed when it starts, so these read
-                    rather than offer. */}
-                {!conversational && (
-                  <InputGroupText title={displayPath(chat.cwd)} className="hidden @3xl:flex">
-                    <DeviceIcon />
-                    {server?.name ?? "This machine"}
-                  </InputGroupText>
-                )}
-                {branch && (
-                  <BranchName branch={branch} />
-                )}
-                <ContextMeter context={open?.context} />
-                {working ? (
-                  <InputGroupButton type="button" onClick={() => void stop()}>
-                    <Square />
-                    Stop
-                  </InputGroupButton>
-                ) : null}
-                <InputGroupButton
-                  type="submit"
-                  variant="default"
-                  size="icon-sm"
-                  className="rounded-full"
-                  disabled={(!draft.text.trim() && codeReferences.length === 0) || draft.uploading || busy || Boolean(archived)}
-                  aria-label="Send"
-                >
-                  <ArrowUp />
-                </InputGroupButton>
-              </div>
-            </InputGroupAddon>
-          </InputGroup>
+          </ReplyComposer>
           {!asks && open?.permissionMode === "default" && (
             <p className="mt-2 text-xs text-muted-foreground">
               {provider?.label ?? "This provider"} can't stop to ask, so Ask keeps it read-only.
@@ -697,59 +677,6 @@ export function ChatView({
           </div>
           </div>
     </div>
-  );
-}
-
-function BranchName({ branch }: { branch: string }) {
-  const [copied, setCopied] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
-
-  useEffect(() => () => clearTimeout(timer.current), []);
-
-  const copy = async () => {
-    let copiedSynchronously = false;
-    try {
-      const input = document.createElement("textarea");
-      input.value = branch;
-      input.setAttribute("readonly", "");
-      input.style.position = "fixed";
-      input.style.left = "-9999px";
-      document.body.append(input);
-      input.focus();
-      input.select();
-      input.setSelectionRange(0, branch.length);
-      copiedSynchronously = document.execCommand("copy");
-      input.remove();
-
-      setCopied(true);
-      clearTimeout(timer.current);
-      timer.current = setTimeout(() => setCopied(false), 1500);
-
-      if (!copiedSynchronously) await navigator.clipboard.writeText(branch);
-    } catch {
-      if (!copiedSynchronously) {
-        setCopied(false);
-        toast.error("Couldn't copy the branch", { description: "Your browser blocked clipboard access." });
-      }
-    }
-  };
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <InputGroupButton
-          type="button"
-          aria-label={`Copy branch ${branch}`}
-          className="hidden min-w-0 max-w-40 text-muted-foreground @2xl:flex"
-          onClick={() => void copy()}
-        >
-          <GitBranch />
-          <span className="truncate">{branch}</span>
-          {copied ? <Check /> : null}
-        </InputGroupButton>
-      </TooltipTrigger>
-      <TooltipContent className="font-mono">{copied ? "Copied" : branch}</TooltipContent>
-    </Tooltip>
   );
 }
 
@@ -1090,22 +1017,6 @@ function ScrollFeed({
   );
 }
 
-const MODEL_SWITCH = /^—\s*moved to\s+(.+?)\s*—$/i;
-
-function modelSwitch(entry: ConvEntry): { provider: string; label: string } | undefined {
-  if (entry.kind !== "assistant") return undefined;
-  const label = entry.text?.match(MODEL_SWITCH)?.[1]?.trim();
-  if (!label) return undefined;
-  const provider = PROVIDERS.find((candidate) => candidate.label.toLowerCase() === label.toLowerCase());
-  return { provider: provider?.id ?? label.toLowerCase(), label };
-}
-
-/// Who an entry belongs to. Provider changes are feed state, not a reply, so
-/// the next real answer still introduces the agent that wrote it.
-function speaker(entry: ConvEntry): "you" | "agent" | "system" {
-  if (modelSwitch(entry)) return "system";
-  return entry.kind === "user" ? "you" : "agent";
-}
 
 type FeedItem =
   | { kind: "entry"; entry: ConvEntry; lead: boolean }
@@ -1710,37 +1621,6 @@ function ArtifactCard({
     >
       <button type="button" data-link onClick={onOpen}>{body}</button>
     </Item>
-  );
-}
-
-/// `MessageAvatar` is the slot; `Avatar` is what goes in it, which is what
-/// gives the mark its circle and keeps it from stretching.
-function AgentAvatar({
-  provider,
-  persona,
-  lead,
-}: {
-  provider: string;
-  persona?: Agent;
-  lead: boolean;
-}) {
-  const claude = provider === "claude";
-  return (
-    <MessageAvatar className={cn("bg-transparent", !lead && "invisible")}>
-      {/* An agent wears the mark it wears in the inbox, so a run of messages
-          is recognised rather than read. Everywhere else it is the provider's
-          own disc: its mark on a wash of its own colour, the way the
-          workspace marks do. */}
-      {persona ? (
-        <AgentMark agent={persona} className="size-8" />
-      ) : (
-        <Avatar>
-          <AvatarFallback className={claude ? "bg-claude/15" : "bg-foreground/10"}>
-            <ProviderMark provider={provider} className="size-4" />
-          </AvatarFallback>
-        </Avatar>
-      )}
-    </MessageAvatar>
   );
 }
 

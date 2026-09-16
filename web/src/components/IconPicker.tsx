@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState, type ReactNode, type ComponentProps } from "react";
 import type { LucideIcon } from "lucide-react";
 import { CheckIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -38,7 +38,7 @@ export function IconPicker<Id extends string>({
   onChange: (patch: { icon?: Id; tint?: TintId }) => void;
   badge?: ReactNode;
   preview?: ReactNode;
-  files?: { workspaceId: string; onPick: (path: string) => void };
+  files?: { workspaceId: string; onPick: (path: string) => void; search?: ComponentProps<typeof ProjectIconSearch>["search"]; loadPreview?: ComponentProps<typeof ProjectIconSearch>["loadPreview"] };
 }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState("glyph");
@@ -137,6 +137,8 @@ export function IconPicker<Id extends string>({
               <ProjectIconSearch
                 active={open && tab === "image"}
                 workspaceId={files.workspaceId}
+                search={files.search}
+                loadPreview={files.loadPreview}
                 onPick={(path) => {
                   files.onPick(path);
                   setOpen(false);

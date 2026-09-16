@@ -1,3 +1,6 @@
+import { hubThreadBranch } from "./hub-thread-branch.js";
+import { prepareHostedBranch } from "./hosted-branch.js";
+import { hostedGatewayModels } from "./hosted-models.js";
 import { setTaskEnvironment } from "./environments.js";
 import {
   canReadThread,
@@ -21,10 +24,11 @@ import {
 } from "./chat.js";
 import { getKv, setKv } from "./db.js";
 import { broadcast } from "./notify.js";
-import { listWorkspaces } from "./workspaces.js";
+import { checkoutWorkspaceBranch, listWorkspaces } from "./workspaces.js";
 import type { ChatImageAttachment } from "./transcript.js";
 
 const KEY = "hubThreadAccess";
+const branchStates = new Map<string, string>();
 const accessRecords = () => getKv<Record<string, ThreadAccess>>(KEY) ?? {};
 const fail = (status: number, error: string) =>
   Response.json({ error }, { status });
@@ -65,7 +69,11 @@ export function hubThreadSnapshot(
     Buffer.byteLength(JSON.stringify(detail)) > 96_000
   )
     detail.entries.shift();
-  return threadSnapshotSchema.parse({ id, revision, access, detail });
+  const branchState = `${detail.cwd}:${detail.state}`;
+  const refreshBranch = branchStates.get(id) !== branchState;
+  branchStates.set(id, branchState);
+  const branch = hubThreadBranch(detail.cwd, () => broadcast({type: "hub-thread", chatId: id}), refreshBranch);
+  return threadSnapshotSchema.parse({ id, revision, access, detail: {...detail, ...(branch ? {branch} : {})} });
 }
 
 export function hubThreadIds(organizationId: string): string[] {
@@ -88,7 +96,7 @@ export async function handleHubThreadRequest(
   ) => Promise<ChatImageAttachment>,
 ): Promise<Response> {
   const match =
-    /^\/hub\/threads(?:\/([0-9a-f-]{36})(?:\/(join|message|approval|question|interrupt|stop|visibility))?)?$/.exec(
+    /^\/hub\/threads(?:\/([0-9a-f-]{36})(?:\/(join|message|approval|question|interrupt|stop|visibility|options))?)?$/.exec(
       path,
     );
   if (!match) return fail(404, "This thread is no longer available.");
@@ -110,7 +118,17 @@ export async function handleHubThreadRequest(
         input.visibility !== "open"
       )
         return fail(400, "Choose who can read this thread.");
+      if(typeof input.model === "string" && input.model.startsWith("remy:")) {
+        if(input.provider !== "codex" || !(hostedGatewayModels().some(model=>model.value===input.model) || input.model.startsWith("remy:openai:") && !!process.env.OPENAI_API_KEY)) return fail(400,"This model provider is unavailable on this computer.");
+      }
+      if (input.branch !== undefined) {
+        if (typeof input.branch !== "string" || !input.branch || input.branch.length > 255) return fail(400, "Choose a branch.");
+        if (process.env.REMY_HOSTED_TASK === "1") await prepareHostedBranch(workspace.path, input.branch);
+        else await checkoutWorkspaceBranch(workspace.id, input.branch, "main");
+      }
+      if (input.permissionMode !== undefined && !["default", "auto", "acceptEdits", "plan", "bypassPermissions"].includes(String(input.permissionMode))) return fail(400, "Choose a permission level.");
       const chat = createChat({
+        permissionMode: input.permissionMode,
         cwd: workspace.path,
         title: typeof input.title === "string" ? input.title : undefined,
         provider: input.provider,
@@ -204,6 +222,12 @@ export async function handleHubThreadRequest(
         input.messageId,
         actor,
       );
+    } else if (method === "POST" && action === "options") {
+      if (Object.keys(input).some(key => !["model", "effort", "permissionMode"].includes(key))) return fail(400, "Choose a thread setting.");
+      if (input.model !== undefined && input.model !== null && (typeof input.model !== "string" || input.model.length > 512)) return fail(400, "Choose a model.");
+      if (input.effort !== undefined && input.effort !== null && (typeof input.effort !== "string" || input.effort.length > 64)) return fail(400, "Choose a reasoning level.");
+      if (input.permissionMode !== undefined && !["default", "auto", "acceptEdits", "plan", "bypassPermissions"].includes(String(input.permissionMode))) return fail(400, "Choose a permission level.");
+      updateChat(id, { model: input.model as string | null | undefined, effort: input.effort as string | null | undefined, permissionMode: input.permissionMode });
     } else if (method === "POST" && action === "approval") {
       if (
         input.decision !== "allow" &&

@@ -39,9 +39,16 @@ jobs:
           trap 'kill "$server_pid"' EXIT
           node web/scripts/hub-website-check.mjs
           node web/scripts/hosted-runtime-check.mjs
-          node --test web/scripts/hosted-preview.test.mjs
+          QA_COMPUTER_ONLY=1 node web/scripts/hosted-runtime-check.mjs
+          QA_BRANCH_ONLY=1 node web/scripts/hosted-runtime-check.mjs
+          QA_DEFAULTS_ONLY=1 node web/scripts/hosted-runtime-check.mjs
+          QA_PROFILE_ONLY=1 node web/scripts/hosted-runtime-check.mjs
+          QA_START_ONLY=1 node web/scripts/hosted-runtime-check.mjs
+          QA_COMPUTER_DEFAULTS_ONLY=1 node web/scripts/hosted-runtime-check.mjs
+          node --test web/scripts/hosted-preview.test.mjs web/scripts/workspace-image-cache.test.mjs
       - run: npm test --prefix contract
       - run: npm run typecheck --prefix contract
       - run: npm test --prefix hub
       - run: npm run typecheck --prefix hub
+      - run: npm run test --prefix hub/runtime
       - run: npm run typecheck --prefix hub/runtime

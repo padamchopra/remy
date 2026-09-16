@@ -1,8 +1,8 @@
+import { WorkspaceMarkFrame } from "./WorkspaceMarkFrame";
 import { useEffect, useState } from "react";
 import { Folder } from "lucide-react";
 import { isProjectIconFile, projectIcon } from "@/lib/projects";
 import { deviceIcon } from "@/lib/devices";
-import { tintOf } from "@/lib/tints";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
 import type { Server, Workspace } from "@/state/types";
@@ -96,22 +96,14 @@ export function WorkspaceMark({
       </span>
     );
   }
-  const colors = tintOf(workspace.tint);
   return (
-    <span
-      className={cn(
-        "inline-flex shrink-0 items-center justify-center overflow-hidden rounded-md leading-none",
-        box,
-        colors.well,
-        colors.fg,
-      )}
-    >
+    <WorkspaceMarkFrame size={size} tint={workspace.tint}>
       <WorkspaceIcon
         workspaceId={workspace.id}
         icon={workspace.icon}
         className={glyph}
         fileClassName="size-full"
       />
-    </span>
+    </WorkspaceMarkFrame>
   );
 }

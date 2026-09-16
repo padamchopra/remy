@@ -51,6 +51,7 @@ export type ConnectionProvider = {
   authorizeUrl: string;
   tokenUrl: string;
   scope: string;
+  callbackPath?: string;
   authorizeParameters?: Record<string, string>;
   identity: (
     token: string,
@@ -195,7 +196,7 @@ export class Connections {
         "Ask your administrator to configure this connection.",
         409,
       );
-    const state = encode(crypto.getRandomValues(new Uint8Array(32))),
+    const state = `${provider.callbackPath ? "remy-connection." : ""}${encode(crypto.getRandomValues(new Uint8Array(32)))}`,
       hash = await connectionHash(state),
       verifier = encode(crypto.getRandomValues(new Uint8Array(32)));
     await this.db
@@ -219,7 +220,7 @@ export class Connections {
     for (const [key, value] of Object.entries({
       ...provider.authorizeParameters,
       client_id: provider.clientId,
-      redirect_uri: `${origin}/api/connections/${providerId}/callback`,
+      redirect_uri: `${origin}${provider.callbackPath ?? `/api/connections/${providerId}/callback`}`,
       response_type: "code",
       scope: provider.scope,
       state,
@@ -259,8 +260,19 @@ export class Connections {
       grant_type: "authorization_code",
       code,
       code_verifier: verifier,
-      redirect_uri: `${origin}/api/connections/${providerId}/callback`,
+      redirect_uri: `${origin}${provider.callbackPath ?? `/api/connections/${providerId}/callback`}`,
     });
+    return this.saveTokens(user, providerId, saved, tokens);
+  }
+  async personalToken(org: string, user: string, token: string) {
+    await this.authorize(org, user, user);
+    if (!token || token.length > 4096 || /\s/.test(token))
+      throw new ConnectionError("Enter a valid GitHub personal access token.");
+    const epoch = await this.epoch(org, "github", user);
+    return this.saveTokens(user, "github", { organization_id: org, subject: user, epoch }, { access_token: token });
+  }
+  private async saveTokens(user: string, providerId: string, saved: { organization_id: string; subject: string; epoch: number }, tokens: ConnectionTokens) {
+    const provider = this.provider(providerId);
     const identity = await provider.identity(tokens.access_token, this.send);
     await this.authorize(saved.organization_id, user, saved.subject);
     const existing = await this.get(

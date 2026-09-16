@@ -1,3 +1,4 @@
+import { AvatarField, NotificationsField, AppearanceField, PermissionField, AppInfo } from "./GeneralFields";
 import { AutomaticUpdateField } from "./AutomaticUpdate";
 import { HubComputers } from "./HubComputers";
 import {
@@ -17,9 +18,8 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Check, Cloud, Copy, Folder, Github, GripVertical, ImagePlus, Laptop, Monitor, Plus, RefreshCw, Smartphone, Trash2, X } from "lucide-react";
+import { Check, Cloud, Copy, Folder, GripVertical, Laptop, Plus, RefreshCw, Smartphone, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
-import remyMark from "@/assets/remy-mark.png";
 import { Badge } from "@/components/ui/badge";
 import {
   AlertDialog,
@@ -77,10 +77,9 @@ import {
 } from "@/components/ui/item";
 import { ModelPickerButton } from "@/components/ModelPicker";
 import { PullRequestMonitoringFields } from "@/components/PullRequestMonitoring";
-import { PERMISSIONS, permissionOf } from "@/lib/chat-options";
+import { permissionOf } from "@/lib/chat-options";
 import { ProviderMark } from "@/components/ProviderMark";
 import type { Provider } from "@/lib/providers";
-import { AvatarFrom, PresetAvatar } from "@/components/UserAvatar";
 import { Markdown } from "@/components/Markdown";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import {
@@ -96,14 +95,7 @@ import { PairingQr } from "@/components/PairingQr";
 import { PathPickerDialog } from "@/components/PathPicker";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { apiError } from "@/lib/api-error";
-import { AVATAR_PRESETS, isImageAvatar, readAvatarFile } from "@/lib/avatars";
-import {
-  askToNotify,
-  notificationsEnabled,
-  notifyPermission,
-  setNotificationsEnabled,
-  type NotifyPermission,
-} from "@/lib/notify";
+
 import { IDENTITIES } from "@/components/AgentSettings";
 import { useAppUpdate, type AppUpdatePhase } from "@/hooks/use-app-update";
 import { useStore } from "@/state/store";
@@ -212,11 +204,8 @@ function GeneralPane({
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center gap-3">
-        <img src={remyMark} alt="" className="size-10 rounded-[10px]" />
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium">Remy</p>
-          {status ? (
+      <AppInfo detail={
+          status ? (
             <p className="text-xs text-muted-foreground">
               {update.phase === "downloading" || update.phase === "installing" ? (
                 <span className="shimmer">{status}</span>
@@ -228,8 +217,8 @@ function GeneralPane({
             <p className="font-mono text-xs text-muted-foreground tabular-nums">
               {checking ? <span className="shimmer">Checking…</span> : current}
             </p>
-          )}
-        </div>
+          )
+      }>
         {/* A copy built here is not behind any release, so it is told what it
             is rather than offered a download it does not want. */}
         {local ? (
@@ -241,17 +230,11 @@ function GeneralPane({
             {checking ? "Checking…" : "Check for updates"}
           </Button>
         )}
-      </div>
-      <AvatarField />
+      </AppInfo>
+      <LocalAvatarField />
       <NotificationsField />
       <ThreadDefaultsField />
-      <div className="flex items-start gap-3 rounded-lg border border-border px-3 py-2.5">
-        <Monitor className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-        <div className="min-w-0">
-          <p className="text-sm font-medium">Appearance</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">Dark is the only theme wired up today.</p>
-        </div>
-      </div>
+      <AppearanceField />
     </div>
   );
 }
@@ -431,179 +414,10 @@ function UpdateButton({
   );
 }
 
-/// The face on your messages. Presets are drawn in the app; a picture is
-/// resized and cropped square here before it is stored, so a settings row never
-/// holds a photo straight off a phone.
-function AvatarField() {
+function LocalAvatarField() {
   const { settings, save } = useServerSettings();
-  const useGithubAvatar = useStore((s) => s.useGithubAvatar);
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const file = useRef<HTMLInputElement>(null);
-
-  if (!settings) return null;
-  const avatar = settings.avatar ?? "";
-
-  const choose = (next: string) => {
-    void save({ avatar: next }, "your avatar");
-    setOpen(false);
-  };
-
-  const fromGithub = async () => {
-    setBusy(true);
-    try {
-      await useGithubAvatar();
-      setOpen(false);
-    } catch (caught) {
-      toast.error("Couldn't get your GitHub picture", { description: apiError(caught) });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const upload = async (picked: File | undefined) => {
-    if (!picked) return;
-    try {
-      choose(await readAvatarFile(picked));
-    } catch (caught) {
-      toast.error("Couldn't use that image", {
-        description: caught instanceof Error ? caught.message : "Try a different one.",
-      });
-    }
-  };
-
-  return (
-    <Field orientation="horizontal" className="items-center">
-      <FieldContent>
-        <FieldLabel>Your avatar</FieldLabel>
-        <FieldDescription className="text-xs">
-          Shown on your messages in a thread.
-        </FieldDescription>
-      </FieldContent>
-      <div className="flex shrink-0 items-center gap-2">
-        <AvatarFrom avatar={avatar} />
-        <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
-          Change
-        </Button>
-      </div>
-
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-[420px]">
-          <DialogHeader>
-            <DialogTitle>Your avatar</DialogTitle>
-            <DialogDescription>Pick one, or use a picture of your own.</DialogDescription>
-          </DialogHeader>
-
-          <div className="grid grid-cols-4 gap-3">
-            <button
-              type="button"
-              aria-label="Default"
-              onClick={() => choose("")}
-              className={cn(
-                "flex items-center justify-center rounded-xl border p-2",
-                avatar ? "border-transparent hover:bg-accent" : "border-primary",
-              )}
-            >
-              <PresetAvatar className="size-12" />
-            </button>
-            {AVATAR_PRESETS.map((preset) => (
-              <button
-                key={preset.id}
-                type="button"
-                aria-label={preset.label}
-                title={preset.label}
-                onClick={() => choose(`preset:${preset.id}`)}
-                className={cn(
-                  "flex items-center justify-center rounded-xl border p-2",
-                  avatar === `preset:${preset.id}` ? "border-primary" : "border-transparent hover:bg-accent",
-                )}
-              >
-                <PresetAvatar preset={preset} className="size-12" />
-              </button>
-            ))}
-          </div>
-
-          <DialogFooter className="sm:justify-between">
-            <input
-              ref={file}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(event) => {
-                void upload(event.target.files?.[0]);
-                event.target.value = "";
-              }}
-            />
-            <span className="flex items-center gap-2">
-              <Button type="button" variant="outline" size="sm" onClick={() => file.current?.click()}>
-                <ImagePlus />
-                Use a picture
-              </Button>
-              <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void fromGithub()}>
-                <Github />
-                {busy ? "Fetching…" : "From GitHub"}
-              </Button>
-            </span>
-            {isImageAvatar(avatar) && (
-              <Button type="button" variant="ghost" size="sm" onClick={() => choose("")}>
-                Remove picture
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </Field>
-  );
-}
-
-/// Banners for a thread that needs you or has finished. Permission belongs to
-/// the browser and the answer sticks, so the switch says what the browser
-/// decided rather than pretending it can ask again.
-function NotificationsField() {
-  const [on, setOn] = useState(() => notificationsEnabled());
-  const [permission, setPermission] = useState<NotifyPermission>(() => notifyPermission());
-
-  const toggle = async (next: boolean) => {
-    if (!next) {
-      setNotificationsEnabled(false);
-      setOn(false);
-      return;
-    }
-    const answer = await askToNotify();
-    setPermission(answer);
-    if (answer !== "granted") {
-      setNotificationsEnabled(false);
-      setOn(false);
-      toast.error(
-        answer === "unsupported"
-          ? "This browser can't show notifications"
-          : "Your browser is blocking notifications",
-        { description: "Allow them for this site, then turn this back on." },
-      );
-      return;
-    }
-    setNotificationsEnabled(true);
-    setOn(true);
-  };
-
-  return (
-    <Field orientation="horizontal" className="items-center">
-      <FieldContent>
-        <FieldLabel htmlFor="notifications">Notify me</FieldLabel>
-        <FieldDescription className="text-xs">
-          {permission === "denied"
-            ? "Your browser is blocking notifications for this site."
-            : "When a thread needs you or finishes. Clicking it opens the thread."}
-        </FieldDescription>
-      </FieldContent>
-      <Switch
-        id="notifications"
-        checked={on && permission === "granted"}
-        disabled={permission === "unsupported"}
-        onCheckedChange={(next) => void toggle(next)}
-      />
-    </Field>
-  );
+  const fromGithub = useStore(s => s.useGithubAvatar);
+  return settings ? <AvatarField avatar={settings.avatar ?? ""} onSave={avatar => save({ avatar }, "your avatar")} onGithub={fromGithub} /> : null;
 }
 
 /// What a new thread starts as: the model it thinks with, and what it may do
@@ -642,32 +456,7 @@ function ThreadDefaultsField() {
             )
           }
         />
-        <Select
-          value={permission.value}
-          onValueChange={(value) => void save({ defaultPermissionMode: value }, "what a new thread may do")}
-        >
-          <SelectTrigger
-            id="thread-default-permission"
-            aria-label="Default permission level"
-            size="sm"
-            className="w-48 shrink-0"
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent align="end">
-            <SelectGroup>
-              {PERMISSIONS.map((option) => {
-                const Icon = option.icon;
-                return (
-                  <SelectItem key={option.value} value={option.value}>
-                    <Icon className="size-4 opacity-70" />
-                    {option.label}
-                  </SelectItem>
-                );
-              })}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
+        <PermissionField value={permission.value} onChange={value => void save({ defaultPermissionMode: value }, "what a new thread may do")} />
       </div>
     </Field>
   );

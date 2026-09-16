@@ -1,3 +1,9 @@
+import { HubThreadSidebar } from "./HubThreadSidebar";
+import { PaneHeader } from "./PaneHeader";
+import { AvatarFrom } from "./UserAvatar";
+import { useHubProfile } from "@/lib/hub-profile";
+import { HubModelFavorites } from "./HubModelFavorites";
+import { EmptyState } from "@/components/EmptyState";
 import { lazy, useEffect, useRef, useState } from "react";
 import {
   Folder,
@@ -59,17 +65,13 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import {
-  Empty,
-  EmptyHeader,
-  EmptyTitle,
-  EmptyDescription,
   EmptyContent,
 } from "@/components/ui/empty";
 import { HubPersonalContext } from "@/lib/hub-scope";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AppLoading } from "@/components/AppLoading";
+import { PaneLoading } from "@/components/PaneLoading";
 import { Spinner } from "@/components/ui/spinner";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -84,12 +86,14 @@ import { HubComputerApproval } from "./HubComputerApproval";
 import { HubInvitation } from "./HubInvitation";
 import { HubSignIn } from "./HubSignIn";
 import { HubNotifications } from "./HubNotifications";
+const GeneralSettings = lazy(() => import("./HubGeneralSettings"));
 const Threads = lazy(() => import("./HubThreads"));
 const Board = lazy(() => import("./HubBoard"));
 const Computers = lazy(() =>
   import("./HubComputers").then((m) => ({ default: m.HubComputers })),
 );
 const Environments = lazy(() => import("./EnvironmentsSettings").then(m=>({default:m.EnvironmentsSettings})));
+const WorkspaceDetails = lazy(() => import("./HubWorkspaceDetails"));
 const OrganizationSettings = lazy(() => import("./HubOrganizationSettings"));
 const Connections = lazy(() =>
   import("./HubConnections").then((m) => ({ default: m.HubConnections })),
@@ -132,7 +136,9 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [personal, setPersonal] = useState<Organization>();
   const [threadsLoaded, setThreadsLoaded] = useState(false);
-  const [profile, setProfile] = useState<{ id: string; name: string }>();
+  const [profile, setProfile] = useState<{ id: string; name: string; image?: string }>();
+  const liveProfile = useHubProfile(route.organizationId ?? "personal").profile;
+  const shownProfile = liveProfile ?? profile;
   const [loaded, setLoaded] = useState(false);
   const [signedOut, setSignedOut] = useState(false);
   const [error, setError] = useState("");
@@ -153,15 +159,12 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
   };
   const reload = async () => {
     try {
-      const [result, person, own] = await Promise.all([
-        hubRequest<{ organizations: Organization[] }>("/api/organizations"),
-        hubRequest<{ id: string; name: string }>("/api/profile"),
-        hubRequest<{ personal: Organization }>("/api/personal"),
+      await Promise.all([
+        hubRequest<{ organizations: Organization[] }>("/api/organizations").then(result => setOrganizations(result.organizations)),
+        hubRequest<{ id: string; name: string }>("/api/profile").then(setProfile),
+        hubRequest<{ personal: Organization }>("/api/personal").then(own => setPersonal(own.personal)),
       ]);
       setError("");
-      setPersonal(own.personal);
-      setOrganizations(result.organizations);
-      setProfile(person);
       setSignedOut(false);
     } catch (e) {
       if (e instanceof HubRequestError && e.status === 401) setSignedOut(true);
@@ -237,7 +240,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
       offOrganization();
     };
   }, [organization?.id, profile?.id]);
-  if (!loaded) return <AppLoading />;
+  if (!loaded && !(profile && organization)) return <AppLoading />;
   if (signedOut) return <HubSignIn runtime={runtime} />;
   const requestedSection =
     route.name === "board" || route.name === "ticket"
@@ -282,6 +285,12 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           selected: section === "workspaces",
         },
         {
+          label: "General",
+          icon: Settings2,
+          route: { name: "settings", tab: "general", organizationId },
+          selected: section === "general",
+        },
+        {
           label: "Computers",
           icon: Laptop,
           route: { name: "settings", tab: "devices", organizationId },
@@ -316,6 +325,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
     : [];
   return (
     <HubPersonalContext value={isPersonal}>
+      <HubModelFavorites key={`${profile?.id}:${organizationId}`} organizationId={organizationId}>
       <SidebarProvider>
         <SidebarNavigation route={route} />
         <Sidebar collapsible="icon">
@@ -446,33 +456,9 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                       </p>
                     )}
                     <SidebarMenu>
-                      {threads.map((thread) => (
-                        <SidebarMenuItem
-                          key={`${thread.computerId}:${thread.id}`}
-                        >
-                          <SidebarMenuButton
-                            data-link
-                            tooltip={thread.detail.title}
-                            aria-label={thread.detail.title}
-                            isActive={
-                              route.name === "threads" &&
-                              route.threadId === thread.id &&
-                              route.computerId === thread.computerId
-                            }
-                            onClick={() =>
-                              navigate({
-                                name: "threads",
-                                organizationId,
-                                computerId: thread.computerId,
-                                threadId: thread.id,
-                              })
-                            }
-                          >
-                            <MessagesSquare />
-                            <span>{thread.detail.title}</span>
-                          </SidebarMenuButton>
-                        </SidebarMenuItem>
-                      ))}
+                      <HubThreadSidebar organizationId={organizationId ?? "personal"} threads={threads}
+                        selected={route.name === "threads" ? {id: route.threadId, computerId: route.computerId} : undefined}
+                        onSelect={thread => navigate({name: "threads", organizationId, computerId: thread.computerId, threadId: thread.id})} />
                     </SidebarMenu>
                   </SidebarGroupContent>
                 </SidebarGroup>}
@@ -492,15 +478,9 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <SidebarMenuButton size="lg" tooltip="Account menu" aria-label="Account menu">
-                      <Avatar size="sm">
-                        <AvatarFallback>
-                          {profile?.name.trim().charAt(0).toUpperCase() || (
-                            <User />
-                          )}
-                        </AvatarFallback>
-                      </Avatar>
+                      <AvatarFrom avatar={shownProfile?.image ?? ""} className="size-6" />
                       <span className="min-w-0 flex-1 truncate">
-                        {profile?.name}
+                        {shownProfile?.name}
                       </span>
                       <ChevronsUpDown className="text-muted-foreground" />
                     </SidebarMenuButton>
@@ -534,44 +514,38 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           </SidebarFooter>
         </Sidebar>
         <SidebarInset className="h-svh min-w-0 overflow-hidden">
-          <header className="flex shrink-0 items-center gap-2 border-b p-3">
+          {route.name === "settings" && route.tab === "general" && <PaneHeader crumbs={[{label:"Settings"},{label:"General"}]}><MobileSidebarTrigger /></PaneHeader>}
+          {!(route.name === "threads" && route.threadId) && !(route.name === "settings" && route.tab === "general") && <header className={`flex shrink-0 items-center gap-2 border-b p-3 ${route.name === "workspaces" && route.workspaceId ? "md:hidden" : ""}`}>
             <MobileSidebarTrigger />
             <h1 className="min-w-0 truncate">{links.find((link) => link.selected)?.label ?? "Remy"}</h1>
-          </header>
+          </header>}
           {error && (
             <p role="alert" className="px-4 py-2">
               {error}
             </p>
           )}
           {!organization ? (
-            <Empty>
-              <EmptyHeader>
-                <EmptyTitle>
-                  {error
+            <EmptyState title={error
                     ? "Your account could not be opened"
-                    : "Choose an account"}
-                </EmptyTitle>
-                <EmptyDescription>
-                  {error
+                    : "Choose an account"} description={error
                     ? "Try opening your account again."
-                    : "Choose Personal or an organization from the sidebar."}
-                </EmptyDescription>
-              </EmptyHeader>
+                    : "Choose Personal or an organization from the sidebar."}>
               {error && (
                 <EmptyContent>
                   <Button onClick={() => void reload()}>Try again</Button>
                 </EmptyContent>
               )}
-            </Empty>
+            </EmptyState>
           ) : (
             <div key={organization.id} className="flex min-h-0 flex-1 flex-col">
+              <div hidden={section !== "general"} className="min-h-0 overflow-auto px-5 py-6"><Deferred open={section === "general"}><GeneralSettings organizationId={organization.id} /></Deferred></div>
               <div
                 hidden={section !== "threads"}
                 className={
                   section === "threads" ? "flex min-h-0 flex-1" : undefined
                 }
               >
-                <Deferred open={section === "threads"}>
+                <Deferred open={section === "threads"} fallback={<div className="w-full p-4"><PaneLoading label="Loading threads" /></div>}>
                   <Threads
                     showNavigation={false}
                     canManageWorkspaces={organization.role !== "member"}
@@ -657,11 +631,11 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                       section === kind && (!isPersonal || kind === "workspaces")
                     }
                   >
-                    <OrganizationSettings
-                      organizationId={organization.id}
-                      kind={kind}
-                      role={organization.role}
-                    />
+                    {kind === "workspaces" && route.name === "workspaces" && route.workspaceId ? (
+                      <WorkspaceDetails key={`${organization.id}:${route.workspaceId}`} organizationId={organization.id} workspaceId={route.workspaceId} role={organization.role} onBack={() => navigate({ name: "workspaces", organizationId: organization.id })} />
+                    ) : (
+                      <OrganizationSettings organizationId={organization.id} kind={kind} role={organization.role} onOpenWorkspace={workspaceId => navigate({ name: "workspaces", workspaceId, organizationId: organization.id })} />
+                    )}
                   </Deferred>
                 </div>
               ))}
@@ -749,6 +723,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           navigate({ name: "threads", organizationId: id });
         }} />}
       </SidebarProvider>
+    </HubModelFavorites>
     </HubPersonalContext>
   );
 }

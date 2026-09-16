@@ -28,7 +28,7 @@ export async function githubRoute(
 ): Promise<Response | undefined> {
   const url = new URL(request.url),
     match =
-      /^\/api\/organizations\/([^/]+)\/github(?:\/(installations|repositories|selection|monitoring|actions))?$/.exec(
+      /^\/api\/organizations\/([^/]+)\/github(?:\/(installations|repositories|selection|monitoring|actions|token|accessible-repositories|import|workspace-images|workspace-branches))?$/.exec(
         url.pathname,
       );
   if (!match) return;
@@ -37,6 +37,9 @@ export async function githubRoute(
     service = githubFor(env);
   try {
     if (request.method === "GET") {
+      if (action === "workspace-branches") return Response.json(await service.workspaceBranches(org, user, url.searchParams.get("workspace") ?? ""), { headers: { "cache-control": "no-store" } });
+      if (action === "workspace-images") return Response.json(await service.workspaceImage(org, user, url.searchParams.get("workspace") ?? "", url.searchParams.get("path") ?? undefined, url.searchParams.get("q") ?? ""), { headers: { "cache-control": "no-store" } });
+      if (action === "accessible-repositories") return Response.json(await service.accessibleRepositories(org, user, Number(url.searchParams.get("page") ?? 1)), {headers: {"cache-control":"no-store"}});
       if (!action) return Response.json(await service.list(org, user));
       if (action === "installations")
         return Response.json({
@@ -53,6 +56,13 @@ export async function githubRoute(
     }
     if (request.method === "POST") {
       const input = (await request.json()) as Record<string, unknown>;
+      if (action === "token") {
+        if (typeof input.token !== "string") throw new ConnectionError("Enter your GitHub personal access token.");
+        await service.access(org, user, ["owner", "admin"]);
+        await service.connections.personalToken(org, user, input.token.trim());
+        return Response.json({connected:true}, {headers:{"cache-control":"no-store"}});
+      }
+      if (action === "import") return Response.json(await service.importRepository(org, user, String(input.fullName ?? "")));
       if (
         action === "selection" &&
         Array.isArray(input.repositoryIds) &&

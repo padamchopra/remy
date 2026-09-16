@@ -30,6 +30,12 @@ function fixture() {
       actor = new Headers(init?.headers).get("authorization") ?? "",
       body = init?.body ? JSON.parse(String(init.body)) : undefined;
     calls.push({ path, method, actor, body });
+    if (path === "/repos/release/remy/git/trees/HEAD") return Response.json({tree:[{path:"assets/logo.png",type:"blob",size:10},{path:"README.md",type:"blob",size:1},{path:"large.png",type:"blob",size:2000000}]});
+    if (path === "/repos/release/remy/contents/assets/logo.png") return Response.json({type:"file",size:10,encoding:"base64",content:"aGVsbG8=\n"});
+    if (path === "/repos/release/remy/contents/large.png") return Response.json({type:"file",size:2000000,encoding:"base64",content:""});
+    if (path === "/user/repos") return Response.json([{id:101,name:"Remy",full_name:"release/remy"}]);
+    if (path === "/repos/release/remy") return Response.json({id:101,name:"Remy",full_name:"release/remy",default_branch:"main"});
+    if (path === "/repos/release/remy/branches") return Response.json([{name:"main"},{name:"feature/next"}]);
     if (path === "/user/installations")
       return Response.json({
         installations: [
@@ -180,4 +186,62 @@ test("mentions require explicit monitoring and mapped members; deliveries and un
   await service.configure("studio", "ada", workspace, 7, false, null);
   await service.receive(delivery("override"), start);
   assert.equal(starts, 1);
+});
+
+
+test("repository picker uses member credentials and imports without deleting existing selections", async () => {
+  const {service, calls} = fixture();
+  const initial = await service.select("studio", "ada", 20, [101]);
+  const listed = await service.accessibleRepositories("studio", "ada", 1);
+  assert.equal(listed.repositories[0].full_name, "release/remy");
+  assert.equal(calls.at(-1)?.actor, "Bearer member-ada");
+  assert.equal(listed.nextPage, null);
+  await assert.rejects(service.accessibleRepositories("studio", "grace", 1));
+  await assert.rejects(service.accessibleRepositories("studio", "ada", 0));
+  await assert.rejects(service.importRepository("studio", "grace", "release/remy"));
+  await assert.rejects(service.importRepository("studio", "ada", "../user"));
+  const added = await service.importRepository("studio", "ada", "release/remy");
+  assert.equal(added.workspace.id, initial.repositories[0].workspace_id);
+  assert.equal((await service.list("studio", "ada")).repositories.length, 1);
+});
+
+test("workspace images use member credentials and reject unauthorized, oversized and non-image reads", async () => {
+  const {service, calls, sqlite} = fixture();
+  const {workspace} = await service.importRepository("studio", "ada", "release/remy");
+  assert.deepEqual(await service.workspaceImage("studio", "ada", workspace.id), {images:[{path:"assets/logo.png"}],truncated:false});
+  assert.deepEqual(await service.workspaceImage("studio", "ada", workspace.id, "assets/logo.png"), {mime:"image/png",data:"aGVsbG8="});
+  assert.equal(calls.at(-1)?.actor, "Bearer member-ada");
+  for (const path of ["../logo.png", "/logo.png", "README.md", "large.png"]) await assert.rejects(service.workspaceImage("studio", "ada", workspace.id, path));
+  await service.organizations.updateWorkspace("studio", "ada", workspace.id, {access:{userIds:[],teamIds:[]},icon:"assets/logo.png"});
+  const count = calls.length;
+  await assert.rejects(service.workspaceImage("studio", "grace", workspace.id));
+  await assert.rejects(service.workspaceImage("other", "ada", workspace.id));
+  assert.equal(calls.length, count);
+  assert.equal((await service.organizations.workspace("studio", "ada", workspace.id)).icon, "assets/logo.png");
+  sqlite.close();
+});
+
+ test("branch listing uses member credentials and enforces workspace access", async () => {
+  const {service, calls, sqlite} = fixture();
+  const {workspace} = await service.importRepository("studio", "ada", "release/remy");
+  assert.deepEqual(await service.workspaceBranches("studio", "ada", workspace.id), {branches:[{name:"main",current:true,checkout:null},{name:"feature/next",current:false,checkout:null}]});
+  assert.equal(calls.at(-1)?.actor, "Bearer member-ada");
+  await service.organizations.updateWorkspace("studio", "ada", workspace.id, {access:{userIds:[],teamIds:[]}});
+  const count = calls.length;
+  await assert.rejects(service.workspaceBranches("studio", "grace", workspace.id));
+  await assert.rejects(service.workspaceBranches("other", "ada", workspace.id));
+  assert.equal(calls.length, count);
+  sqlite.close();
+});
+
+test("cloud Git uses the initiating member's connection for imported workspaces", async () => {
+  const {service, sqlite} = fixture();
+  const {workspace} = await service.importRepository("studio", "ada", "release/remy");
+  assert.equal(await service.workspaceGitToken("studio", "ada", workspace.id), "member-ada");
+  await service.organizations.updateWorkspace("studio", "ada", workspace.id, {access:{userIds:[],teamIds:[]}});
+  await assert.rejects(service.workspaceGitToken("studio", "grace", workspace.id));
+  await assert.rejects(service.workspaceGitToken("other", "ada", workspace.id));
+  sqlite.exec("DELETE FROM memberships WHERE user_id='ada'");
+  await assert.rejects(service.workspaceGitToken("studio", "ada", workspace.id));
+  sqlite.close();
 });

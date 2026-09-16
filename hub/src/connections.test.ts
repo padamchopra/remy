@@ -241,3 +241,40 @@ test("webhook signatures, timestamp bounds, durable receipt and queue retry reta
     provider.verifyWebhook(request(), raw, secret, now + 61_000),
   );
 });
+
+
+test("GitHub PATs share encrypted connection storage and cannot reconnect after revocation", async () => {
+  const f = fixture();
+  f.provider.id = "github";
+  f.provider.clientId = undefined;
+  f.provider.clientSecret = undefined;
+  await f.service.personalToken("studio", "ada", "private-pat");
+  assert.equal(await f.service.token("studio", "github", "ada"), "private-pat");
+  assert.ok(!JSON.stringify(await f.service.list("studio", "ada")).includes("private-pat"));
+  assert.ok(!String(f.sqlite.prepare("SELECT credentials FROM connections").get()?.credentials).includes("private-pat"));
+  await assert.rejects(f.service.personalToken("other", "ada", "private-pat"));
+  await assert.rejects(f.service.personalToken("studio", "ada", "invalid token"));
+  f.provider.identity = async () => {
+    await f.service.disconnect("studio", "ada", "github", "ada");
+    return {id:"external",label:"Studio"};
+  };
+  await assert.rejects(f.service.personalToken("studio", "ada", "new-pat"));
+  await assert.rejects(f.service.token("studio", "github", "ada"));
+});
+
+
+test("repository OAuth reuses sign-in configuration with isolated callback state", async () => {
+  const github = connectionProviders({GITHUB_CLIENT_ID:"signin",GITHUB_CLIENT_SECRET:"secret"} as Env).find(p=>p.id==="github")!;
+  assert.equal(github.clientId, "signin");
+  assert.equal(await github.clientSecret!(), "secret");
+  assert.equal(github.scope, "repo");
+  assert.equal(github.callbackPath, "/api/auth/callback/github");
+  const f = fixture();
+  f.provider.callbackPath = github.callbackPath;
+  const url = await f.begin("ada");
+  assert.equal(url.searchParams.get("redirect_uri"), "https://hub.example/api/auth/callback/github");
+  assert.ok(url.searchParams.get("state")?.startsWith("remy-connection."));
+  await f.finish(url);
+  assert.equal(f.bodies[0].get("redirect_uri"), url.searchParams.get("redirect_uri"));
+  await assert.rejects(f.finish(url));
+});

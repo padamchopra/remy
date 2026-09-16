@@ -1,6 +1,7 @@
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 
 /// The look of a tab strip, shared by a thread's workbench and the draft pane
@@ -59,4 +60,12 @@ export function TabClose({ label, active, onClose }: { label: string; active: bo
       <X />
     </Button>
   );
+}
+
+export function WorkbenchTabTrigger({ icon, label, children, className, ...props }: ComponentProps<typeof TabsTrigger> & { icon: ReactNode; label: string }) {
+  return <TabsTrigger {...props} className={cn(tabTriggerClass, className)}>
+    {icon}
+    <span className="truncate">{label}</span>
+    {children}
+  </TabsTrigger>;
 }
