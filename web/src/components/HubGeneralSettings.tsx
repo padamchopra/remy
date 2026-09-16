@@ -6,8 +6,10 @@ import { AvatarField, AppearanceField, NotificationsField, PermissionField, AppI
 import { useHubProfile, saveHubAvatar } from "@/lib/hub-profile";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { Button } from "./ui/button";
-export default function HubGeneralSettings({organizationId}:{organizationId:string}) {
-  const preferences = useHubResource<{permissionMode:string}>(organizationId, "/profile-preferences");
+import { Field, FieldContent, FieldDescription, FieldLabel } from "./ui/field";
+type Preferences = {permissionMode:string};
+export default function HubGeneralSettings({organizationId,showModelDefault=true}:{organizationId:string;showModelDefault?:boolean}) {
+  const preferences = useHubResource<Preferences>(organizationId, "/profile-preferences");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState<{source:typeof preferences.value;permissionMode:string}>();
   const permission = saved?.source === preferences.value ? saved?.permissionMode : preferences.value?.permissionMode;
@@ -22,14 +24,21 @@ export default function HubGeneralSettings({organizationId}:{organizationId:stri
     }} />}
     {error && <p role="alert">{error}</p>}
     <NotificationsField />
-    <HubModelDefault organizationId={organizationId}>
-      <PermissionField value={permission ?? "default"} disabled={saving || !preferences.value} onChange={async permissionMode => {
-        setSaving(true);
-        try { await hubRequest(`${hubThreadBase(organizationId)}/profile-preferences`, "PATCH", {permissionMode}); setSaved({source:preferences.value,permissionMode}); }
-        catch(error) { toast.error("Couldn't save your permission level", {description:error instanceof Error ? error.message : "Try again."}); }
-        finally { setSaving(false); }
-      }} />
-    </HubModelDefault>
+    {showModelDefault ? <HubModelDefault organizationId={organizationId}>
+      <PermissionControl permission={permission} saving={saving} source={preferences.value} setSaving={setSaving} saved={setSaved} organizationId={organizationId} />
+    </HubModelDefault> : <Field orientation="horizontal" className="items-center">
+      <FieldContent><FieldLabel>Default permission level</FieldLabel><FieldDescription className="text-xs">You can still change this per thread.</FieldDescription></FieldContent>
+      <PermissionControl permission={permission} saving={saving} source={preferences.value} setSaving={setSaving} saved={setSaved} organizationId={organizationId} />
+    </Field>}
     <AppearanceField />
   </section>;
+}
+
+function PermissionControl({permission,saving,source,setSaving,saved:setSaved,organizationId}:{permission?:string;saving:boolean;source:Preferences|undefined;setSaving:(saving:boolean)=>void;saved:(value:{source:Preferences|undefined;permissionMode:string})=>void;organizationId:string}) {
+  return <PermissionField value={permission ?? "default"} disabled={saving || !source} onChange={async permissionMode => {
+        setSaving(true);
+        try { await hubRequest(`${hubThreadBase(organizationId)}/profile-preferences`, "PATCH", {permissionMode}); setSaved({source,permissionMode}); }
+        catch(error) { toast.error("Couldn't save your permission level", {description:error instanceof Error ? error.message : "Try again."}); }
+        finally { setSaving(false); }
+      }} />;
 }

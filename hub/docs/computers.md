@@ -6,6 +6,8 @@ A personal computer belongs to the member who attaches it. Only that member can 
 
 Personal computers start with **Only me**. Shared computers start with **Everyone in your organization**. A **Selected members and teams** policy accepts only current members and teams of that organization. The computer owner retains access. A thread's private/open policy further restricts access: computer access does not grant access to private threads.
 
+Organization → Computers lets an owner or admin share one of their Personal computers with the organization. The computer remains owned by Personal; the organization stores a revocable use grant and every current member can run organization work on it. The computer's signing key remains on the computer, organization responses omit it, and other administrators can remove the grant without gaining control of the Personal computer. Removing the computer or the member removes the grant.
+
 Settings → Computers carries the machine's name and icon into its registration. Names and icons can subsequently be edited on the organization computer. Device authorization keeps the device code and private key in the computer process; the window sees the comparison code. The signing key stays in Keychain on ordinary Macs. Existing local-only operation has no hub dependency.
 
 Removing a computer closes its hub connection and removes its hub thread catalogue and notifications. Its local threads, files, and running provider processes remain intact. Detaching from this Mac also clears its local registration and pending hub notifications. A disconnected organization cannot confirm a removal; the control reports that failure instead of claiming success.
@@ -21,6 +23,8 @@ Removing a computer closes its hub connection and removes its hub thread catalog
 | Live update | Coordinator invalidates computer and thread views on policy changes, removal, reconnect, and team/member changes | Recipient windows refresh their addressed inbox; device preferences invalidate the member's other open windows |
 | Reconnect | Computer/policy views make a full authorized read; threads resume or reset their existing cursor | SQLite retries until the hub acknowledges a persisted receipt; unique receipts prevent duplicate delivery; clients refetch and deduplicate alerts |
 | Unavailable owner | Last computer list is marked stale; cached threads remain readable only with current access; writes fail | Computer queues up to 1,000 alerts for seven days; hub retries Apple delivery with backoff while the signed-in device remains authorized |
+
+A shared Personal computer keeps its one authenticated connection to its Personal coordinator. Organization requests are authorized against the current grant and relayed through that coordinator with the destination organization id. Thread snapshots, manifests, attachments and notifications return to the destination coordinator, where ordinary membership, workspace and thread checks still apply. A reconnect reads the current grants and republishes each organization's thread manifest; revocation removes the computer from routing immediately and tells the connected computer to stop publishing that organization's threads.
 
 Access checks apply to start, read, write, join, approval, question, interrupt, image upload/download, list snapshots, and replayed live frames. Removing access updates an already-open thread without navigation. Named threads on a computer card open that thread; team transcripts and catalogue rows identify both computer and starter.
 

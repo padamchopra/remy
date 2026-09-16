@@ -9,7 +9,7 @@ import { ThreadComposerEditor } from "./ThreadComposerEditor";
 import { NewThreadSurface, ComposerWorkspaceTrigger } from "./NewThreadSurface";
 import { HubWorkspaceIcon } from "./HubWorkspaceIcon";
 import { ComposerMenu } from "./ComposerMenu";
-import { Check, Cloud, Laptop } from "lucide-react";
+import { Check, Cloud, Laptop, Lock, Users } from "lucide-react";
 import { InputGroupButton } from "./ui/input-group";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "./ui/dropdown-menu";
 import { EmptyState } from "@/components/EmptyState";
@@ -24,6 +24,7 @@ import { PaneLoading } from "@/components/PaneLoading";
 import { useHubResource } from "@/lib/hub-organization";
 import { formatLocation } from "@/lib/route";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
+import { usePersonalHub } from "@/lib/hub-scope";
 export function HubThreadComposer({
   organizationId,
   memberId,
@@ -41,6 +42,7 @@ export function HubThreadComposer({
   canManageWorkspaces: boolean;
   open: (computer: string, thread: string) => void;
 }) {
+  const isPersonal = usePersonalHub();
   const catalogue = useHubResource<{
     workspaces: { id: string; name: string; origin: string; icon?: string; tint?: string }[];
   }>(organizationId, "/workspaces");
@@ -60,6 +62,8 @@ export function HubThreadComposer({
     [workspaceId, setWorkspace] = useState(""),
     [selected, select] = useState("automatic"),
     [preferenceLoaded, setPreferenceLoaded] = useState(false),
+    [recommendedVisibility, setRecommendedVisibility] = useState<"private" | "open">(),
+    [visibilityOverride, setVisibilityOverride] = useState<"private" | "open">(),
     [message, setMessage] = useState(""),
     [error, setError] = useState("");
   useEffect(() => {
@@ -93,8 +97,24 @@ export function HubThreadComposer({
   useEffect(() => {
     setBranch("");
     setRequestId(crypto.randomUUID());
+    setVisibilityOverride(undefined);
     setError("");
   }, [workspaceId, organizationId]);
+  useEffect(() => {
+    let cancelled = false;
+    setRecommendedVisibility(isPersonal ? "private" : undefined);
+    if (!workspaceId || !preferenceLoaded || isPersonal) return;
+    void hubRequest<{ recommendedVisibility: "private" | "open" }>(`${base}/routing/resolve`, "POST", {
+      workspaceId,
+      trigger: "manual",
+      computerId: selected === "automatic" ? null : selected,
+    }).then(value => {
+      if (!cancelled) setRecommendedVisibility(value.recommendedVisibility);
+    }).catch(e => {
+      if (!cancelled) setError(e.message);
+    });
+    return () => { cancelled = true; };
+  }, [base, isPersonal, preferenceLoaded, selected, workspaceId]);
   const codexAccount=useHubResource<{phase:string}>(organizationId,workspaceId ? `/hosted/${encodeURIComponent(workspaceId)}/codex` : null);
   const modelAccess = useHubResource<{providers:ModelAccessEntry[]}>(organizationId,"/model-access");
   const defaults = useHubModelDefaults(organizationId, workspaceId || undefined, selected === "automatic" ? undefined : selected);
@@ -110,6 +130,8 @@ export function HubThreadComposer({
   const cloudConnections = useHubResource<{enabledProviders?: string[]}>(organizationId, "/hosted");
   const cloudOptions = CLOUD_COMPUTERS.filter(c => cloudConnections.value?.enabledProviders?.includes(c.provider));
   const workspace = workspaces.find((w) => w.id === workspaceId);
+  const visibility = visibilityOverride ?? recommendedVisibility ?? "private";
+  const visibilityLoaded = isPersonal || recommendedVisibility !== undefined;
   const eligible = computers.filter(
     (c) =>
       c.ownership !== "hosted" &&
@@ -174,6 +196,7 @@ export function HubThreadComposer({
           !workspace ||
           !memberId ||
           !preferenceLoaded ||
+          !visibilityLoaded ||
           !defaults.value ||
           !message.trim() ||
           catalogue.stale ||
@@ -184,14 +207,14 @@ export function HubThreadComposer({
           organizationId, ownerId: memberId, requestId, workspaceId,
           computerId: selected === "automatic" ? null : selected,
           computerName: cloudOptions.find(c => c.id === selected)?.name ?? eligible.find(c => c.computerId === selected)?.name ?? "Automatic",
-          message: message.trim(), ...(branch ? {branch} : {}), ...executionChoice,
+          message: message.trim(), visibility, ...(branch ? {branch} : {}), ...executionChoice,
         });
         open("pending", requestId);
       }}
     >
       <ThreadComposerEditor
         textarea={{ id: "hub-thread-message", maxLength: 64000, value: message, onChange: e => setMessage(e.target.value), required: true, disabled: false }}
-        canSend={!!memberId && !!workspace && preferenceLoaded && !!defaults.value && !!message.trim() && !catalogue.stale && (!(usingCloud || modelChoice.provider) || !!choiceValid)}
+        canSend={!!memberId && !!workspace && preferenceLoaded && visibilityLoaded && !!defaults.value && !!message.trim() && !catalogue.stale && (!(usingCloud || modelChoice.provider) || !!choiceValid)}
         busy={false} sendLabel="Send"
         controls={<ModelPickerButton variant="composer" value={modelChoice} onPick={choice=>setPickedModel({workspaceId,choice})} catalogue={modelCatalogue} disabled={false} />}
         contextEnd={<BranchPicker workspaceId={workspaceId} branch={branch || "Choose branch"} pending={!branch && resolvingBranch} busy={false} loadBranches={loadBranches} onPick={async value => { setBranch(value); return true; }} />}
@@ -207,6 +230,10 @@ export function HubThreadComposer({
               catch { select(previous); toast.error("Your computer choice could not be saved. Try again."); }
               finally { setPreferenceLoaded(true); }
             }} />
+          {!isPersonal && <ComposerMenu ariaLabel="Thread visibility" icon={visibility === "open" ? Users : Lock}
+            label={visibility === "open" ? "Organization" : "Private"} value={visibility} pending={!visibilityLoaded}
+            options={[{ value: "open", label: "Open to organization", icon: Users }, { value: "private", label: "Keep private", icon: Lock }]}
+            onChange={value => setVisibilityOverride(value as "private" | "open")} />}
           {cloudConnections.value && computersLoaded && !cloudOptions.length && !eligible.length && <InputGroupButton data-link onClick={() => go("settings")}>Set up a computer</InputGroupButton>}
         </>}
       />

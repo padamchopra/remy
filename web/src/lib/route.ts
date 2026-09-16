@@ -21,7 +21,7 @@ export type Route = (
   | { name: "board"; scope?: string }
   | { name: "ticket"; key: string }
   | { name: "prs" }
-  | { name: "settings"; tab: SettingsTab; organizationTab?: "members" | "teams"; analyticsTab?: AnalyticsTab; deviceId?: string; organizationId?: string }) & { organizationId?: string; ownerOrganizationId?: string };
+  | { name: "settings"; tab: SettingsTab; organizationTab?: "members" | "teams" | "computers"; analyticsTab?: AnalyticsTab; deviceId?: string; organizationId?: string }) & { organizationId?: string; ownerOrganizationId?: string };
 
 export interface AppLocation {
   route: Route;
@@ -71,7 +71,7 @@ function parseRoute(hash: string): AppLocation {
         name: "settings",
         tab,
         ...(tab === "devices" && params.get("organization") ? { organizationId: params.get("organization")! } : {}),
-        ...(tab === "organization" ? {organizationTab: params.get("section") === "teams" ? "teams" as const : "members" as const} : {}),
+        ...(tab === "organization" ? {organizationTab: params.get("section") === "teams" ? "teams" as const : params.get("section") === "computers" ? "computers" as const : "members" as const} : {}),
         ...(tab === "analytics" ? { analyticsTab } : {}),
         ...((tab === "providers" || tab === "devices") && deviceId ? { deviceId } : {}),
       },

@@ -29,12 +29,32 @@ export class HostedSettingsStore {
     });
   }
   async enabledProviders(org: string): Promise<HostedSettings["provider"][]> {
-    const secrets = await this.secrets(org);
-    return Object.entries(secrets).flatMap(([key, value]) => {
+    const direct = Object.entries(await this.secrets(org)).flatMap(([key, value]) => {
       if (!key.startsWith("cloud:")) return [];
       const parsed = cloudConnectionSchema.safeParse(JSON.parse(value));
       return parsed.success && parsed.data.enabled ? [parsed.data.provider] : [];
     });
+    const shared = (await this.db.prepare("SELECT source_organization_id,provider FROM organization_cloud_shares WHERE organization_id=?").bind(org).all<{source_organization_id:string;provider:HostedSettings["provider"]}>()).results;
+    for (const row of shared) {
+      const connection = await this.connection(row.source_organization_id, row.provider);
+      if (connection?.enabled) direct.push(row.provider);
+    }
+    return [...new Set(direct)];
+  }
+
+  async connection(org: string, provider: HostedSettings["provider"]) {
+    const direct = (await this.secrets(org))[`cloud:${provider}`];
+    if (direct) {
+      const parsed = cloudConnectionSchema.safeParse(JSON.parse(direct));
+      if (parsed.success && parsed.data.enabled) return parsed.data;
+    }
+    const shares = await this.db.prepare("SELECT source_organization_id FROM organization_cloud_shares WHERE organization_id=? AND provider=? ORDER BY created_at").bind(org, provider).all<{source_organization_id:string}>();
+    for (const share of shares.results) {
+      const saved = (await this.secrets(share.source_organization_id))[`cloud:${provider}`];
+      if (!saved) continue;
+      const parsed = cloudConnectionSchema.safeParse(JSON.parse(saved));
+      if (parsed.success && parsed.data.enabled) return parsed.data;
+    }
   }
   async executionSettings(org: string, workspace: string, provider?: HostedSettings["provider"]): Promise<HostedSettings> {
     const settings = await this.settings(org, workspace);

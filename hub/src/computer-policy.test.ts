@@ -159,6 +159,75 @@ test("organization and hosted computers have no personal owner and survive the r
   }
 });
 
+test("a personal computer grant gives every organization member use without management or key access", async () => {
+  const { sqlite, service } = database();
+  const computerId = crypto.randomUUID();
+  try {
+    sqlite.exec("INSERT INTO organizations(id,name,createdAt,updatedAt,personal_owner_id) VALUES('personal','Personal',1,1,'ada'); INSERT INTO memberships(id,organization_id,user_id,role,createdAt,updatedAt) VALUES('personal-ada','personal','ada','owner',1,1)");
+    await service.register("personal", "ada", { ...input, computerId, capabilities: { ...input.capabilities, workspaces: [{ id: "private", name: "Private", path: "/private", origin: "github.com/ada/private" }, { id: "release", name: "Release", path: "/release", origin: "github.com/example/release" }] } });
+    sqlite.prepare("INSERT INTO organization_computer_shares(organization_id,source_organization_id,computer_id,shared_by,created_at) VALUES(?,?,?,?,?)").run("org", "personal", computerId, "ada", 1);
+    sqlite.prepare("INSERT INTO organization_workspaces(id,organization_id,name,origin,created_at,updated_at) VALUES(?,?,?,?,?,?)").run("org-release", "org", "Release", "github.com/example/release", 1, 1);
+    const memberView = await service.list("org", "grace");
+    assert.equal(memberView.length, 1);
+    assert.equal(memberView[0].organizationId, "org");
+    assert.equal(memberView[0].canUse, true);
+    assert.equal(memberView[0].canManage, false);
+    assert.equal(memberView[0].shared, true);
+    assert.equal(memberView[0].access.mode, "organization");
+    assert.deepEqual(memberView[0].capabilities.workspaces.map(workspace => workspace.id), ["release"]);
+    assert.equal("publicKey" in memberView[0], false);
+    await service.requireUse("org", computerId, "grace");
+    await assert.rejects(service.update("org", computerId, "ada", { name: "Changed through the organization" }));
+    sqlite.prepare("DELETE FROM organization_computer_shares WHERE organization_id=? AND computer_id=?").run("org", computerId);
+    assert.deepEqual(await service.list("org", "grace"), []);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("organization computer settings share only an admin's personal connections and never return credentials", async () => {
+  const { sqlite, db, computers, organizations, service: computerService } = database();
+  const { createRouteHandler } = await import("./worker.js");
+  const { OrganizationService } = await import("./organizations.js");
+  const { personalSpace } = await import("./personal-space.js");
+  const { HostedSettingsStore } = await import("./hosted-settings.js");
+  let userId = "ada";
+  try {
+    const personal = await personalSpace(db, userId);
+    const computerId = crypto.randomUUID();
+    await computerService.register(personal.id, userId, { ...input, computerId });
+    const settings = new HostedSettingsStore(db, async () => "test-encryption-root-with-at-least-thirty-two-characters");
+    await settings.setSecret(personal.id, "cloud:modal", JSON.stringify({ provider: "modal", enabled: true, tokenId: "private-id", tokenSecret: "private-secret" }));
+    const route = createRouteHandler({
+      accountService: () => ({ authenticate: async () => ({ userId, sessionId: "session", clientKind: "web" }) }) as never,
+      computerStore: () => computers,
+      organizationStore: () => organizations,
+      organizationService: () => new OrganizationService(organizations),
+    });
+    const env = { DB: db, AUTH_SECRET: { get: async () => "test-encryption-root-with-at-least-thirty-two-characters" }, BETTER_AUTH_URL: "https://hub.example", COORDINATOR: { idFromName: (id:string) => id, get: () => ({ fetch: async () => Response.json({ ok: true }) }) } } as never;
+    const call = (path: string, method = "GET") => route(new Request(`https://hub.example/api/organizations/org/${path}`, { method, headers: { authorization: "Bearer session", origin: "https://hub.example" } }), env);
+    assert.equal((await call(`compute-shares/computers/${computerId}`, "PUT")).status, 200);
+    assert.equal((await call("compute-shares/cloud/modal", "PUT")).status, 200);
+    const response = await call("compute-shares");
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { computers: {id:string;shared:boolean}[]; cloudConnections:{provider:string;shared:boolean}[] };
+    assert.ok(payload.computers.some(computer => computer.id === computerId && computer.shared));
+    assert.ok(payload.cloudConnections.some(connection => connection.provider === "modal" && connection.shared));
+    const serialized = JSON.stringify(payload);
+    assert.equal(serialized.includes("private-id"), false);
+    assert.equal(serialized.includes("private-secret"), false);
+    assert.equal(serialized.includes("publicKey"), false);
+    userId = "grace";
+    assert.equal((await call(`compute-shares/computers/${computerId}`, "PUT")).status, 403);
+    assert.equal((await computerService.requireUse("org", computerId, "grace")).computerId, computerId);
+    userId = "ada";
+    assert.equal((await call(`compute-shares/computers/${computerId}`, "DELETE")).status, 200);
+    await assert.rejects(computerService.requireUse("org", computerId, "grace"), /not available/);
+  } finally {
+    sqlite.close();
+  }
+});
+
 test("notifications address eligible participants, persist once, and honor device revocation on retry", async () => {
   const { sqlite, db, service } = database();
   try {
@@ -421,6 +490,10 @@ test("hosted model keys are encrypted per organization and settings inherit expl
     await store.setSecret('org','cloud:modal',JSON.stringify(modal));
     assert.deepEqual(await store.enabledProviders('org'),['modal']);
     assert.equal((await store.executionSettings('org','w')).provider,'modal');
+    sqlite.prepare("INSERT INTO organization_cloud_shares(organization_id,source_organization_id,provider,shared_by,created_at) VALUES(?,?,?,?,?)").run('other','org','modal','outsider',1);
+    assert.deepEqual(await store.enabledProviders('other'),['modal']);
+    assert.deepEqual(await store.connection('other','modal'),modal);
+    assert.deepEqual(await store.secretNames('other'),[]);
   } finally {sqlite.close();}
 });
 

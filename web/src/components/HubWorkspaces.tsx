@@ -29,13 +29,13 @@ export default function HubWorkspaces({organizations, filter, onOpenWorkspace, o
   },[ids]);
   const loaded = summary.key === ids && summary.counts.size === visible.length;
   const count = summary.key === ids ? [...summary.counts.values()].reduce((a,b)=>a+b,0) : 0;
-  const canAdd = organizations.some(o=>o.role !== "member");
+  const canAdd = visible.some(o=>o.role !== "member");
   return <section className="flex min-w-0 flex-col gap-4 p-6" aria-label="Workspaces">
     {canAdd && (!loaded || count > 0) && <Button className="self-start" onClick={()=>setAdding(true)}>Add workspace</Button>}
     {error && <p role="alert">{error}</p>}
     {!loaded && !error && <Spinner aria-label="Loading workspaces" />}
     {loaded && count === 0 && <EmptyState title={canAdd ? "Add your first workspace" : "No workspaces available"} description={canAdd ? "Choose a repository for your first thread." : undefined}>{canAdd && <Button onClick={()=>setAdding(true)}>Add a workspace</Button>}</EmptyState>}
-    {visible.map(owner => <HubPersonalContext key={owner.id} value={owner.personal === true}><OrganizationSettings workspaceListOnly organizationId={owner.id} kind="workspaces" role={owner.role} onOpenWorkspace={id=>onOpenWorkspace(owner.id,id)} /></HubPersonalContext>)}
+    {visible.map(owner => <HubPersonalContext key={owner.id} value={owner.personal === true}><OrganizationSettings workspaceListOnly workspaceOwnerLabel={filter === "all" ? owner.personal ? "Personal" : owner.name : undefined} organizationId={owner.id} kind="workspaces" role={owner.role} onOpenWorkspace={id=>onOpenWorkspace(owner.id,id)} /></HubPersonalContext>)}
     <HubAddWorkspace organizationId={filter === "all" ? organizations.find(o=>o.personal)?.id ?? organizations[0]?.id ?? "" : filter} organizations={organizations} open={adding} onOpenChange={setAdding} onAdded={onAdded} />
   </section>;
 }
