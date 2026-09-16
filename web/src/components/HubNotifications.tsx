@@ -27,16 +27,18 @@ import { formatLocation } from "@/lib/route";
 const announced = new Set<string>();
 export function HubNotifications({
   organizationId,
+  organizationIds,
   open: controlledOpen,
   onOpenChange,
   showTrigger = true,
 }: {
   organizationId: string;
+  organizationIds?: string[];
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   showTrigger?: boolean;
 }) {
-  const [items, setItems] = useState<HubNotification[]>([]);
+  const [items, setItems] = useState<(HubNotification & {ownerOrganizationId:string})[]>([]);
   const [savingDevice, setSavingDevice] = useState<string>();
   const [error, setError] = useState("");
   const [ownOpen, setOwnOpen] = useState(false);
@@ -47,39 +49,40 @@ export function HubNotifications({
     () => localStorage.getItem(key) !== "off",
   );
   const [devices, setDevices] = useState<
-    { id: string; name: string; enabled: number }[]
+    { id: string; name: string; enabled: number; ownerOrganizationId:string }[]
   >([]);
-  const path = `${hubThreadBase(organizationId)}/notifications`;
-  const read = async (item: HubNotification) => {
-    await hubRequest(`${path}/${item.id}/read`, "POST");
+  const read = async (item: HubNotification & {ownerOrganizationId:string}) => {
+    await hubRequest(`${hubThreadBase(item.ownerOrganizationId)}/notifications/${item.id}/read`, "POST");
     setOpen(false);
     window.location.hash = formatLocation({
       route: {
         name: "threads",
-        organizationId,
+        organizationId: organizationIds ? "all" : organizationId,
+        ...(organizationIds ? {ownerOrganizationId:item.ownerOrganizationId} : {}),
         computerId: item.computerId,
         threadId: item.threadId,
       },
     });
   };
+  const ownersKey = (organizationIds ?? [organizationId]).join(",");
   useEffect(() => {
+    const snapshots = new Map<string, {notifications:(HubNotification & {ownerOrganizationId:string})[]; devices:typeof devices}>();
+    const stops = ownersKey.split(",").filter(Boolean).map(ownerOrganizationId => {
     let loaded = false;
     return watchHubResource<{
       notifications: HubNotification[];
       devices: typeof devices;
     }>(
-      path,
+      `${hubThreadBase(ownerOrganizationId)}/notifications`,
       (value) => {
-        if (!value) {
-          setItems([]);
-          setDevices([]);
-          return;
-        }
-        setItems(value.notifications);
-        setDevices(value.devices);
+        snapshots.set(ownerOrganizationId, {notifications:(value?.notifications ?? []).map(item => ({...item,ownerOrganizationId})),devices:(value?.devices ?? []).map(device => ({...device,ownerOrganizationId}))});
+        setItems([...snapshots.values()].flatMap(s => s.notifications));
+        setDevices([...snapshots.values()].flatMap(s => s.devices));
+        if (!value) return;
         setError("");
-        for (const item of value.notifications) {
-          const id = `${organizationId}:${item.id}`;
+        for (const original of value.notifications) {
+          const item = {...original,ownerOrganizationId};
+          const id = `${ownerOrganizationId}:${item.id}`;
           if (
             loaded &&
             !item.readAt &&
@@ -105,7 +108,9 @@ export function HubNotifications({
       },
       setError,
     );
-  }, [path]);
+    });
+    return () => stops.forEach(stop => stop());
+  }, [ownersKey]);
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       {showTrigger && <DialogTrigger asChild>
@@ -138,26 +143,26 @@ export function HubNotifications({
           />
         </Field>
         {devices.map((device) => (
-          <Field key={device.id} orientation="horizontal">
-            <FieldLabel htmlFor={`push-${device.id}`}>{device.name}</FieldLabel>
+          <Field key={`${device.ownerOrganizationId}:${device.id}`} orientation="horizontal">
+            <FieldLabel htmlFor={`push-${device.ownerOrganizationId}-${device.id}`}>{device.name}</FieldLabel>
             <Switch
-              id={`push-${device.id}`}
+              id={`push-${device.ownerOrganizationId}-${device.id}`}
               checked={!!device.enabled}
               disabled={savingDevice === device.id}
               onCheckedChange={(enabled) => {
                 setSavingDevice(device.id);
                 setDevices((old) =>
                   old.map((d) =>
-                    d.id === device.id ? { ...d, enabled: Number(enabled) } : d,
+                    d.id === device.id && d.ownerOrganizationId === device.ownerOrganizationId ? { ...d, enabled: Number(enabled) } : d,
                   ),
                 );
-                void hubRequest(`${path}/devices/${device.id}`, "PATCH", {
+                void hubRequest(`${hubThreadBase(device.ownerOrganizationId)}/notifications/devices/${device.id}`, "PATCH", {
                   enabled,
                 })
                   .then(() =>
                     setDevices((old) =>
                       old.map((d) =>
-                        d.id === device.id
+                        d.id === device.id && d.ownerOrganizationId === device.ownerOrganizationId
                           ? { ...d, enabled: Number(enabled) }
                           : d,
                       ),
@@ -165,7 +170,7 @@ export function HubNotifications({
                   )
                   .catch((e) => {
                     setDevices((old) =>
-                      old.map((d) => (d.id === device.id ? device : d)),
+                      old.map((d) => (d.id === device.id && d.ownerOrganizationId === device.ownerOrganizationId ? device : d)),
                     );
                     setError(e.message);
                   })
@@ -186,7 +191,7 @@ export function HubNotifications({
         )}
         <ItemGroup>
           {items.map((item) => (
-            <Item key={item.id}>
+            <Item key={`${item.ownerOrganizationId}:${item.id}`}>
               <ItemContent className="min-w-0">
                 <ItemTitle className="whitespace-normal break-words">
                   {item.title}
