@@ -145,6 +145,7 @@ export const computerSummarySchema = computerRegistrationSchema.omit({ publicKey
   updateRequired: z.boolean(),
   canManage: z.boolean().optional(),
   canUse: z.boolean().optional(),
+  shared: z.boolean().optional(),
 });
 export type ComputerSummary = z.infer<typeof computerSummarySchema>;
 

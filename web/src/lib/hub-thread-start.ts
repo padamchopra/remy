@@ -10,6 +10,7 @@ export type ThreadStart = {
   computerId: string | null;
   computerName: string;
   message: string;
+  visibility: "private" | "open";
   branch?: string;
   provider?: string;
   model?: string;
@@ -22,7 +23,7 @@ const storageKey = "remy:pending-hosted-threads";
 let starts: ThreadStart[] = [];
 try {
   const saved = JSON.parse(sessionStorage.getItem(storageKey) ?? "[]") as ThreadStart[];
-  if (Array.isArray(saved)) starts = saved.filter(s => s.at > Date.now() - 86_400_000).slice(-10).map(s => s.phase === "starting" ? {...s, phase: "failed", error: "Startup was interrupted. Retry to continue your thread."} : s);
+  if (Array.isArray(saved)) starts = saved.filter(s => s.at > Date.now() - 86_400_000).slice(-10).map(s => ({...s, visibility: s.visibility ?? "private", ...(s.phase === "starting" ? {phase: "failed" as const, error: "Startup was interrupted. Retry to continue your thread."} : {})}));
 } catch {}
 const listeners = new Set<() => void>();
 export const threadStarts = () => starts;
@@ -52,6 +53,7 @@ export async function retryHubThread(start: ThreadStart) {
         workspaceId: start.workspaceId, computerId: start.computerId,
         title: start.message.slice(0, 200), requestId: start.requestId,
         branch: start.branch, provider: start.provider, model: start.model,
+        visibility: start.visibility,
       });
       current = {...current, created};
       update(current);

@@ -98,6 +98,7 @@ try {
           return route.fulfill({json:{favorites:[...favorites]}});
         }
         if(path === `${base}/routing/preference`){if(route.request().method()==="POST"){await new Promise(resolve=>setTimeout(resolve,500));if(failPreference)return route.fulfill({status:500,json:{error:"Internal server error"}});preference=route.request().postDataJSON().computerId;}return route.fulfill({json:{computerId:preference}});}
+        if(path === `${base}/routing/resolve` && route.request().method()==="POST") return route.fulfill({json:{computerId:org.personal?undefined:"personal-mac",workspaceId:"repo",reason:"Preview route.",recommendedVisibility:org.personal?"private":"open"}});
         if(path===`${base}/github/workspace-branches`) return route.fulfill({json:{branches:[{name:"main",current:true,checkout:null},{name:"feature/selected",current:false,checkout:null}]}});
         if(path===`${base}/hosted/repo/codex`)return route.fulfill({json:{phase:"disconnected"}});
         if(path===`${base}/threads` && route.request().method()==="POST") {
@@ -175,6 +176,11 @@ try {
           await page.getByRole("option",{name:"Studio",exact:true}).click();
           await ownerDialog.getByRole("button",{name:"Choose account",exact:true}).click();
           await page.waitForURL(/organization=all.*owner=team/);
+          const visibility=page.getByLabel("Thread visibility",{exact:true});
+          await visibility.getByText("Organization",{exact:true}).waitFor();
+          if(artifacts)await page.screenshot({path:`${artifacts}/thread-visibility-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
+          await visibility.click();await page.getByRole("menuitem",{name:"Keep private",exact:true}).click();
+          await visibility.getByText("Private",{exact:true}).waitFor();
           await page.getByRole("button",{name:"Back to all",exact:true}).click();
           await combinedThreads.getByText("Personal thread",{exact:true}).waitFor();
           all.hash="/board?organization=all";await page.goto(all.href);

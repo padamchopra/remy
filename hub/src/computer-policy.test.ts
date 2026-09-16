@@ -172,6 +172,7 @@ test("a personal computer grant gives every organization member use without mana
     assert.equal(memberView[0].organizationId, "org");
     assert.equal(memberView[0].canUse, true);
     assert.equal(memberView[0].canManage, false);
+    assert.equal(memberView[0].shared, true);
     assert.equal(memberView[0].access.mode, "organization");
     assert.deepEqual(memberView[0].capabilities.workspaces.map(workspace => workspace.id), ["release"]);
     assert.equal("publicKey" in memberView[0], false);

@@ -98,6 +98,7 @@ export class ComputerService {
     return Promise.all(visible.map(async ({ publicKey: _, ...computer }) => computerSummarySchema.parse({
       ...computer,
       organizationId,
+      shared: computer.organizationId !== organizationId,
       access: computer.organizationId === organizationId ? computer.access : { mode: "organization", userIds: [], teamIds: [] },
       capabilities: { ...computer.capabilities, workspaces: userId ? (await Promise.all(computer.capabilities.workspaces.map(async (w) => await this.canUseWorkspace({ ...computer, publicKey: "" }, userId, w.id, organizationId) ? w : undefined))).filter((w) => w !== undefined) : computer.capabilities.workspaces },
       canManage: userId ? await this.canManage({ ...computer, publicKey: "" }, userId, organizationId) : false,

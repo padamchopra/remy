@@ -815,12 +815,13 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           const teams=await organizationStore.teams(organizationId),teamIds:string[]=[];
           for(const team of teams)if((await organizationStore.teamMembers(organizationId,team.id)).includes(identity.userId))teamIds.push(team.id);
           const preference=input.usePreference?await env.DB.prepare("SELECT computer_id FROM member_computer_preferences WHERE organization_id=? AND user_id=? AND workspace_id=?").bind(organizationId,identity.userId,workspace.id).first<{computer_id:string}>():null;
-          const choice=resolveComputer(rules,all,{workspaceId:workspace.id,origin:workspace.origin,teamIds,trigger:input.trigger??"manual",enabledProviders,...(preference?{override:preference.computer_id}:{})});
+          const override=input.computerId !== undefined ? input.computerId ?? undefined : preference?.computer_id;
+          const choice=resolveComputer(rules,all,{workspaceId:workspace.id,origin:workspace.origin,teamIds,trigger:input.trigger??"manual",enabledProviders,...(override?{override}:{})});
           if(choice.hostedWorkspaceId && input.prewarm) {
             const response=await board().fetch(new Request(`https://internal/hosted/${workspace.id}`,{method:"POST",headers:{"x-organization-id":organizationId},body:JSON.stringify({provider:choice.hostedProvider})}));
             if(!response.ok)return response;
           }
-          return Response.json(choice);
+          return Response.json({...choice,recommendedVisibility:choice.computerId && all.find(computer=>computer.computerId===choice.computerId)?.shared ? "open" : "private"});
         }
         return jsonError("This routing action is unavailable.",405);
       }
@@ -1901,13 +1902,14 @@ export class HubCoordinator {
     }
     if (url.pathname === "/threads" && request.method === "POST") {
       const org = request.headers.get("x-organization-id")!;
-      const input = await body<{workspaceId?: string; title?: string; requestId?: string; computerId?:string|null; provider?:string; model?:string; branch?:string}>(request);
+      const input = await body<{workspaceId?: string; title?: string; requestId?: string; computerId?:string|null; provider?:string; model?:string; branch?:string; visibility?:string}>(request);
       if (!input || typeof input.workspaceId !== "string" || typeof input.requestId !== "string" || !/^[0-9a-f-]{36}$/.test(input.requestId)) return jsonError("Choose a workspace and retry your thread.", 400);
       const workspace = await new OrganizationService(new D1OrganizationStore(this.env.DB)).workspace(org, actor.id, input.workspaceId);
       if(input.computerId !== undefined && input.computerId !== null && typeof input.computerId !== "string") return jsonError("Choose a computer.",400);
       if(input.provider !== undefined && !["claude","codex","cursor"].includes(input.provider))return jsonError("Choose a provider.",400);
       if(input.model !== undefined && (typeof input.model !== "string" || input.model.length>512))return jsonError("Choose a model.",400);
       if(input.branch !== undefined && (typeof input.branch !== "string" || !input.branch || input.branch.length > 255)) return jsonError("Choose a branch.",400);
+      if(input.visibility !== undefined && input.visibility !== "private" && input.visibility !== "open") return jsonError("Choose who can read this thread.",400);
       const routed=/^remy:(router|openrouter|openai):(.+)$/.exec(input.model ?? "");
       if(routed) {
         const access=publicModelAccess(await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).secrets(org)).find(p=>p.id===routed[1]);
@@ -1919,7 +1921,7 @@ export class HubCoordinator {
       try {
         const choice = await this.taskComputer(actor.id, workspace.id, "manual", `${actor.id}:${input.requestId}`, input.title,input.computerId,input);
         const preferences = await this.env.DB.prepare("SELECT permission_mode FROM member_preferences WHERE user_id=?").bind(actor.id).first<{permission_mode:string}>();
-        const made = await this.dispatchComputer(choice.computerId, actor, "POST", "/hub/threads", {workspaceId:choice.workspaceId, hubTaskId:key, permissionMode:preferences?.permission_mode ?? "default", branch:input.branch, provider:input.provider, model:input.model, title:typeof input.title === "string" ? input.title.slice(0,200) : undefined});
+        const made = await this.dispatchComputer(choice.computerId, actor, "POST", "/hub/threads", {workspaceId:choice.workspaceId, hubTaskId:key, permissionMode:preferences?.permission_mode ?? "default", branch:input.branch, provider:input.provider, model:input.model, visibility:input.visibility ?? "private", title:typeof input.title === "string" ? input.title.slice(0,200) : undefined});
         if (!made.ok) return made;
         const thread = threadSnapshotSchema.parse(await made.json());
         await this.threads.snapshot(choice.computerId, thread);
