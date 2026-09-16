@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
-import { ArrowLeft, Check, ChevronDown, CircleSlash, Star } from "lucide-react";
+import { ModelFavoritesContext } from "@/lib/model-favorites";
+import { useContext, useEffect, useState } from "react";
+import { Bot, ArrowLeft, Check, ChevronDown, CircleSlash, Star } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -56,18 +57,19 @@ function match(value: string, search: string, keywords?: string[]): number {
   return fields.some((entry) => entry.includes(query)) ? 1 : 0;
 }
 
-function useProviders(): Provider[] {
+function useProviders(override?: Provider[]): Provider[] {
   const providers = useStore((s) => s.providers);
   const loadProviders = useStore((s) => s.loadProviders);
 
   useEffect(() => {
+    if (override) return;
     void loadProviders().catch(() => {
       // The machine says elsewhere that it is unreachable; the built-in
       // catalogue is enough to paint the picker.
     });
-  }, [loadProviders]);
+  }, [loadProviders, override]);
 
-  return providers ?? PROVIDERS;
+  return override ?? providers ?? PROVIDERS;
 }
 
 function displayModel(model: ProviderModel): string {
@@ -88,6 +90,7 @@ export function ModelPicker({
   allowDefault,
   defaultChoice,
   onlyProvider,
+  catalogue,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -100,8 +103,9 @@ export function ModelPicker({
   defaultChoice?: ModelChoice;
   /// Keeps an existing thread on the provider that owns its transcript.
   onlyProvider?: string;
+  catalogue?: Provider[];
 }) {
-  const providers = useProviders();
+  const providers = useProviders(catalogue);
   const shownProviders = onlyProvider
     ? providers.filter((provider) => provider.id === onlyProvider)
     : providers;
@@ -112,7 +116,9 @@ export function ModelPicker({
   const saveSettings = useStore((s) => s.saveSettings);
   const off = allowOff && value.model === OFF;
   const inherited = allowDefault && value.provider === REMY_DEFAULT;
-  const favorites = new Set(settings?.favoriteModels ?? []);
+  const hostedFavorites = useContext(ModelFavoritesContext);
+  const favorites = new Set(hostedFavorites?.values ?? settings?.favoriteModels ?? []);
+  const [savingFavorite, setSavingFavorite] = useState(false);
   const [pending, setPending] = useState<ModelChoice>();
 
   const changeOpen = (next: boolean) => {
@@ -125,7 +131,11 @@ export function ModelPicker({
     const next = favorites.has(key)
       ? [...favorites].filter((entry) => entry !== key)
       : [...favorites, key];
-    void saveSettings({ favoriteModels: next }).catch(() => toast.error("Couldn't update favorites"));
+    setSavingFavorite(true);
+    const save = hostedFavorites
+      ? hostedFavorites.toggle(key, !favorites.has(key))
+      : saveSettings({ favoriteModels: next });
+    void save.catch(() => toast.error("Couldn't update favorites")).finally(() => setSavingFavorite(false));
   };
 
   const favoriteModels = shownProviders.flatMap((provider) =>
@@ -248,6 +258,7 @@ export function ModelPicker({
                   type="button"
                   variant="ghost"
                   size="icon-xs"
+                  disabled={savingFavorite || (hostedFavorites !== null && !hostedFavorites.ready)}
                   aria-label={`Remove ${model.label} from favorites`}
                   className="ml-auto text-yellow-500"
                   onClick={(event) => {
@@ -289,6 +300,7 @@ export function ModelPicker({
                       type="button"
                       variant="ghost"
                       size="icon-xs"
+                      disabled={savingFavorite || (hostedFavorites !== null && !hostedFavorites.ready)}
                       aria-label={`${favorites.has(`${provider.id}:${model.value}`) ? "Remove" : "Add"} ${model.label} ${favorites.has(`${provider.id}:${model.value}`) ? "from" : "to"} favorites`}
                       className={cn(
                         "ml-auto text-muted-foreground opacity-60 hover:opacity-100",
@@ -342,6 +354,7 @@ export function ModelPickerButton({
   title,
   id,
   className,
+  catalogue,
 }: {
   value: ModelChoice;
   onPick: (choice: ModelChoice) => void;
@@ -355,14 +368,16 @@ export function ModelPickerButton({
   title?: string;
   id?: string;
   className?: string;
+  catalogue?: Provider[];
 }) {
-  const providers = useProviders();
+  const providers = useProviders(catalogue);
   const [open, setOpen] = useState(false);
   const inherited = allowDefault && value.provider === REMY_DEFAULT;
-  const label = inherited
+  const hasChoice = providers.some(p => p.id === value.provider);
+  const label = catalogue && !hasChoice && !inherited && value.model !== OFF ? (value.provider ? `${value.model || value.provider} · Unavailable` : "Choose a model") : inherited
     ? inheritedLabel(providers, defaultChoice)
-    : value.model === OFF ? "Off" : `${modelLabel(providers, value)} · ${effortLabel(providers, value)}`;
-  const mark = inherited
+    : value.model === OFF ? "Off" : `${modelLabel(providers, value)}${providers.find(p => p.id === value.provider)?.efforts.length ? ` · ${effortLabel(providers, value)}` : ""}`;
+  const mark = !hasChoice && !inherited ? <Bot className="size-4 shrink-0" /> : inherited
     ? <ProviderMark provider={defaultChoice?.provider ?? "claude"} />
     : <ProviderMark provider={value.provider} />;
 
@@ -409,6 +424,7 @@ export function ModelPickerButton({
         allowDefault={allowDefault}
         defaultChoice={defaultChoice}
         onlyProvider={onlyProvider}
+        catalogue={catalogue}
       />
     </>
   );

@@ -1,3 +1,4 @@
+import { HostedStartupError } from "../../src/hosted-startup-error.js";
 import { createServer } from "node:http";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { providers } from "./providers.js";
@@ -84,8 +85,8 @@ createServer(async (req, res) => {
     }
     res.end(JSON.stringify(result));
     } finally { adapter.close(); }
-  } catch {
-    res.writeHead(502).end('{"error":"Hosted computer operation failed."}');
+  } catch (cause) {
+    res.writeHead(502).end(JSON.stringify({code: "runtime_operation_failed", error: cause instanceof HostedStartupError ? cause.message : "Your cloud computer could not start. Retry to continue."}));
   }
 }).listen(
   Number(process.env.PORT ?? 8788),

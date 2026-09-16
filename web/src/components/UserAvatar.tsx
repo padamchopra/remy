@@ -14,14 +14,14 @@ export function UserAvatar({ className }: { className?: string }) {
 
 /// The same face, from a value rather than the setting — for previewing one you
 /// have not chosen yet.
-export function AvatarFrom({ avatar, className }: { avatar: string; className?: string }) {
+export function AvatarFrom({ avatar, className, label }: { avatar: string; className?: string; label?: string }) {
   const preset = presetFor(avatar);
-  const src = preset?.src ?? (avatar.startsWith("data:image/") ? avatar : undefined);
+  const src = preset?.src ?? ((avatar.startsWith("data:image/") || /^https?:\/\//.test(avatar)) ? avatar : undefined);
   return (
     <Avatar className={className}>
       {src && <AvatarImage src={src} alt="" className="object-cover" />}
       <AvatarFallback className="bg-primary/15 text-primary">
-        <User className="size-4" />
+        {label ? <span className="text-[0.55em] font-medium">{label.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join("").toUpperCase()}</span> : <User className="size-4" />}
       </AvatarFallback>
     </Avatar>
   );

@@ -1,3 +1,4 @@
+import { HostedStartupError } from "./hosted-startup-error.js";
 import type { HostedComputerState, HostedSettings } from "@remy/contract";
 import type { BoardStorage } from "./organization-board.js";
 import type {
@@ -135,10 +136,12 @@ export class HostedLifecycle {
     state.phase = state.runtime?.snapshot ? "restoring" : "allocating";
     delete state.error;
     await this.save(state);
+    let step = "preparing its configuration";
     try {
       const input = await this.prepare(state),
         provider = this.provider(state.provider),
         allocating = this.now();
+      step = "starting its cloud runtime";
       state.runtime = state.runtime
         ? await provider.start(state.runtime, input)
         : await provider.provision(input);
@@ -146,6 +149,7 @@ export class HostedLifecycle {
         this.now() - allocating;
       await this.save(state);
       const waiting = this.now();
+      step = "connecting to Remy";
       await this.ready(state.computerId);
       state.timing.readyMs = this.now() - waiting;
       state.phase = "ready";
@@ -153,7 +157,8 @@ export class HostedLifecycle {
       return await this.save(state);
     } catch (cause) {
       state.phase = "failed";
-      state.error = "This hosted computer could not start; try again.";
+      state.error = cause instanceof HostedStartupError ? cause.message : `Your cloud computer failed while ${step}. Retry to continue.`;
+      console.error("Cloud startup failed", {step, type: cause instanceof Error ? cause.name : "UnknownError"});
       await this.save(state);
       throw new Error(state.error, {cause});
     }

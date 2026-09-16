@@ -1,3 +1,4 @@
+import { readOAuthSecret } from "./auth.js";
 import {linearFor} from "./linear-routes.js";
 import { githubFor } from "./github-routes.js";
 import {
@@ -14,16 +15,17 @@ export function connectionProviders(env: Env): ConnectionProvider[] {
       receive: async delivery => { await githubFor(env).receive(delivery,async(org,user,workspace,agent,prompt)=>{const response=await env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${org}`)).fetch(new Request("https://internal/github/start",{method:"POST",headers:{"x-organization-id":org,"x-user-id":user,"content-type":"application/json"},body:JSON.stringify({workspace,agent,prompt})}));if(!response.ok)throw Error("This agent is unavailable.");return await response.json() as {threadId:string;computerId:string};}); },
       name: "GitHub",
       subjects: ["member"],
-      clientId: env.GITHUB_CONNECTION_CLIENT_ID,
+      clientId: env.GITHUB_CONNECTION_CLIENT_ID ?? env.GITHUB_CLIENT_ID,
+      ...(!env.GITHUB_CONNECTION_CLIENT_ID ? {callbackPath: "/api/auth/callback/github"} : {}),
       clientSecret: env.GITHUB_CONNECTION_CLIENT_SECRET
         ? () => env.GITHUB_CONNECTION_CLIENT_SECRET!.get()
-        : undefined,
+        : !env.GITHUB_CONNECTION_CLIENT_ID && env.GITHUB_CLIENT_SECRET ? async () => (await readOAuthSecret(env.GITHUB_CLIENT_SECRET))! : undefined,
       webhookSecret: env.GITHUB_WEBHOOK_SECRET
         ? () => env.GITHUB_WEBHOOK_SECRET!.get()
         : undefined,
       authorizeUrl: "https://github.com/login/oauth/authorize",
       tokenUrl: "https://github.com/login/oauth/access_token",
-      scope: "",
+      scope: env.GITHUB_CONNECTION_CLIENT_ID ? "" : "repo",
       identity: async (token, send) => {
         const response = await send("https://api.github.com/user", {
           headers: {

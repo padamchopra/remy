@@ -1,3 +1,4 @@
+import { WorkspaceComputerBadges } from "@/components/WorkspaceComputerBadges";
 import { AutomaticUpdateNotices } from "@/components/AutomaticUpdate";
 import { lazy, Suspense, useCallback, useEffect, useRef, useMemo, useState, type ComponentProps } from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -728,36 +729,7 @@ export function App() {
                           <span className="min-w-0 flex-1">
                             <span className="block truncate text-sm leading-5 font-medium">{workspace.name}</span>
                           </span>
-                          {devices.length > 0 && (
-                            <span className="flex shrink-0 items-center -space-x-1.5">
-                              {devices.map((server) => {
-                                const DeviceIcon = deviceIcon(server.icon);
-                                const chip = tintOf(server.tint);
-                                return (
-                                  <Tooltip key={server.id}>
-                                    <TooltipTrigger asChild>
-                                      <span
-                                        className={cn(
-                                          "relative flex size-6 items-center justify-center rounded-full border border-background",
-                                          chip.well,
-                                          chip.fg,
-                                        )}
-                                      >
-                                        <DeviceIcon className="size-3" />
-                                        <span
-                                          className={cn(
-                                            "absolute -right-0 -bottom-0 size-1.5 rounded-full ring-1 ring-background",
-                                            server.online ? "bg-success" : "bg-muted-foreground",
-                                          )}
-                                        />
-                                      </span>
-                                    </TooltipTrigger>
-                                    <TooltipContent>{server.name}</TooltipContent>
-                                  </Tooltip>
-                                );
-                              })}
-                            </span>
-                          )}
+                          <WorkspaceComputerBadges computers={devices} />
                         </div>
                       </Card>
                       );

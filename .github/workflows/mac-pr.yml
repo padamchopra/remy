@@ -63,7 +63,7 @@ jobs:
         run: |
           npm --prefix desktop test
           npm --prefix server run build
-          node --test server/dist/app-update.test.js server/dist/service-restart*.test.js server/dist/ticket-tool-auth.test.js
+          node --test server/dist/hub-thread-branch.test.js server/dist/hosted-git-config.test.js server/dist/hosted-sprite-lease.test.js server/dist/app-update.test.js server/dist/service-restart*.test.js server/dist/ticket-tool-auth.test.js
 
       - name: Build unsigned app
         run: npm run pack:mac

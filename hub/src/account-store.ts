@@ -180,9 +180,11 @@ export class D1AccountStore implements AccountStore {
   }
 
   async profile(userId: string): Promise<ProfileRecord | undefined> {
-    const user = await this.db.prepare("SELECT id,name,email,emailVerified,image FROM user WHERE id=?").bind(userId).first<Row>();
+    const [user, emails] = await Promise.all([
+      this.db.prepare("SELECT id,name,email,emailVerified,image FROM user WHERE id=?").bind(userId).first<Row>(),
+      this.db.prepare("SELECT email FROM verified_emails WHERE user_id=? ORDER BY is_primary DESC,created_at").bind(userId).all<Row>(),
+    ]);
     if (!user) return undefined;
-    const emails = await this.db.prepare("SELECT email FROM verified_emails WHERE user_id=? ORDER BY is_primary DESC,created_at").bind(userId).all<Row>();
     return { id: String(user.id), name: String(user.name), email: String(user.email), emailVerified: Boolean(user.emailVerified), ...(user.image ? { image: String(user.image) } : {}), verifiedEmails: emails.results.map((row) => String(row.email)) };
   }
 

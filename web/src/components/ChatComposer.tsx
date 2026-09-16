@@ -1,14 +1,15 @@
+import { resolveModelDefault } from "@/lib/model-defaults";
+import { BranchPicker } from "./BranchPicker";
+import { ThreadComposerEditor } from "./ThreadComposerEditor";
+import { NewThreadSurface, ComposerWorkspaceTrigger } from "./NewThreadSurface";
 import { useEffect, useRef, useState } from "react";
 import {
   Activity,
-  ArrowUp,
   ChartNoAxesCombined,
   Check,
-  ChevronDown,
   Folder,
   FolderGit2,
   Gauge,
-  GitBranch,
   GitPullRequest,
   Globe2,
   MessagesSquare,
@@ -17,14 +18,6 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,14 +28,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupButton,
   InputGroupText,
-  InputGroupTextarea,
 } from "@/components/ui/input-group";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Skeleton } from "@/components/ui/skeleton";
 import { ComposerMenu } from "@/components/ComposerMenu";
 import { ModelPickerButton, useProvider } from "@/components/ModelPicker";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -59,7 +46,7 @@ import type { ModelChoice } from "@/lib/providers";
 import { transport } from "@/lib/transport";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
-import type { GitBranch as Branch, Server, Workspace } from "@/state/types";
+import type { Server, Workspace } from "@/state/types";
 
 const HOME = "home";
 const DEVICE_PREFIX = "device:";
@@ -188,15 +175,11 @@ export function ChatComposer({
       return;
     }
     if (modelPicked) return;
-    setChoice(
-      workspace?.provider
-        ? { provider: workspace.provider, model: workspace.model ?? "", effort: workspace.effort ?? "" }
-        : {
-            provider: settings?.defaultProvider ?? "claude",
-            model: settings?.defaultModel ?? "",
-            effort: settings?.defaultEffort ?? "",
-          },
-    );
+    setChoice(resolveModelDefault(
+      workspace?.provider ? { provider: workspace.provider, model: workspace.model ?? "", effort: workspace.effort ?? "" } : undefined,
+      settings ? { provider: settings.defaultProvider ?? "claude", model: settings.defaultModel ?? "", effort: settings.defaultEffort ?? "" } : undefined,
+      {provider:"claude",model:"",effort:""},
+    ));
   }, [
     workspace?.provider,
     workspace?.model,
@@ -434,22 +417,15 @@ export function ChatComposer({
         )}
 
         <TabsContent value="draft" forceMount className={tabContentClass}>
-        <div className="flex min-h-0 flex-1 items-center justify-center p-6">
-          <div className="flex w-full max-w-2xl flex-col gap-8">
-          <h2 className="flex flex-wrap items-center justify-center gap-x-1.5 text-3xl font-medium leading-none tracking-tight">
-            <span>What do you want to do in</span>
+        <NewThreadSurface heading={<>
             <DropdownMenu>
-              <DropdownMenuTrigger
-                type="button"
-                className="inline-flex cursor-pointer appearance-none items-center gap-1.5 whitespace-nowrap border-x-0 border-t-0 border-b border-dotted border-muted-foreground bg-transparent p-0 font-[inherit] text-[inherit] leading-none outline-none"
-              >
+              <ComposerWorkspaceTrigger>
                 <WorkspaceMark home={home} workspace={workspace} server={server} size="lg" />
                 {place}
-              </DropdownMenuTrigger>
+              </ComposerWorkspaceTrigger>
               <WorkspaceMenu {...picker} />
             </DropdownMenu>
-            <span>?</span>
-          </h2>
+          </>}>
 
           <form
             onSubmit={(event) => {
@@ -458,22 +434,10 @@ export function ChatComposer({
               void submit();
             }}
           >
-            <InputGroup className="compose-box items-stretch">
-              <InputGroupTextarea
-                ref={textareaRef}
-                aria-label="Message"
-                placeholder="Ask a question or describe a change."
-                value={text}
-                disabled={busy || switchingBranch}
-                className="min-h-28"
-                onChange={(event) => setText(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
-                  event.preventDefault();
-                  void submit();
-                }}
-              />
-              <InputGroupAddon align="block-end">
+            <ThreadComposerEditor
+              textarea={{ ref: textareaRef, value: text, disabled: busy || switchingBranch, onChange: event => setText(event.target.value) }}
+              canSend={canSend} busy={busy}
+              controls={<>
                 {cloud ? (
                   <InputGroupText>Cursor Cloud default</InputGroupText>
                 ) : (
@@ -497,18 +461,8 @@ export function ChatComposer({
                   options={cloud ? CLOUD_MODES : PERMISSIONS}
                   title={asks ? undefined : `${providerName} answers and exits, so it never stops to ask.`}
                 />
-                <InputGroupButton
-                  type="submit"
-                  variant="default"
-                  size="icon-sm"
-                  className="ml-auto rounded-full"
-                  disabled={!canSend}
-                  aria-label="Send"
-                >
-                  <ArrowUp />
-                </InputGroupButton>
-              </InputGroupAddon>
-              <InputGroupAddon align="block-end" className="border-t">
+              </>}
+              context={<>
                 {(home ? servers.filter((entry) => !entry.workspaceOnly) : workspaceServers).length > 1 ? (
                   <ComposerMenu
                     icon={DeviceIcon}
@@ -527,8 +481,9 @@ export function ChatComposer({
                     {server?.name ?? "This machine"}
                   </InputGroupText>
                 )}
-                {git && workspace && branchName ? (
-                  <div className="ml-auto flex min-w-0 items-center gap-1">
+              </>}
+              contextEnd={git && workspace && branchName ? (
+                  <>
                     <BranchPicker
                       workspaceId={workspace.id}
                       branch={branchName}
@@ -544,118 +499,22 @@ export function ChatComposer({
                       options={CHECKOUTS}
                       disabled={switchingBranch}
                     />
-                  </div>
+                  </>
                 ) : null}
-              </InputGroupAddon>
-            </InputGroup>
+            />
             {!asks && permissionMode === "default" && (
               <p className="mt-2 text-xs text-muted-foreground">
                 {providerName} can't stop to ask, so Ask keeps it read-only.
               </p>
             )}
           </form>
-          </div>
-        </div>
+        </NewThreadSurface>
         </TabsContent>
       </Tabs>
     </div>
   );
 }
 
-function BranchPicker({
-  workspaceId,
-  branch,
-  busy,
-  onPick,
-}: {
-  workspaceId: string;
-  branch: string;
-  busy: boolean;
-  onPick: (value: string) => Promise<boolean>;
-}) {
-  const listBranches = useStore((s) => s.listBranches);
-  const [open, setOpen] = useState(false);
-  const [branches, setBranches] = useState<Branch[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    setLoading(true);
-    void listBranches(workspaceId)
-      .then((next) => {
-        if (!cancelled) setBranches(next);
-      })
-      .catch((caught) => {
-        if (!cancelled) {
-          setBranches([]);
-          toast.error("Couldn't load branches", { description: apiError(caught) });
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, workspaceId, listBranches]);
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <InputGroupButton aria-label="Branch" className="min-w-0" disabled={busy}>
-          <GitBranch />
-          <span className="max-w-40 truncate">{branch}</span>
-          <ChevronDown />
-        </InputGroupButton>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-72 p-0">
-        <Command>
-          <CommandInput placeholder="Search branches" />
-          <CommandList>
-            {loading ? (
-              <div className="flex flex-col gap-2 p-2">
-                <Skeleton className="h-8 w-full" />
-                <Skeleton className="h-8 w-full" />
-                <Skeleton className="h-8 w-full" />
-              </div>
-            ) : (
-              <>
-                <CommandEmpty>No matching branch.</CommandEmpty>
-                <CommandGroup>
-                  {branches.map((entry) => (
-                    <CommandItem
-                      key={entry.name}
-                      value={entry.name}
-                      disabled={busy}
-                      onSelect={() => {
-                        void onPick(entry.name).then((picked) => {
-                          if (picked) setOpen(false);
-                        });
-                      }}
-                    >
-                      <GitBranch />
-                      <span className="min-w-0 truncate">{entry.name}</span>
-                      <span className="ml-auto flex items-center gap-2">
-                        {entry.checkout === "main" ? (
-                          <span className="text-muted-foreground">Main checkout</span>
-                        ) : null}
-                        {entry.checkout === "worktree" ? (
-                          <span className="text-muted-foreground">Worktree</span>
-                        ) : null}
-                        {entry.name === branch ? <Check /> : null}
-                      </span>
-                    </CommandItem>
-                  ))}
-                </CommandGroup>
-              </>
-            )}
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
-  );
-}
 
 function WorkspaceMenu({
   home,

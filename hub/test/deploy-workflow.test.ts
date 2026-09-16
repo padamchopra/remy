@@ -39,6 +39,7 @@ test("hub workflow validates pull requests without repeating checks on main", ()
     "npm run typecheck --prefix contract",
     "npm test --prefix hub",
     "npm run typecheck --prefix hub",
+    "npm run test --prefix hub/runtime",
     "npm run typecheck --prefix hub/runtime",
   ]);
 });

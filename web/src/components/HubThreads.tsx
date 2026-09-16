@@ -1,4 +1,28 @@
-import { Skeleton } from "@/components/ui/skeleton";
+import { speaker } from "@/lib/thread-message";
+import { useHubThreadBranch } from "@/lib/hub-thread-branch";
+import { ThreadMessageAvatar } from "./ThreadMessageAvatar";
+import { BranchName } from "./BranchName";
+import { ContextMeter } from "./ContextMeter";
+import type { ContextUsage } from "@/state/types";
+import { ReplyComposer, replyComposerFrame, replyComposerForm } from "./ReplyComposer";
+import { InlineImageComposer, type InlineImageComposerHandle, type InlineImageComposerValue } from "./InlineImageComposer";
+import { InputGroupText } from "./ui/input-group";
+import { ModelPickerButton } from "./ModelPicker";
+import { ComposerMenu } from "./ComposerMenu";
+import { PERMISSIONS, permissionOf } from "@/lib/chat-options";
+import { hostedModels } from "@/lib/hub-models";
+import { useHubResource } from "@/lib/hub-organization";
+import type { ModelAccessEntry } from "./HubModelAccess";
+import { AvatarFrom } from "./UserAvatar";
+import { useHubProfile } from "@/lib/hub-profile";
+import { useThreadStarts, retryHubThread, forgetThreadStart } from "@/lib/hub-thread-start";
+import { LoaderCircle, MessagesSquare, MoreHorizontal } from "lucide-react";
+import { TabStrip, WorkbenchTabTrigger, tabListClass } from "@/components/WorkbenchTabs";
+import { Tabs, TabsList } from "@/components/ui/tabs";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuLabel, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { SidebarTrigger } from "@/components/ui/sidebar";
+import { EmptyState } from "@/components/EmptyState";
+import { PaneLoading } from "@/components/PaneLoading";
 import { usePersonalHub } from "@/lib/hub-scope";
 import { organizationArtifactRoute } from "@/lib/artifact-route";
 import type { ConvArtifact } from "@/state/types";
@@ -14,12 +38,7 @@ import {
   type ComputerSummary,
 } from "@remy/contract";
 import { Button } from "@/components/ui/button";
-import {
-  InputGroup,
-  InputGroupTextarea,
-  InputGroupAddon,
-  InputGroupButton,
-} from "@/components/ui/input-group";
+
 import {
   Message,
   MessageContent,
@@ -28,12 +47,6 @@ import {
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import {
-  Empty,
-  EmptyHeader,
-  EmptyTitle,
-  EmptyDescription,
-} from "@/components/ui/empty";
 import {
   hubRequest,
   hubThreadPath,
@@ -72,6 +85,8 @@ export default function HubThreads({
   threadId?: string;
   navigate: (route: Route) => void;
 }) {
+  const modelAccess = useHubResource<{providers:ModelAccessEntry[]}>(organizationId,"/model-access");
+  const { profile } = useHubProfile(organizationId);
   const transcript = useRef<HTMLDivElement>(null);
   const followsLatest = useRef(true);
   const isPersonal = usePersonalHub();
@@ -79,9 +94,10 @@ export default function HubThreads({
   const [member, setMember] = useState<ThreadMember>();
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const [draft, setDraft] = useState<InlineImageComposerValue>({text:"",attachments:[],uploading:false});
+  const editor = useRef<InlineImageComposerHandle>(null);
   const [busy, setBusy] = useState(false);
-  const [attachments, setAttachments] = useState<string[]>([]);
+
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [computersLoaded, setComputersLoaded] = useState(false);
   const [computerError, setComputerError] = useState("");
@@ -111,13 +127,26 @@ export default function HubThreads({
     return () => { offComputers(); offThreads(); };
   }, [organizationId]);
   useEffect(() => {
-    setMessage("");
+    editor.current?.clear();
     setAnswers({});
-    setAttachments([]);
+
   }, [threadId, computerId]);
-  const thread = threads.find(
-    (item) => item.id === threadId && item.computerId === computerId,
+  const starts = useThreadStarts();
+  const pending = starts.find(s => !!threadId && s.ownerId === member?.id && s.organizationId === organizationId && ((computerId === "pending" && s.requestId === threadId) || (s.created?.id === threadId && s.created?.computerId === computerId)));
+  const savedThread = threads.find(
+    (item) => item.computerId !== "pending" && item.id === threadId && item.computerId === computerId,
   );
+  const thread: HubThread | undefined = savedThread ?? (pending ? {
+    id: pending.requestId, computerId: pending.created?.computerId ?? "pending", stale: false, revision: 0, observedAt: pending.at,
+    access: {organizationId, owner: member ?? {id: "pending", label: "You"}, participants: [], visibility: "private"},
+    detail: {id: pending.requestId, title: pending.message.slice(0, 200), state: "working", entries: [{id: `u-${pending.requestId}`, kind: "user", text: pending.message}]},
+  } : undefined);
+  useEffect(() => {
+    if (pending?.phase === "ready" && pending.created && computerId === "pending") {
+      navigate({name: "threads", organizationId, computerId: pending.created.computerId, threadId: pending.created.id});
+    }
+    if (pending && savedThread) forgetThreadStart(pending.requestId);
+  }, [pending, savedThread, computerId, organizationId, navigate]);
   useEffect(() => {
     if (followsLatest.current && transcript.current)
       transcript.current.scrollTop = transcript.current.scrollHeight;
@@ -126,11 +155,18 @@ export default function HubThreads({
     followsLatest.current = true;
   }, [threadId, computerId]);
   const computer = computers.find((c) => c.computerId === thread?.computerId);
-  const ComputerIcon = deviceIcon(computer?.icon as DeviceIconId);
+  const branch = useHubThreadBranch(organizationId, savedThread, computer) ?? pending?.branch;
+  const ComputerIcon = deviceIcon((computer?.icon ?? (pending?.computerId?.startsWith("cloud:") ? "cloud" : undefined)) as DeviceIconId);
   const writable =
     !!thread && !!member && canWriteThread(thread.access, member.id);
-  const disabled = busy || !thread || thread.stale || !writable;
+  const disabled = !!pending || busy || !thread || thread.stale || !writable;
   const path = hubThreadPath(organizationId, computerId ?? "", threadId);
+  const runtimeProvider = String(thread?.detail.provider ?? pending?.provider ?? "codex");
+  const runtimeModel = String(thread?.detail.model ?? pending?.model ?? "");
+  const gateway = /^remy:(openrouter|router|openai):(.+)$/.exec(runtimeModel);
+  const providers = hostedModels(modelAccess.value?.providers ?? [], true);
+  const modelProvider = gateway?.[1] ?? (runtimeProvider === "claude" ? "anthropic" : runtimeProvider);
+  const permission = permissionOf(typeof thread?.detail.permissionMode === "string" ? thread.detail.permissionMode : undefined);
   const approval = thread?.detail.approval as Approval | undefined;
   const question = thread?.detail.question as Question | undefined;
   const act = async (action: string, input: unknown = {}) => {
@@ -156,15 +192,15 @@ export default function HubThreads({
       threadId: id,
     });
   const send = async () => {
-    if (disabled || !message.trim()) return;
+    if (disabled || draft.uploading || !draft.text.trim()) return;
     const accepted = await act("message", {
-      text: message,
+      text: draft.text,
       messageId: `u-${crypto.randomUUID()}`,
-      attachmentIds: attachments,
+      attachmentIds: draft.attachments.map(image => image.id),
     });
     if (accepted) {
-      setMessage("");
-      setAttachments([]);
+      editor.current?.clear();
+
     }
   };
   return (
@@ -172,45 +208,51 @@ export default function HubThreads({
       className="flex min-h-0 min-w-0 flex-1 flex-col"
       aria-label="Threads"
     >
-      {(showNavigation || thread) && <header className="flex min-w-0 shrink-0 flex-wrap items-center gap-2 border-b p-4">
-        {showNavigation && <><HubNotifications organizationId={organizationId} />
-        <Button
-          variant="ghost"
-          data-link
-          onClick={() => navigate({ name: "threads", organizationId })}
-        >
-          Threads
-        </Button></>}
-        {thread && (
-          <div className="min-w-0 flex-1">
-            <p className="break-words">{thread.detail.title}</p>
-            <p className="text-xs text-muted-foreground">
-              {thread.access.visibility === "private"
-                ? "Private"
-                : isPersonal ? "Only you" : "Open to your organization"}
-            </p>
-          </div>
-        )}
+      {thread ? (
+        <Tabs value={thread.id} className="shrink-0 gap-0">
+          <TabStrip actions={
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon-sm" aria-label="Thread details"><MoreHorizontal /></Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="max-w-[calc(100vw-2rem)]">
+                <DropdownMenuLabel>{thread.access.visibility === "private" ? "Private" : isPersonal ? "Only you" : "Open to your organization"}</DropdownMenuLabel>
+                <DropdownMenuLabel className="font-normal text-muted-foreground">Started by {thread.access.owner.label}</DropdownMenuLabel>
+                {!isPersonal && thread.access.participants.length > 0 && <DropdownMenuLabel className="font-normal text-muted-foreground">{thread.access.participants.map(person => person.label).join(", ")}</DropdownMenuLabel>}
+                <DropdownMenuItem onSelect={() => navigate({ name: "settings", tab: "devices", organizationId })}>
+                  <ComputerIcon />{computer?.name ?? pending?.computerName ?? "Computer unavailable"}
+                </DropdownMenuItem>
+                {!pending && !isPersonal && member?.id === thread.access.owner.id && <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem disabled={busy || thread.stale} onSelect={() => void act("visibility", { visibility: thread.access.visibility === "private" ? "open" : "private" })}>
+                    {thread.access.visibility === "private" ? "Open to organization" : "Make private"}
+                  </DropdownMenuItem>
+                </>}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          }>
+            {!showNavigation && <SidebarTrigger className="md:hidden" />}
+            <TabsList aria-label="Open tabs" className={tabListClass}>
+              <WorkbenchTabTrigger value={thread.id} label={thread.detail.title} title={thread.detail.title} icon={<MessagesSquare className="size-3.5 shrink-0" />} />
+            </TabsList>
+          </TabStrip>
+        </Tabs>
+      ) : showNavigation && <header className="flex shrink-0 items-center gap-2 border-b p-4">
+        <HubNotifications organizationId={organizationId} />
+        <Button variant="ghost" data-link onClick={() => navigate({ name: "threads", organizationId })}>Threads</Button>
       </header>}
-      {thread && <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2 text-xs text-muted-foreground"><Button variant="link" size="sm" data-link onClick={() => navigate({ name: "settings", tab: "devices", organizationId })}><ComputerIcon />{computer?.name ?? "Computer unavailable"}</Button><span className="min-w-0 break-words">Started by {thread.access.owner.label}</span></div>}
       {error && (
         <p role="alert" className="px-4 py-2 text-sm text-destructive">
           {error}
         </p>
       )}
-      {!loaded ? (
-        <div role="status" aria-label="Loading threads" className="flex flex-col gap-4 p-6">{[1,2,3].map(n => <Skeleton key={n} className="h-12 w-full" />)}</div>
+      {!loaded && threadId && !pending ? (
+        <div className="p-4"><PaneLoading label="Loading threads" /></div>
       ) : threadId && !thread ? (
-        <Empty>
-          <EmptyHeader>
-            <EmptyTitle>This thread is unavailable</EmptyTitle>
-            <EmptyDescription>
-              Ask the person who started it to check your access.
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
+        <EmptyState title="This thread is unavailable" description="Ask the person who started it to check your access." />
       ) : !thread ? (
-        <div className="flex min-w-0 flex-col gap-3 overflow-auto p-4">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-auto">
+          {!loaded && <span role="status" aria-label="Loading threads" className="sr-only">Loading threads</span>}
           {threads.map((item) => (
             <Button
               key={`${item.computerId}:${item.id}`}
@@ -222,50 +264,14 @@ export default function HubThreads({
               <span className="min-w-0 break-words">{item.detail.title}<span className="block text-xs text-muted-foreground">{computers.find((c) => c.computerId === item.computerId)?.name ?? "Computer unavailable"} · Started by {item.access.owner.label}{item.stale ? " · Offline" : ""}</span></span>
             </Button>
           ))}
-          <HubThreadComposer key={organizationId} organizationId={organizationId} computers={computers} computersLoaded={computersLoaded} computerError={computerError} canManageWorkspaces={canManageWorkspaces} open={open} />
+          <HubThreadComposer key={organizationId} organizationId={organizationId} memberId={member?.id} computers={computers} computersLoaded={computersLoaded} computerError={computerError} canManageWorkspaces={canManageWorkspaces} open={open} />
         </div>
       ) : (
         <>
-          <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2 text-xs text-muted-foreground">
-            <span>
-              {thread.access.participants
-                .map((person) => person.label)
-                .join(", ")}
-            </span>
-            {thread.stale && (
-              <span role="status">
-                This computer is offline; you’re reading its last saved update.
-              </span>
-            )}
-            {!writable && (
-              <Button
-                size="sm"
-                disabled={busy || thread.stale}
-                onClick={() => void act("join")}
-              >
-                Join thread
-              </Button>
-            )}
-            {!isPersonal && member?.id === thread.access.owner.id && (
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={busy || thread.stale}
-                onClick={() =>
-                  void act("visibility", {
-                    visibility:
-                      thread.access.visibility === "private"
-                        ? "open"
-                        : "private",
-                  })
-                }
-              >
-                {thread.access.visibility === "private"
-                  ? "Open to organization"
-                  : "Make private"}
-              </Button>
-            )}
-          </div>
+          {!pending && (thread.stale || !writable) && <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2 text-xs text-muted-foreground">
+            {thread.stale && <span role="status">This computer is offline; you’re reading its last saved update.</span>}
+            {!writable && <Button size="sm" disabled={busy || thread.stale} onClick={() => void act("join")}>Join thread</Button>}
+          </div>}
           <div
             ref={transcript}
             onScroll={(e) => {
@@ -277,20 +283,22 @@ export default function HubThreads({
             aria-label="Thread transcript"
           >
             <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4">
-              {thread.detail.entries.map((entry) => (
+              {thread.detail.entries.map((entry, index) => (
                 <Message
                   key={String(entry.id)}
                   align={entry.kind === "user" ? "end" : "start"}
                 >
+                  {entry.kind === "user" && profile && ((entry.member as ThreadMember | undefined)?.id ?? member?.id) === profile.id && <AvatarFrom avatar={profile.image ?? ""} className="size-8 self-end" />}
+                  {(entry.kind === "assistant" || entry.kind === "thinking") && <ThreadMessageAvatar provider={runtimeProvider} lead={index === 0 || speaker(thread.detail.entries[index - 1]) !== speaker(entry)} /> }
                   <MessageContent>
-                    <MessageHeader>
+                    {entry.kind !== "assistant" && entry.kind !== "thinking" && <MessageHeader>
                       {(entry.member as ThreadMember | undefined)?.label ??
                         (entry.kind === "user"
                           ? "You"
                           : entry.kind === "tool"
                             ? String(entry.tool ?? "Tool")
                             : "Agent")}
-                    </MessageHeader>
+                    </MessageHeader>}
                     <Bubble
                       variant={entry.kind === "user" ? "default" : "ghost"}
                     >
@@ -330,6 +338,10 @@ export default function HubThreads({
                   </MessageContent>
                 </Message>
               ))}
+              {pending && <Message align="start"><MessageContent>
+                {pending.phase === "failed" ? <><p role="alert" className="text-sm text-destructive">{pending.error}</p><Button variant="outline" onClick={() => void retryHubThread(pending)}>Retry</Button></>
+                  : <LoaderCircle role="status" aria-label="Starting thread" className="size-4 animate-spin text-muted-foreground" />}
+              </MessageContent></Message>}
             </div>
           </div>
           {approval && (
@@ -416,88 +428,36 @@ export default function HubThreads({
               </Button>
             </form>
           )}
-          <form
-            className="shrink-0 p-4"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void send();
-            }}
-          >
-            <InputGroup>
-              <InputGroupTextarea
-                aria-label="Message"
-                placeholder="Write a message…"
-                value={message}
+          <div className={replyComposerFrame}>
+            <form className={replyComposerForm} onSubmit={event => { event.preventDefault(); void send(); }}>
+              <ReplyComposer
+                working={!pending && thread.detail.state === "working"}
                 disabled={disabled}
-                onChange={(e) => setMessage(e.target.value)}
-                onKeyDown={(e) => {
-                  if (
-                    e.key === "Enter" &&
-                    !e.shiftKey &&
-                    !e.nativeEvent.isComposing
-                  ) {
-                    e.preventDefault();
-                    void send();
-                  }
-                }}
-              />
-              <InputGroupAddon align="block-end" className="flex-wrap">
-                <InputGroupButton
-                  className="h-auto max-w-full whitespace-normal"
-                  disabled={disabled || !message.trim()}
-                  type="submit"
-                >
-                  Send message
-                </InputGroupButton>
-                <InputGroupButton
-                  className="h-auto max-w-full whitespace-normal"
-                  disabled={disabled || thread.detail.state === "idle"}
-                  onClick={() => void act("interrupt")}
-                >
-                  Stop turn
-                </InputGroupButton>
-                <label className="min-w-0 max-w-full text-xs">
-                  Attach image
-                  <input
-                    aria-label="Attach image"
-                    type="file"
-                    accept="image/png,image/jpeg,image/gif,image/webp"
-                    disabled={disabled || attachments.length >= 8}
-                    className="block w-40 max-w-full text-xs"
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      setBusy(true);
-                      try {
-                        const response = await fetch(`${path}/attachments`, {
-                          method: "POST",
-                          headers: {
-                            "content-type": file.type,
-                            "x-filename": file.name,
-                          },
-                          body: file,
-                        });
-                        const result = await response.json();
-                        if (!response.ok) throw new Error(result.error);
-                        setAttachments((old) => [...old, result.id]);
-                      } catch (error) {
-                        setError(
-                          error instanceof Error
-                            ? error.message
-                            : "This image could not be attached.",
-                        );
-                      } finally {
-                        setBusy(false);
-                      }
-                    }}
-                  />
-                </label>
-                {attachments.length > 0 && (
-                  <span className="text-xs">{attachments.length} attached</span>
-                )}
-              </InputGroupAddon>
-            </InputGroup>
-          </form>
+                onStop={() => void act("interrupt")}
+                canSend={!disabled && !draft.uploading && !!draft.text.trim()}
+                controls={<>
+                  <ModelPickerButton variant="composer" catalogue={providers} onlyProvider={modelProvider} value={{provider:modelProvider,model:gateway?.[2] ?? runtimeModel,effort:String(thread.detail.effort ?? "")}} disabled={disabled}
+                    onPick={choice => void act("options", {model:gateway ? `remy:${gateway[1]}:${choice.model}` : choice.model,effort:choice.effort ?? null})} />
+                  <ComposerMenu icon={permission.icon} label={permission.label} value={permission.value} options={PERMISSIONS} disabled={disabled} onChange={permissionMode => void act("options", {permissionMode})} />
+                </>}
+                context={<>
+                  <InputGroupText className="hidden @3xl:flex"><ComputerIcon />{computer?.name ?? pending?.computerName ?? "Computer unavailable"}</InputGroupText>
+                  {branch && <BranchName branch={branch} />}
+                  <ContextMeter context={thread.detail.context as ContextUsage | undefined} />
+                </>}
+              >
+                <InlineImageComposer key={`${computerId}:${threadId}`} ref={editor} ariaLabel="Message" placeholder="Reply, or ask for the next change." disabled={disabled}
+                  onChange={setDraft} onSubmit={() => void send()} onError={setError}
+                  onUpload={async file => {
+                    const response = await fetch(`${path}/attachments`, {method:"POST",headers:{"content-type":file.type,"x-filename":file.name},body:file});
+                    const result = await response.json();
+                    if (!response.ok) throw new Error(result.error ?? "This image could not be attached.");
+                    return {id:result.id,name:file.name,mimeType:file.type as "image/png" | "image/jpeg" | "image/gif" | "image/webp",sizeBytes:file.size};
+                  }}
+                />
+              </ReplyComposer>
+            </form>
+          </div>
         </>
       )}
     </section>

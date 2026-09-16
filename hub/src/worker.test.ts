@@ -159,3 +159,11 @@ test("turns an uncaught failure into one redacted error outcome", async () => {
   });
   assert.doesNotMatch(JSON.stringify(events), /secret credential/);
 });
+
+test("API responses expose backend duration without response contents", async () => {
+  let now = 10;
+  const handler = createHandler({ log: () => {}, now: () => now++, route: async () => Response.json({ ok: true }) });
+  const response = await handler(new Request("https://hub.example/api/profile"), env);
+  assert.equal(response.headers.get("server-timing"), "app;dur=1");
+  assert.deepEqual(await response.json(), {ok:true});
+});

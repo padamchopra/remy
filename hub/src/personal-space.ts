@@ -2,11 +2,9 @@ import { D1OrganizationStore } from "./organization-store.js";
 
 /// Account-owned scopes reuse the coordinator protocol without joining an organization.
 export async function personalSpace(db: D1Database, userId: string) {
-  let row = await db
-    .prepare("SELECT id FROM organizations WHERE personal_owner_id=?")
-    .bind(userId)
-    .first<{ id: string }>();
-  if (!row) {
+  const store = new D1OrganizationStore(db);
+  let scope = await store.personalOrganization(userId);
+  if (!scope) {
     const now = Date.now();
     await db.batch([
       db
@@ -20,14 +18,8 @@ export async function personalSpace(db: D1Database, userId: string) {
         )
         .bind(crypto.randomUUID(), userId, now, now, userId),
     ]);
-    row = await db
-      .prepare("SELECT id FROM organizations WHERE personal_owner_id=?")
-      .bind(userId)
-      .first<{ id: string }>();
+    scope = await store.personalOrganization(userId);
   }
-  if (!row)
-    throw new Error("Your personal account could not be opened; try again.");
-  const scope = await new D1OrganizationStore(db).organization(row.id);
   if (!scope)
     throw new Error("Your personal account could not be opened; try again.");
   return { ...scope, role: "owner" as const, personal: true as const };

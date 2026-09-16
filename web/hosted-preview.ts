@@ -1,9 +1,11 @@
-import type { IncomingMessage, ServerResponse } from 'node:http';
+import { Agent as HttpAgent, type IncomingMessage, type ServerResponse } from 'node:http';
+import { Agent as HttpsAgent } from 'node:https';
 import type { Plugin, ProxyOptions } from 'vite';
 
 export function hostedPreview(target: string): { plugin: Plugin; proxy: ProxyOptions } {
   const hub = new URL(target);
   if (hub.protocol !== 'https:' && !['127.0.0.1', 'localhost'].includes(hub.hostname)) throw Error('Use HTTPS for the hosted service.');
+  const agent = new (hub.protocol === 'https:' ? HttpsAgent : HttpAgent)({keepAlive:true, autoSelectFamilyAttemptTimeout:2000});
   let origin = '';
   let token = '';
   let refreshToken = '';
@@ -32,6 +34,7 @@ export function hostedPreview(target: string): { plugin: Plugin; proxy: ProxyOpt
     name:'hosted-preview',
     configureServer(server) {
       origin = `http://127.0.0.1:${server.config.server.port}`;
+      server.httpServer?.once('close', () => agent.destroy());
       server.middlewares.use(async (request, response, next) => {
         if (!request.url?.startsWith('/api/')) return next();
         if (!trusted(request)) return json(response, 403, {error:'Open the preview on this Mac.'});
@@ -59,7 +62,10 @@ export function hostedPreview(target: string): { plugin: Plugin; proxy: ProxyOpt
       });
     },
   };
-  return {plugin, proxy:{target:hub.origin,changeOrigin:true,ws:true,configure(proxy) {
+  return {plugin, proxy:{target:hub.origin,changeOrigin:true,ws:true,agent,configure(proxy) {
+    proxy.on('error', (_error, _request, response) => {
+      if ('writeHead' in response && !response.headersSent && !response.writableEnded) json(response,502,{error:'Could not connect to Remy; try again.'});
+    });
     proxy.on('proxyReq', (outgoing, incoming) => {
       outgoing.removeHeader('cookie');
       outgoing.setHeader('authorization',`Bearer ${token}`);

@@ -1,3 +1,9 @@
+import { profilePreferences } from "./profile-preferences.js";
+import { validProfileImage } from "./profile-image.js";
+import { HostedStartupError } from "./hosted-startup-error.js";
+import { modelDefaults } from "./model-defaults.js";
+import { modelFavorites } from "./model-favorites.js";
+import { modelAccessIds, publicModelAccess, saveModelAccess, type ModelAccessId } from "./model-access.js";
 import { routerConnectionSchema, routerModels } from "./router-connection.js";
 import { cloudComputerProvider } from "@remy/contract";
 import { managementCredential } from "./cloud-connection.js";
@@ -10,7 +16,7 @@ import {LinearBoard} from "./linear-board.js";
 import {linearFor} from "./linear-routes.js";
 import {linearRoute} from "./linear-routes.js";
 import { githubFor, githubRoute } from "./github-routes.js";
-import { connectionRoute, connectionWebhook } from "./connection-routes.js";
+import { connectionRoute, connectionWebhook, isGitHubConnectionCallback } from "./connection-routes.js";
 import { connectionProviders } from "./connection-providers.js";
 import type { ConnectionDelivery, ConnectionJob } from "./connections.js";
 import { HubRoutines } from "./hub-routines.js";
@@ -219,7 +225,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     }
   }
   if (env.WEB_APP_URL && url.origin !== new URL(env.WEB_APP_URL).origin && /^\/api\/auth\/(callback\/(google|github)|magic-link\/verify|verify-email)$/.test(url.pathname)) return Response.redirect(new URL(`${url.pathname}${url.search}`, env.WEB_APP_URL), 307);
-  if (url.pathname.startsWith("/api/auth/")) {
+  if (url.pathname.startsWith("/api/auth/") && !isGitHubConnectionCallback(url)) {
     return (await (dependencies.betterAuth ?? authFor)(env)).handler(request);
   }
   if (url.pathname === "/api/sessions/web" && request.method === "POST") {
@@ -250,7 +256,8 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
   }
 
   if (url.pathname === "/api/runtime" && request.method === "GET") return Response.json({ mode: "hub", auth: { magicLink: emailAvailable(env), google: !!env.GOOGLE_CLIENT_ID && !!env.GOOGLE_CLIENT_SECRET, github: !!env.GITHUB_CLIENT_ID && !!env.GITHUB_CLIENT_SECRET, sso: true } }, { headers: { "cache-control": "no-store" } });
-  const protectedRoute = url.pathname === "/api/device/approve"
+  const protectedRoute = isGitHubConnectionCallback(url)
+    || url.pathname === "/api/device/approve"
     || url.pathname === "/api/sessions"
     || url.pathname === "/api/sessions/revoke-all"
     || url.pathname === "/api/profile"
@@ -311,8 +318,17 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     const workspace=await organizationStore.workspace(org,workspaceId);
     const repository=workspace && githubRepository(workspace.origin);
     const installation=await env.DB.prepare("SELECT installation_id,account FROM organization_git_installations WHERE organization_id=?").bind(org).first<{installation_id:number;account:string}>();
-    if(!repository || !installation || repository.split("/")[0]!==installation.account.toLowerCase())return jsonError("Connect this workspace to GitHub first.",404);
-    if(!await env.DB.prepare("SELECT 1 FROM github_repositories WHERE organization_id=? AND workspace_id=? AND installation_id=?").bind(org,workspaceId,installation.installation_id).first())return jsonError("Select this repository in your GitHub connection.",403);
+    if(!repository)return jsonError("Connect this workspace to GitHub first.",404);
+    const installationSelected = installation && repository.split("/")[0] === installation.account.toLowerCase() && !!await env.DB.prepare("SELECT 1 FROM github_repositories WHERE organization_id=? AND workspace_id=? AND installation_id=?").bind(org,workspaceId,installation.installation_id).first();
+    const repositoryToken = async (computerId: string, write: boolean) => {
+      if (installationSelected && env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY) {
+        return new GithubInstallation(env.GITHUB_APP_ID, () => env.GITHUB_APP_PRIVATE_KEY!.get()).token(installation!.installation_id, repository, write);
+      }
+      const response = await env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${org}`)).fetch(new Request(`https://internal/internal/hosted-git-owner?computer=${encodeURIComponent(computerId)}`, {headers:{"x-organization-id":org}}));
+      const owner = await response.json() as {userId?: string; workspaceId?: string};
+      if (!owner.userId || owner.workspaceId !== workspaceId) throw new Error("Reconnect GitHub before starting this cloud thread.");
+      return githubFor(env).workspaceGitToken(org, owner.userId, workspaceId);
+    };
     const capabilities=new GitCapabilities(()=>env.AUTH_SECRET.get());
     const policy=await env.DB.prepare("SELECT branches FROM workspace_git_policies WHERE organization_id=? AND workspace_id=?").bind(org,workspaceId).first<{branches:string}>();
     const branches=JSON.parse(policy?.branches??"[]") as string[];
@@ -331,9 +347,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       if(grant.organizationId!==org || grant.workspaceId!==workspaceId || grant.repository!==repository || !computer || computer.ownership!=="hosted" || !computer.capabilities.workspaces.some(w=>githubRepository(w.origin??"")===repository))return jsonError("This computer cannot use this workspace.",403);
       if(!await env.DB.prepare("SELECT 1 FROM hosted_workspace_bindings WHERE organization_id=? AND workspace_id=? AND computer_id=?").bind(org,workspaceId,grant.computerId).first())return jsonError("This computer cannot use this workspace.",403);
       grant.branches=grant.branches.filter(b=>branches.includes(b));
-      if(!env.GITHUB_APP_ID || !env.GITHUB_APP_PRIVATE_KEY)return jsonError("GitHub access is unavailable.",503);
-      const github=new GithubInstallation(env.GITHUB_APP_ID,()=>env.GITHUB_APP_PRIVATE_KEY!.get());
-      return proxyGit(request,grant,action,()=>github.token(installation.installation_id,repository,grant.write));
+      return proxyGit(request,grant,action,()=>repositoryToken(grant.computerId,grant.write));
     }
   }
   const boardSyncMatch = /^\/api\/organizations\/([^/]+)\/computers\/board-sync$/.exec(url.pathname);
@@ -425,6 +439,36 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     if (organizationMatch) {
       const organizationId = decodeURIComponent(organizationMatch[1]); const tail = organizationMatch[2] ?? "";
       const board = () => env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${organizationId}`));
+      if (tail === "profile-preferences" && (request.method === "GET" || request.method === "PATCH")) {
+        await organizations.member(organizationId, identity.userId);
+        const response = await profilePreferences(env.DB, identity.userId, request);
+        if (request.method === "PATCH" && response.ok) {
+          const memberships = await env.DB.prepare("SELECT organization_id FROM memberships WHERE user_id=?").bind(identity.userId).all<{organization_id:string}>();
+          await Promise.all(memberships.results.map(row => env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${row.organization_id}`)).fetch(new Request("https://internal/profile/changed", {method:"POST", headers:{"x-organization-id":row.organization_id,"x-user-id":identity.userId}}))));
+        }
+        return response;
+      }
+      if (tail === "github/profile" && request.method === "GET") {
+        const github = await githubFor(env).api<{avatar_url:string}>(organizationId, identity.userId, "/user");
+        const image = new URL(github.avatar_url);
+        if (image.protocol !== "https:" || image.hostname !== "avatars.githubusercontent.com") return jsonError("Your GitHub picture is unavailable.", 502);
+        return Response.json({ image: image.href });
+      }
+      if (tail === "model-defaults" && (request.method === "GET" || request.method === "PATCH")) {
+        if(request.method === "PATCH" && !allowedRequestOrigin(request,env.PREVIEW_ORIGINS)) return jsonError("Open settings in Remy.",403);
+        const response=await modelDefaults(env.DB,organizationId,identity.userId,request);
+        if(request.method === "PATCH" && response.ok) {
+          const memberships=await env.DB.prepare("SELECT organization_id FROM memberships WHERE user_id=?").bind(identity.userId).all<{organization_id:string}>();
+          await Promise.all(memberships.results.map(row=>env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${row.organization_id}`)).fetch(new Request("https://internal/model-defaults/changed",{method:"POST",headers:{"x-organization-id":row.organization_id,"x-user-id":identity.userId}}))));
+        }
+        return response;
+      }
+      if (tail === "model-favorites" && (request.method === "GET" || request.method === "PATCH")) {
+        await organizations.member(organizationId, identity.userId);
+        const response = await modelFavorites(env.DB, organizationId, identity.userId, request);
+        if (request.method === "PATCH" && response.ok) await board().fetch(new Request("https://internal/model-favorites/changed", { method: "POST", headers: { "x-organization-id": organizationId, "x-user-id": identity.userId } }));
+        return response;
+      }
       if (tail === "computers" && request.method === "POST") {
         await organizations.member(organizationId, identity.userId);
         if (identity.clientKind !== "computer") return jsonError("Use a computer authorization.", 403);
@@ -541,22 +585,40 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           method: request.method, headers: { "x-organization-id": organizationId, "x-user-id": identity.userId },
         }));
       }
-      if (["router-models", "router-connection"].includes(tail) && ["POST", "PUT", "DELETE"].includes(request.method)) {
+      if (tail === "model-access" || tail.startsWith("model-access/")) {
+        const member=await organizations.member(organizationId,identity.userId);
+        const store=new HostedSettingsStore(env.DB,()=>env.AUTH_SECRET.get());
+        if(tail === "model-access" && request.method === "GET") return Response.json({providers:publicModelAccess(await store.secrets(organizationId))});
+        const id=tail.slice("model-access/".length) as ModelAccessId;
+        if(!modelAccessIds.includes(id) || request.method !== "PATCH") return jsonError("This model action is unavailable.",405);
+        if(member.role === "member" || identity.clientKind === "computer") return jsonError("Only an administrator can configure model access.",403);
+        if(!allowedRequestOrigin(request,env.PREVIEW_ORIGINS)) return jsonError("Configure model access from Remy.",403);
+        try {
+          const providers=await saveModelAccess(store,organizationId,id,await body(request));
+          await board().fetch(new Request("https://internal/organization/changed",{method:"POST",headers:{"x-organization-id":organizationId}}));
+          return Response.json({providers});
+        } catch {return jsonError("Your model access could not be saved; check your key and try again.",400);}
+      }
+      if (["router-models", "router-connection", "openrouter-models", "openrouter-connection"].includes(tail) && ["POST", "PUT", "DELETE"].includes(request.method)) {
+        const provider = tail.startsWith("openrouter-") ? "openrouter" : "router";
+        const label = provider === "openrouter" ? "OpenRouter" : "Router";
+        const secretName = `model:${provider}`;
+        if (tail === `${provider}-models` ? request.method !== "POST" : !["PUT", "DELETE"].includes(request.method)) return jsonError("This model action is unavailable.",405);
         const member=await organizations.member(organizationId,identity.userId);
         if(member.role === "member" || identity.clientKind === "computer") return jsonError("Only an administrator can configure model access.",403);
         if(!allowedRequestOrigin(request,env.PREVIEW_ORIGINS)) return jsonError("Configure model access from Remy.",403);
         const store=new HostedSettingsStore(env.DB,()=>env.AUTH_SECRET.get());
-        if(tail === "router-connection" && request.method === "DELETE") await store.setSecret(organizationId,"model:router",null);
+        if(tail === `${provider}-connection` && request.method === "DELETE") await store.setSecret(organizationId,secretName,null);
         else {
           const input=await body<{apiKey?:string;model?:string}>(request);
-          if(!input || typeof input.apiKey !== "string" || !input.apiKey.trim() || input.apiKey.length > 8192) return jsonError("Enter your Router API key.",400);
+          if(!input || typeof input.apiKey !== "string" || !input.apiKey.trim() || input.apiKey.length > 8192) return jsonError(`Enter your ${label} API key.`,400);
           try {
-            const models=await routerModels(input.apiKey);
-            if(tail === "router-models" && request.method === "POST") return Response.json({models});
+            const models=await routerModels(input.apiKey.trim(), fetch, provider);
+            if(tail === `${provider}-models` && request.method === "POST") return Response.json({models});
             const parsed=routerConnectionSchema.safeParse(input);
-            if(request.method !== "PUT" || !parsed.success || !models.includes(parsed.data.model)) return jsonError("Choose a model available to your Router key.",400);
-            await store.setSecret(organizationId,"model:router",JSON.stringify(parsed.data));
-          } catch(e) {return jsonError(e instanceof Error ? e.message : "Router could not connect.",502);}
+            if(request.method !== "PUT" || !parsed.success || !models.includes(parsed.data.model)) return jsonError(`Choose a model available to your ${label} key.`,400);
+            await store.setSecret(organizationId,secretName,JSON.stringify(parsed.data));
+          } catch(e) {return jsonError(e instanceof Error ? e.message : `${label} could not connect.`,502);}
         }
         await board().fetch(new Request("https://internal/organization/changed",{method:"POST",headers:{"x-organization-id":organizationId}}));
         return Response.json({saved:true});
@@ -598,7 +660,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         const workspaceId = hostedMatch[1] ? decodeURIComponent(hostedMatch[1]) : "";
         if (workspaceId) await organizations.workspace(organizationId, identity.userId, workspaceId);
         const settings = new HostedSettingsStore(env.DB, () => env.AUTH_SECRET.get());
-        if (request.method === "GET" && (!workspaceId || hostedMatch[2] === "settings")) return Response.json({ settings: await settings.settings(organizationId,workspaceId), secretNames: member.role !== "member" ? (await settings.secretNames(organizationId)).filter(name => !name.startsWith("cloud:") && !name.startsWith("model:")) : [], enabledProviders: await settings.enabledProviders(organizationId), routerConfigured: (await settings.secretNames(organizationId)).includes("model:router"), connections: (await settings.secretNames(organizationId)).filter(name => name.startsWith("cloud:")).map(name => name.slice(6)), available: !!env.HOSTED_IMAGE && (!!env.PROVIDER_RUNTIME || (!!env.HOSTED_CONTROL_URL && !!env.HOSTED_CONTROL_TOKEN)) });
+        if (request.method === "GET" && (!workspaceId || hostedMatch[2] === "settings")) return Response.json({ settings: await settings.settings(organizationId,workspaceId), secretNames: member.role !== "member" ? (await settings.secretNames(organizationId)).filter(name => !name.startsWith("cloud:") && !name.startsWith("model:") && !name.startsWith("access:")) : [], enabledProviders: await settings.enabledProviders(organizationId), routerConfigured: (await settings.secretNames(organizationId)).includes("model:router"), openrouterConfigured: (await settings.secretNames(organizationId)).includes("model:openrouter"), connections: (await settings.secretNames(organizationId)).filter(name => name.startsWith("cloud:")).map(name => name.slice(6)), available: !!env.HOSTED_IMAGE && (!!env.PROVIDER_RUNTIME || (!!env.HOSTED_CONTROL_URL && !!env.HOSTED_CONTROL_TOKEN)) });
         if (request.method === "PUT" && (!workspaceId || hostedMatch[2] === "settings")) {
           if (member.role === "member") return jsonError("Ask an admin to change hosted computers.",403);
           const input = await body<{settings?:unknown;secret?:{name?:unknown;value?:unknown}}>(request);
@@ -618,7 +680,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           return board().fetch(new Request(`https://internal/hosted/${encodeURIComponent(workspaceId)}`,{method:request.method,headers:{"x-organization-id":organizationId}}));
         }
       }
-      if (tail === "threads" || tail === "threads/live" || /^computers\/[^/]+\/threads(?:\/|$)/.test(tail)) {
+      if (tail === "threads" || tail === "threads/live" || /^computers\/[^/]+\/workspaces\/[^/]+\/branches$/.test(tail) || /^computers\/[^/]+\/threads(?:\/|$)/.test(tail)) {
         await organizations.member(organizationId, identity.userId);
         const profile = await store.profile(identity.userId);
         const actor = threadMemberSchema.parse({ id: identity.userId, label: profile?.name || "Member" });
@@ -744,7 +806,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       }
       if (tail === "members" && request.method === "GET") {
         const members = await organizations.members(organizationId, identity.userId);
-        return Response.json({ members: await Promise.all(members.map(async (m) => ({ ...m, name: (await store.profile(m.userId))?.name ?? "Member" }))) });
+        return Response.json({ members: await Promise.all(members.map(async (m) => { const profile = await store.profile(m.userId); return {...m, name: profile?.name ?? "Member", image: profile?.image ?? null}; })) });
       }
       if (tail === "invites" && request.method === "POST") {
         const input = await body<{ email?: string; role?: "admin" | "member" }>(request);
@@ -791,11 +853,13 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       const workspaceMatch = /^workspaces\/([^/]+)$/.exec(tail);
       if (workspaceMatch && request.method === "GET") return Response.json(await organizations.workspace(organizationId, identity.userId, decodeURIComponent(workspaceMatch[1])));
       if (workspaceMatch && request.method === "PATCH") {
-        const input = await body<{ name?: unknown; access?: null | { teamIds?: unknown; userIds?: unknown } }>(request);
-        if (!input || (input.name === undefined && input.access === undefined)) return jsonError("Choose a workspace change.", 400);
+        const input = await body<{ name?: unknown; icon?: unknown; tint?: unknown; access?: null | { teamIds?: unknown; userIds?: unknown } }>(request);
+        if (!input || (input.name === undefined && input.access === undefined && input.icon === undefined && input.tint === undefined)) return jsonError("Choose a workspace change.", 400);
         if (input.name !== undefined && (typeof input.name !== "string" || !input.name.trim() || input.name.length > 120)) return jsonError("Enter a workspace name.", 400);
         if (input.access !== undefined && input.access !== null && (!Array.isArray(input.access.teamIds) || !input.access.teamIds.every((id) => typeof id === "string") || !Array.isArray(input.access.userIds) || !input.access.userIds.every((id) => typeof id === "string"))) return jsonError("Choose valid workspace access.", 400);
-        return Response.json(await organizations.updateWorkspace(organizationId, identity.userId, decodeURIComponent(workspaceMatch[1]), { ...(typeof input.name === "string" ? { name: input.name.trim() } : {}), ...(input.access !== undefined ? { access: input.access as { teamIds: string[]; userIds: string[] } | null } : {}) }));
+        const updated = await organizations.updateWorkspace(organizationId, identity.userId, decodeURIComponent(workspaceMatch[1]), { ...(input.icon !== undefined ? {icon: String(input.icon)} : {}), ...(input.tint !== undefined ? {tint: String(input.tint)} : {}), ...(typeof input.name === "string" ? { name: input.name.trim() } : {}), ...(input.access !== undefined ? { access: input.access as { teamIds: string[]; userIds: string[] } | null } : {}) });
+        await board().fetch(new Request("https://internal/connections/changed", {method:"POST",headers:{"x-organization-id":organizationId}}));
+        return Response.json(updated);
       }
       if (workspaceMatch && request.method === "DELETE") { if ((await organizations.member(organizationId, identity.userId)).role === "member") return jsonError("Only an administrator can remove a workspace.", 403); const cleanup = await board().fetch(new Request(`https://internal/hosted-workspace/${workspaceMatch[1]}`, {method:"DELETE"})); if (!cleanup.ok) return jsonError("This hosted computer could not be removed; try again.", 502); await organizations.deleteWorkspace(organizationId, identity.userId, decodeURIComponent(workspaceMatch[1])); return new Response(null, { status: 204 }); }
     }
@@ -832,12 +896,11 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
   if (url.pathname === "/api/profile" && request.method === "PATCH") {
     const input = await body<{ name?: string; image?: string | null }>(request);
     if (!input || (input.name !== undefined && (typeof input.name !== "string" || !input.name.trim() || input.name.length > 120))) return jsonError("Enter your name.", 400);
-    if (input.image !== undefined && input.image !== null) {
-      if (typeof input.image !== "string" || input.image.length > 2048 || !URL.canParse(input.image)) return jsonError("Choose a valid image URL.", 400);
-      const protocol = new URL(input.image).protocol;
-      if (protocol !== "https:" && protocol !== "http:") return jsonError("Choose a valid image URL.", 400);
-    }
-    return Response.json(await store.updateProfile(identity.userId, { ...(input.name !== undefined ? { name: input.name.trim() } : {}), ...(input.image !== undefined ? { image: input.image } : {}) }));
+    if (input.image !== undefined && input.image !== null && !validProfileImage(input.image)) return jsonError("Choose a valid profile picture.", 400);
+    const profile = await store.updateProfile(identity.userId, { ...(input.name !== undefined ? { name: input.name.trim() } : {}), ...(input.image !== undefined ? { image: input.image } : {}) });
+    const memberships = await env.DB.prepare("SELECT organization_id FROM memberships WHERE user_id=?").bind(identity.userId).all<{organization_id:string}>();
+    await Promise.all(memberships.results.map(row => env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${row.organization_id}`)).fetch(new Request("https://internal/profile/changed", { method:"POST", headers:{"x-organization-id":row.organization_id,"x-user-id":identity.userId} }))));
+    return Response.json(profile);
   }
   return Response.json(hubErrorSchema.parse({ error: "Not found" }), { status: 404 });
   };
@@ -884,6 +947,8 @@ export function createHandler(overrides: Partial<HandlerDependencies> = {}) {
     }
     const headers = new Headers(response.headers);
     headers.set("x-request-id", requestId);
+    const durationMs = Math.max(0, dependencies.now() - startedAt);
+    if (route.startsWith("/api/") && response.status !== 101) headers.append("server-timing", `app;dur=${durationMs}`);
     const correlatedResponse = new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
@@ -898,7 +963,7 @@ export function createHandler(overrides: Partial<HandlerDependencies> = {}) {
       method: request.method,
       route,
       status: correlatedResponse.status,
-      durationMs: Math.max(0, dependencies.now() - startedAt),
+      durationMs,
       outcome,
     }));
     return correlatedResponse;
@@ -945,6 +1010,17 @@ export class HubCoordinator {
     const org = request.headers.get("x-organization-id");
     const user = request.headers.get("x-user-id");
     if (org) {await this.ctx.storage.put("organizationId", org);await seedHubAgents(this.board,new D1OrganizationStore(this.env.DB),org);}
+    if (url.pathname === "/internal/hosted-git-owner" && request.method === "GET") {
+      const owner = await this.ctx.storage.get<{userId: string; workspaceId: string}>(`hosted-git-owner:${url.searchParams.get("computer")}`);
+      return Response.json(owner ?? {});
+    }
+    if (url.pathname === "/profile/changed" || url.pathname === "/model-favorites/changed" || url.pathname === "/model-defaults/changed") {
+      for (const socket of this.ctx.getWebSockets()) {
+        const attachment = socket.deserializeAttachment() as { kind?: string; userId?: string };
+        if (attachment.kind === "organization" && (url.pathname === "/profile/changed" || attachment.userId === user) && org && attachment.userId && await new D1OrganizationStore(this.env.DB).membership(org, attachment.userId)) socket.send(JSON.stringify({ kind: url.pathname === "/profile/changed" ? "profile.changed" : url.pathname === "/model-defaults/changed" ? "model-defaults.changed" : "model-favorites.changed" }));
+      }
+      return Response.json({ ok: true });
+    }
     if (url.pathname === "/connections/changed") {
       for (const socket of this.ctx.getWebSockets()) {
         const a=socket.deserializeAttachment() as {kind?:string;userId?:string};
@@ -1427,6 +1503,16 @@ export class HubCoordinator {
 
   private readonly agentStarts=new Map<string,Promise<unknown>>();
   private async dispatchComputer(computerId:string,actor:ThreadMember,method:string,path:string,input:unknown):Promise<Response> {
+    if (method === "POST" && path === "/hub/threads" && input && typeof input === "object" && "branch" in input && input.branch !== undefined) {
+      if (typeof input.branch !== "string" || !input.branch || input.branch.length > 255) return jsonError("Choose a branch.", 400);
+      const org = (await this.ctx.storage.get<string>("organizationId"))!;
+      const computer = await this.computers.computer(org, computerId);
+      if (computer?.ownership !== "hosted") {
+        const workspaceId = (input as {workspaceId?: string}).workspaceId;
+        const checked = await this.dispatchComputer(computerId, actor, "POST", `/workspaces/${encodeURIComponent(workspaceId ?? "")}/checkout`, {branch: input.branch, mode: "main"});
+        if (!checked.ok) return checked;
+      }
+    }
     if(method==="POST" && (path==="/hub/threads" || /^\/hub\/threads\/[^/]+\/message$/.test(path)) && input && typeof input==="object") {
       const org=(await this.ctx.storage.get<string>("organizationId"))!;
       const computer=await this.computers.computer(org,computerId);
@@ -1438,7 +1524,7 @@ export class HubCoordinator {
     }
     const socket=this.computerSocket(computerId);if(!socket)return jsonError("This computer is offline.",503);
     const id=crypto.randomUUID();const response=new Promise<Response>(resolve=>{const timer=setTimeout(()=>{this.pending.delete(id);resolve(jsonError("This computer did not answer.",504));},30_000);this.pending.set(id,{computerId,resolve,timer});});
-    socket.send(JSON.stringify({kind:"request",id,method,path,headers:{},actor,body:encodeWireBody(new TextEncoder().encode(JSON.stringify(input)).buffer)}));return response;
+    socket.send(JSON.stringify({kind:"request",id,method,path,headers:{},actor,...(input === undefined ? {} : {body:encodeWireBody(new TextEncoder().encode(JSON.stringify(input)).buffer)})}));return response;
   }
   private async routeFor(userId:string,workspaceId:string,trigger:string,override?:string|null) {
     const org=(await this.ctx.storage.get<string>("organizationId"))!,store=new D1OrganizationStore(this.env.DB),service=new OrganizationService(store);
@@ -1449,12 +1535,18 @@ export class HubCoordinator {
     const preference=await this.env.DB.prepare("SELECT computer_id FROM member_computer_preferences WHERE organization_id=? AND user_id=? AND workspace_id=?").bind(org,userId,workspaceId).first<{computer_id:string}>();
     return resolveComputer(routingRuleSchema.array().parse(JSON.parse(row?.rules??"[]")),await this.computerService().list(org,userId),{workspaceId,origin:workspace.origin,teamIds,trigger,enabledProviders,...(override !== undefined ? (override ? {override} : {}) : trigger === "manual" && preference ? {override:preference.computer_id} : {})});
   }
-  private async taskComputer(userId:string, workspaceId:string, trigger:string, taskId:string, title?:string, override?:string|null) {
+  private async taskComputer(userId:string, workspaceId:string, trigger:string, taskId:string, title?:string, override?:string|null, modelChoice?:{provider?:string;model?:string}) {
     const org = (await this.ctx.storage.get<string>("organizationId"))!;
     let choice = await this.routeFor(userId, workspaceId, trigger,override);
     const target = choice.computerId ? await this.computers.computer(org, choice.computerId) : undefined;
+    if(target && target.ownership !== "hosted" && modelChoice?.provider && !target.capabilities.providers.some(p=>p.id===modelChoice.provider && (!modelChoice.model || p.models.includes(modelChoice.model)))) {
+      if(override)throw Error("This computer cannot run your selected model; choose another computer.");
+      const settings=await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSettings(org,workspaceId);
+      choice={reason:"A cloud computer can run your selected model.",hostedWorkspaceId:workspaceId,hostedProvider:settings.provider};
+    }
     if (choice.hostedWorkspaceId || target?.ownership === "hosted") {
       const settings = await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSettings(org,workspaceId,choice.hostedProvider);
+      await this.ctx.storage.put(`hosted-task-owner:${taskId}`, userId);
       const state = await this.hostedService().ensure(workspaceId,settings,taskId,title);
       const computer = await this.computers.computer(org,state.computerId);
       choice = {computerId:state.computerId,workspaceId:computer?.capabilities.workspaces[0]?.id ?? workspaceId,reason:"A separate computer for your task."};
@@ -1532,13 +1624,18 @@ export class HubCoordinator {
       const registration={computerId:state.computerId,organizationId:org,ownerUserId:null,ownership:"hosted" as const,name:state.taskId?`${state.taskTitle || workspace.name} · ${state.computerId.slice(0,6)}`:`Codex for ${workspace.name}`,icon:"cloud",platform:"linux" as const,daemonVersion:this.env.MINIMUM_DAEMON_VERSION??"0.1.0",protocol:{minimum:1,maximum:1},publicKey:keys.publicKey,capabilities:{providers:[],workspaces:[{id:workspace.id,name:workspace.name,path:"/workspace",origin:workspace.origin}],worktrees:true,terminals:true,emulator:false},access:{mode:"organization" as const,userIds:[],teamIds:[]},registeredAt:now,updatedAt:now};
       if(!await this.computers.computer(org,state.computerId)) await this.computers.register({...registration,lastSeenAt:null});
       await this.env.DB.prepare("INSERT INTO hosted_workspace_bindings(computer_id,organization_id,workspace_id) VALUES(?,?,?) ON CONFLICT(computer_id) DO NOTHING").bind(state.computerId,org,state.workspaceId).run();
+      const taskOwner = state.taskId ? await this.ctx.storage.get<string>(`hosted-task-owner:${state.taskId}`) : undefined;
+      if (taskOwner) {
+        await new OrganizationService(new D1OrganizationStore(this.env.DB)).workspace(org, taskOwner, workspace.id);
+        await this.ctx.storage.put(`hosted-git-owner:${state.computerId}`, {userId: taskOwner, workspaceId: workspace.id});
+      }
       const actual=await this.computers.computer(org,state.computerId);
       const environment={...modelSecrets(await settings.secrets(org)),MC_CONFIG_DIR:"/data/remy",REMY_HOSTED_BOOTSTRAP:JSON.stringify({registration:{...actual,hubUrl:this.env.BETTER_AUTH_URL},privateKey:keys.privateKey,...(state.taskId?{taskId:state.taskId}:{}),workspace:{id:workspace.id,name:workspace.name,origin:workspace.origin}})};
-      const domains=[new URL(this.env.BETTER_AUTH_URL).hostname,"api.anthropic.com","api.openai.com","api.router.com","auth.openai.com","chatgpt.com","ab.chatgpt.com","github.com","api.github.com","objects.githubusercontent.com","release-assets.githubusercontent.com","registry.npmjs.org"];
+      const domains=[new URL(this.env.BETTER_AUTH_URL).hostname,"api.anthropic.com","api.openai.com","api.router.com","openrouter.ai","auth.openai.com","chatgpt.com","ab.chatgpt.com","github.com","api.github.com","objects.githubusercontent.com","release-assets.githubusercontent.com","registry.npmjs.org"];
       return {organizationId:org,computerId:state.computerId,settings:state.settings,image:this.env.HOSTED_IMAGE,archive:this.env.HOSTED_ARCHIVE??"",environment,allowedDomains:domains};
     }, async id=>{
       for(let attempt=0;attempt<300;attempt++){if(this.computerSocket(id))return;await new Promise(resolve=>setTimeout(resolve,100));}
-      throw new Error("Hosted computer did not connect.");
+      throw new HostedStartupError("Your cloud computer started but did not connect to Remy. Retry to reconnect.");
     }, Date.now, id => !!this.computerSocket(id));return this.hosted;
   }
 
@@ -1619,10 +1716,19 @@ export class HubCoordinator {
 
   private async threadRequest(request: Request): Promise<Response | undefined> {
     const url = new URL(request.url);
-    const match = /^\/computers\/([^/]+)\/threads(?:\/([0-9a-f-]{36})(?:\/(join|message|approval|question|interrupt|stop|visibility|attachments)(?:\/([0-9a-f-]{36}))?)?)?$/.exec(url.pathname);
-    if (!match && url.pathname !== "/threads" && url.pathname !== "/threads/live") return undefined;
+    const match = /^\/computers\/([^/]+)\/threads(?:\/([0-9a-f-]{36})(?:\/(join|message|approval|question|interrupt|stop|visibility|options|attachments)(?:\/([0-9a-f-]{36}))?)?)?$/.exec(url.pathname);
+    const branchMatch = /^\/computers\/([^/]+)\/workspaces\/([^/]+)\/branches$/.exec(url.pathname);
+    if (!match && !branchMatch && url.pathname !== "/threads" && url.pathname !== "/threads/live") return undefined;
     let actor: ThreadMember;
     try { actor = threadMemberSchema.parse(JSON.parse(decodeURIComponent(request.headers.get("x-thread-member") ?? "null"))); } catch { return jsonError("Sign in again.", 401); }
+    if (branchMatch) {
+      if (request.method !== "GET") return jsonError("This action is not available.", 404);
+      const org = request.headers.get("x-organization-id")!;
+      const computerId = decodeURIComponent(branchMatch[1]), workspaceId = decodeURIComponent(branchMatch[2]);
+      const target = await this.computerService().requireUse(org, computerId, actor.id);
+      if (!await this.computerService().canUseWorkspace(target, actor.id, workspaceId)) return jsonError("This workspace is not available to you.", 404);
+      return this.dispatchComputer(computerId, actor, "GET", `/workspaces/${encodeURIComponent(workspaceId)}/branches`, undefined);
+    }
     const computerId = match ? decodeURIComponent(match[1]) : undefined;
     const id = match?.[2]; const action = match?.[3]; const attachmentId = match?.[4];
     if (url.pathname === "/threads" && request.method === "GET") {
@@ -1646,16 +1752,25 @@ export class HubCoordinator {
     }
     if (url.pathname === "/threads" && request.method === "POST") {
       const org = request.headers.get("x-organization-id")!;
-      const input = await body<{workspaceId?: string; title?: string; requestId?: string; computerId?:string|null}>(request);
+      const input = await body<{workspaceId?: string; title?: string; requestId?: string; computerId?:string|null; provider?:string; model?:string; branch?:string}>(request);
       if (!input || typeof input.workspaceId !== "string" || typeof input.requestId !== "string" || !/^[0-9a-f-]{36}$/.test(input.requestId)) return jsonError("Choose a workspace and retry your thread.", 400);
       const workspace = await new OrganizationService(new D1OrganizationStore(this.env.DB)).workspace(org, actor.id, input.workspaceId);
       if(input.computerId !== undefined && input.computerId !== null && typeof input.computerId !== "string") return jsonError("Choose a computer.",400);
+      if(input.provider !== undefined && !["claude","codex","cursor"].includes(input.provider))return jsonError("Choose a provider.",400);
+      if(input.model !== undefined && (typeof input.model !== "string" || input.model.length>512))return jsonError("Choose a model.",400);
+      if(input.branch !== undefined && (typeof input.branch !== "string" || !input.branch || input.branch.length > 255)) return jsonError("Choose a branch.",400);
+      const routed=/^remy:(router|openrouter|openai):(.+)$/.exec(input.model ?? "");
+      if(routed) {
+        const access=publicModelAccess(await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).secrets(org)).find(p=>p.id===routed[1]);
+        if(input.provider!=="codex" || !access?.enabled || (routed[1]!=="openai" && !access.models.includes(routed[2])))return jsonError("Choose an enabled provider and model.",400);
+      }
       const key = `manual-task:${actor.id}:${input.requestId}`;
       const previous = await this.ctx.storage.get<{computerId:string; id:string}>(key);
       if (previous) return Response.json(previous,{status:201});
       try {
-        const choice = await this.taskComputer(actor.id, workspace.id, "manual", `${actor.id}:${input.requestId}`, input.title,input.computerId);
-        const made = await this.dispatchComputer(choice.computerId, actor, "POST", "/hub/threads", {workspaceId:choice.workspaceId, hubTaskId:key, title:typeof input.title === "string" ? input.title.slice(0,200) : undefined});
+        const choice = await this.taskComputer(actor.id, workspace.id, "manual", `${actor.id}:${input.requestId}`, input.title,input.computerId,input);
+        const preferences = await this.env.DB.prepare("SELECT permission_mode FROM member_preferences WHERE user_id=?").bind(actor.id).first<{permission_mode:string}>();
+        const made = await this.dispatchComputer(choice.computerId, actor, "POST", "/hub/threads", {workspaceId:choice.workspaceId, hubTaskId:key, permissionMode:preferences?.permission_mode ?? "default", branch:input.branch, provider:input.provider, model:input.model, title:typeof input.title === "string" ? input.title.slice(0,200) : undefined});
         if (!made.ok) return made;
         const thread = threadSnapshotSchema.parse(await made.json());
         await this.threads.snapshot(choice.computerId, thread);

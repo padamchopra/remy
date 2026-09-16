@@ -1,3 +1,6 @@
+import { HubModelDefault } from "./HubModelDefault";
+import { PROVIDERS } from "@/lib/providers";
+import { EmptyState } from "@/components/EmptyState";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { HubPersonalContext, usePersonalHub } from "@/lib/hub-scope";
 import { Deferred } from "./Deferred";
@@ -279,14 +282,7 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
           </p>
         )}
         {!org && (
-          <Empty>
-            <EmptyHeader>
-              <EmptyTitle>Connect this Mac</EmptyTitle>
-              <EmptyDescription>
-                Attach this Mac to use your threads from the web.
-              </EmptyDescription>
-            </EmptyHeader>
-          </Empty>
+          <EmptyState title="Connect this Mac" description="Attach this Mac to use your threads from the web." />
         )}
         {local && registration && <Field>
           <FieldDescription>This Mac is connected to Remy on the web.</FieldDescription>
@@ -317,10 +313,9 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
                 <HostedComputers key={org} organizationId={org} admin={options.role !== "member"} />
               </Deferred>
             </div>}
-            {!local && computersLoaded && !["computers", "general", "cloud"].includes(pane) && !computers.some((c) => c.computerId === pane) && <Empty>
-              <EmptyHeader><EmptyTitle>Computer unavailable</EmptyTitle><EmptyDescription>Choose another computer or add your Mac.</EmptyDescription></EmptyHeader>
+            {!local && computersLoaded && !["computers", "general", "cloud"].includes(pane) && !computers.some((c) => c.computerId === pane) && <EmptyState title="Computer unavailable" description="Choose another computer or add your Mac.">
               <Button variant="outline" data-link onClick={() => choosePane("computers")}>View computers</Button>
-            </Empty>}
+            </EmptyState>}
         {!local && pane === "computers" && !computersLoaded && !error && <p role="status" className="text-sm text-muted-foreground">Reading computers…</p>}
         {!local && pane === "computers" && computersLoaded && computers.length === 0 && !error && !stale && <Empty className="py-12">
           <EmptyHeader>
@@ -371,6 +366,7 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
                         ? "Selected members and teams"
                         : "Everyone in your organization"}
                   </ItemDescription>
+                  {!local && pane === computer.computerId && computer.canUse && <HubModelDefault organizationId={org} computerId={computer.computerId} catalogue={computer.capabilities.providers.map(p=>({...PROVIDERS.find(v=>v.id===p.id)!,models:p.models.map(value=>({value,label:value || "Default"}))}))} />}
                   {running.map((thread) => (
                     <Button
                       key={thread.id}

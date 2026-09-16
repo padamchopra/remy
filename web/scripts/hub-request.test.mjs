@@ -1,0 +1,21 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {build} from 'esbuild';
+const bundled=await build({entryPoints:['web/src/lib/hub-threads.ts'],bundle:true,write:false,platform:'node',format:'esm',plugins:[{name:'transport',setup(b){b.onResolve({filter:/^\.\/transport$/},()=>({path:'transport',namespace:'stub'}));b.onLoad({filter:/.*/,namespace:'stub'},()=>({contents:'export const hubTransport={request:(...args)=>globalThis.__hubTestRequest(...args)}'}));}}]});
+const {hubRequest}=await import(`data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString('base64')}`);
+test('concurrent reads deduplicate, settle cleanly, and mutations invalidate pending reads',async()=>{
+  let calls=0,resolve;
+  globalThis.__hubTestRequest=()=>{calls++;return new Promise(r=>resolve=r);};
+  const a=hubRequest('/test'),b=hubRequest('/test');
+  assert.equal(calls,1);resolve(Response.json({ok:true}));
+  assert.deepEqual(await a,await b);
+  globalThis.__hubTestRequest=async()=>{calls++;return Response.json({error:'failed'},{status:500});};
+  await assert.rejects(hubRequest('/test'));await assert.rejects(hubRequest('/test'));assert.equal(calls,3);
+  const resolvers=[];
+  globalThis.__hubTestRequest=()=>{calls++;return new Promise(r=>resolvers.push(r));};
+  const old=hubRequest('/test'),write=hubRequest('/test','PATCH',{}),fresh=hubRequest('/test');
+  assert.equal(calls,6);
+  for(const r of resolvers)r(Response.json({ok:true}));
+  await Promise.all([old,write,fresh]);
+  delete globalThis.__hubTestRequest;
+});

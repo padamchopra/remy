@@ -32,14 +32,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ChatView, ThreadTicket } from "@/components/ChatView";
 import { SurfaceLoading } from "@/components/Deferred";
 import { StartSubthreadDialog } from "@/components/StartSubthreadDialog";
 import { ThreadActivityTool } from "@/components/ThreadActivity";
 import { ThreadTerminal, terminalSessionId } from "@/components/ThreadTerminal";
-import { TabClose, TabCloseSpace, TabStrip, tabContentClass, tabListClass, tabTriggerClass } from "@/components/WorkbenchTabs";
+import { TabClose, TabCloseSpace, TabStrip, WorkbenchTabTrigger, tabContentClass, tabListClass } from "@/components/WorkbenchTabs";
 import { browserKey, githubPullRequestTarget, useSharedBrowsers, type SharedBrowserView } from "@/hooks/use-thread-tools";
 import { threadActivities } from "@/lib/thread-activity";
 import {
@@ -421,16 +421,16 @@ function TabTrigger({
                 child would write its own open state over the tab's active one. */}
             <TooltipTrigger asChild>
               <span className="flex min-w-0 items-center">
-                <TabsTrigger
+                <WorkbenchTabTrigger
+                  icon={<Icon className="size-3.5 shrink-0" />}
+                  label={label}
                   value={id}
                   aria-keyshortcuts="Meta+Shift+[ Meta+Shift+]"
-                  className={cn(tabTriggerClass, closable && "pr-1")}
+                  className={closable ? "pr-1" : undefined}
                 >
-                  <Icon className="size-3.5 shrink-0" />
-                  <span className="truncate">{label}</span>
                   {dot}
                   {closable && <TabCloseSpace />}
-                </TabsTrigger>
+                </WorkbenchTabTrigger>
               </span>
             </TooltipTrigger>
             {/* Whose tab it is, since a collection can hold more than one thread. */}

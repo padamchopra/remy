@@ -1,34 +1,32 @@
+import { startHubThread } from "@/lib/hub-thread-start";
+import { hostedModels } from "@/lib/hub-models";
+import { resolveModelDefault } from "@/lib/model-defaults";
+import { useHubModelDefaults } from "./HubModelDefault";
+import { BranchPicker } from "./BranchPicker";
+import type { GitBranch } from "@/state/types";
+import { toast } from "sonner";
+import { ThreadComposerEditor } from "./ThreadComposerEditor";
+import { NewThreadSurface, ComposerWorkspaceTrigger } from "./NewThreadSurface";
+import { HubWorkspaceIcon } from "./HubWorkspaceIcon";
+import { ComposerMenu } from "./ComposerMenu";
+import { Check, Cloud, Laptop } from "lucide-react";
+import { InputGroupButton } from "./ui/input-group";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "./ui/dropdown-menu";
+import { EmptyState } from "@/components/EmptyState";
+import { ModelPickerButton } from "./ModelPicker";
+import { PROVIDERS, type ModelChoice } from "@/lib/providers";
+import type { ModelAccessEntry } from "./HubModelAccess";
 import { CLOUD_COMPUTERS, cloudComputerProvider } from "@remy/contract";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ComputerSummary } from "@remy/contract";
 import { Button } from "@/components/ui/button";
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Collapsible,
-  CollapsibleTrigger,
-  CollapsibleContent,
-} from "@/components/ui/collapsible";
-import {
-  Empty,
-  EmptyHeader,
-  EmptyTitle,
-  EmptyDescription,
-} from "@/components/ui/empty";
-import { Skeleton } from "@/components/ui/skeleton";
+import { PaneLoading } from "@/components/PaneLoading";
 import { useHubResource } from "@/lib/hub-organization";
 import { formatLocation } from "@/lib/route";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectGroup,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { hubRequest, hubThreadPath, hubThreadBase } from "@/lib/hub-threads";
+import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 export function HubThreadComposer({
   organizationId,
+  memberId,
   computers,
   computersLoaded,
   computerError,
@@ -36,20 +34,15 @@ export function HubThreadComposer({
   open,
 }: {
   organizationId: string;
+  memberId?: string;
   computers: ComputerSummary[];
   computersLoaded: boolean;
   computerError: string;
   canManageWorkspaces: boolean;
   open: (computer: string, thread: string) => void;
 }) {
-  const created = useRef<{
-    id: string;
-    computerId: string;
-    message: string;
-  } | null>(null);
-  const [optionsOpen, setOptionsOpen] = useState(false);
   const catalogue = useHubResource<{
-    workspaces: { id: string; name: string; origin: string }[];
+    workspaces: { id: string; name: string; origin: string; icon?: string; tint?: string }[];
   }>(organizationId, "/workspaces");
   const workspaces = catalogue.value?.workspaces ?? [];
   const go = (name: "workspaces" | "settings") => {
@@ -60,13 +53,14 @@ export function HubThreadComposer({
           : { name, organizationId },
     });
   };
+  const [branch, setBranch] = useState("");
+  const [resolvingBranch, setResolvingBranch] = useState(true);
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
   const base = hubThreadBase(organizationId),
     [workspaceId, setWorkspace] = useState(""),
     [selected, select] = useState("automatic"),
     [preferenceLoaded, setPreferenceLoaded] = useState(false),
     [message, setMessage] = useState(""),
-    [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   useEffect(() => {
     if (catalogue.value)
@@ -97,10 +91,22 @@ export function HubThreadComposer({
     };
   }, [workspaceId, base]);
   useEffect(() => {
+    setBranch("");
     setRequestId(crypto.randomUUID());
-    created.current = null;
     setError("");
   }, [workspaceId, organizationId]);
+  const codexAccount=useHubResource<{phase:string}>(organizationId,workspaceId ? `/hosted/${encodeURIComponent(workspaceId)}/codex` : null);
+  const modelAccess = useHubResource<{providers:ModelAccessEntry[]}>(organizationId,"/model-access");
+  const defaults = useHubModelDefaults(organizationId, workspaceId || undefined, selected === "automatic" ? undefined : selected);
+  const [pickedModel,setPickedModel]=useState<{workspaceId:string;choice:ModelChoice}>();
+  const inheritedModel = resolveModelDefault(defaults.value?.workspace, defaults.value?.remy, {provider:"",model:""}, defaults.value?.computer);
+  const modelChoice = pickedModel?.workspaceId === workspaceId ? pickedModel.choice : inheritedModel;
+  const cloudModels = hostedModels(modelAccess.value?.providers ?? [], codexAccount.value?.phase === "connected");
+  const usingCloud=!!cloudComputerProvider(selected) || selected==="automatic";
+  const modelCatalogue=usingCloud ? cloudModels : (computers.find(c=>c.computerId===selected)?.capabilities.providers ?? []).map(p=>({...PROVIDERS.find(v=>v.id===p.id)!,models:p.models.map(value=>({value,label:value || "Default"}))}));
+  const chosenProvider=modelCatalogue.find(p=>p.id===modelChoice.provider);
+  const choiceValid=chosenProvider?.models.some(m=>m.value===modelChoice.model);
+  const executionChoice=choiceValid ? {provider:modelChoice.provider==="anthropic"?"claude":["openai","router","openrouter"].includes(modelChoice.provider)?"codex":modelChoice.provider,model:["openai","router","openrouter"].includes(modelChoice.provider)?`remy:${modelChoice.provider}:${modelChoice.model}`:modelChoice.model} : {};
   const cloudConnections = useHubResource<{enabledProviders?: string[]}>(organizationId, "/hosted");
   const cloudOptions = CLOUD_COMPUTERS.filter(c => cloudConnections.value?.enabledProviders?.includes(c.provider));
   const workspace = workspaces.find((w) => w.id === workspaceId);
@@ -114,251 +120,107 @@ export function HubThreadComposer({
         (w) => w.id === workspaceId || w.origin === workspace?.origin,
       ),
   );
+  const loadBranches = useCallback(async (id: string) => {
+    if (!usingCloud) {
+      const computer = computers.find(c => c.computerId === selected);
+      const local = computer?.capabilities.workspaces.find(w => w.id === id || w.origin === workspace?.origin);
+      if (!local) throw Error("Choose another computer to load branches.");
+      return (await hubRequest<{ branches: GitBranch[] }>(`${base}/computers/${encodeURIComponent(selected)}/workspaces/${encodeURIComponent(local.id)}/branches`)).branches;
+    }
+    const response = await hubRequest<{ branches: GitBranch[] }>(`${base}/github/workspace-branches?workspace=${encodeURIComponent(id)}`);
+    return response.branches;
+  }, [base, usingCloud, selected, computers, workspace?.origin]);
+  useEffect(() => {
+    if (!workspaceId || !preferenceLoaded || branch) return;
+    let cancelled = false;
+    setResolvingBranch(true);
+    void loadBranches(workspaceId).then(branches => {
+      if (!cancelled) setBranch(value => value || branches.find(entry => entry.current)?.name || "");
+    }).catch(() => {
+      if (!cancelled) toast.error("Couldn't load your branch. Open the branch picker to retry.");
+    }).finally(() => {
+      if (!cancelled) setResolvingBranch(false);
+    });
+    return () => { cancelled = true; };
+  }, [workspaceId, preferenceLoaded, branch, loadBranches]);
   if (!catalogue.value)
     return catalogue.error ? (
       <p role="alert">{catalogue.error}</p>
     ) : (
-      <Skeleton
-        className="h-48 w-full max-w-xl"
-        aria-label="Loading workspaces"
-      />
+      <PaneLoading label="Loading workspaces" />
     );
   if (!workspaces.length)
     return <HubThreadSetup organizationId={organizationId} computers={computers} computersLoaded={computersLoaded} computerError={computerError} canManageWorkspaces={canManageWorkspaces} go={go} />;
   return (
+    <NewThreadSurface heading={<>
+      <DropdownMenu>
+        <ComposerWorkspaceTrigger disabled={false} aria-label="Thread workspace">
+          {workspace && <HubWorkspaceIcon organizationId={organizationId} workspaceId={workspace.id} icon={workspace.icon} className="size-[0.65em]" />}
+          {workspace?.name ?? "a workspace"}
+        </ComposerWorkspaceTrigger>
+        <DropdownMenuContent>
+          {workspaces.map(w => <DropdownMenuItem key={w.id} onSelect={() => { setWorkspace(w.id); select("automatic"); }}>
+            <HubWorkspaceIcon organizationId={organizationId} workspaceId={w.id} icon={w.icon} className="size-4" />{w.name}{w.id === workspaceId && <Check className="ml-auto" />}
+          </DropdownMenuItem>)}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>}>
     <form
-      className="flex w-full max-w-xl flex-col gap-3 rounded-lg border p-4"
+      className="flex flex-col gap-3"
       aria-label="New thread"
       onSubmit={async (event) => {
         event.preventDefault();
         if (
           !workspace ||
-          busy ||
+          !memberId ||
           !preferenceLoaded ||
+          !defaults.value ||
           !message.trim() ||
-          catalogue.stale
+          catalogue.stale ||
+          ((usingCloud || !!modelChoice.provider) && !choiceValid)
         )
           return;
-        setBusy(true);
-        setError("");
-        try {
-          const firstMessage = created.current?.message ?? message.trim();
-          const title = firstMessage.slice(0, 200);
-          if (!created.current) {
-            let choice: {
-              computerId?: string;
-              workspaceId?: string;
-              reason?: string;
-              hostedWorkspaceId?: string;
-            } = {};
-            if (selected !== "automatic" && !cloudComputerProvider(selected)) {
-              const c = eligible.find((c) => c.computerId === selected);
-              if (!c) throw Error("Choose another computer to continue.");
-              choice = {
-                computerId: c.computerId,
-                workspaceId: c.capabilities.workspaces.find(
-                  (w) => w.id === workspaceId || w.origin === workspace.origin,
-                )!.id,
-              };
-            } else {
-              const thread = await hubRequest<{
-                id: string;
-                computerId: string;
-              }>(`${base}/threads`, "POST", {
-                workspaceId,
-                computerId: selected === "automatic" ? null : selected,
-                title: title.trim(),
-                requestId,
-              });
-              created.current = { ...thread, message: firstMessage };
-            }
-            if (!created.current) {
-              if (!choice.computerId || !choice.workspaceId)
-                throw Error(choice.reason ?? "Choose another computer.");
-              const thread = await hubRequest<{ id: string }>(
-                hubThreadPath(organizationId, choice.computerId),
-                "POST",
-                {
-                  workspaceId: choice.workspaceId,
-                  ...(title.trim() ? { title: title.trim() } : {}),
-                },
-              );
-              created.current = {
-                id: thread.id,
-                computerId: choice.computerId,
-                message: firstMessage,
-              };
-            }
-          }
-          const current = created.current!;
-          await hubRequest(
-            `${hubThreadPath(organizationId, current.computerId, current.id)}/message`,
-            "POST",
-            {
-              text: current.message,
-              messageId: `u-${requestId}`,
-              attachmentIds: [],
-            },
-          );
-          open(current.computerId, current.id);
-        } catch (e) {
-          setError(
-            e instanceof Error ? e.message : "This thread could not start.",
-          );
-        } finally {
-          setBusy(false);
-        }
+        startHubThread({
+          organizationId, ownerId: memberId, requestId, workspaceId,
+          computerId: selected === "automatic" ? null : selected,
+          computerName: cloudOptions.find(c => c.id === selected)?.name ?? eligible.find(c => c.computerId === selected)?.name ?? "Automatic",
+          message: message.trim(), ...(branch ? {branch} : {}), ...executionChoice,
+        });
+        open("pending", requestId);
       }}
     >
-      <FieldGroup>
-        <Field>
-          <FieldLabel htmlFor="hub-thread-message">
-            What would you like to work on?
-          </FieldLabel>
-          <Textarea
-            id="hub-thread-message"
-            maxLength={64000}
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            required
-            disabled={busy || !!created.current}
-            placeholder="Describe a change or ask a question about your code."
-          />
-        </Field>
-        <Field>
-          <FieldLabel>Workspace</FieldLabel>
-          <Select
-            value={workspaceId}
-            disabled={busy || !!created.current}
-            onValueChange={(v) => {
-              if (!v) return;
-              setWorkspace(v);
-              select("automatic");
-            }}
-          >
-            <SelectTrigger aria-label="Thread workspace">
-              <SelectValue placeholder="Choose a workspace" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {workspaces.map((w) => (
-                  <SelectItem key={w.id} value={w.id}>
-                    {w.name}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </Field>
-        <Collapsible open={optionsOpen} onOpenChange={setOptionsOpen}>
-          <CollapsibleTrigger asChild>
-            <Button type="button" variant="ghost">
-              Choose a computer
-            </Button>
-          </CollapsibleTrigger>
-          <CollapsibleContent className="pt-3">
-            <Field>
-              <FieldLabel>Computer</FieldLabel>
-              <Select
-                value={selected}
-                disabled={busy || !!created.current || !preferenceLoaded}
-                onValueChange={async (v) => {
-                  if (!v) return;
-                  const previous = selected;
-                  select(v);
-                  setPreferenceLoaded(false);
-                  setError("");
-                  try {
-                    await hubRequest(`${base}/routing/preference`, "POST", {
-                      workspaceId,
-                      computerId: v === "automatic" ? null : v,
-                    });
-                  } catch (e) {
-                    select(previous);
-                    setError(
-                      e instanceof Error
-                        ? e.message
-                        : "Your computer choice could not be saved.",
-                    );
-                  } finally {
-                    setPreferenceLoaded(true);
-                  }
-                }}
-              >
-                <SelectTrigger aria-label="Thread computer">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectItem value="automatic">
-                      Choose automatically
-                    </SelectItem>
-                    {cloudOptions.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-                    {selected !== "automatic" && !cloudOptions.some(c => c.id === selected) &&
-                      !eligible.some((c) => c.computerId === selected) && (
-                        <SelectItem value={selected} disabled>
-                          {computers.find((c) => c.computerId === selected)
-                            ?.name ?? "Saved computer"}{" "}
-                          (unavailable)
-                        </SelectItem>
-                      )}
-                    {eligible.map((c) => (
-                      <SelectItem key={c.computerId} value={c.computerId}>
-                        {c.name}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </Field>
-            <p className="text-muted-foreground text-sm">
-              Your computer choice is remembered for this workspace.
-            </p>
-          </CollapsibleContent>
-        </Collapsible>
-      </FieldGroup>
-      {!cloudOptions.length && !computers.some((c) => c.canUse && c.availability !== "offline") && (
-        <p className="text-sm text-muted-foreground">
-          Your request needs a connected Mac or configured cloud execution.
-        </p>
-      )}
-      <Button
-        type="button"
-        variant="link"
-        data-link
-        onClick={() => go("settings")}
-      >
-        Set up a computer
-      </Button>
+      <ThreadComposerEditor
+        textarea={{ id: "hub-thread-message", maxLength: 64000, value: message, onChange: e => setMessage(e.target.value), required: true, disabled: false }}
+        canSend={!!memberId && !!workspace && preferenceLoaded && !!defaults.value && !!message.trim() && !catalogue.stale && (!(usingCloud || modelChoice.provider) || !!choiceValid)}
+        busy={false} sendLabel="Send"
+        controls={<ModelPickerButton variant="composer" value={modelChoice} onPick={choice=>setPickedModel({workspaceId,choice})} catalogue={modelCatalogue} disabled={false} />}
+        contextEnd={<BranchPicker workspaceId={workspaceId} branch={branch || "Choose branch"} pending={!branch && resolvingBranch} busy={false} loadBranches={loadBranches} onPick={async value => { setBranch(value); return true; }} />}
+        context={<>
+          <ComposerMenu ariaLabel="Thread computer" icon={usingCloud ? Cloud : Laptop}
+            label={cloudOptions.find(c => c.id === selected)?.name ?? eligible.find(c => c.computerId === selected)?.name ?? (selected === "automatic" ? "Automatic" : "Computer unavailable")}
+            value={selected} disabled={false} pending={!preferenceLoaded}
+            options={[{ value: "automatic", label: "Choose automatically" }, ...cloudOptions.map(c => ({ value: c.id, label: c.name, icon: Cloud })), ...eligible.map(c => ({ value: c.computerId, label: c.name, icon: Laptop }))]}
+            onChange={async v => {
+              const previous = selected;
+              setBranch(""); select(v); setPreferenceLoaded(false); setError("");
+              try { await hubRequest(`${base}/routing/preference`, "POST", { workspaceId, computerId: v === "automatic" ? null : v }); }
+              catch { select(previous); toast.error("Your computer choice could not be saved. Try again."); }
+              finally { setPreferenceLoaded(true); }
+            }} />
+          {cloudConnections.value && computersLoaded && !cloudOptions.length && !eligible.length && <InputGroupButton data-link onClick={() => go("settings")}>Set up a computer</InputGroupButton>}
+        </>}
+      />
+      {defaults.error && <p role="alert">{defaults.error}</p>}
+      {cloudConnections.error && <p role="alert">{cloudConnections.error}</p>}
       {catalogue.stale && (
         <p role="status">
           Reconnect to refresh your workspaces before starting a thread.
         </p>
       )}
-      {busy && <p role="status">Preparing your thread…</p>}
       {error && <p role="alert">{error}</p>}
-      <Button
-        type="submit"
-        disabled={
-          busy ||
-          !workspace ||
-          !preferenceLoaded ||
-          !message.trim() ||
-          catalogue.stale
-        }
-      >
-        {created.current ? "Retry sending request" : "Start thread"}
-      </Button>
-      {created.current && !busy && (
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => open(created.current!.computerId, created.current!.id)}
-        >
-          Open created thread
-        </Button>
-      )}
+
     </form>
+    </NewThreadSurface>
   );
 }
 
@@ -375,35 +237,23 @@ function HubThreadSetup({ organizationId, computers, computersLoaded, computerEr
   if (computerError || (!readyComputer && cloud.error))
     return <p role="alert">{computerError || cloud.error}</p>;
   if (!computersLoaded || (!readyComputer && !cloud.value))
-    return <Skeleton className="h-48 w-full max-w-xl" aria-label="Checking your computers" />;
+    return <PaneLoading label="Checking your computers" />;
   const needsComputer = !readyComputer && !(cloud.value?.available && (cloud.value.enabledProviders?.length ?? 0) > 0);
   if (needsComputer)
     return (
-      <Empty>
-        <EmptyHeader>
-          <EmptyTitle>{computers.length ? "Your computer is unavailable" : "Set up your first computer"}</EmptyTitle>
-          <EmptyDescription>
-            {computers.length
+      <EmptyState title={computers.length ? "Your computer is unavailable" : "Set up your first computer"} description={computers.length
               ? "Check your computer’s connection and access before starting a thread."
-              : "Connect your Mac or configure cloud execution to run your threads."}
-          </EmptyDescription>
-        </EmptyHeader>
+              : "Connect your Mac or configure cloud execution to run your threads."}>
         <Button data-link onClick={() => go("settings")}>
           {computers.length ? "View computers" : "Set up a computer"}
         </Button>
-      </Empty>
+      </EmptyState>
     );
   return (
-    <Empty>
-      <EmptyHeader>
-        <EmptyTitle>{canManageWorkspaces ? "Add your first workspace" : "No workspaces available"}</EmptyTitle>
-        <EmptyDescription>
-          {canManageWorkspaces
+    <EmptyState title={canManageWorkspaces ? "Add your first workspace" : "No workspaces available"} description={canManageWorkspaces
             ? "Choose a repository for your first thread."
-            : "Ask an organization administrator to add a workspace or give you access."}
-        </EmptyDescription>
-      </EmptyHeader>
+            : "Ask an organization administrator to add a workspace or give you access."}>
       {canManageWorkspaces && <Button data-link onClick={() => go("workspaces")}>Add a workspace</Button>}
-    </Empty>
+    </EmptyState>
   );
 }

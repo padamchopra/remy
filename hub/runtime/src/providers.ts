@@ -1,13 +1,13 @@
+import { startProgram } from "./start-program.js";
+import { HostedStartupError } from "../../src/hosted-startup-error.js";
 import { ModalClient } from "modal";
-import { SpritesClient } from "@fly/sprites";
+import { ExecError, SpritesClient } from "@fly/sprites";
 import type {
   ComputerRuntime,
   ComputerRuntimeProvider,
   ProvisionComputerInput,
 } from "../../src/computer-runtime.js";
 const ENTRY = "/opt/remy/server/dist/hosted-entry.js";
-const startProgram =
-  'const{spawn}=require("node:child_process");const fs=require("node:fs");try{process.kill(Number(fs.readFileSync("/tmp/remy.pid","utf8")),0);process.exit(0)}catch{}const p=spawn("node",["/opt/remy/server/dist/hosted-entry.js"],{env:process.env,detached:true,stdio:"ignore"});fs.writeFileSync("/tmp/remy.pid",String(p.pid));p.unref();';
 const stopProgram = `(async()=>{const fs=require("node:fs");let pid;try{pid=Number(fs.readFileSync("/tmp/remy.pid","utf8"))}catch{return}if(!Number.isInteger(pid)||pid<2)throw Error("Invalid computer process");try{process.kill(-pid,"SIGTERM")}catch{}for(let n=0;n<100;n++){let status;try{status=fs.readFileSync("/proc/"+pid+"/stat","utf8")}catch{break}if(status.split(") ")[1]?.startsWith("Z"))break;if(n===99)throw Error("Computer did not stop");await new Promise(r=>setTimeout(r,100))}fs.rmSync("/tmp/remy.pid",{force:true})})().catch(()=>process.exit(1));`;
 
 const nameFor = (id: string) => `remy-${id}`;
@@ -131,15 +131,19 @@ export class FlySpritesRuntime implements ComputerRuntimeProvider {
   constructor(private readonly client: SpritesClient) {}
   close() {}
   async provision(input: ProvisionComputerInput): Promise<ComputerRuntime> {
+    let step = "finding your Sprite";
+    try {
     let sprite;
     try {
       sprite = await this.client.getSprite(nameFor(input.computerId));
     } catch (e) {
       if ((e as { statusCode?: number }).statusCode !== 404) throw e;
     }
+    step = "creating your Sprite";
     sprite ??= await this.client.createSprite(nameFor(input.computerId), {
       urlSettings: { auth: "sprite" },
     });
+    step = "configuring your Sprite network";
     await sprite.updateNetworkPolicy({
       rules: [
         ...input.allowedDomains.map((domain) => ({
@@ -149,7 +153,11 @@ export class FlySpritesRuntime implements ComputerRuntimeProvider {
         { domain: "*", action: "deny" },
       ],
     });
-    const exists = await sprite.execFile("test", ["-f", ENTRY]);
+    step = "checking the Remy installation";
+    const exists = await sprite.execFile("test", ["-f", ENTRY]).catch(error => {
+      if (error instanceof ExecError && error.exitCode === 1) return { exitCode: 1 };
+      throw error;
+    });
     if (exists.exitCode !== 0) {
       for (const [file, args] of [
         [
@@ -166,12 +174,14 @@ export class FlySpritesRuntime implements ComputerRuntimeProvider {
         ],
         ["tar", ["-xzf", "/tmp/remy-computer.tar.gz", "-C", "/"]],
       ] as const) {
+        step = file === "curl" ? "downloading Remy" : "installing Remy";
         const r = await sprite.execFile(file, [...args]);
         if (r.exitCode !== 0)
           throw new Error("Computer image installation failed.");
       }
     }
-    return this.start(
+    step = "starting Remy";
+    return await this.start(
       {
         id: input.computerId,
         provider: this.id,
@@ -179,6 +189,11 @@ export class FlySpritesRuntime implements ComputerRuntimeProvider {
       },
       input,
     );
+    } catch (cause) {
+      const status = (cause as {statusCode?: number}).statusCode;
+      const detail = typeof status === "number" ? ` (HTTP ${status})` : cause instanceof ExecError ? ` (exit ${cause.exitCode})` : "";
+      throw new HostedStartupError(`Fly.io failed while ${step}${detail}. Retry to continue.`);
+    }
   }
   async start(runtime: ComputerRuntime, input: ProvisionComputerInput) {
     const sprite = this.client.sprite(runtime.providerReference);

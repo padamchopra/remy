@@ -1,4 +1,6 @@
+import { threadStarts, watchThreadStarts } from "./hub-thread-start";
 import { hubTransport } from "./transport";
+import { shareSubscription } from "./shared-subscription";
 import type { HubThread, ThreadLiveFrame, ThreadMember } from "@remy/contract";
 
 export const hubThreadBase = (organizationId: string) =>
@@ -14,7 +16,23 @@ export class HubRequestError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
 }
 
-export async function hubRequest<T>(
+const pendingReads = new Map<string, Promise<unknown>>();
+
+export function hubRequest<T>(path: string, method = "GET", body?: unknown): Promise<T> {
+  if (method !== "GET") {
+    pendingReads.clear();
+    return readHubResponse<T>(path, method, body);
+  }
+  const pending = pendingReads.get(path);
+  if (pending) return pending as Promise<T>;
+  const request = readHubResponse<T>(path, method, body).finally(() => {
+    if (pendingReads.get(path) === request) pendingReads.delete(path);
+  });
+  pendingReads.set(path, request);
+  return request;
+}
+
+async function readHubResponse<T>(
   path: string,
   method = "GET",
   body?: unknown,
@@ -31,7 +49,9 @@ export async function hubRequest<T>(
   return result as T;
 }
 
-export function watchHubThreads(
+export const watchHubThreads = shareSubscription<[HubThread[], ThreadMember?]>(startHubThreads);
+
+function startHubThreads(
   organizationId: string,
   changed: (threads: HubThread[], member?: ThreadMember) => void,
   failed: (error: string) => void,
@@ -46,7 +66,15 @@ export function watchHubThreads(
   let attempt = 0;
   const key = (thread: { computerId: string; id: string }) =>
     `${thread.computerId}:${thread.id}`;
-  const emit = () => changed([...threads.values()], member);
+  const emit = () => {
+    const pending: HubThread[] = member ? threadStarts().filter(s => s.ownerId === member!.id && s.organizationId === organizationId && ![...threads.values()].some(t => t.id === s.created?.id && t.computerId === s.created?.computerId)).map(s => ({
+      id: s.requestId, computerId: "pending", revision: 0, stale: false, observedAt: s.at,
+      access: {organizationId, owner: member!, participants: [], visibility: "private"},
+      detail: {id: s.requestId, title: s.message.slice(0, 200), state: s.phase === "failed" ? "idle" : "working", entries: [{id: `u-${s.requestId}`,kind: "user",text: s.message}]},
+    })) : [];
+    changed([...threads.values(), ...pending], member);
+  };
+  const offStarts = watchThreadStarts(emit);
   const refresh = async () => {
     const current = ++generation;
     const result = await hubRequest<{
@@ -129,6 +157,7 @@ export function watchHubThreads(
   void refresh().then(connect).catch(recover);
   return () => {
     stopped = true;
+    offStarts();
     generation += 1;
     clearTimeout(retry);
     socket?.close();

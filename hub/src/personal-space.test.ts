@@ -30,7 +30,10 @@ test("a personal scope is stable, private, and absent from organization lists", 
   t.after(() => sqlite.close());
   const ada = await personalSpace(db, "ada"),
     grace = await personalSpace(db, "grace");
-  assert.equal((await personalSpace(db, "ada")).id, ada.id);
+  let reads = 0;
+  const measuredDb = { ...db, prepare(query: string) { reads++; return db.prepare(query); } } as D1Database;
+  assert.equal((await personalSpace(measuredDb, "ada")).id, ada.id);
+  assert.equal(reads, 1, "Existing personal accounts use one database read");
   assert.notEqual(ada.id, grace.id);
   assert.equal(ada.personal, true);
   assert.deepEqual(await store.organizationsFor("ada"), []);

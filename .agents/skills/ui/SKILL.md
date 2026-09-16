@@ -5,7 +5,7 @@ description: Layout and keyboard for the Remy web UI. Use when adding or changin
 
 # UI
 
-`content` owns the words. `qa` owns clicking the result. `.agents/skills/shadcn` owns the CLI, composition rules, and component APIs — read it before adding or rewriting a primitive.
+`product-design` owns web and desktop parity; apply it before changing a surface or its controls. `content` owns the words. `qa` owns clicking the result. `.agents/skills/shadcn` owns the CLI, composition rules, and component APIs — read it before adding or rewriting a primitive.
 
 The UI is shadcn New York (Radix, not Base) in `web/src/components/ui`, configured by `web/components.json`. Run CLI commands from `web/`.
 

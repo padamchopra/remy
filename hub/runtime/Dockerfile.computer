@@ -4,7 +4,9 @@ WORKDIR /opt/remy
 COPY contract ./contract
 COPY server ./server
 COPY package.json ./package.json
-RUN npm ci --prefix contract && npm ci --prefix server && npm run build --prefix server && npm install --global @anthropic-ai/claude-code @openai/codex
+RUN npm ci --prefix contract && ./contract/node_modules/.bin/tsc --project contract --noEmit false --outDir contract/dist --rootDir contract/src \
+    && node -e 'const fs=require("fs"); const p=require("./contract/package.json"); p.exports["."].default="./dist/index.js"; fs.writeFileSync("contract/package.json",JSON.stringify(p))' \
+    && npm ci --prefix server && npm run build --prefix server && npm install --global @anthropic-ai/claude-code @openai/codex
 ARG DAEMON_VERSION
 RUN node -e 'const fs=require("fs"); const p=require("./package.json"); if(!process.env.DAEMON_VERSION) throw Error("DAEMON_VERSION required"); p.version=process.env.DAEMON_VERSION; fs.writeFileSync("package.json",JSON.stringify(p))'
 ENV MC_CONFIG_DIR=/data/remy

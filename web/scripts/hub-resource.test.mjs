@@ -1,0 +1,21 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {build} from 'esbuild';
+const bundled=await build({entryPoints:['web/src/lib/hub-computers.ts'],bundle:true,write:false,platform:'node',format:'esm',plugins:[{name:'transport',setup(b){b.onResolve({filter:/^\.\/transport$/},()=>({path:'transport',namespace:'stub'}));b.onLoad({filter:/.*/,namespace:'stub'},()=>({contents:'export const hubTransport={request:(...args)=>globalThis.__hubTestRequest(...args)}'}));}}]});
+const {watchHubResource}=await import(`data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString('base64')}`);
+test('resources share a live channel and independently refresh and lose access',async()=>{
+  const sockets=[],reads=[],updates=[],errors=[];
+  globalThis.window={location:{origin:'http://localhost'}};
+  globalThis.WebSocket=class {constructor(url){this.url=url;sockets.push(this);} close(){this.closed=true;}};
+  globalThis.__hubTestRequest=async path=>{reads.push(path);return Response.json({path});};
+  const flush=()=>new Promise(r=>setImmediate(r));
+  const a=watchHubResource('/a',(v,s)=>updates.push(['a',v,s]),e=>errors.push(e),'/shared/live');
+  const b=watchHubResource('/b',(v,s)=>updates.push(['b',v,s]),e=>errors.push(e),'/shared/live');
+  await flush();assert.equal(sockets.length,1);assert.deepEqual(reads,['/a','/b']);
+  sockets[0].onmessage();await flush();assert.deepEqual(reads,['/a','/b','/a','/b']);
+  sockets[0].onclose({code:1008});
+  assert.equal(errors.length,2);
+  assert.deepEqual(updates.slice(-1)[0],['b',undefined,true]);
+  a();assert.equal(sockets[0].closed,undefined);b();assert.equal(sockets[0].closed,true);
+  delete globalThis.window;delete globalThis.WebSocket;delete globalThis.__hubTestRequest;
+});
