@@ -1,3 +1,4 @@
+import { hubThreadBranch } from "./hub-thread-branch.js";
 import { prepareHostedBranch } from "./hosted-branch.js";
 import { hostedGatewayModels } from "./hosted-models.js";
 import { setTaskEnvironment } from "./environments.js";
@@ -27,6 +28,7 @@ import { checkoutWorkspaceBranch, listWorkspaces } from "./workspaces.js";
 import type { ChatImageAttachment } from "./transcript.js";
 
 const KEY = "hubThreadAccess";
+const branchStates = new Map<string, string>();
 const accessRecords = () => getKv<Record<string, ThreadAccess>>(KEY) ?? {};
 const fail = (status: number, error: string) =>
   Response.json({ error }, { status });
@@ -67,7 +69,11 @@ export function hubThreadSnapshot(
     Buffer.byteLength(JSON.stringify(detail)) > 96_000
   )
     detail.entries.shift();
-  return threadSnapshotSchema.parse({ id, revision, access, detail });
+  const branchState = `${detail.cwd}:${detail.state}`;
+  const refreshBranch = branchStates.get(id) !== branchState;
+  branchStates.set(id, branchState);
+  const branch = hubThreadBranch(detail.cwd, () => broadcast({type: "hub-thread", chatId: id}), refreshBranch);
+  return threadSnapshotSchema.parse({ id, revision, access, detail: {...detail, ...(branch ? {branch} : {})} });
 }
 
 export function hubThreadIds(organizationId: string): string[] {
