@@ -1,7 +1,7 @@
-name: OpenRouter runtime deployment
+name: Branch selection runtime deployment
 on:
   push:
-    branches: [padam/deploy-openrouter-20260915]
+    branches: [padam/deploy-branches-20260916]
 permissions:
   contents: write
   packages: write
@@ -17,13 +17,13 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and verify runtime
         run: |
-          docker build -f hub/runtime/Dockerfile.computer --build-arg DAEMON_VERSION=0.1.97-openrouter.20260915 -t ghcr.io/padamchopra/remy-computer:openrouter-20260915 .
-          docker run --rm --entrypoint node ghcr.io/padamchopra/remy-computer:openrouter-20260915 --test /opt/remy/server/dist/hosted-models.test.js /opt/remy/server/dist/hosted-codex-account.test.js /opt/remy/server/dist/provider-adapters/codex.test.js /opt/remy/server/dist/hub-threads.test.js
+          docker build -f hub/runtime/Dockerfile.computer --build-arg DAEMON_VERSION=0.1.97-branches.20260916 -t ghcr.io/padamchopra/remy-computer:branches-20260916 .
+          docker run --rm --entrypoint node ghcr.io/padamchopra/remy-computer:branches-20260916 --test /opt/remy/server/dist/hosted-models.test.js /opt/remy/server/dist/hosted-codex-account.test.js /opt/remy/server/dist/provider-adapters/codex.test.js /opt/remy/server/dist/hub-threads.test.js /opt/remy/server/dist/hosted-branch.test.js
       - name: Publish runtime image and archive
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          image=ghcr.io/padamchopra/remy-computer:openrouter-20260915
+          image=ghcr.io/padamchopra/remy-computer:branches-20260916
           docker push "$image"
           container=$(docker create "$image")
           mkdir -p "$RUNNER_TEMP/computer/opt" "$RUNNER_TEMP/computer/usr"
@@ -31,4 +31,4 @@ jobs:
           docker cp "$container:/usr/local" "$RUNNER_TEMP/computer/usr/local"
           docker rm "$container"
           tar -czf "$RUNNER_TEMP/remy-computer-linux.tar.gz" -C "$RUNNER_TEMP/computer" opt usr
-          gh release create cloud-openrouter-20260915 --target "$GITHUB_SHA" --prerelease --latest=false --title "OpenRouter cloud runtime" --notes "Cloud runtime for explicit provider selection and OpenRouter model access." "$RUNNER_TEMP/remy-computer-linux.tar.gz"
+          gh release create cloud-branches-20260916 --target "$GITHUB_SHA" --prerelease --latest=false --title "Branch selection cloud runtime" --notes "Cloud runtime for selecting the branch before starting a thread." "$RUNNER_TEMP/remy-computer-linux.tar.gz"

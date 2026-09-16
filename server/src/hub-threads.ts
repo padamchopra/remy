@@ -1,3 +1,4 @@
+import { prepareHostedBranch } from "./hosted-branch.js";
 import { hostedGatewayModels } from "./hosted-models.js";
 import { setTaskEnvironment } from "./environments.js";
 import {
@@ -22,7 +23,7 @@ import {
 } from "./chat.js";
 import { getKv, setKv } from "./db.js";
 import { broadcast } from "./notify.js";
-import { listWorkspaces } from "./workspaces.js";
+import { checkoutWorkspaceBranch, listWorkspaces } from "./workspaces.js";
 import type { ChatImageAttachment } from "./transcript.js";
 
 const KEY = "hubThreadAccess";
@@ -113,6 +114,11 @@ export async function handleHubThreadRequest(
         return fail(400, "Choose who can read this thread.");
       if(typeof input.model === "string" && input.model.startsWith("remy:")) {
         if(input.provider !== "codex" || !(hostedGatewayModels().some(model=>model.value===input.model) || input.model.startsWith("remy:openai:") && !!process.env.OPENAI_API_KEY)) return fail(400,"This model provider is unavailable on this computer.");
+      }
+      if (input.branch !== undefined) {
+        if (typeof input.branch !== "string" || !input.branch || input.branch.length > 255) return fail(400, "Choose a branch.");
+        if (process.env.REMY_HOSTED_TASK === "1") await prepareHostedBranch(workspace.path, input.branch);
+        else await checkoutWorkspaceBranch(workspace.id, input.branch, "main");
       }
       const chat = createChat({
         cwd: workspace.path,
