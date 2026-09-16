@@ -1,3 +1,5 @@
+import type { Organization } from "@remy/contract";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "./ui/select";
 import { useEffect, useState } from "react";
 import { Github } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -11,15 +13,34 @@ import { apiError } from "@/lib/api-error";
 import type { ConnectionsState } from "./HubConnections";
 
 type Repository = { id: number; name: string; full_name: string };
-export function HubAddWorkspace({ organizationId, open, onOpenChange, onManual }: {
-  organizationId: string; open: boolean; onOpenChange: (open: boolean) => void; onManual: () => void;
+export function HubAddWorkspace({ organizationId, organizations, open, onOpenChange, onManual, onAdded }: {
+  organizationId: string; organizations?: Organization[]; open: boolean; onOpenChange: (open: boolean) => void; onManual?: () => void; onAdded?: (organizationId:string) => void;
 }) {
+  const destinations = organizations?.filter(o => o.role !== "member");
+  const [selected, setSelected] = useState(organizationId);
+  const [manual, setManual] = useState(false);
+  useEffect(() => { if (open) {setSelected(organizationId); setManual(false);} }, [open,organizationId]);
+  const destination = destinations ? destinations.find(o => o.id === selected)?.id ?? destinations[0]?.id : organizationId;
+  const added = () => {onOpenChange(false); if (destination) onAdded?.(destination);};
   return <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent>
       <DialogHeader className="text-center sm:text-center"><DialogTitle>Add a workspace</DialogTitle><DialogDescription>Choose a GitHub repository or enter its URL.</DialogDescription></DialogHeader>
-      {open && <RepositoryPicker organizationId={organizationId} onAdded={() => onOpenChange(false)} onManual={onManual} />}
+      {destinations && <Field><FieldLabel>Account</FieldLabel><Select value={destination} onValueChange={value => {setSelected(value); setManual(false);}}><SelectTrigger aria-label="Workspace account" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{destinations.map(o => <SelectItem key={o.id} value={o.id}>{o.personal ? "Personal" : o.name}</SelectItem>)}</SelectContent></Select></Field>}
+      {open && destination && (manual ? <ManualRepository key={destination} organizationId={destination} onAdded={added} /> : <RepositoryPicker key={destination} organizationId={destination} onAdded={added} onManual={onManual ?? (() => setManual(true))} />)}
     </DialogContent>
   </Dialog>;
+}
+function ManualRepository({organizationId,onAdded}:{organizationId:string;onAdded:()=>void}) {
+  const [name,setName]=useState("");
+  const [origin,setOrigin]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState("");
+  return <form className="flex flex-col gap-4" onSubmit={event => {event.preventDefault();setBusy(true);setError("");void hubRequest(`${hubThreadBase(organizationId)}/workspaces`,"POST",{name:name.trim(),origin:origin.trim()}).then(onAdded).catch(e=>setError(apiError(e))).finally(()=>setBusy(false));}}>
+    <Field><FieldLabel htmlFor="workspace-name">Name</FieldLabel><Input id="workspace-name" required value={name} onChange={event=>setName(event.target.value)} disabled={busy} /></Field>
+    <Field><FieldLabel htmlFor="workspace-repository">Repository URL</FieldLabel><Input id="workspace-repository" required value={origin} onChange={event=>setOrigin(event.target.value)} disabled={busy} /></Field>
+    {error && <p role="alert">{error}</p>}
+    <Button disabled={busy || !name.trim() || !origin.trim()} type="submit">{busy && <Spinner />}Add workspace</Button>
+  </form>;
 }
 function RepositoryPicker({organizationId, onAdded, onManual}: {organizationId:string; onAdded:()=>void; onManual:()=>void}) {
   const connection = useHubResource<ConnectionsState>(organizationId, "/connections");

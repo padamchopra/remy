@@ -77,20 +77,22 @@ export default function HubOrganizationSettings({
   kind,
   role,
   onOpenWorkspace,
+  workspaceListOnly = false,
 }: {
   organizationId: string;
   kind: "members" | "teams" | "workspaces";
   role: string;
   onOpenWorkspace: (workspaceId: string) => void;
+  workspaceListOnly?: boolean;
 }) {
   const isPersonal = usePersonalHub();
   const members = useHubResource<{ members: HubMember[] }>(
     organizationId,
-    "/members",
+    kind === "workspaces" ? null : "/members",
   );
   const teams = useHubResource<{ teams: OrganizationTeam[] }>(
     organizationId,
-    "/teams",
+    kind === "workspaces" ? null : "/teams",
   );
   const workspaces = useHubResource<{ workspaces: HubWorkspace[] }>(
     organizationId,
@@ -232,14 +234,14 @@ export default function HubOrganizationSettings({
         : (workspaces.value?.workspaces ?? []);
   const emptyWorkspace = kind === "workspaces" && !!workspaces.value && items.length === 0;
   return (
-    <section className={`flex min-w-0 flex-col gap-4 ${emptyWorkspace ? "p-4" : "p-6"}`} aria-label={title}>
+    <section className={`flex min-w-0 flex-col gap-4 ${workspaceListOnly ? "" : emptyWorkspace ? "p-4" : "p-6"}`} aria-label={title}>
       {kind !== "workspaces" && <Field>
         <FieldLabel>{title}</FieldLabel>
         <FieldDescription>
           Manage the people you work with.
         </FieldDescription>
       </Field>}
-      {emptyWorkspace && <EmptyState
+      {emptyWorkspace && !workspaceListOnly && <EmptyState
         title={admin ? "Add your first workspace" : "No workspaces available"}
         description={admin ? "Choose a repository for your first thread." : "Ask an organization administrator to add a workspace or give you access."}
       >
@@ -253,7 +255,7 @@ export default function HubOrganizationSettings({
       {(members.stale || teams.stale || workspaces.stale) && (
         <p role="status">You’re reading the last saved settings.</p>
       )}
-      {admin && !emptyWorkspace && (
+      {admin && !emptyWorkspace && !workspaceListOnly && (
         <Button
           className="self-start"
           disabled={busy}
@@ -481,7 +483,7 @@ export default function HubOrganizationSettings({
                     Cancel
                   </Button>
                   <Button disabled={busy || (kind === "workspaces" && !admin)} type="submit">
-                    {kind === "members" ? "Create invitation" : kind === "workspaces" && !edit?.id ? "Add workspace" : "Save changes"}
+                    {kind === "members" ? (edit.name.trim() ? "Send invitation" : "Create invitation link") : kind === "workspaces" && !edit?.id ? "Add workspace" : "Save changes"}
                   </Button>
                 </DialogFooter>
               </FieldGroup>

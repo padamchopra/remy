@@ -21,13 +21,14 @@ export type Route = (
   | { name: "board"; scope?: string }
   | { name: "ticket"; key: string }
   | { name: "prs" }
-  | { name: "settings"; tab: SettingsTab; analyticsTab?: AnalyticsTab; deviceId?: string; organizationId?: string }) & { organizationId?: string };
+  | { name: "settings"; tab: SettingsTab; organizationTab?: "members" | "teams"; analyticsTab?: AnalyticsTab; deviceId?: string; organizationId?: string }) & { organizationId?: string; ownerOrganizationId?: string };
 
 export interface AppLocation {
   route: Route;
 }
 
 const SETTINGS_TABS: SettingsTab[] = [
+  "organization",
   "general",
   "version-control",
   "providers",
@@ -70,6 +71,7 @@ function parseRoute(hash: string): AppLocation {
         name: "settings",
         tab,
         ...(tab === "devices" && params.get("organization") ? { organizationId: params.get("organization")! } : {}),
+        ...(tab === "organization" ? {organizationTab: params.get("section") === "teams" ? "teams" as const : "members" as const} : {}),
         ...(tab === "analytics" ? { analyticsTab } : {}),
         ...((tab === "providers" || tab === "devices") && deviceId ? { deviceId } : {}),
       },
@@ -115,11 +117,15 @@ export function formatLocation({ route }: AppLocation): string {
   if (!route.organizationId) return `#${path}`;
   const [base, query] = path.split("?");
   const params = new URLSearchParams(query); params.set("organization", route.organizationId);
+  if (route.name === "settings" && route.tab === "organization" && route.organizationTab) params.set("section", route.organizationTab);
+  if (route.ownerOrganizationId) params.set("owner", route.ownerOrganizationId);
   return `#${base}?${params}`;
 }
 
 export function parseLocation(hash: string): AppLocation {
   const result = parseRoute(hash);
-  const org = new URLSearchParams(hash.split("?")[1] ?? "").get("organization");
-  return org ? { route: { ...result.route, organizationId: org } } : result;
+  const params = new URLSearchParams(hash.split("?")[1] ?? "");
+  const org = params.get("organization");
+  const owner = org === "all" ? params.get("owner") : null;
+  return org ? { route: { ...result.route, organizationId: org, ...(owner ? {ownerOrganizationId:owner} : {}) } } : result;
 }

@@ -6,6 +6,7 @@ import { HubModelFavorites } from "./HubModelFavorites";
 import { EmptyState } from "@/components/EmptyState";
 import { lazy, useEffect, useRef, useState } from "react";
 import {
+  Layers,
   Folder,
   Laptop,
   MessagesSquare,
@@ -18,6 +19,7 @@ import {
   ChevronDown,
   ChevronLeft,
   Settings2,
+  Settings as OrganizationSettingsIcon,
   Check,
   Building2,
   SquarePen,
@@ -86,6 +88,9 @@ import { HubComputerApproval } from "./HubComputerApproval";
 import { HubInvitation } from "./HubInvitation";
 import { HubSignIn } from "./HubSignIn";
 import { HubNotifications } from "./HubNotifications";
+const WorkspacesList = lazy(() => import("./HubWorkspaces"));
+const OrganizationAdmin = lazy(() => import("./HubOrganizationAdmin"));
+const AllView = lazy(() => import("./HubAllView"));
 const GeneralSettings = lazy(() => import("./HubGeneralSettings"));
 const Threads = lazy(() => import("./HubThreads"));
 const Board = lazy(() => import("./HubBoard"));
@@ -137,7 +142,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
   const [personal, setPersonal] = useState<Organization>();
   const [threadsLoaded, setThreadsLoaded] = useState(false);
   const [profile, setProfile] = useState<{ id: string; name: string; image?: string }>();
-  const liveProfile = useHubProfile(route.organizationId ?? "personal").profile;
+  const liveProfile = useHubProfile(route.organizationId === "all" ? personal?.id ?? "personal" : route.organizationId ?? "personal").profile;
   const shownProfile = liveProfile ?? profile;
   const [loaded, setLoaded] = useState(false);
   const [signedOut, setSignedOut] = useState(false);
@@ -201,17 +206,35 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
     : null;
   const organizationId =
     route.organizationId ??
-    contexts.find((o) => o.id === remembered)?.id ??
+    (remembered === "all" ? "all" : contexts.find((o) => o.id === remembered)?.id) ??
     personal?.id;
-  const organization = contexts.find((o) => o.id === organizationId);
+  const isAll = organizationId === "all";
+  const organization = isAll ? {...personal, id:"all", name:"All", role:"owner", personal:false} as Organization : contexts.find((o) => o.id === organizationId);
+  const contextIds = contexts.map(o => o.id).join(",");
   const isPersonal = organization?.personal === true;
   useEffect(() => {
     setThreads([]);
     setThreadsLoaded(false);
+    setError("");
     if (!organization) return;
     localStorage.setItem(`remy.organization:${profile?.id}`, organization.id);
     if (!route.organizationId)
       navigate({ ...route, organizationId: organization.id });
+    if (isAll) {
+      const values = new Map<string, HubThread[]>();
+      const settled = new Set<string>();
+      const emit = () => {
+        setThreads([...values.values()].flat().sort((a,b) => Number(b.detail.updatedAt ?? b.observedAt) - Number(a.detail.updatedAt ?? a.observedAt)));
+        setThreadsLoaded(settled.size === contexts.length);
+      };
+      const off = contexts.map(owner => watchHubThreads(owner.id, value => { values.set(owner.id,value); settled.add(owner.id); emit(); }, message => { settled.add(owner.id); setError(`${owner.name}: ${message}`); emit(); }));
+      const offOwners = contexts.map(owner => watchHubResource<{organization:Organization}>(hubThreadBase(owner.id), value => {
+        if (!value) return;
+        if (value.organization.personal) setPersonal(value.organization);
+        else setOrganizations(all => all.map(o => o.id === owner.id ? value.organization : o));
+      }, () => { void reload(); }));
+      return () => [...off, ...offOwners].forEach(stop => stop());
+    }
     const offThreads = watchHubThreads(
       organization.id,
       (value) => {
@@ -239,7 +262,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
       offThreads();
       offOrganization();
     };
-  }, [organization?.id, profile?.id]);
+  }, [organization?.id, profile?.id, isAll ? contextIds : ""]);
   if (!loaded && !(profile && organization)) return <AppLoading />;
   if (signedOut) return <HubSignIn runtime={runtime} />;
   const requestedSection =
@@ -248,10 +271,8 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
       : route.name === "settings"
         ? route.tab
         : route.name;
-  const section =
-    isPersonal && ["members", "teams"].includes(requestedSection ?? "")
-      ? "threads"
-      : requestedSection;
+  const organizationSettings = route.name === "settings" && ["organization", "members", "teams"].includes(route.tab);
+  const section = organizationSettings ? "organization" : requestedSection;
   const inSettings = route.name === "settings";
   const links: {
     label: string;
@@ -310,22 +331,16 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           selected: section === "connections",
         },
         {
-          label: "Members",
-          icon: User,
-          route: { name: "settings", tab: "members", organizationId },
-          selected: section === "members",
-        },
-        {
-          label: "Teams",
-          icon: Users,
-          route: { name: "settings", tab: "teams", organizationId },
-          selected: section === "teams",
+          label: "Organization",
+          icon: Building2,
+          route: { name:"settings", tab:"organization", organizationId },
+          selected: organizationSettings,
         },
       ]
     : [];
   return (
     <HubPersonalContext value={isPersonal}>
-      <HubModelFavorites key={`${profile?.id}:${organizationId}`} organizationId={organizationId}>
+      <HubModelFavorites key={`${profile?.id}:${organizationId}`} organizationId={isAll ? undefined : organizationId}>
       <SidebarProvider>
         <SidebarNavigation route={route} />
         <Sidebar collapsible="icon">
@@ -342,11 +357,11 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <SidebarMenuButton
-                  tooltip="Choose personal or organization"
-                  aria-label="Choose personal or organization"
+                  tooltip="Choose account view"
+                  aria-label="Choose account view"
                   className="min-w-0 flex-1"
                 >
-                  {isPersonal ? <User /> : <Building2 />}
+                  {isAll ? <Layers /> : isPersonal ? <User /> : <Building2 />}
                   <span className="min-w-0 flex-1 truncate">
                     {organization?.name ?? "Choose account"}
                   </span>
@@ -355,6 +370,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-60">
                 <DropdownMenuGroup>
+                  <DropdownMenuItem onSelect={() => navigate({name:"threads",organizationId:"all"})}><Layers /><span className="min-w-0 flex-1">All</span>{isAll && <Check />}</DropdownMenuItem>
                   {personal && (
                     <DropdownMenuItem
                       onSelect={() =>
@@ -374,16 +390,17 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                 <DropdownMenuGroup>
                   <DropdownMenuLabel>Organizations</DropdownMenuLabel>
                   {organizations.map((o) => (
-                    <DropdownMenuItem
-                      key={o.id}
-                      onSelect={() =>
-                        navigate({ name: "threads", organizationId: o.id })
-                      }
-                    >
-                      <Building2 />
-                      <span className="min-w-0 flex-1 truncate">{o.name}</span>
-                      {o.id === organizationId && <Check />}
-                    </DropdownMenuItem>
+                    <div key={o.id} className="flex items-center gap-1">
+                      <DropdownMenuItem className="min-w-0 flex-1" onSelect={() => navigate({ name: "threads", organizationId: o.id })}>
+                        <Building2 />
+                        <span className="min-w-0 flex-1 truncate">{o.name}</span>
+                        {o.id === organizationId && <Check />}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem className="shrink-0 justify-center" aria-label={`${o.name} settings`} title={`${o.name} settings`} onSelect={() => navigate({name:"settings",tab:"organization",organizationTab:"members",organizationId:o.id})}>
+                        <OrganizationSettingsIcon />
+                        <span className="sr-only">{o.name} settings</span>
+                      </DropdownMenuItem>
+                    </div>
                   ))}
                   <DropdownMenuItem onSelect={() => setCreate(true)}>
                     <Plus />
@@ -456,9 +473,9 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                       </p>
                     )}
                     <SidebarMenu>
-                      <HubThreadSidebar organizationId={organizationId ?? "personal"} threads={threads}
+                      {isAll ? contexts.map(owner => <HubThreadSidebar key={owner.id} organizationId={owner.id} threads={threads.filter(t => t.access.organizationId === owner.id)} selected={route.name === "threads" ? {id:route.threadId,computerId:route.computerId} : undefined} onSelect={thread => navigate({name:"threads",organizationId:"all",ownerOrganizationId:owner.id,computerId:thread.computerId,threadId:thread.id})} />) : <HubThreadSidebar organizationId={organizationId ?? "personal"} threads={threads}
                         selected={route.name === "threads" ? {id: route.threadId, computerId: route.computerId} : undefined}
-                        onSelect={thread => navigate({name: "threads", organizationId, computerId: thread.computerId, threadId: thread.id})} />
+                        onSelect={thread => navigate({name: "threads", organizationId, computerId: thread.computerId, threadId: thread.id})} />}
                     </SidebarMenu>
                   </SidebarGroupContent>
                 </SidebarGroup>}
@@ -536,6 +553,12 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                 </EmptyContent>
               )}
             </EmptyState>
+          ) : organizationSettings && route.name === "settings" ? (
+            <Deferred open><OrganizationAdmin organizations={organizations} selectedId={isAll ? route.ownerOrganizationId : organizationId} tab={route.tab === "teams" ? "teams" : route.organizationTab ?? "members"} onSelect={owner => navigate({...route,tab:"organization",organizationId:isAll ? "all" : owner,...(isAll ? {ownerOrganizationId:owner} : {})})} onTab={organizationTab => navigate({...route,tab:"organization",organizationTab,ownerOrganizationId:isAll ? route.ownerOrganizationId ?? organizations[0]?.id : undefined})} /></Deferred>
+          ) : route.name === "workspaces" && !route.workspaceId ? (
+            <div className="min-h-0 flex-1 overflow-auto"><Deferred open><WorkspacesList organizations={contexts} filter={organizationId ?? "all"} onOpenWorkspace={(owner,id) => navigate({name:"workspaces",workspaceId:id,organizationId:isAll ? "all" : owner,...(isAll ? {ownerOrganizationId:owner} : {})})} onAdded={owner => {if (!isAll && owner !== organizationId) navigate({name:"workspaces",organizationId:owner});}} /></Deferred></div>
+          ) : isAll ? (
+            <Deferred open><AllView organizations={contexts} threads={threads} threadsLoaded={threadsLoaded} route={route} userId={profile?.id ?? ""} navigate={navigate} /></Deferred>
           ) : (
             <div key={organization.id} className="flex min-h-0 flex-1 flex-col">
               <div hidden={section !== "general"} className="min-h-0 overflow-auto px-5 py-6"><Deferred open={section === "general"}><GeneralSettings organizationId={organization.id} /></Deferred></div>
@@ -646,6 +669,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           <HubNotifications
             key={organization.id}
             organizationId={organization.id}
+            organizationIds={isAll ? contexts.map(o => o.id) : undefined}
             showTrigger={false}
             open={notificationsAccount === organization.id}
             onOpenChange={(open) => setNotificationsAccount(open ? organization.id : undefined)}
