@@ -1,9 +1,13 @@
 import { mkdirSync, chmodSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { configureHostedGit } from "./hosted-git-config.js";
+import { startHostedSpriteLease } from "./hosted-sprite-lease.js";
 
 const raw = process.env.REMY_HOSTED_BOOTSTRAP;
 if (!raw) throw new Error("Hosted computer configuration is missing.");
 delete process.env.REMY_HOSTED_BOOTSTRAP;
+const spriteLease = await startHostedSpriteLease();
+process.once("SIGTERM", () => { void spriteLease.stop().finally(() => process.exit(0)); });
 const bootstrap = JSON.parse(raw) as {
   registration: Record<string, unknown> & { computerId: string; organizationId: string; hubUrl: string };
   privateKey: string;
@@ -51,15 +55,7 @@ if (bootstrap.workspace.id) {
   const helper = new URL("./hosted-git-helper.js", import.meta.url).pathname;
   chmodSync(helper, 0o755);
   execFileSync("git", ["init", "-q", "/workspace"], { stdio: "ignore" });
-  for (const args of [
-    ["credential.helper", ""],
-    ["--add", "credential.helper", helper],
-    ["credential.useHttpPath", "true"],
-    ["remote.origin.url", remote],
-  ])
-    execFileSync("git", ["-C", "/workspace", "config", "--local", ...args], {
-      stdio: "ignore",
-    });
+  configureHostedGit("/workspace", helper, remote);
   try {
     execFileSync("git", ["-C", "/workspace", "rev-parse", "--verify", "HEAD"], {
       stdio: "ignore",
