@@ -15,7 +15,7 @@ export const workspace: Workspace = { id: "demo-workspace", serverId: "demo-mac"
 ] };
 export const sampleAgent: Agent = {
   id: "demo-agent", serverId: "demo-mac", name: "Review agent", handle: "review", role: "A second pair of eyes on your changes.",
-  instructions: "Review changes for correctness and clear, maintainable code.", provider: "claude", permissionMode: "auto", autoStart: false, handoffTo: [], gitIdentity: "default",
+  instructions: "Review changes for correctness and clear, maintainable code.", provider: "claude", permissionMode: "auto", autoStart: false, handoffTo: [], delegable: false, gitIdentity: "default",
 };
 const sampleRoutines: Routine[] = [
   { id: "demo-morning", name: "Morning pull request review", cadence: "weekdays", hour: 9, minute: 0 },

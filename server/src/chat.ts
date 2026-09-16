@@ -7,7 +7,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { agentCommand } from "./agent.js";
-import { getAgent, gitIdentityEnv, resolvedAgentModel, type Agent } from "./agents.js";
+import { getAgent, gitIdentityEnv, listAgents, resolvedAgentModel, type Agent } from "./agents.js";
 import { memoryPrompt } from "./agent-memories.js";
 import { deviceId } from "./board-log.js";
 import {
@@ -22,6 +22,7 @@ import {
   providerAdapter,
   type ProviderApprovalDecision,
   type ProviderApprovalRequest,
+  type ProviderDelegate,
   type ProviderEvent,
   type ProviderQuestionRequest,
   type ProviderRun,
@@ -582,19 +583,31 @@ This is the agent's Inbox conversation. When the person signals that something s
     }
   }
 
-  private environmentSignature = "";
+  /// What the live session was opened with. A turn that would need different
+  /// values recycles it rather than running against stale ones — the session
+  /// resumes from its own provider transcript, so nothing is lost.
+  private sessionSignature = "";
   private async providerTurn(prompt: ChatPrompt): Promise<void> {
     const agent = this.record.agentId ? getAgent(this.record.agentId) : undefined;
     this.activePermissionMode = this.record.permissionMode;
     let run: ProviderRun;
     try {
       const environment = prompt.environment;
-      const signature = JSON.stringify(environment);
-      if (this.providerSession && signature !== this.environmentSignature) {
+      // The roster is settled per turn, so marking an agent available reaches
+      // the thread you are sitting in front of rather than waiting for you to
+      // stop it. Editing one's instructions or model lands the same way.
+      // Gathering memories costs a lookup per delegate, so a machine with none
+      // marked available — the default — does not pay for the feature, and the
+      // turn reaches the provider without waiting on anything.
+      const delegates = delegableAgents(this.record.agentId).length === 0
+        ? []
+        : await threadDelegates(this.record.provider, this.record.cwd, this.record.agentId);
+      const signature = JSON.stringify({ environment, delegates });
+      if (this.providerSession && signature !== this.sessionSignature) {
         this.providerSession.close();
         this.providerSession = undefined;
       }
-      this.environmentSignature = signature;
+      this.sessionSignature = signature;
       if (!this.providerSession) {
         const adapter = providerAdapter(this.record.provider);
         let session!: ProviderSession;
@@ -640,6 +653,7 @@ This is the agent's Inbox conversation. When the person signals that something s
             }),
             env: { ...agentEnvironment(agent), ...environment },
             entries: this.record.entries,
+            delegates,
           },
           {
             event: (event) => {
@@ -1407,6 +1421,46 @@ export function createChat(input: {
   broadcast({ type: "chat-list", operation: "upsert", chat: chat.summary() });
   broadcast({ type: "chats" });
   return chat.summary();
+}
+
+/// The agents a thread may delegate to, as its provider will read them.
+///
+/// The thread's own agent is left out: it is already the voice running the
+/// turn, so offering it as a delegate spends context on a loop. Remy's own
+/// agent is left out for the reason it is kept out of a handoff list — it is
+/// the app, not a step in the work — so a row that somehow says otherwise is
+/// not honoured here. The agent's permission mode is left out too: a subagent
+/// runs under the thread's mode, and see `ProviderDelegate` for why carrying
+/// it across would be wrong.
+export function delegableAgents(ownAgentId?: string): Agent[] {
+  return listAgents().filter((agent) => agent.delegable && !agent.builtIn && agent.id !== ownAgentId);
+}
+
+export async function threadDelegates(
+  provider: ProviderId,
+  cwd: string,
+  ownAgentId?: string,
+): Promise<ProviderDelegate[]> {
+  const eligible = delegableAgents(ownAgentId);
+  return Promise.all(eligible.map(async (agent) => {
+    // A model belongs to the provider that answers to it, so an agent on Codex
+    // lends this thread its instructions and not a model Claude would refuse.
+    // Empty means the thread's own model. `resolvedAgentModel` has already put
+    // the model through `providerModel` for the agent's own provider.
+    const resolved = resolvedAgentModel(agent);
+    const model = resolved.provider === provider ? resolved.model : "";
+    // The same agent should not forget what it was told to remember just
+    // because you delegated to it rather than opening its conversation.
+    const remembered = await memoryPrompt(agent.id, cwd);
+    const persona = agent.instructions.trim()
+      || [`You are ${agent.name}.`, agent.role].filter(Boolean).join(" ");
+    return {
+      handle: agent.handle,
+      description: agent.delegateDescription ?? agent.role ?? agent.name,
+      prompt: [persona, remembered].filter(Boolean).join("\n\n"),
+      ...(model ? { model } : {}),
+    };
+  }));
 }
 
 function visibleParentContext(parent: ChatDetail): string {
