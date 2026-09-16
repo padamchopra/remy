@@ -384,9 +384,10 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     const organizationId = decodeURIComponent(computerConnectMatch[1]);
     const computer = await authenticateComputer(request, organizationId, computerStore);
     if (!computer) return jsonError("This computer could not be authenticated.", 401);
+    const sharedOrganizationIds = await computerStore.sharedOrganizationIds?.(organizationId, computer.computerId) ?? [];
     const coordinator = env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${organizationId}`));
     const internal = new Request("https://internal/computers/connect", {
-      headers: { upgrade: "websocket", "x-computer-id": computer.computerId, "x-organization-id": organizationId, "x-minimum-daemon-version": env.MINIMUM_DAEMON_VERSION ?? "0.1.0" },
+      headers: { upgrade: "websocket", "x-computer-id": computer.computerId, "x-organization-id": organizationId, "x-minimum-daemon-version": env.MINIMUM_DAEMON_VERSION ?? "0.1.0", "x-shared-organizations": JSON.stringify(sharedOrganizationIds) },
     });
     return coordinator.fetch(internal);
   }
@@ -394,9 +395,11 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
   const attachmentDownload = /^\/api\/organizations\/([^/]+)\/computers\/([^/]+)\/thread-attachments\/([0-9a-f-]{36})\/([0-9a-f-]{36})$/.exec(url.pathname);
   if (attachmentDownload && request.method === "GET") {
     const [, org, computerId, threadId, attachmentId] = attachmentDownload;
-    const computer = await authenticateComputer(request, decodeURIComponent(org), computerStore);
+    const organizationId = decodeURIComponent(org), decodedComputerId = decodeURIComponent(computerId);
+    const share = await env.DB.prepare("SELECT source_organization_id FROM organization_computer_shares WHERE organization_id=? AND computer_id=?").bind(organizationId, decodedComputerId).first<{source_organization_id:string}>();
+    const computer = await authenticateComputer(request, share?.source_organization_id ?? organizationId, computerStore);
     if (!computer || computer.computerId !== decodeURIComponent(computerId)) return jsonError("Image not found.", 404);
-    const object = await env.OBJECTS.get(`thread-attachments/${encodeURIComponent(computer.organizationId)}/${encodeURIComponent(computer.computerId)}/${threadId}/${attachmentId}`);
+    const object = await env.OBJECTS.get(`thread-attachments/${encodeURIComponent(organizationId)}/${encodeURIComponent(computer.computerId)}/${threadId}/${attachmentId}`);
     if (!object) return jsonError("Image not found.", 404);
     return new Response(object.body, { headers: { "content-type": object.httpMetadata?.contentType ?? "application/octet-stream", "content-length": String(object.size), "x-filename": object.customMetadata?.name ?? "image" } });
   }
@@ -514,6 +517,75 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         if (request.method !== "GET" && !allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Open notifications in Remy.", 403);
         return board().fetch(new Request(`https://internal/${tail}`, { method: request.method, headers: { "x-organization-id": organizationId, "x-user-id": identity.userId, "x-session-id": identity.sessionId, upgrade: request.headers.get("upgrade") ?? "" } }));
       }
+      if (tail === "compute-shares" && request.method === "GET") {
+        const member = await organizations.member(organizationId, identity.userId);
+        const personal = await personalSpace(env.DB, identity.userId);
+        const ownComputers = member.role === "member" ? [] : (await computers.list(personal.id, identity.userId)).filter(computer => computer.ownerUserId === identity.userId && computer.ownership === "personal");
+        const computerShares = (await env.DB.prepare(`SELECT s.computer_id,s.shared_by,c.name,c.icon,c.platform,c.last_seen_at
+          FROM organization_computer_shares s JOIN organization_computers c ON c.id=s.computer_id
+          WHERE s.organization_id=? ORDER BY lower(c.name),c.id`).bind(organizationId).all<{computer_id:string;shared_by:string;name:string;icon:string;platform:string;last_seen_at:number|null}>()).results;
+        const cloudShares = (await env.DB.prepare("SELECT source_organization_id,provider,shared_by FROM organization_cloud_shares WHERE organization_id=? ORDER BY provider,created_at").bind(organizationId).all<{source_organization_id:string;provider:string;shared_by:string}>()).results;
+        const settings = new HostedSettingsStore(env.DB, () => env.AUTH_SECRET.get());
+        const ownCloud = member.role === "member" ? [] : Object.entries(await settings.secrets(personal.id)).flatMap(([name, value]) => {
+          if (!name.startsWith("cloud:")) return [];
+          const parsed = cloudConnectionSchema.safeParse(JSON.parse(value));
+          return parsed.success && parsed.data.enabled ? [parsed.data.provider] : [];
+        });
+        const sharedCloudAvailability = new Map<string, boolean>();
+        for (const share of cloudShares) {
+          const saved = (await settings.secrets(share.source_organization_id))[cloudConnectionKey(share.provider)];
+          const parsed = saved ? cloudConnectionSchema.safeParse(JSON.parse(saved)) : null;
+          sharedCloudAvailability.set(`${share.source_organization_id}:${share.provider}`, !!parsed?.success && parsed.data.enabled);
+        }
+        const names = new Map<string,string>();
+        for (const userId of new Set([...computerShares.map(share => share.shared_by), ...cloudShares.map(share => share.shared_by)])) names.set(userId, (await store.profile(userId))?.name ?? "Member");
+        return Response.json({
+          canManage: member.role !== "member",
+          computers: [
+            ...computerShares.map(share => ({ id: share.computer_id, name: share.name, icon: share.icon, platform: share.platform, shared: true, available: share.last_seen_at !== null && Date.now() - share.last_seen_at <= COMPUTER_HEARTBEAT_TIMEOUT_MS, sharedBy: names.get(share.shared_by) ?? "Member", canUnshare: member.role !== "member" })),
+            ...ownComputers.filter(computer => !computerShares.some(share => share.computer_id === computer.computerId)).map(computer => ({ id: computer.computerId, name: computer.name, icon: computer.icon, platform: computer.platform, shared: false, available: computer.availability !== "offline", sharedBy: (null as string | null), canUnshare: false })),
+          ],
+          cloudConnections: [
+            ...cloudShares.map(share => ({ provider: share.provider, shared: true, available: sharedCloudAvailability.get(`${share.source_organization_id}:${share.provider}`) ?? false, sharedBy: names.get(share.shared_by) ?? "Member", canUnshare: member.role !== "member" })),
+            ...ownCloud.filter(provider => !cloudShares.some(share => share.source_organization_id === personal.id && share.provider === provider)).map(provider => ({ provider, shared: false, available: true, sharedBy: (null as string | null), canUnshare: false })),
+          ],
+        });
+      }
+      const computerShare = /^compute-shares\/computers\/([^/]+)$/.exec(tail);
+      const cloudShare = /^compute-shares\/cloud\/([^/]+)$/.exec(tail);
+      if ((computerShare || cloudShare) && (request.method === "PUT" || request.method === "DELETE")) {
+        const member = await organizations.member(organizationId, identity.userId);
+        if (member.role === "member") return jsonError("Ask an organization admin to share computers.", 403);
+        if (!allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Open organization settings in Remy.", 403);
+        const personal = await personalSpace(env.DB, identity.userId);
+        let sourceOrganizationId = personal.id;
+        let computerId: string | undefined;
+        if (computerShare) {
+          computerId = decodeURIComponent(computerShare[1]);
+          if (request.method === "PUT") {
+            const computer = await computerStore.computer(personal.id, computerId);
+            if (!computer || computer.organizationId !== personal.id || computer.ownerUserId !== identity.userId || computer.ownership !== "personal") return jsonError("Choose one of your personal computers.", 404);
+            await env.DB.prepare("INSERT INTO organization_computer_shares(organization_id,source_organization_id,computer_id,shared_by,created_at) VALUES(?,?,?,?,?) ON CONFLICT(organization_id,computer_id) DO NOTHING").bind(organizationId, personal.id, computerId, identity.userId, Date.now()).run();
+          } else {
+            const existing = await env.DB.prepare("SELECT source_organization_id FROM organization_computer_shares WHERE organization_id=? AND computer_id=?").bind(organizationId, computerId).first<{source_organization_id:string}>();
+            sourceOrganizationId = existing?.source_organization_id ?? personal.id;
+            if (existing) await board().fetch(new Request("https://internal/shared-threads/manifest", { method: "POST", headers: { "content-type": "application/json", "x-organization-id": organizationId, "x-source-organization-id": sourceOrganizationId, "x-computer-id": computerId }, body: JSON.stringify({ ids: [] }) }));
+            await env.DB.prepare("DELETE FROM organization_computer_shares WHERE organization_id=? AND computer_id=?").bind(organizationId, computerId).run();
+          }
+        } else {
+          const provider = decodeURIComponent(cloudShare![1]);
+          if (!['fly-sprites','modal'].includes(provider)) return jsonError("Choose a cloud connection.", 400);
+          if (request.method === "PUT") {
+            const saved = (await new HostedSettingsStore(env.DB, () => env.AUTH_SECRET.get()).secrets(personal.id))[cloudConnectionKey(provider)];
+            const connection = saved ? cloudConnectionSchema.safeParse(JSON.parse(saved)) : null;
+            if (!connection?.success || !connection.data.enabled) return jsonError("Enable this cloud provider in Personal first.", 409);
+            await env.DB.prepare("INSERT INTO organization_cloud_shares(organization_id,source_organization_id,provider,shared_by,created_at) VALUES(?,?,?,?,?) ON CONFLICT(organization_id,source_organization_id,provider) DO NOTHING").bind(organizationId, personal.id, provider, identity.userId, Date.now()).run();
+          } else await env.DB.prepare("DELETE FROM organization_cloud_shares WHERE organization_id=? AND provider=?").bind(organizationId, provider).run();
+        }
+        await board().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId } }));
+        if (computerId) await env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${sourceOrganizationId}`)).fetch(new Request("https://internal/shared-computers/changed", { method: "POST", headers: { "x-organization-id": sourceOrganizationId, "x-computer-id": computerId } }));
+        return Response.json({ ok: true });
+      }
       if (tail === "computers/options" && request.method === "GET") {
         const member = await organizations.member(organizationId, identity.userId);
         const members = await organizations.members(organizationId, identity.userId);
@@ -530,12 +602,15 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         const id = decodeURIComponent(computerMatch[1]);
         if (request.method === "DELETE") {
           const current=await computerStore.computer(organizationId,id);
+          const sharedOrganizationIds = current?.organizationId === organizationId ? await computerStore.sharedOrganizationIds?.(organizationId, id) ?? [] : [];
+          for (const targetOrganizationId of sharedOrganizationIds) await env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${targetOrganizationId}`)).fetch(new Request("https://internal/shared-threads/manifest", { method: "POST", headers: { "content-type": "application/json", "x-organization-id": targetOrganizationId, "x-source-organization-id": organizationId, "x-computer-id": id }, body: JSON.stringify({ ids: [] }) }));
           if(current?.ownership==="hosted") {
-            if(!await computers.canManage(current,identity.userId)) return jsonError("Computer not found.",404);
+            if(!await computers.canManage(current,identity.userId,organizationId)) return jsonError("Computer not found.",404);
             const removed=await board().fetch(new Request(`https://internal/hosted-computers/${encodeURIComponent(id)}`,{method:"DELETE",headers:{"x-organization-id":organizationId}}));
             if(!removed.ok) return removed;
           }
           await computers.remove(organizationId, id, identity.userId);
+          for (const targetOrganizationId of sharedOrganizationIds) await env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${targetOrganizationId}`)).fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": targetOrganizationId, "x-removed-computer": id } }));
         }
         else {
           const input = await body<{ name?: unknown; icon?: unknown; access?: unknown }>(request);
@@ -767,7 +842,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         const member = await organizations.member(organizationId, identity.userId);
         const computerId = decodeURIComponent(boardGrant[1]);
         const computer = await computerStore.computer(organizationId, computerId);
-        if (!computer || computer.ownership === "hosted" || member.role === "member" || !await computers.canManage(computer, identity.userId)) return jsonError("Computer not found.", 404);
+        if (!computer || computer.ownership === "hosted" || member.role === "member" || !await computers.canManage(computer, identity.userId, organizationId)) return jsonError("Computer not found.", 404);
         if (request.method === "PUT") await env.DB.prepare("INSERT INTO organization_board_computers (organization_id,computer_id,granted_by,created_at) VALUES (?,?,?,?) ON CONFLICT(organization_id,computer_id) DO UPDATE SET granted_by=excluded.granted_by").bind(organizationId, computerId, identity.userId, Date.now()).run();
         if (request.method === "DELETE") await env.DB.prepare("DELETE FROM organization_board_computers WHERE organization_id=? AND computer_id=?").bind(organizationId, computerId).run();
         return Response.json({ enabled: !!await env.DB.prepare("SELECT 1 FROM organization_board_computers WHERE organization_id=? AND computer_id=?").bind(organizationId, computerId).first() });
@@ -1010,6 +1085,52 @@ export class HubCoordinator {
     const org = request.headers.get("x-organization-id");
     const user = request.headers.get("x-user-id");
     if (org) {await this.ctx.storage.put("organizationId", org);await seedHubAgents(this.board,new D1OrganizationStore(this.env.DB),org);}
+    if (url.pathname === "/shared-computers/changed" && request.method === "POST" && org) {
+      const computerId = request.headers.get("x-computer-id") ?? "";
+      const organizationIds = await this.computers.sharedOrganizationIds?.(org, computerId) ?? [];
+      this.computerSocket(computerId)?.send(JSON.stringify({ kind: "sharing.changed", organizationIds }));
+      this.invalidateComputers();
+      return Response.json({ ok: true });
+    }
+    if (url.pathname === "/shared-computers/request" && request.method === "POST" && org) {
+      const targetOrganizationId = request.headers.get("x-target-organization-id") ?? "";
+      const computerId = request.headers.get("x-computer-id") ?? "";
+      const grant = await this.env.DB.prepare("SELECT 1 FROM organization_computer_shares WHERE organization_id=? AND source_organization_id=? AND computer_id=?").bind(targetOrganizationId, org, computerId).first();
+      if (!grant) return jsonError("This computer is no longer shared.", 403);
+      const input = await body<{ actor?: unknown; method?: unknown; path?: unknown; input?: unknown }>(request);
+      const actor = threadMemberSchema.safeParse(input?.actor);
+      if (!actor.success || typeof input?.method !== "string" || typeof input.path !== "string" || !input.path.startsWith("/")) return jsonError("This computer request is invalid.", 400);
+      return this.sendComputerRequest(computerId, targetOrganizationId, actor.data, input.method, input.path, input.input);
+    }
+    if (url.pathname === "/shared-threads/snapshot" && request.method === "POST" && org) {
+      const sourceOrganizationId = request.headers.get("x-source-organization-id") ?? "";
+      const computerId = request.headers.get("x-computer-id") ?? "";
+      const grant = await this.env.DB.prepare("SELECT 1 FROM organization_computer_shares WHERE organization_id=? AND source_organization_id=? AND computer_id=?").bind(org, sourceOrganizationId, computerId).first();
+      const parsed = threadSnapshotSchema.safeParse(await request.json());
+      if (!grant || !parsed.success || parsed.data.access.organizationId !== org) return jsonError("This shared thread is unavailable.", 403);
+      await this.threads.snapshot(computerId, parsed.data);
+      return Response.json({ ok: true });
+    }
+    if (url.pathname === "/shared-threads/manifest" && request.method === "POST" && org) {
+      const sourceOrganizationId = request.headers.get("x-source-organization-id") ?? "";
+      const computerId = request.headers.get("x-computer-id") ?? "";
+      const grant = await this.env.DB.prepare("SELECT 1 FROM organization_computer_shares WHERE organization_id=? AND source_organization_id=? AND computer_id=?").bind(org, sourceOrganizationId, computerId).first();
+      const input = await body<{ ids?: unknown }>(request);
+      if (!grant || !Array.isArray(input?.ids) || !input.ids.every(id => typeof id === "string")) return jsonError("This shared thread list is unavailable.", 403);
+      await this.threads.manifest(computerId, input.ids);
+      return Response.json({ ok: true });
+    }
+    if (url.pathname === "/shared-notification" && request.method === "POST" && org) {
+      const sourceOrganizationId = request.headers.get("x-source-organization-id") ?? "";
+      const computerId = request.headers.get("x-computer-id") ?? "";
+      const grant = await this.env.DB.prepare("SELECT 1 FROM organization_computer_shares WHERE organization_id=? AND source_organization_id=? AND computer_id=?").bind(org, sourceOrganizationId, computerId).first();
+      const input = await body<import("@remy/contract").HubNotificationInput>(request);
+      if (!grant || !input) return jsonError("This shared notification is unavailable.", 403);
+      const recipients = await this.notifications.raise(org, computerId, input);
+      for (const userId of recipients ?? []) this.invalidateNotifications(userId);
+      if (recipients) await this.scheduleAlarm(Date.now() + 1_000);
+      return Response.json({ accepted: !!recipients });
+    }
     if (url.pathname === "/internal/hosted-git-owner" && request.method === "GET") {
       const owner = await this.ctx.storage.get<{userId: string; workspaceId: string}>(`hosted-git-owner:${url.searchParams.get("computer")}`);
       return Response.json(owner ?? {});
@@ -1107,8 +1228,9 @@ export class HubCoordinator {
       const [client, server] = Object.values(pair);
       this.ctx.acceptWebSocket(server);
       await this.ctx.storage.put("organizationId", request.headers.get("x-organization-id") ?? "");
+      const sharedOrganizationIds = JSON.parse(request.headers.get("x-shared-organizations") ?? "[]") as string[];
       server.serializeAttachment({ kind: "computer", computerId, lastSeenAt: Date.now(), minimumDaemonVersion: request.headers.get("x-minimum-daemon-version") ?? "0.1.0" });
-      server.send(JSON.stringify({ kind: "welcome", protocolVersion: COMPUTER_PROTOCOL_VERSION, heartbeatIntervalMs: COMPUTER_HEARTBEAT_INTERVAL_MS, threadRelay: true, notifications: true }));
+      server.send(JSON.stringify({ kind: "welcome", protocolVersion: COMPUTER_PROTOCOL_VERSION, heartbeatIntervalMs: COMPUTER_HEARTBEAT_INTERVAL_MS, threadRelay: true, notifications: true, sharedOrganizationIds }));
       await this.scheduleAlarm(Date.now() + COMPUTER_HEARTBEAT_TIMEOUT_MS);
       return new Response(null, { status: 101, webSocket: client });
     }
@@ -1415,6 +1537,12 @@ export class HubCoordinator {
     if (this.computerSocket(attachment.computerId) !== socket) return;
     if (frame.kind === "account.changed") { this.invalidateComputers(); return; }
     if (frame.kind === "notification") {
+      const targetOrganizationId = frame.organizationId ?? registeredOrg;
+      if (targetOrganizationId !== registeredOrg) {
+        const forwarded = await this.env.COORDINATOR.get(this.env.COORDINATOR.idFromName(`organization:${targetOrganizationId}`)).fetch(new Request("https://internal/shared-notification", { method: "POST", headers: { "content-type": "application/json", "x-organization-id": targetOrganizationId, "x-source-organization-id": registeredOrg, "x-computer-id": attachment.computerId }, body: JSON.stringify(frame.notification) }));
+        if (forwarded.ok && (await forwarded.json() as {accepted?:boolean}).accepted) socket.send(JSON.stringify({ kind: "notification.ack", id: frame.notification.id }));
+        return;
+      }
       const recipients = await this.notifications.raise(registeredOrg, attachment.computerId, frame.notification);
       if (!recipients) return;
       socket.send(JSON.stringify({ kind: "notification.ack", id: frame.notification.id }));
@@ -1423,7 +1551,13 @@ export class HubCoordinator {
       return;
     }
     if (frame.kind === "thread.snapshot") {
-      if (frame.snapshot.access.organizationId !== organizationId) { socket.close(1008, "Invalid organization."); return; }
+      if (frame.snapshot.access.organizationId !== organizationId) {
+        const targetOrganizationId = frame.snapshot.access.organizationId;
+        const grant = await this.env.DB.prepare("SELECT 1 FROM organization_computer_shares WHERE organization_id=? AND source_organization_id=? AND computer_id=?").bind(targetOrganizationId, organizationId, attachment.computerId).first();
+        if (!grant) return;
+        await this.env.COORDINATOR.get(this.env.COORDINATOR.idFromName(`organization:${targetOrganizationId}`)).fetch(new Request("https://internal/shared-threads/snapshot", { method: "POST", headers: { "content-type": "application/json", "x-organization-id": targetOrganizationId, "x-source-organization-id": organizationId, "x-computer-id": attachment.computerId }, body: JSON.stringify(frame.snapshot) }));
+        return;
+      }
       await this.threads.snapshot(attachment.computerId, frame.snapshot);
       const running=(await this.threads.list()).some(t=>t.computerId===attachment.computerId && ["working","running","busy","needs_input"].includes(String(t.detail.state)));
       await this.hostedService().activity(attachment.computerId,running,frame.snapshot.detail.entries.some(e=>e.kind==="assistant"));
@@ -1437,7 +1571,16 @@ export class HubCoordinator {
       }
       return;
     }
-    if (frame.kind === "thread.manifest") { await this.threads.manifest(attachment.computerId, frame.ids); return; }
+    if (frame.kind === "thread.manifest") {
+      const targetOrganizationId = frame.organizationId ?? organizationId;
+      if (targetOrganizationId === organizationId) await this.threads.manifest(attachment.computerId, frame.ids);
+      else {
+        const grant = await this.env.DB.prepare("SELECT 1 FROM organization_computer_shares WHERE organization_id=? AND source_organization_id=? AND computer_id=?").bind(targetOrganizationId, organizationId, attachment.computerId).first();
+        if (!grant) return;
+        await this.env.COORDINATOR.get(this.env.COORDINATOR.idFromName(`organization:${targetOrganizationId}`)).fetch(new Request("https://internal/shared-threads/manifest", { method: "POST", headers: { "content-type": "application/json", "x-organization-id": targetOrganizationId, "x-source-organization-id": organizationId, "x-computer-id": attachment.computerId }, body: JSON.stringify({ ids: frame.ids }) }));
+      }
+      return;
+    }
     if (frame.kind === "heartbeat") {
       const now = Date.now();
       socket.serializeAttachment({ ...attachment, lastSeenAt: now });
@@ -1503,10 +1646,10 @@ export class HubCoordinator {
 
   private readonly agentStarts=new Map<string,Promise<unknown>>();
   private async dispatchComputer(computerId:string,actor:ThreadMember,method:string,path:string,input:unknown):Promise<Response> {
+    const org = (await this.ctx.storage.get<string>("organizationId"))!;
+    const computer = await this.computers.computer(org, computerId);
     if (method === "POST" && path === "/hub/threads" && input && typeof input === "object" && "branch" in input && input.branch !== undefined) {
       if (typeof input.branch !== "string" || !input.branch || input.branch.length > 255) return jsonError("Choose a branch.", 400);
-      const org = (await this.ctx.storage.get<string>("organizationId"))!;
-      const computer = await this.computers.computer(org, computerId);
       if (computer?.ownership !== "hosted") {
         const workspaceId = (input as {workspaceId?: string}).workspaceId;
         const checked = await this.dispatchComputer(computerId, actor, "POST", `/workspaces/${encodeURIComponent(workspaceId ?? "")}/checkout`, {branch: input.branch, mode: "main"});
@@ -1514,17 +1657,22 @@ export class HubCoordinator {
       }
     }
     if(method==="POST" && (path==="/hub/threads" || /^\/hub\/threads\/[^/]+\/message$/.test(path)) && input && typeof input==="object") {
-      const org=(await this.ctx.storage.get<string>("organizationId"))!;
-      const computer=await this.computers.computer(org,computerId);
       const threadId=/^\/hub\/threads\/([^/]+)\/message$/.exec(path)?.[1];
       const thread=threadId?await this.threads.get(computerId,threadId):undefined;
       const local=computer?.capabilities.workspaces.find(w=>w.id===(input as {workspaceId?:string}).workspaceId || (thread?.detail.cwd===w.path || typeof thread?.detail.cwd==="string" && thread.detail.cwd.startsWith(w.path.replace(/\/$/,"")+"/")));
       const workspace=local?.origin?await new D1OrganizationStore(this.env.DB).workspaceByOrigin(org,repositoryOrigin(local.origin)):undefined;
       if(workspace)input={...input,hubEnvironment:await new EnvironmentStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).forWorkspace(org,workspace.id)};
     }
+    if (computer && computer.organizationId !== org) {
+      const coordinator = this.env.COORDINATOR.get(this.env.COORDINATOR.idFromName(`organization:${computer.organizationId}`));
+      return coordinator.fetch(new Request("https://internal/shared-computers/request", { method: "POST", headers: { "content-type": "application/json", "x-organization-id": computer.organizationId, "x-target-organization-id": org, "x-computer-id": computerId }, body: JSON.stringify({ actor, method, path, input }) }));
+    }
+    return this.sendComputerRequest(computerId, org, actor, method, path, input);
+  }
+  private async sendComputerRequest(computerId:string,organizationId:string,actor:ThreadMember,method:string,path:string,input:unknown):Promise<Response> {
     const socket=this.computerSocket(computerId);if(!socket)return jsonError("This computer is offline.",503);
     const id=crypto.randomUUID();const response=new Promise<Response>(resolve=>{const timer=setTimeout(()=>{this.pending.delete(id);resolve(jsonError("This computer did not answer.",504));},30_000);this.pending.set(id,{computerId,resolve,timer});});
-    socket.send(JSON.stringify({kind:"request",id,method,path,headers:{},actor,...(input === undefined ? {} : {body:encodeWireBody(new TextEncoder().encode(JSON.stringify(input)).buffer)})}));return response;
+    socket.send(JSON.stringify({kind:"request",id,method,path,headers:{"x-organization-id":organizationId},actor,body:input === undefined ? "" : encodeWireBody(new TextEncoder().encode(JSON.stringify(input)).buffer)}));return response;
   }
   private async routeFor(userId:string,workspaceId:string,trigger:string,override?:string|null) {
     const org=(await this.ctx.storage.get<string>("organizationId"))!,store=new D1OrganizationStore(this.env.DB),service=new OrganizationService(store);
@@ -1609,9 +1757,9 @@ export class HubCoordinator {
         () => this.env.PROVIDER_RUNTIME ? this.env.AUTH_SECRET.get().then(managementCredential) : this.env.HOSTED_CONTROL_TOKEN!.get(),
         this.env.PROVIDER_RUNTIME ? (input, init) => this.env.PROVIDER_RUNTIME!.get(this.env.PROVIDER_RUNTIME!.idFromName("provider-management")).fetch(new Request(input, init)) : undefined, async () => {
         const org = (await this.ctx.storage.get<string>("organizationId"))!;
-        const saved = (await settings.secrets(org))[cloudConnectionKey(id)];
-        if (!saved) throw new Error("Connect your cloud provider in Computers settings.");
-        return cloudConnectionSchema.parse(JSON.parse(saved));
+        const connection = await settings.connection(org, id as "fly-sprites" | "modal");
+        if (!connection) throw new Error("Connect your cloud provider in Computers settings.");
+        return connection;
       });
     }, async state=>{
       const org=(await this.ctx.storage.get<string>("organizationId"))!;
@@ -1663,7 +1811,7 @@ export class HubCoordinator {
     const visible = [];
     for (const thread of await this.threads.list(userId)) {
       const computer = org && await this.computers.computer(org, thread.computerId);
-      if (computer && await this.canReadAgentThread(thread.id,userId) && allowed.has(thread.computerId) && await this.computerService().canReadWorkspace(computer, userId, thread.detail.cwd)) visible.push(thread);
+      if (computer && await this.canReadAgentThread(thread.id,userId) && allowed.has(thread.computerId) && await this.computerService().canReadWorkspace(computer, userId, thread.detail.cwd, org)) visible.push(thread);
     }
     return visible;
   }
@@ -1694,7 +1842,7 @@ export class HubCoordinator {
       const current = await this.threads.get(computerId, threadId);
       const key = `threads:viewer:${meta.subscriptionId}:${computerId}:${threadId}`;
       const computer = await this.computers.computer(organizationId, computerId);
-      if (!current || !await this.canReadAgentThread(threadId,meta.userId) || !computer || !await this.computerService().canUse(computer, meta.userId) || !canReadThread(current.access, meta.userId) || !await this.computerService().canReadWorkspace(computer, meta.userId, current.detail.cwd)) {
+      if (!current || !await this.canReadAgentThread(threadId,meta.userId) || !computer || !await this.computerService().canUse(computer, meta.userId, organizationId) || !canReadThread(current.access, meta.userId) || !await this.computerService().canReadWorkspace(computer, meta.userId, current.detail.cwd, organizationId)) {
         if (await this.ctx.storage.get<boolean>(key)) {
           socket.send(JSON.stringify({ kind: "remove", cursor: frame.cursor, computerId, threadId }));
           await this.ctx.storage.delete(key);
@@ -1703,7 +1851,7 @@ export class HubCoordinator {
       }
       await this.ctx.storage.put(key, true);
       // Replays use the current access decision, never the historical visibility.
-      if (frame.kind === "snapshot" && (!await this.canReadAgentThread(frame.thread.id,meta.userId) || !canReadThread(frame.thread.access, meta.userId) || !await this.computerService().canReadWorkspace(computer, meta.userId, frame.thread.detail.cwd))) return;
+      if (frame.kind === "snapshot" && (!await this.canReadAgentThread(frame.thread.id,meta.userId) || !canReadThread(frame.thread.access, meta.userId) || !await this.computerService().canReadWorkspace(computer, meta.userId, frame.thread.detail.cwd, organizationId))) return;
     }
     socket.send(JSON.stringify(frame));
   }
@@ -1726,7 +1874,7 @@ export class HubCoordinator {
       const org = request.headers.get("x-organization-id")!;
       const computerId = decodeURIComponent(branchMatch[1]), workspaceId = decodeURIComponent(branchMatch[2]);
       const target = await this.computerService().requireUse(org, computerId, actor.id);
-      if (!await this.computerService().canUseWorkspace(target, actor.id, workspaceId)) return jsonError("This workspace is not available to you.", 404);
+      if (!await this.computerService().canUseWorkspace(target, actor.id, workspaceId, org)) return jsonError("This workspace is not available to you.", 404);
       return this.dispatchComputer(computerId, actor, "GET", `/workspaces/${encodeURIComponent(workspaceId)}/branches`, undefined);
     }
     const computerId = match ? decodeURIComponent(match[1]) : undefined;
@@ -1734,7 +1882,8 @@ export class HubCoordinator {
     if (url.pathname === "/threads" && request.method === "GET") {
       const cursor = (await this.threads.replay()).cursor;
       const threads = await this.visibleThreads(actor.id);
-      return Response.json({ threads: threads.map((thread) => ({ ...thread, stale: thread.stale || !this.computerSocket(thread.computerId) })), cursor, member: actor });
+      const availability = new Map((await this.computerService().list(request.headers.get("x-organization-id")!, actor.id)).map(computer => [computer.computerId, computer.availability]));
+      return Response.json({ threads: threads.map((thread) => ({ ...thread, stale: thread.stale || availability.get(thread.computerId) === "offline" })), cursor, member: actor });
     }
     if (url.pathname === "/threads/live" && request.method === "GET") {
       if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return jsonError("Open a WebSocket connection.", 426);
@@ -1785,8 +1934,9 @@ export class HubCoordinator {
     let target;
     try { target = await this.computerService().requireUse(request.headers.get("x-organization-id")!, computerId, actor.id); } catch { return jsonError("This computer is not available to you.", 404); }
     const snapshot = id ? await this.threads.get(computerId, id) : undefined;
-    if (id && (!await this.canReadAgentThread(id,actor.id) || !snapshot || !canReadThread(snapshot.access, actor.id) || !await this.computerService().canReadWorkspace(target, actor.id, snapshot.detail.cwd))) return jsonError("This thread is no longer available.", 404);
-    if (id && !action && request.method === "GET" && !this.computerSocket(computerId)) return Response.json({ ...snapshot!, stale: true, member: actor });
+    if (id && (!await this.canReadAgentThread(id,actor.id) || !snapshot || !canReadThread(snapshot.access, actor.id) || !await this.computerService().canReadWorkspace(target, actor.id, snapshot.detail.cwd, request.headers.get("x-organization-id")!))) return jsonError("This thread is no longer available.", 404);
+    const targetAvailable = target.lastSeenAt !== null && Date.now() - target.lastSeenAt <= COMPUTER_HEARTBEAT_TIMEOUT_MS;
+    if (id && !action && request.method === "GET" && !targetAvailable) return Response.json({ ...snapshot!, stale: true, member: actor });
     if (id && action !== "join" && request.method !== "GET" && !canWriteThread(snapshot!.access, actor.id)) return jsonError("Join this thread before replying.", 403);
     if (action === "attachments" && id) {
       const org = request.headers.get("x-organization-id")!;
@@ -1797,7 +1947,7 @@ export class HubCoordinator {
         return new Response(object.body, { headers: { "content-type": object.httpMetadata?.contentType ?? "application/octet-stream", "cache-control": "private, no-store", "x-content-type-options": "nosniff" } });
       }
       if (!attachmentId && request.method === "POST") {
-        if (!this.computerSocket(computerId)) return jsonError("This computer is offline; try again when it reconnects.", 503);
+        if (!targetAvailable) return jsonError("This computer is offline; try again when it reconnects.", 503);
         const contentType = request.headers.get("content-type") ?? "";
         if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(contentType)) return jsonError("Choose a PNG, JPEG, GIF, or WebP image.", 400);
         const data = await limitedBody(request, 10 * 1024 * 1024);
@@ -1810,19 +1960,18 @@ export class HubCoordinator {
     }
     const allowed = id ? ((request.method === "GET" || request.method === "PATCH") && !action) || (request.method === "POST" && !!action) : request.method === "POST";
     if (!allowed) return jsonError("This action is not available.", 404);
-    if(id && request.method==="POST" && !this.computerSocket(computerId)) {
+    if(id && request.method==="POST" && !targetAvailable) {
       const state=(await this.hostedService().list()).find(s=>s.computerId===computerId);
       if(state){try{await this.hostedService().ensure(state.workspaceId,state.settings,state.taskId);}catch(error){return jsonError(error instanceof Error?error.message:"Your computer could not resume.",409);}}
     }
-    const socket = this.computerSocket(computerId);
-    if (!socket) return jsonError("This computer is offline; try again when it reconnects.", 503);
+    if (!targetAvailable) return jsonError("This computer is offline; try again when it reconnects.", 503);
     let payload = await limitedBody(request, 96_000);
     if (!payload) return jsonError("Send a shorter message.", 413);
     if (!id) {
       let input;
       try { input = JSON.parse(new TextDecoder().decode(payload)); } catch { return jsonError("Choose a workspace.", 400); }
       if(input.hubInstructions!==undefined || input.hubInbox!==undefined || input.hubEnvironment!==undefined || input.hubTaskId!==undefined)return jsonError("This thread configuration is unavailable.",403);
-      if (typeof input.workspaceId !== "string" || !await this.computerService().canUseWorkspace(target, actor.id, input.workspaceId)) return jsonError("This workspace is not available to you.", 404);
+      if (typeof input.workspaceId !== "string" || !await this.computerService().canUseWorkspace(target, actor.id, input.workspaceId, request.headers.get("x-organization-id")!)) return jsonError("This workspace is not available to you.", 404);
     }
     if(id && action==="message" && snapshot) {
       const org=request.headers.get("x-organization-id")!;

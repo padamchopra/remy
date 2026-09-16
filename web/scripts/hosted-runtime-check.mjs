@@ -37,6 +37,8 @@ try {
       let failToggle=false;
       let failPreference=false;
       let connected = false;
+      let sharedComputer = false;
+      let sharedCloud = false;
       let cloudEnabled = false;
       let online = false;
       let releaseColdReads;
@@ -71,6 +73,8 @@ try {
           return route.fulfill({json:{permissionMode}});
         }
         if(path === `${base}/github/profile`) return route.fulfill({json:{image:"https://avatars.githubusercontent.com/u/1"}});
+        if(path === `${base}/compute-shares/computers/personal-mac` && ["PUT","DELETE"].includes(route.request().method())) {sharedComputer=route.request().method()==="PUT";return route.fulfill({json:{ok:true}});}
+        if(path === `${base}/compute-shares/cloud/modal` && ["PUT","DELETE"].includes(route.request().method())) {sharedCloud=route.request().method()==="PUT";return route.fulfill({json:{ok:true}});}
         if (path === `${base}/cloud-connection` && ["PUT", "PATCH"].includes(route.request().method())) {
           const connection = route.request().postDataJSON();
           if (route.request().method() === "PATCH") {
@@ -132,24 +136,97 @@ try {
           "/api/personal": { personal },
           "/api/organizations": { organizations: [team] },
           [base]: { organization: org },
-          [`${base}/threads`]: { threads: startedThread?[startedThread]:[], cursor: 0, member: { id: "reader", role: "owner" } },
+          [`${base}/threads`]: { threads: process.env.QA_SCOPE_ONLY === "1" ? [{id:`${org.id}-thread`,computerId:`${org.id}-computer`,revision:1,stale:false,observedAt:Date.now(),access:{organizationId:org.id,owner:{id:"reader",label:"Reader"},participants:[],visibility:"private"},detail:{id:`${org.id}-thread`,title:org.personal?"Personal thread":"Studio thread",state:"idle",provider:"codex",entries:[]}}] : startedThread?[startedThread]:[], cursor: 0, member: { id: "reader", role: "owner" } },
           [`${base}/computers`]: { computers: connected ? [{ computerId: "studio", name: computerName, icon: "laptop", ownership: "personal", availability: online ? "online" : "offline", access: { mode: "owner" }, canUse: online, canManage: false, capabilities: { workspaces: [] } }] : [] },
           [`${base}/computers/options`]: { role: "owner", members: [], teams: [] },
           [`${base}/hosted`]: { settings: { enabled: cloudEnabled, provider: "fly-sprites", region: "", cpu: 1, memoryMiB: 2048, maxComputers: 5, idleMinutes: 12 }, secretNames: [], connections: [...connections], enabledProviders: [...enabledProviders], available },
-          [`${base}/members`]: {members:Array.from({length:4},(_,i)=>({id:`m${i}`,userId:`p${i}`,name:`Person ${i}`,image:`data:image/png;base64,${readFileSync(new URL('../public/favicon.png',import.meta.url)).toString('base64')}`}))},
+          [`${base}/members`]: {members:[{id:"reader-member",userId:"reader",name:profile.name,image:profile.image,role:"owner"},...Array.from({length:4},(_,i)=>({id:`m${i}`,userId:`p${i}`,name:`Person ${i}`,image:`data:image/png;base64,${readFileSync(new URL('../public/favicon.png',import.meta.url)).toString('base64')}`,role:"member"}))]},
           [`${base}/teams`]: {teams:[]},
           [`${base}/workspaces/repo`]: {id:"repo",name:"Example",origin:"github.com/example/repo",restricted:false},
           [`${base}/workspaces`]: { workspaces: hasWorkspace?[{id:"repo",name:"Example",origin:"https://github.com/example/repo"}]:[], canManage: true },
           [`${base}/notifications`]: { notifications: [], devices: [] },
           [`${base}/environments`]: { environments: [], assignments: [], workspaces: [] },
+          [`${base}/board/tickets`]: {items:process.env.QA_SCOPE_ONLY === "1"?[{id:`${org.id}-ticket`,entity:"ticket",fields:{title:org.personal?"Personal ticket":"Studio ticket",status:"todo",number:1,keyPrefix:org.personal?"PER":"STD"},lastActor:{id:"reader",label:"Reader"},activity:[]}]:[]},
+          [`${base}/agents`]: {agents:process.env.QA_SCOPE_ONLY === "1"?[{id:`${org.id}-agent`,entity:"agent",fields:{name:org.personal?"Personal agent":"Studio agent",role:"Builder",scope:"org"},lastActor:{id:"reader",label:"Reader"},activity:[]}]:[]},
+          [`${base}/connections`]: {canManage:true,providers:[],connections:[]},
+          [`${base}/routing`]: {rules:[],canEdit:true,enabledProviders:[]},
+          [`${base}/compute-shares`]: {canManage:true,computers:[{id:"personal-mac",name:"Personal Mac",icon:"laptop",platform:"darwin",shared:sharedComputer,available:true,sharedBy:sharedComputer?"Reader":null}],cloudConnections:[{provider:"modal",shared:sharedCloud,available:true,sharedBy:sharedCloud?"Reader":null}]},
         };
         if (!(path in responses)) unexpected.push(path);
         return route.fulfill({ status: path in responses ? 200 : 404, json: responses[path] ?? { error: "Not found" } });
       });
-      if (process.env.QA_PROFILE_ONLY === "1" || process.env.QA_START_ONLY === "1" || process.env.QA_COMPUTER_ONLY === "1" || process.env.QA_BRANCH_ONLY === "1" || process.env.QA_DEFAULTS_ONLY === "1" || process.env.QA_COMPUTER_DEFAULTS_ONLY === "1") {
+      if (process.env.QA_PROFILE_ONLY === "1" || process.env.QA_START_ONLY === "1" || process.env.QA_COMPUTER_ONLY === "1" || process.env.QA_BRANCH_ONLY === "1" || process.env.QA_DEFAULTS_ONLY === "1" || process.env.QA_COMPUTER_DEFAULTS_ONLY === "1" || process.env.QA_SCOPE_ONLY === "1") {
         holdColdReads=false;holdSetupReads=false;releaseColdReads();releaseWorkspaces();releaseComputers();
         hasWorkspace=true;cloudEnabled=true;connections.add("fly-sprites");connections.add("modal");enabledProviders.add("fly-sprites");enabledProviders.add("modal");
+        if(process.env.QA_SCOPE_ONLY === "1") profile.image="preset:cobalt-cyclops";
         const target=new URL(url);target.hash="/threads?organization=personal";await page.goto(target.href);
+        if(process.env.QA_SCOPE_ONLY === "1") {
+          const all=new URL(url);all.hash="/threads?organization=all";await page.goto(all.href);
+          const combinedThreads=page.getByRole("region",{name:"Threads",exact:true});
+          await combinedThreads.getByText("Personal thread",{exact:true}).waitFor();
+          await combinedThreads.getByText("Studio thread",{exact:true}).waitFor();
+          assert.equal(await combinedThreads.getByRole("button",{name:"New thread",exact:true}).count(),1,"Threads has one primary action");
+          assert.equal(await page.getByRole("heading",{name:"Personal",exact:true}).count(),0);
+          assert.equal(await page.getByRole("heading",{name:"Studio",exact:true}).count(),0);
+          if(artifacts)await page.screenshot({path:`${artifacts}/unified-threads-${mobile?'phone':'desktop'}.png`});
+          await combinedThreads.getByRole("button",{name:"New thread",exact:true}).click();
+          const ownerDialog=page.getByRole("dialog");
+          await ownerDialog.getByRole("combobox",{name:"Account",exact:true}).click();
+          await page.getByRole("option",{name:"Studio",exact:true}).click();
+          await ownerDialog.getByRole("button",{name:"Choose account",exact:true}).click();
+          await page.waitForURL(/organization=all.*owner=team/);
+          await page.getByRole("button",{name:"Back to all",exact:true}).click();
+          await combinedThreads.getByText("Personal thread",{exact:true}).waitFor();
+          all.hash="/board?organization=all";await page.goto(all.href);
+          await page.getByText("Personal ticket",{exact:false}).waitFor();
+          await page.getByText("Studio ticket",{exact:false}).waitFor();
+          assert.equal(await page.getByRole("button",{name:"Create ticket",exact:true}).count(),1);
+          assert.equal(await page.getByRole("region",{name:"Tasks",exact:true}).count(),1);
+          if(artifacts)await page.screenshot({path:`${artifacts}/unified-tasks-${mobile?'phone':'desktop'}.png`});
+          all.hash="/inbox?organization=all";await page.goto(all.href);
+          await page.getByText("Personal agent",{exact:true}).waitFor();
+          await page.getByText("Studio agent",{exact:true}).waitFor();
+          assert.equal(await page.getByRole("button",{name:"Create agent",exact:true}).count(),1);
+          assert.equal(await page.getByRole("region",{name:"Inbox",exact:true}).count(),1);
+          all.hash="/workspaces?organization=all";await page.goto(all.href);
+          await page.getByText("Personal · https://github.com/example/repo",{exact:true}).waitFor();
+          await page.getByText("Studio · https://github.com/example/repo",{exact:true}).waitFor();
+          assert.equal(await page.getByRole("button",{name:"Add workspace",exact:true}).count(),1);
+          assert.equal(await page.getByRole("heading",{name:"Personal",exact:true}).count(),0);
+          assert.equal(await page.getByRole("heading",{name:"Studio",exact:true}).count(),0);
+          all.hash="/settings/general?organization=all";await page.goto(all.href);
+          await page.getByRole("region",{name:"General settings",exact:true}).waitFor();
+          assert.equal(await page.getByRole("region",{name:"General settings",exact:true}).count(),1);
+          const defaults=page.getByRole("region",{name:"Account defaults",exact:true});
+          await defaults.getByText("Personal default model",{exact:true}).waitFor();
+          await defaults.getByText("Studio default model",{exact:true}).waitFor();
+          assert.equal(await defaults.count(),1);
+          all.hash="/settings/devices?organization=all";await page.goto(all.href);
+          await page.getByRole("button",{name:"Manage computers",exact:true}).waitFor();
+          assert.equal(await page.getByRole("button",{name:"Manage computers",exact:true}).count(),1);
+          assert.equal(await page.getByRole("heading",{name:"Personal",exact:true}).count(),0);
+          assert.equal(await page.getByRole("heading",{name:"Studio",exact:true}).count(),0);
+          all.hash="/settings/organization?organization=all&section=members&owner=team";await page.goto(all.href);
+          const readerMember=page.locator('[data-slot="item"]',{hasText:"Reader"});
+          await readerMember.locator('[data-slot="avatar-image"]').waitFor();
+          assert.match(await readerMember.locator('[data-slot="avatar-image"]').getAttribute("src"),/cobalt-cyclops/);
+          if(artifacts)await page.screenshot({path:`${artifacts}/member-avatar-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
+          all.hash="/settings/organization?organization=all&section=computers&owner=team";await page.goto(all.href);
+          const computerShare=page.getByRole("switch",{name:"Share Personal Mac",exact:true});
+          const cloudShare=page.getByRole("switch",{name:"Share Modal",exact:true});
+          await computerShare.waitFor();await cloudShare.waitFor();
+          await computerShare.click();await cloudShare.click();
+          assert.equal(sharedComputer,true);assert.equal(sharedCloud,true);
+          await page.reload();
+          assert.equal(await page.getByRole("switch",{name:"Share Personal Mac",exact:true}).isChecked(),true);
+          assert.equal(await page.getByRole("switch",{name:"Share Modal",exact:true}).isChecked(),true);
+          assert.equal(await page.getByText("private-modal-secret",{exact:false}).count(),0);
+          await page.getByText("Connection credentials stay private.",{exact:false}).waitFor();
+          if(artifacts)await page.screenshot({path:`${artifacts}/organization-computers-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
+          assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+          assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);
+          await context.close();console.log(`Unified account scope passed: ${returning?'saved local state':'fresh profile'}, ${mobile?'touch phone':'desktop'}.`);continue;
+        }
         if(process.env.QA_PROFILE_ONLY === "1") {
           target.hash="/settings/general?organization=personal";await page.goto(target.href);
           await page.getByRole("button",{name:"Change",exact:true}).click();

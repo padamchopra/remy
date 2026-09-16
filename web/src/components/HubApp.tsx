@@ -88,6 +88,7 @@ import { HubComputerApproval } from "./HubComputerApproval";
 import { HubInvitation } from "./HubInvitation";
 import { HubSignIn } from "./HubSignIn";
 import { HubNotifications } from "./HubNotifications";
+import { HubAccountPickerDialog } from "./HubAccountPickerDialog";
 const WorkspacesList = lazy(() => import("./HubWorkspaces"));
 const OrganizationAdmin = lazy(() => import("./HubOrganizationAdmin"));
 const AllView = lazy(() => import("./HubAllView"));
@@ -149,6 +150,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
   const [error, setError] = useState("");
   const [threads, setThreads] = useState<HubThread[]>([]);
   const [create, setCreate] = useState(false);
+  const [createThread, setCreateThread] = useState(false);
   const [notificationsAccount, setNotificationsAccount] = useState<string>();
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -415,7 +417,10 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               aria-label="New thread"
               title="New thread"
               data-link
-              onClick={() => navigate({ name: "threads", organizationId })}
+              onClick={() => {
+                if (isAll) setCreateThread(true);
+                else navigate({ name: "threads", organizationId });
+              }}
             >
               <SquarePen />
             </Button>
@@ -554,7 +559,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               )}
             </EmptyState>
           ) : organizationSettings && route.name === "settings" ? (
-            <Deferred open><OrganizationAdmin organizations={organizations} selectedId={isAll ? route.ownerOrganizationId : organizationId} tab={route.tab === "teams" ? "teams" : route.organizationTab ?? "members"} onSelect={owner => navigate({...route,tab:"organization",organizationId:isAll ? "all" : owner,...(isAll ? {ownerOrganizationId:owner} : {})})} onTab={organizationTab => navigate({...route,tab:"organization",organizationTab,ownerOrganizationId:isAll ? route.ownerOrganizationId ?? organizations[0]?.id : undefined})} /></Deferred>
+            <Deferred open><OrganizationAdmin organizations={organizations} selectedId={isAll ? route.ownerOrganizationId : organizationId} tab={route.organizationTab ?? "members"} onSelect={owner => navigate({...route,tab:"organization",organizationId:isAll ? "all" : owner,...(isAll ? {ownerOrganizationId:owner} : {})})} onTab={organizationTab => navigate({...route,tab:"organization",organizationTab,ownerOrganizationId:isAll ? route.ownerOrganizationId ?? organizations[0]?.id : undefined})} /></Deferred>
           ) : route.name === "workspaces" && !route.workspaceId ? (
             <div className="min-h-0 flex-1 overflow-auto"><Deferred open><WorkspacesList organizations={contexts} filter={organizationId ?? "all"} onOpenWorkspace={(owner,id) => navigate({name:"workspaces",workspaceId:id,organizationId:isAll ? "all" : owner,...(isAll ? {ownerOrganizationId:owner} : {})})} onAdded={owner => {if (!isAll && owner !== organizationId) navigate({name:"workspaces",organizationId:owner});}} /></Deferred></div>
           ) : isAll ? (
@@ -727,6 +732,22 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
             </form>
           </DialogContent>
         </Dialog>
+        <HubAccountPickerDialog
+          open={createThread}
+          onOpenChange={setCreateThread}
+          organizations={contexts}
+          title="New thread"
+          description="Choose who owns this thread."
+          action="Choose account"
+          onSelect={(ownerOrganizationId) => {
+            setCreateThread(false);
+            navigate({
+              name: "threads",
+              organizationId: "all",
+              ownerOrganizationId,
+            });
+          }}
+        />
         {computerCode && <HubComputerApproval preview={new URLSearchParams(window.location.search).get("preview") === "1"} code={computerCode} accountName={profile?.name ?? "your account"} close={() => {
           setComputerCode(null);
           const url = new URL(window.location.href);

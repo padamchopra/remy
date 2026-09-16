@@ -6,9 +6,10 @@ import { tintOf } from "@/lib/tints";
 import type { ComputerSummary } from "@remy/contract";
 import { HubAddWorkspace } from "./HubAddWorkspace";
 import { EmptyState } from "@/components/EmptyState";
+import { AvatarFrom } from "@/components/UserAvatar";
 import { usePersonalHub } from "@/lib/hub-scope";
 import { useEffect, useState } from "react";
-import { Trash2, User, Users } from "lucide-react";
+import { Trash2, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -78,12 +79,14 @@ export default function HubOrganizationSettings({
   role,
   onOpenWorkspace,
   workspaceListOnly = false,
+  workspaceOwnerLabel,
 }: {
   organizationId: string;
   kind: "members" | "teams" | "workspaces";
   role: string;
   onOpenWorkspace: (workspaceId: string) => void;
   workspaceListOnly?: boolean;
+  workspaceOwnerLabel?: string;
 }) {
   const isPersonal = usePersonalHub();
   const members = useHubResource<{ members: HubMember[] }>(
@@ -290,12 +293,19 @@ export default function HubOrganizationSettings({
         </Field>
       )}
       <ItemGroup>
-        {items.map((item) => {const workspace = item as HubWorkspace;  return (
+        {items.map((item) => {
+          const member = item as HubMember;
+          const workspace = item as HubWorkspace;
+          return (
           <Item key={item.id} variant="outline" className="relative">
             {kind === "workspaces" && <Button variant="ghost" className="absolute inset-0 h-full w-full" data-link aria-label={`Open ${item.name} workspace details`} onClick={() => onOpenWorkspace(workspace.id)} />}
             <ItemMedia className={kind === "workspaces" ? "pointer-events-none" : undefined}>
               {kind === "members" ? (
-                <User />
+                <AvatarFrom
+                  avatar={member.image ?? ""}
+                  label={item.name}
+                  className="size-8"
+                />
               ) : kind === "teams" ? (
                 <Users />
               ) : (
@@ -306,7 +316,7 @@ export default function HubOrganizationSettings({
               <ItemTitle className="break-words">{item.name}</ItemTitle>
               {"origin" in item && (
                 <ItemDescription className="break-words">
-                  {String(item.origin)}
+                  {workspaceOwnerLabel ? `${workspaceOwnerLabel} · ` : ""}{String(item.origin)}
                 </ItemDescription>
               )}
             </ItemContent>
@@ -363,7 +373,8 @@ export default function HubOrganizationSettings({
               )}
             </ItemActions>
           </Item>
-        );})}
+          );
+        })}
       </ItemGroup>
       <HubAddWorkspace organizationId={organizationId} open={addingWorkspace} onOpenChange={setAddingWorkspace} onManual={() => {setAddingWorkspace(false);void open(undefined, true);}} />
       <Dialog

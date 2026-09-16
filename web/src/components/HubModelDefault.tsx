@@ -17,7 +17,7 @@ export const modelDefaultsPath=(workspaceId?:string,computerId?:string)=>{
 export function useHubModelDefaults(org:string,workspaceId?:string,computerId?:string) {
   return useHubResource<HubModelDefaults>(org,modelDefaultsPath(workspaceId,computerId));
 }
-export function HubModelDefault({organizationId,workspaceId,computerId,catalogue,children}:{organizationId:string;workspaceId?:string;computerId?:string;catalogue?:Provider[];children?:ReactNode}) {
+export function HubModelDefault({organizationId,workspaceId,computerId,catalogue,label="Default model",description,children}:{organizationId:string;workspaceId?:string;computerId?:string;catalogue?:Provider[];label?:ReactNode;description?:ReactNode;children?:ReactNode}) {
   const id=useId();
   const defaults=useHubModelDefaults(organizationId,workspaceId,computerId);
   const access=useHubResource<{providers:ModelAccessEntry[]}>(organizationId,"/model-access");
@@ -27,7 +27,7 @@ export function HubModelDefault({organizationId,workspaceId,computerId,catalogue
   const inherited=value?.remy ?? {provider:"",model:""};
   const choice=computerId ? value?.computer ?? {provider:REMY_DEFAULT,model:""} : workspaceId ? value?.workspace ?? {provider:REMY_DEFAULT,model:""} : inherited;
   return <Field orientation="horizontal" className="items-center">
-    <FieldContent><FieldLabel htmlFor={id}>Default model</FieldLabel><FieldDescription className="text-xs">{(workspaceId || computerId) ? "You can still change this per thread." : "A workspace or agent can differ."}</FieldDescription></FieldContent>
+    <FieldContent><FieldLabel htmlFor={id}>{label}</FieldLabel><FieldDescription className="text-xs">{description ?? ((workspaceId || computerId) ? "You can still change this per thread." : "A workspace or agent can differ.")}</FieldDescription></FieldContent>
     <div className="flex min-w-0 flex-wrap justify-end gap-2">
     <ModelPickerButton id={id} className="w-48 min-w-0" value={choice} defaultChoice={value?.remy ?? undefined} allowDefault={!!workspaceId || !!computerId} catalogue={catalogue ?? hostedModels(access.value?.providers??[])} disabled={saving || !defaults.value || (!!computerId && !("computer" in defaults.value))} onPick={async choice=>{
       setSaving(true);

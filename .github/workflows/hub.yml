@@ -45,6 +45,7 @@ jobs:
           QA_PROFILE_ONLY=1 node web/scripts/hosted-runtime-check.mjs
           QA_START_ONLY=1 node web/scripts/hosted-runtime-check.mjs
           QA_COMPUTER_DEFAULTS_ONLY=1 node web/scripts/hosted-runtime-check.mjs
+          QA_SCOPE_ONLY=1 node web/scripts/hosted-runtime-check.mjs
           node --test web/scripts/hosted-preview.test.mjs web/scripts/workspace-image-cache.test.mjs
       - run: npm test --prefix contract
       - run: npm run typecheck --prefix contract

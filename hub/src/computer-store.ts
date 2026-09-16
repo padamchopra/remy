@@ -10,6 +10,7 @@ export interface ComputerStore {
   update(organizationId: string, computerId: string, patch: { name?: string; icon?: string; access?: ComputerAccess }, at: number): Promise<boolean>;
   remove(organizationId: string, computerId: string): Promise<boolean>;
   claimNonce(computerId: string, nonce: string, expiresAt: number, now: number): Promise<boolean>;
+  sharedOrganizationIds?(sourceOrganizationId: string, computerId: string): Promise<string[]>;
 }
 
 type Row = Record<string, unknown>;
@@ -40,13 +41,29 @@ export class D1ComputerStore implements ComputerStore {
   constructor(private readonly db: D1Database) {}
 
   async computer(organizationId: string, computerId: string) {
-    const row = await this.db.prepare("SELECT * FROM organization_computers WHERE organization_id=? AND id=?").bind(organizationId, computerId).first<Row>();
+    const row = await this.db.prepare(`SELECT c.* FROM organization_computers c
+      WHERE c.organization_id=? AND c.id=?
+      UNION ALL
+      SELECT c.* FROM organization_computers c
+      JOIN organization_computer_shares s ON s.computer_id=c.id AND s.source_organization_id=c.organization_id
+      WHERE s.organization_id=? AND c.id=?
+      LIMIT 1`).bind(organizationId, computerId, organizationId, computerId).first<Row>();
     return row ? fromRow(row) : undefined;
   }
 
   async computers(organizationId: string) {
-    const rows = await this.db.prepare("SELECT * FROM organization_computers WHERE organization_id=? ORDER BY lower(name),id").bind(organizationId).all<Row>();
+    const rows = await this.db.prepare(`SELECT * FROM (
+      SELECT c.* FROM organization_computers c WHERE c.organization_id=?
+      UNION ALL
+      SELECT c.* FROM organization_computers c
+      JOIN organization_computer_shares s ON s.computer_id=c.id AND s.source_organization_id=c.organization_id
+      WHERE s.organization_id=?
+    ) ORDER BY lower(name),id`).bind(organizationId, organizationId).all<Row>();
     return rows.results.map(fromRow);
+  }
+
+  async sharedOrganizationIds(sourceOrganizationId: string, computerId: string) {
+    return (await this.db.prepare("SELECT organization_id FROM organization_computer_shares WHERE source_organization_id=? AND computer_id=? ORDER BY organization_id").bind(sourceOrganizationId, computerId).all<{organization_id:string}>()).results.map(row => row.organization_id);
   }
 
   async register(computer: StoredComputer) {

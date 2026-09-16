@@ -190,9 +190,9 @@ export type HubNotification = HubNotificationInput & { computerId: string; compu
 const proxyHeadersSchema = z.record(z.string(), z.string());
 export const computerToHubFrameSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("account.changed") }),
-  z.object({ kind: z.literal("notification"), notification: hubNotificationInputSchema }),
+  z.object({ kind: z.literal("notification"), organizationId: z.string().min(1).optional(), notification: hubNotificationInputSchema }),
   z.object({ kind: z.literal("thread.snapshot"), snapshot: threadSnapshotSchema }),
-  z.object({ kind: z.literal("thread.manifest"), ids: z.array(z.string().uuid()) }),
+  z.object({ kind: z.literal("thread.manifest"), organizationId: z.string().min(1).optional(), ids: z.array(z.string().uuid()) }),
   z.object({ kind: z.literal("hello"), boardSync: z.boolean().optional(), protocolVersion: z.number().int().positive(), daemonVersion: z.string().min(1), capabilities: computerCapabilitiesSchema }),
   z.object({ kind: z.literal("heartbeat"), availability: z.enum(["available", "busy"]), observedAt: z.number().int().nonnegative() }),
   z.object({ kind: z.literal("response"), id: z.string().min(1), status: z.number().int().min(100).max(599), headers: proxyHeadersSchema, body: z.string() }),
@@ -203,7 +203,8 @@ export type ComputerToHubFrame = z.infer<typeof computerToHubFrameSchema>;
 export const hubToComputerFrameSchema = z.discriminatedUnion("kind", [
   z.object({kind:z.literal("agent.deleted"),threadIds:z.array(z.string().uuid()).max(1000)}),
   z.object({ kind: z.literal("board.changed") }),
-  z.object({ kind: z.literal("welcome"), protocolVersion: z.number().int().positive(), heartbeatIntervalMs: z.number().int().positive(), threadRelay: z.boolean().optional(), notifications: z.boolean().optional() }),
+  z.object({ kind: z.literal("sharing.changed"), organizationIds: z.array(z.string().min(1)).max(100) }),
+  z.object({ kind: z.literal("welcome"), protocolVersion: z.number().int().positive(), heartbeatIntervalMs: z.number().int().positive(), threadRelay: z.boolean().optional(), notifications: z.boolean().optional(), sharedOrganizationIds: z.array(z.string().min(1)).max(100).optional() }),
   z.object({ kind: z.literal("notification.ack"), id: z.string().uuid() }),
   z.object({ kind: z.literal("update_required"), minimumDaemonVersion: z.string().min(1) }),
   z.object({ kind: z.literal("request"), id: z.string().min(1), method: z.string().min(1), path: z.string().startsWith("/"), headers: proxyHeadersSchema, body: z.string(), actor: threadMemberSchema.optional() }),

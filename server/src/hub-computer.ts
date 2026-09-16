@@ -26,6 +26,7 @@ import { tooling } from "./tooling.js";
 import { listWorkspaces } from "./workspaces.js";
 
 const NOTIFICATION_OUTBOX = "hubNotificationOutbox";
+type QueuedHubNotification = HubNotificationInput & { organizationId?: string };
 const REGISTRATION_KEY = "hubComputerRegistration";
 const PRIVATE_KEY_KV = "hubComputerPrivateKey";
 const KEYCHAIN_SERVICE = "me.padamchopra.Remy.hub-computer";
@@ -135,6 +136,7 @@ export class HubComputerConnection {
   private introduced = false;
   private syncingThreads = false;
   private notificationRelay = false;
+  private sharedOrganizationIds = new Set<string>();
   private offNotifications?: () => void;
   private offBroadcast?: () => void;
   private snapshots = new Map<string, ReturnType<typeof setTimeout>>();
@@ -145,9 +147,10 @@ export class HubComputerConnection {
   start(): void { if (!this.stopped && this.socket && this.socket.readyState <= WebSocket.OPEN) return; this.stopped = false;
     this.offNotifications?.();
     this.offNotifications = onAddressedNotification((evt) => {
-      if (!hubThreadSnapshot(evt.session, this.registration.organizationId)) return false;
-      const outbox = (getKv<HubNotificationInput[]>(NOTIFICATION_OUTBOX) ?? []).filter((n) => n.createdAt > Date.now() - 7 * 86400000);
-      outbox.push({ id: randomUUID(), threadId: evt.session, title: evt.title.slice(0, 160), message: evt.message.slice(0, 500), highPriority: evt.highPriority, createdAt: Date.now() });
+      const organizationId = [this.registration.organizationId, ...this.sharedOrganizationIds].find(candidate => hubThreadSnapshot(evt.session, candidate));
+      if (!organizationId) return false;
+      const outbox = (getKv<QueuedHubNotification[]>(NOTIFICATION_OUTBOX) ?? []).filter((n) => n.createdAt > Date.now() - 7 * 86400000);
+      outbox.push({ id: randomUUID(), organizationId, threadId: evt.session, title: evt.title.slice(0, 160), message: evt.message.slice(0, 500), highPriority: evt.highPriority, createdAt: Date.now() });
       setKv(NOTIFICATION_OUTBOX, outbox.slice(-1000));
       this.flushNotifications();
       return true;
@@ -214,34 +217,39 @@ export class HubComputerConnection {
   private syncThreads(socket: WebSocket): void {
     if (!this.introduced || !this.threadRelay || this.syncingThreads) return;
     this.syncingThreads = true;
+    const organizations = () => [this.registration.organizationId, ...this.sharedOrganizationIds];
     const publish = (id: string) => {
       if (socket.readyState !== WebSocket.OPEN) return;
-      const snapshot = hubThreadSnapshot(id, this.registration.organizationId);
+      const snapshot = organizations().map(organizationId => hubThreadSnapshot(id, organizationId)).find(Boolean);
       if (snapshot) socket.send(JSON.stringify({ kind: "thread.snapshot", snapshot }));
-      else socket.send(JSON.stringify({ kind: "thread.manifest", ids: hubThreadIds(this.registration.organizationId) }));
+      else for (const organizationId of organizations()) socket.send(JSON.stringify({ kind: "thread.manifest", organizationId, ids: hubThreadIds(organizationId) }));
     };
     this.offBroadcast?.();
     this.offBroadcast = onLocalBroadcast((value) => {
       const frame = value as { type?: string; chatId?: string };
       if (frame.type === "chats") {
-        if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ kind: "thread.manifest", ids: hubThreadIds(this.registration.organizationId) }));
+        if (socket.readyState === WebSocket.OPEN) for (const organizationId of organizations()) socket.send(JSON.stringify({ kind: "thread.manifest", organizationId, ids: hubThreadIds(organizationId) }));
       }
       if (!frame.chatId || !["chat", "hub-thread"].includes(frame.type ?? "") || this.snapshots.has(frame.chatId)) return;
       const id = frame.chatId;
       this.snapshots.set(id, setTimeout(() => { this.snapshots.delete(id); publish(id); }, 50));
     });
-    for (const id of hubThreadIds(this.registration.organizationId)) publish(id);
-    socket.send(JSON.stringify({ kind: "thread.manifest", ids: hubThreadIds(this.registration.organizationId) }));
+    for (const organizationId of organizations()) {
+      for (const id of hubThreadIds(organizationId)) publish(id);
+      socket.send(JSON.stringify({ kind: "thread.manifest", organizationId, ids: hubThreadIds(organizationId) }));
+    }
+    this.syncingThreads = false;
   }
 
   private flushNotifications(): void {
     const socket = this.socket;
     if (!this.introduced || !this.notificationRelay || socket?.readyState !== WebSocket.OPEN) return;
-    for (const notification of getKv<HubNotificationInput[]>(NOTIFICATION_OUTBOX) ?? []) {
-      const snapshot = hubThreadSnapshot(notification.threadId, this.registration.organizationId);
+    for (const notification of getKv<QueuedHubNotification[]>(NOTIFICATION_OUTBOX) ?? []) {
+      const organizationId = notification.organizationId ?? this.registration.organizationId;
+      const snapshot = hubThreadSnapshot(notification.threadId, organizationId);
       if (!snapshot) continue;
       socket.send(JSON.stringify({ kind: "thread.snapshot", snapshot }));
-      socket.send(JSON.stringify({ kind: "notification", notification }));
+      socket.send(JSON.stringify({ kind: "notification", organizationId, notification }));
     }
   }
 
@@ -255,9 +263,15 @@ export class HubComputerConnection {
     try { value = JSON.parse(raw); } catch { socket.close(1003, "Invalid hub frame."); return; }
     const parsed = hubToComputerFrameSchema.safeParse(value);
     if (!parsed.success) { socket.close(1003, "Invalid hub frame."); return; }
-    if (parsed.data.kind === "welcome") { this.threadRelay = parsed.data.threadRelay === true; this.notificationRelay = parsed.data.notifications === true; this.syncThreads(socket); this.flushNotifications(); }
+    if (parsed.data.kind === "welcome") { this.threadRelay = parsed.data.threadRelay === true; this.notificationRelay = parsed.data.notifications === true; this.sharedOrganizationIds = new Set(parsed.data.sharedOrganizationIds ?? []); this.syncThreads(socket); this.flushNotifications(); }
+    if (parsed.data.kind === "sharing.changed") {
+      const next = new Set(parsed.data.organizationIds);
+      for (const organizationId of this.sharedOrganizationIds) if (!next.has(organizationId) && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ kind: "thread.manifest", organizationId, ids: [] }));
+      this.sharedOrganizationIds = next;
+      this.syncThreads(socket);
+    }
     if (parsed.data.kind === "board.changed") {void this.boardSync?.sync();void this.syncEnvironments().catch(()=>{});}
-    if (parsed.data.kind === "notification.ack") { const id = parsed.data.id; setKv(NOTIFICATION_OUTBOX, (getKv<HubNotificationInput[]>(NOTIFICATION_OUTBOX) ?? []).filter((n) => n.id !== id)); }
+    if (parsed.data.kind === "notification.ack") { const id = parsed.data.id; setKv(NOTIFICATION_OUTBOX, (getKv<QueuedHubNotification[]>(NOTIFICATION_OUTBOX) ?? []).filter((n) => n.id !== id)); }
     if (parsed.data.kind === "update_required") { this.stopped = true; socket.close(1008, "Update Remy to reconnect."); return; }
     if (parsed.data.kind === "agent.deleted") { const {deleteChat}=await import("./chat.js");const shared=new Set(hubThreadIds(this.registration.organizationId));for(const id of parsed.data.threadIds)if(shared.has(id))deleteChat(id); }
     if (parsed.data.kind === "request") await this.proxy(socket, parsed.data);
@@ -292,8 +306,10 @@ export class HubComputerConnection {
       if (frame.path.startsWith("/hub/threads")) {
         if (!frame.actor || frame.body.length > 256_000) throw new Error("Invalid thread request");
         const input = frame.body ? JSON.parse(Buffer.from(frame.body, "base64url").toString()) : {};
-        const response = await handleHubThreadRequest(this.registration.organizationId, frame.actor, frame.method, frame.path, input, async (chatId, attachmentId) => {
-          const url = new URL(`/api/organizations/${encodeURIComponent(this.registration.organizationId)}/computers/${encodeURIComponent(this.registration.computerId)}/thread-attachments/${chatId}/${attachmentId}`, this.registration.hubUrl);
+        const organizationId = frame.headers["x-organization-id"] ?? this.registration.organizationId;
+        if (organizationId !== this.registration.organizationId && !this.sharedOrganizationIds.has(organizationId)) throw new Error("This computer is not shared with that organization.");
+        const response = await handleHubThreadRequest(organizationId, frame.actor, frame.method, frame.path, input, async (chatId, attachmentId) => {
+          const url = new URL(`/api/organizations/${encodeURIComponent(organizationId)}/computers/${encodeURIComponent(this.registration.computerId)}/thread-attachments/${chatId}/${attachmentId}`, this.registration.hubUrl);
           const image = await fetch(url, { headers: { authorization: connectionAuthorization(this.registration.organizationId, this.registration.computerId, privateKey().privateKey) }, signal: AbortSignal.timeout(15_000), redirect: "error" });
           if (!image.ok || Number(image.headers.get("content-length")) > 10 * 1024 * 1024) throw new Error("This image is no longer available.");
           return { ...saveChatImage(chatId, image.headers.get("x-filename"), image.headers.get("content-type"), Buffer.from(await image.arrayBuffer())), remoteId: attachmentId };

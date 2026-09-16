@@ -125,7 +125,7 @@ export class HubNotifications {
         Date.now,
         "0.1.0",
         organizations,
-      ).canReadWorkspace(computer, user, thread.detail.cwd))
+      ).canReadWorkspace(computer, user, thread.detail.cwd, org))
     );
   }
 
