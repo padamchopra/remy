@@ -265,6 +265,7 @@ try {
           await page.getByRole("tab",{name:"Studio thread",exact:true}).waitFor();
           assert.equal(new URL(page.url()).pathname.endsWith("/threads/team-thread"), true, "A thread address names only the thread");
           assert.equal(new URL(page.url()).search, "", "Thread URLs drop computer and owner query");
+          if(artifacts)await page.screenshot({path:`${artifacts}/thread-url-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
           assert.equal(await page.getByRole("button",{name:"Back to all",exact:true}).count(),0,"Thread details do not add a second navigation row");
           assert.equal(await page.getByText("This computer is offline; you’re reading its last saved update.",{exact:true}).count(),0,"Offline threads do not add a redundant status row");
           await page.goto(clean("/board"));
@@ -421,6 +422,7 @@ try {
           const pending=new URL(pendingUrl);
           assert.match(pending.pathname,/\/threads\/[0-9a-f-]{36}$/,"Pending start uses a thread path");
           assert.equal(pending.search,"","Pending start does not add computer or owner query");
+          if(artifacts)await page.screenshot({path:`${artifacts}/start-pending-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
           await page.goto(target.href);
           await page.locator("#hub-thread-message").waitFor();
           assert.equal(await page.getByLabel("Thread transcript",{exact:true}).count(),0);
@@ -437,6 +439,7 @@ try {
           assert.equal(await page.getByRole("button",{name:"Retry",exact:true}).count(),0);
           const transcript = page.getByLabel("Thread transcript",{exact:true});
           await transcript.getByRole("img",{name:"Codex",exact:true}).waitFor();
+          if(artifacts)await page.screenshot({path:`${artifacts}/start-ready-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
           assert.equal(await transcript.getByText("Agent",{exact:true}).count(),0);
           if(mobile) await page.getByRole("button",{name:"Toggle Sidebar",exact:true}).click();
           const sidebarRow=page.locator('.sidebar-thread').filter({hasText:"Hello startup QA"});
