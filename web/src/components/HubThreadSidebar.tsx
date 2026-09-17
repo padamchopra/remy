@@ -14,7 +14,7 @@ import { deviceIcon, type DeviceIconId } from "@/lib/devices";
 import type { ChatState } from "@/state/types";
 
 export function HubThreadSidebar({organizationId, threads, selected, onSelect}: {
-  organizationId: string; threads: HubThread[]; selected?: {id?: string; computerId?: string}; onSelect: (thread: HubThread) => void;
+  organizationId: string; threads: HubThread[]; selected?: {id?: string}; onSelect: (thread: HubThread) => void;
 }) {
   const {profile} = useHubProfile(organizationId);
   const members = useHubResource<{members: HubMember[]}>(organizationId, "/members");
@@ -31,7 +31,7 @@ export function HubThreadSidebar({organizationId, threads, selected, onSelect}: 
     const preview = typeof detail.preview === "string" ? detail.preview : [...detail.entries].reverse().find(e => typeof e.text === "string")?.text;
     return <SidebarMenuItem key={`${thread.computerId}:${thread.id}`}>
       <ThreadSidebarRow people={[thread.access.owner, ...thread.access.participants].map(person => ({...person, image: person.id === profile?.id ? profile.image : members.value?.members.find(member => member.userId === person.id)?.image}))}
-        provider={String(detail.provider ?? "codex")} model={typeof detail.model === "string" ? detail.model : undefined} title={detail.title} active={selected?.id === thread.id && selected.computerId === thread.computerId}
+        provider={String(detail.provider ?? "codex")} model={typeof detail.model === "string" ? detail.model : undefined} title={detail.title} active={selected?.id === thread.id}
         state={state} pinned={detail.pinned === true} preview={typeof preview === "string" ? preview : ""}
         time={typeof detail.workingSince === "number" ? elapsedSince(detail.workingSince, now) : agoLabel(typeof detail.updatedAt === "number" ? detail.updatedAt : thread.observedAt, now)}
         onSelect={() => onSelect(thread)}

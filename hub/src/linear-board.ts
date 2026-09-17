@@ -566,7 +566,7 @@ export class LinearBoard {
       await this.comment(
         binding,
         event.id,
-        `${text}${link?.chatId && link.computerId ? `\n\n[Open thread](${this.origin}/threads/${link.chatId}?organization=${this.org}&computer=${link.computerId})` : ""}`,
+        `${text}${link?.chatId ? `\n\n[Open thread](${this.origin}/threads/${link.chatId})` : ""}`,
         event.actor.label,
         event.at,
       );
@@ -580,7 +580,7 @@ export class LinearBoard {
       await this.comment(
         binding,
         event.id,
-        `[Open thread](${this.origin}/threads/${event.payload.chatId}?organization=${this.org}&computer=${event.payload.computerId}) — ${event.actor.label} started work.`,
+        `[Open thread](${this.origin}/threads/${event.payload.chatId}) — ${event.actor.label} started work.`,
         event.actor.label,
         event.at,
       );
@@ -759,7 +759,7 @@ export class LinearBoard {
       await this.comment(
         binding,
         `started:${key}`,
-        `[Open thread](${this.origin}/threads/${run.threadId}?organization=${this.org}&computer=${run.computerId}) — work started.`,
+        `[Open thread](${this.origin}/threads/${run.threadId}) — work started.`,
         "Remy",
       );
       await this.storage.put(claim, { phase: "started", ...run });
@@ -802,7 +802,7 @@ export class LinearBoard {
         if (ticket?.fields.projectId === run.workspaceId)
           href = `${this.origin}/tickets/${encodeURIComponent(id)}?organization=${this.org}`;
       } else if (artifact.kind === "thread" && id === thread)
-        href = `${this.origin}/threads/${thread}?organization=${this.org}&computer=${String(artifact.computerId ?? "")}`;
+        href = `${this.origin}/threads/${thread}`;
       else if (artifact.kind === "workspace" && id === run.workspaceId)
         href = `${this.origin}/workspaces/${id}?organization=${this.org}`;
       if (href)
@@ -834,7 +834,7 @@ export class LinearBoard {
     await this.comment(
       binding,
       `reply:${thread}`,
-      `${text}\n\n[Open thread](${this.origin}/threads/${thread}?organization=${this.org}&computer=${computer})`,
+      `${text}\n\n[Open thread](${this.origin}/threads/${thread})`,
       "Remy",
     );
     await this.storage.put(`linear:run-done:${thread}`, true);

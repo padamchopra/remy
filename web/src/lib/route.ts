@@ -108,15 +108,13 @@ export function formatPathLocation({ route }: AppLocation): string {
                 ? "/pull-requests"
                 : `/inbox${route.agent ? `/${encodeURIComponent(route.agent)}` : ""}`;
   const params = new URLSearchParams();
-  if (route.name === "threads") {
-    if (route.focus && !route.organizationId) params.set("focus", route.focus);
-    if (route.computerId) params.set("computer", route.computerId);
-  }
+  const threadId = route.name === "threads" ? route.threadId : undefined;
+  if (route.name === "threads" && route.focus) params.set("focus", route.focus);
   if (route.name === "settings" && route.tab === "analytics" && route.analyticsTab === "usage") params.set("tab", "usage");
   if (route.name === "settings" && (route.tab === "providers" || route.tab === "devices") && route.deviceId) params.set("device", route.deviceId);
-  if (route.organizationId && route.organizationId !== "all") params.set("organization", route.organizationId);
+  if (route.organizationId && route.organizationId !== "all" && !threadId) params.set("organization", route.organizationId);
   if (route.name === "settings" && route.tab === "organization" && route.organizationTab) params.set("section", route.organizationTab);
-  if (route.ownerOrganizationId) params.set("owner", route.ownerOrganizationId);
+  if (route.ownerOrganizationId && !threadId) params.set("owner", route.ownerOrganizationId);
   const query = params.toString();
   return query ? `${path}?${query}` : path;
 }
@@ -149,9 +147,12 @@ export function currentLocation(): string {
 
 export function normalizeLocation(): AppLocation {
   const legacyHash = window.location.hash.startsWith("#/");
-  const redundantAll = new URLSearchParams(window.location.search).get("organization") === "all";
+  const search = new URLSearchParams(window.location.search);
+  const redundantAll = search.get("organization") === "all";
   const location = parseLocation(currentLocation());
-  if (isHostedRuntime() && (legacyHash || redundantAll)) {
+  const hostedThread = isHostedRuntime() && location.route.name === "threads" && location.route.threadId
+    && (search.has("computer") || search.has("owner") || search.has("organization") || legacyHash);
+  if (isHostedRuntime() && (legacyHash || redundantAll || hostedThread)) {
     window.history.replaceState(null, "", `${hostedBasePath()}${formatPathLocation(location)}`);
   }
   return location;

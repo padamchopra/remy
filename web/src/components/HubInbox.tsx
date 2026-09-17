@@ -330,7 +330,7 @@ export function HubInbox({
                   aria-disabled={!run.available}
                   href={
                     run.available
-                      ? formatBrowserLocation({ route: { name: "threads", threadId: run.threadId, organizationId, computerId: run.computerId } })
+                      ? formatBrowserLocation({ route: { name: "threads", threadId: run.threadId, organizationId } })
                       : undefined
                   }
                 >

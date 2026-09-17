@@ -2,11 +2,13 @@ import { lazy, useEffect, useMemo, useState } from "react";
 import type {
   BoardProjection,
   ComputerSummary,
+  HubThread,
   Organization,
   RoutingRule,
 } from "@remy/contract";
 import type { Route } from "@/lib/route";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
+import { useThreadStarts } from "@/lib/hub-thread-start";
 import { watchHubResource } from "@/lib/hub-computers";
 import { HubPersonalContext } from "@/lib/hub-scope";
 import { HubModelFavorites } from "./HubModelFavorites";
@@ -220,7 +222,7 @@ function AllThreads({
   const scoped = (next: Route) => navigate({
     ...next,
     organizationId: "all",
-    ownerOrganizationId: next.organizationId ?? owner.id,
+    ...(next.name === "threads" && next.threadId ? {} : { ownerOrganizationId: next.organizationId ?? owner.id }),
   });
   return (
     <HubPersonalContext value={owner.personal === true}>
@@ -671,24 +673,41 @@ export default function HubAllView({
   route,
   userId,
   navigate,
+  threads = [],
+  threadsLoaded = true,
 }: {
   organizations: Organization[];
   route: Route;
   userId: string;
   navigate: (route: Route) => void;
+  threads?: HubThread[];
+  threadsLoaded?: boolean;
 }) {
+  const starts = useThreadStarts();
+  const pendingStart = route.name === "threads" && route.threadId
+    ? starts.find((start) => start.requestId === route.threadId || start.created?.id === route.threadId)
+    : undefined;
+  const threadOwnerId = route.name === "threads" && route.threadId
+    ? route.ownerOrganizationId
+      ?? threads.find((thread) => thread.id === route.threadId)?.access.organizationId
+      ?? pendingStart?.organizationId
+    : route.ownerOrganizationId;
   const selectedOwner = organizations.find(
-    (organization) => organization.id === route.ownerOrganizationId,
+    (organization) => organization.id === threadOwnerId,
   );
   const section = route.name === "settings" ? route.tab : route.name;
   const scoped = (next: Route) =>
     navigate({
       ...next,
       organizationId: "all",
-      ownerOrganizationId: next.organizationId ?? selectedOwner?.id,
+      ...(next.name === "threads" && next.threadId ? {} : { ownerOrganizationId: next.organizationId ?? selectedOwner?.id }),
     });
-  if (route.ownerOrganizationId && !selectedOwner)
+  if (route.name === "threads" && route.threadId && !threadsLoaded && !pendingStart && !route.ownerOrganizationId)
+    return <div className="flex min-h-0 flex-1 items-center justify-center"><Spinner aria-label="Loading threads" /></div>;
+  if (threadOwnerId && !selectedOwner)
     return <EmptyState title="This account is unavailable" />;
+  if (route.name === "threads" && route.threadId && !selectedOwner)
+    return <EmptyState title="This thread is unavailable" />;
   if (selectedOwner)
     return (
       <HubPersonalContext value={selectedOwner.personal === true}>
@@ -735,9 +754,6 @@ export default function HubAllView({
                     organizationId={selectedOwner.id}
                     showNavigation={false}
                     canManageWorkspaces={selectedOwner.role !== "member"}
-                    computerId={
-                      route.name === "threads" ? route.computerId : undefined
-                    }
                     threadId={
                       route.name === "threads" ? route.threadId : undefined
                     }

@@ -73,7 +73,6 @@ type Question = {
 
 export default function HubThreads({
   organizationId,
-  computerId,
   threadId,
   navigate,
   canManageWorkspaces = false,
@@ -89,7 +88,6 @@ export default function HubThreads({
   organizationId: string;
   canManageWorkspaces?: boolean;
   showNavigation?: boolean;
-  computerId?: string;
   threadId?: string;
   navigate: (route: Route) => void;
   newThreadSharingControl?: ReactNode;
@@ -145,37 +143,39 @@ export default function HubThreads({
     editor.current?.clear();
     setAnswers({});
 
-  }, [threadId, computerId]);
+  }, [threadId]);
   const starts = useThreadStarts();
-  const pending = starts.find(s => !!threadId && s.ownerId === member?.id && s.organizationId === organizationId && ((computerId === "pending" && s.requestId === threadId) || (s.created?.id === threadId && s.created?.computerId === computerId)));
+  const pending = starts.find(s => !!threadId && s.organizationId === organizationId && (s.requestId === threadId || s.created?.id === threadId));
   const savedThread = threads.find(
-    (item) => item.computerId !== "pending" && item.id === threadId && item.computerId === computerId,
+    (item) => item.computerId !== "pending" && item.id === threadId,
   );
   const thread: HubThread | undefined = savedThread ?? (pending ? {
     id: pending.requestId, computerId: pending.created?.computerId ?? "pending", stale: false, revision: 0, observedAt: pending.at,
     access: {organizationId, owner: member ?? {id: "pending", label: "You"}, participants: [], visibility: pending.visibility},
     detail: {id: pending.requestId, title: pending.message.slice(0, 200), state: "working", entries: [{id: `u-${pending.requestId}`, kind: "user", text: pending.message}]},
   } : undefined);
+  const actingComputer = savedThread?.computerId ?? pending?.created?.computerId;
+  const actingThread = savedThread?.id ?? pending?.created?.id ?? threadId;
   useEffect(() => {
-    if (pending?.phase === "ready" && pending.created && computerId === "pending") {
-      navigate({name: "threads", organizationId, computerId: pending.created.computerId, threadId: pending.created.id});
+    if (pending?.phase === "ready" && pending.created && threadId === pending.requestId) {
+      navigate({name: "threads", organizationId, threadId: pending.created.id});
     }
     if (pending && savedThread) forgetThreadStart(pending.requestId);
-  }, [pending, savedThread, computerId, organizationId, navigate]);
+  }, [pending, savedThread, threadId, organizationId, navigate]);
   useEffect(() => {
     if (followsLatest.current && transcript.current)
       transcript.current.scrollTop = transcript.current.scrollHeight;
   }, [thread?.revision]);
   useEffect(() => {
     followsLatest.current = true;
-  }, [threadId, computerId]);
+  }, [threadId]);
   const computer = computers.find((c) => c.computerId === thread?.computerId);
   const branch = useHubThreadBranch(organizationId, savedThread, computer) ?? pending?.branch;
   const ComputerIcon = deviceIcon((computer?.icon ?? (pending?.computerId?.startsWith("cloud:") ? "cloud" : undefined)) as DeviceIconId);
   const writable =
     !!thread && !!member && canWriteThread(thread.access, member.id);
   const disabled = !!pending || busy || !thread || thread.stale || !writable;
-  const path = hubThreadPath(organizationId, computerId ?? "", threadId);
+  const path = actingComputer ? hubThreadPath(organizationId, actingComputer, actingThread) : "";
   const runtimeProvider = String(thread?.detail.provider ?? pending?.provider ?? "codex");
   const runtimeModel = String(thread?.detail.model ?? pending?.model ?? "");
   const gateway = /^remy:(openrouter|router|openai):(.+)$/.exec(runtimeModel);
@@ -199,11 +199,10 @@ export default function HubThreads({
       setBusy(false);
     }
   };
-  const open = (computer: string, id?: string) =>
+  const open = (_computer: string, id?: string) =>
     navigate({
       name: "threads",
       organizationId,
-      computerId: computer,
       threadId: id,
     });
   const send = async () => {
@@ -448,7 +447,7 @@ export default function HubThreads({
                   <ContextMeter context={thread.detail.context as ContextUsage | undefined} />
                 </>}
               >
-                <InlineImageComposer key={`${computerId}:${threadId}`} ref={editor} ariaLabel="Message" placeholder="Reply, or ask for the next change." disabled={disabled}
+                <InlineImageComposer key={`${actingComputer ?? "pending"}:${actingThread}`} ref={editor} ariaLabel="Message" placeholder="Reply, or ask for the next change." disabled={disabled}
                   onChange={setDraft} onSubmit={() => void send()} onError={setError}
                   onUpload={async file => {
                     const response = await fetch(`${path}/attachments`, {method:"POST",headers:{"content-type":file.type,"x-filename":file.name},body:file});

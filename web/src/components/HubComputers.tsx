@@ -181,7 +181,6 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
       route: {
         name: "threads",
         organizationId: org,
-        computerId: thread.computerId,
         threadId: thread.id,
       },
     });

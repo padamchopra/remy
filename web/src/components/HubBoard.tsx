@@ -351,7 +351,6 @@ export default function HubBoard({
                         navigate({
                           name: "threads",
                           organizationId,
-                          computerId: link.computerId,
                           threadId: link.chatId,
                         })
                       }

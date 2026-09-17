@@ -9,6 +9,8 @@
 /// Models are named the way each CLI names them on its own command line, so
 /// what Remy stores is what the tool is handed.
 
+import { hostedGatewayAvailable } from "./hosted-models.js";
+
 export type ProviderId = "claude" | "codex" | "cursor";
 
 export interface ProviderEffort {
@@ -154,6 +156,7 @@ export function providerModel(id: unknown, value: unknown): string {
   if (models.some((model) => model.value === value) || discoveredModels.get(resolved)?.has(String(value ?? ""))) {
     return String(value);
   }
+  if (resolved === "codex" && hostedGatewayAvailable(String(value ?? ""))) return String(value);
   // Cursor model aliases are supplied by the installed CLI and can change
   // independently of Remy. Preserve a previously selected safe alias across a
   // daemon restart; the live catalogue remains what the picker offers.
@@ -169,6 +172,7 @@ export function knowsModel(id: unknown, value: unknown): boolean {
   const resolved = providerId(id);
   return (provider(resolved)?.models ?? []).some((model) => model.value === value)
     || discoveredModels.get(resolved)?.has(String(value ?? "")) === true
+    || (resolved === "codex" && hostedGatewayAvailable(String(value ?? "")))
     || (resolved === "cursor" && typeof value === "string" && /^[A-Za-z0-9._:[\],=-]{1,160}$/.test(value));
 }
 

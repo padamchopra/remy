@@ -1,12 +1,19 @@
 import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 const state = mkdtempSync(join(tmpdir(), "remy-hub-threads-"));
 process.env.MC_CONFIG_DIR = state;
+const binDir = mkdtempSync(join(tmpdir(), "remy-hub-threads-bin-"));
+for (const command of ["claude", "codex", "agent"]) {
+  const path = join(binDir, command);
+  writeFileSync(path, "#!/bin/sh\nexit 0\n");
+  chmodSync(path, 0o755);
+}
+process.env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
 const { createChat, deleteChat, getChat } = await import("./chat.js");
 const { shareHubThread, hubThreadSnapshot, handleHubThreadRequest } =
   await import("./hub-threads.js");
@@ -15,7 +22,10 @@ const teammate = { id: "grace", label: "Grace" };
 const noAttachment = async () => {
   throw new Error("Unexpected image transfer");
 };
-test.after(() => rmSync(state, { recursive: true, force: true }));
+test.after(() => {
+  rmSync(state, { recursive: true, force: true });
+  rmSync(binDir, { recursive: true, force: true });
+});
 
 test("manual starts are private; trusted automatic and external starts default open", () => {
   for (const source of ["manual", "automatic", "external"] as const) {
@@ -188,6 +198,54 @@ test("thread creation checks out the requested branch before creating and dedupl
   deleteChat(thread.id);
 });
 
+test("hosted OpenRouter starts even when the selected model is not in the fetched catalogue", async () => {
+  const { addWorkspace } = await import("./workspaces.js");
+  const cwd = mkdtempSync(join(state, "gateway-"));
+  const workspace = await addWorkspace("Gateway QA", cwd);
+  const before = {
+    key: process.env.OPENROUTER_API_KEY,
+    models: process.env.OPENROUTER_MODELS,
+  };
+  process.env.OPENROUTER_API_KEY = "private-openrouter";
+  process.env.OPENROUTER_MODELS = JSON.stringify(["vendor/model"]);
+  try {
+    const accepted = await handleHubThreadRequest(
+      "org",
+      owner,
+      "POST",
+      "/hub/threads",
+      {
+        workspaceId: workspace.id,
+        provider: "codex",
+        model: "remy:openrouter:openrouter/auto",
+        hubTaskId: "openrouter-qa",
+      },
+      noAttachment,
+    );
+    assert.equal(accepted.status, 201);
+    const thread = (await accepted.json()) as { id: string };
+    assert.equal(getChat(thread.id)?.model, "remy:openrouter:openrouter/auto");
+    deleteChat(thread.id);
+    const refused = await handleHubThreadRequest(
+      "org",
+      owner,
+      "POST",
+      "/hub/threads",
+      {
+        workspaceId: workspace.id,
+        provider: "claude",
+        model: "remy:openrouter:openrouter/auto",
+      },
+      noAttachment,
+    );
+    assert.equal(refused.status, 400);
+  } finally {
+    if (before.key === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = before.key;
+    if (before.models === undefined) delete process.env.OPENROUTER_MODELS;
+    else process.env.OPENROUTER_MODELS = before.models;
+  }
+});
 
 test("thread snapshots retain the confirmed branch", async () => {
   execFileSync("git", ["init", "-b", "feature/snapshot", state], {stdio: "pipe"});
