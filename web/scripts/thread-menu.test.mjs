@@ -1,6 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { threadGroup, threadIsRunning, threadLink, threadMenuGroups, threadWorkspace } from "../src/lib/thread-menu.ts";
+import { build } from "esbuild";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const bundled = await build({
+  absWorkingDir: root,
+  entryPoints: ["src/lib/thread-menu.ts"],
+  bundle: true,
+  write: false,
+  platform: "node",
+  format: "esm",
+  alias: { "@": resolve(root, "src") },
+});
+const { threadGroup, threadIsRunning, threadLink, threadMenuGroups, threadWorkspace } = await import(
+  `data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString("base64")}`
+);
 
 test("parent lifecycle includes only its own device's children", () => {
   const parent = { id: "parent", serverId: "remote", state: "idle" };

@@ -95,8 +95,8 @@ export interface ThreadMenuFacts {
 
 export function threadMenuGroups(facts: ThreadMenuFacts): ThreadMenuEntry[][] {
   const unavailable = Boolean(facts.busy || !facts.online);
-  const copy = {
-    kind: "copy" as const,
+  const copy: ThreadMenuEntry = {
+    kind: "copy",
     label: "Copy thread link",
     disabled: Boolean(facts.busy) || facts.linkable === false,
   };
@@ -109,30 +109,29 @@ export function threadMenuGroups(facts: ThreadMenuFacts): ThreadMenuEntry[][] {
       [{ kind: "delete", label: "Delete permanently…", destructive: true, disabled: unavailable }],
     ];
   }
-  return [
-    [
-      ...(!facts.parent ? [{
-        kind: facts.pinned ? "unpin" as const : "pin" as const,
-        label: facts.pinned ? "Unpin thread" : "Pin thread",
-        disabled: unavailable || Boolean(facts.cloud),
-      }] : []),
-      { kind: "rename", label: "Rename…", disabled: unavailable },
-      copy,
-    ],
-    [
-      ...(!facts.parent && !facts.cloud && facts.spawn !== false ? [{ kind: "spawn" as const, label: "Start subthread…", disabled: unavailable }] : []),
-      ...(facts.parent && facts.beside ? [{ kind: "beside" as const, label: "Open beside parent" }] : []),
-      ...(facts.workspace ? [{ kind: "workspace" as const, label: "Open workspace" }] : []),
-      ...(facts.pullRequest ? [{ kind: "pr" as const, label: "Open pull request", href: true }] : []),
-    ],
-    [
-      ...(facts.running ? [{ kind: "stop" as const, label: "Stop agent", disabled: unavailable }] : []),
-      {
-        kind: facts.groupRunning ? "stop-archive" as const : "archive" as const,
-        label: facts.groupRunning ? "Stop and archive…" : "Archive thread",
-        disabled: unavailable,
-      },
-    ],
-    [{ kind: "delete", label: "Delete thread…", destructive: true, disabled: unavailable }],
-  ].filter((group) => group.length > 0);
+  const first: ThreadMenuEntry[] = [
+    ...(!facts.parent ? [{
+      kind: facts.pinned ? "unpin" as const : "pin" as const,
+      label: facts.pinned ? "Unpin thread" : "Pin thread",
+      disabled: unavailable || Boolean(facts.cloud),
+    }] : []),
+    { kind: "rename", label: "Rename…" as const, disabled: unavailable },
+    copy,
+  ];
+  const second: ThreadMenuEntry[] = [
+    ...(!facts.parent && !facts.cloud && facts.spawn !== false ? [{ kind: "spawn" as const, label: "Start subthread…", disabled: unavailable }] : []),
+    ...(facts.parent && facts.beside ? [{ kind: "beside" as const, label: "Open beside parent" }] : []),
+    ...(facts.workspace ? [{ kind: "workspace" as const, label: "Open workspace" }] : []),
+    ...(facts.pullRequest ? [{ kind: "pr" as const, label: "Open pull request", href: true }] : []),
+  ];
+  const third: ThreadMenuEntry[] = [
+    ...(facts.running ? [{ kind: "stop" as const, label: "Stop agent", disabled: unavailable }] : []),
+    {
+      kind: facts.groupRunning ? "stop-archive" as const : "archive" as const,
+      label: facts.groupRunning ? "Stop and archive…" : "Archive thread",
+      disabled: unavailable,
+    },
+  ];
+  const fourth: ThreadMenuEntry[] = [{ kind: "delete", label: "Delete thread…", destructive: true, disabled: unavailable }];
+  return [first, second, third, fourth].filter((group) => group.length > 0);
 }

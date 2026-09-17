@@ -96,7 +96,7 @@ function ThreadMenuView({
   const inputId = useId();
   const actionRef = useRef<HTMLButtonElement>(null);
   const menuOpen = contextOpen || dropdownOpen;
-  const unavailable = busy || Boolean(facts.busy) || !facts.online;
+  const unavailable = busy || !facts.online;
 
   const loadPullRequest = actions.loadPullRequest;
   useEffect(() => {
