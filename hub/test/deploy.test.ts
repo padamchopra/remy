@@ -64,6 +64,34 @@ test("deployment migrates, deploys, then validates health", async () => {
   assert.ok(commands[2]?.includes("RELEASE:abc123"));
 });
 
+test("deployment waits for the new release to reach the public URL", async () => {
+  let healthChecks = 0;
+  const waits: number[] = [];
+  await deployHub({
+    environment: "production",
+    hubUrl: "https://production.example",
+    release: "abc123",
+    run: async () => {},
+    wait: async (milliseconds) => { waits.push(milliseconds); },
+    fetchHealth: async (input) => {
+      if (String(input) === "https://production.example/api/runtime") return Response.json({ auth: { magicLink: true } });
+      healthChecks++;
+      return Response.json({
+        contractVersion: CONTRACT_VERSION,
+        environment: "production",
+        release: healthChecks === 1 ? "previous-release" : "abc123",
+        status: "ok",
+        dependencies: {
+          database: "ready", coordinator: "ready", objectStore: "ready", queue: "ready", secrets: "ready",
+        },
+      });
+    },
+  });
+
+  assert.equal(healthChecks, 2);
+  assert.deepEqual(waits, [5_000]);
+});
+
 test("deployment command failure prevents the smoke check", async () => {
   let command = 0;
   let fetched = false;

@@ -13,11 +13,14 @@ type DeployOptions = {
   hubUrl: string;
   run?: RunCommand;
   fetchHealth?: typeof fetch;
+  wait?: (milliseconds: number) => Promise<void>;
 };
 
 const hubRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const wrangler = join(hubRoot, "node_modules/.bin/wrangler");
 const execute = promisify(execFile);
+const healthAttempts = 12;
+const healthRetryMilliseconds = 5_000;
 const hubUrls: Record<HubEnvironment, string> = {
   production: "https://tryremy.dev",
   staging: "https://remy-hub-staging.jb-padamchopra.workers.dev",
@@ -52,14 +55,35 @@ export async function deployHub(options: DeployOptions): Promise<void> {
     `BETTER_AUTH_URL:${options.hubUrl}`,
   ]);
 
-  const response = await (options.fetchHealth ?? fetch)(new URL("/health", options.hubUrl));
-  if (!response.ok) throw new Error(`Hub smoke check returned ${response.status}`);
-  const health = parseHubHealth(await response.json());
-  if (health.environment !== options.environment) throw new Error("Hub smoke check reached the wrong environment");
-  if (health.release !== options.release) throw new Error("Hub smoke check reached the wrong release");
-  if (health.contractVersion !== CONTRACT_VERSION) throw new Error("Hub smoke check reached an incompatible contract");
+  const fetchHealth = options.fetchHealth ?? fetch;
+  const wait = options.wait ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+  let lastFailure = "Hub smoke check did not reach the deployed release";
+  for (let attempt = 0; attempt < healthAttempts; attempt++) {
+    let response: Response | undefined;
+    try {
+      response = await fetchHealth(new URL("/health", options.hubUrl), { cache: "no-store" });
+    } catch (error) {
+      lastFailure = `Hub smoke check failed: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    if (response) {
+      if (!response.ok) {
+        lastFailure = `Hub smoke check returned ${response.status}`;
+      } else {
+        const health = parseHubHealth(await response.json());
+        if (health.environment !== options.environment) throw new Error("Hub smoke check reached the wrong environment");
+        if (health.contractVersion !== CONTRACT_VERSION) throw new Error("Hub smoke check reached an incompatible contract");
+        if (health.release === options.release) {
+          lastFailure = "";
+          break;
+        }
+        lastFailure = "Hub smoke check reached the wrong release";
+      }
+    }
+    if (attempt < healthAttempts - 1) await wait(healthRetryMilliseconds);
+  }
+  if (lastFailure) throw new Error(lastFailure);
   if (options.environment === "production") {
-    const runtimeResponse = await (options.fetchHealth ?? fetch)(new URL("/api/runtime", options.hubUrl));
+    const runtimeResponse = await fetchHealth(new URL("/api/runtime", options.hubUrl));
     if (!runtimeResponse.ok) throw new Error("Production sign-in configuration is unavailable");
     const runtime = await runtimeResponse.json() as { auth?: { magicLink?: boolean } };
     if (runtime.auth?.magicLink !== true) throw new Error("Production email signup is unavailable");
