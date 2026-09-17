@@ -58,3 +58,15 @@ export function hostedModels(entries: ModelAccessEntry[], chatgpt = false, ensur
   }
   return cloudModels;
 }
+
+/// Maps a composer or stored gateway choice onto the runtime pair POST /threads
+/// accepts. A model that already carries `remy:` keeps that prefix.
+export function hostedExecutionChoice(choice: ModelChoice): { provider: string; model: string } {
+  if (choice.provider === "anthropic") return { provider: "claude", model: choice.model };
+  if (choice.provider === "openai" || choice.provider === "router" || choice.provider === "openrouter") {
+    const model = choice.model.startsWith("remy:") ? choice.model : `remy:${choice.provider}:${choice.model}`;
+    return { provider: "codex", model };
+  }
+  if (choice.model.startsWith("remy:")) return { provider: "codex", model: choice.model };
+  return { provider: choice.provider, model: choice.model };
+}

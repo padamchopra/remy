@@ -15,7 +15,7 @@ import { apiError } from "@/lib/api-error";
 import { hubRequest, hubThreadPath } from "@/lib/hub-threads";
 import { useHubProfile } from "@/lib/hub-profile";
 import { transport } from "@/lib/transport";
-import { threadGroup, threadIsRunning, threadLink, threadMenuGroups, threadWorkspace, type ThreadMenuFacts, type ThreadMenuKind } from "@/lib/thread-menu";
+import { hostedThreadMenuFacts, threadGroup, threadIsRunning, threadLink, threadMenuGroups, threadWorkspace, type ThreadMenuFacts, type ThreadMenuKind } from "@/lib/thread-menu";
 import { useStore } from "@/state/store";
 import { useShallow } from "zustand/react/shallow";
 import type { ArchivedThread, Chat, ChatState } from "@/state/types";
@@ -339,9 +339,7 @@ function HostedThreadMenu({
 }) {
   const { profile } = useHubProfile(hosted.organizationId);
   const pending = hosted.thread.computerId === "pending";
-  const cloud = hosted.computer?.ownership === "hosted";
-  const online = !pending && !hosted.thread.stale && hosted.computer != null && hosted.computer.availability !== "offline";
-  const writable = Boolean(profile && canWriteThread(hosted.thread.access, profile.id));
+  const writable = !profile || canWriteThread(hosted.thread.access, profile.id);
   const running = threadIsRunning(chat);
   const path = hubThreadPath(hosted.organizationId, hosted.thread.computerId, hosted.thread.id);
   const actions = useMemo<ThreadMenuActions>(() => ({
@@ -364,11 +362,8 @@ function HostedThreadMenu({
       itemClassName={itemClassName}
       childCount={hosted.childCount ?? 0}
       facts={{
-        online: online && writable,
-        cloud,
+        ...hostedThreadMenuFacts({ pending, writable }),
         groupRunning: running,
-        spawn: false,
-        linkable: !pending,
       }}
       workspaceId={hosted.workspaceId}
       onOpenWorkspace={hosted.workspaceId ? onOpenWorkspace : undefined}

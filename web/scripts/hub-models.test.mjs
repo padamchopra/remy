@@ -14,7 +14,7 @@ const bundled = await build({
   format: "esm",
   alias: { "@": resolve(root, "src") },
 });
-const { hostedModels } = await import(
+const { hostedExecutionChoice, hostedModels } = await import(
   `data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString("base64")}`
 );
 
@@ -44,4 +44,19 @@ test("hosted models omit providers that are turned off", () => {
     false,
   );
   assert.deepEqual(models.map((entry) => entry.id), []);
+});
+
+test("hosted execution maps OpenRouter onto Codex without a double remy prefix", () => {
+  assert.deepEqual(hostedExecutionChoice({ provider: "openrouter", model: "openrouter/auto" }), {
+    provider: "codex",
+    model: "remy:openrouter:openrouter/auto",
+  });
+  assert.deepEqual(hostedExecutionChoice({ provider: "openrouter", model: "remy:openrouter:openrouter/auto" }), {
+    provider: "codex",
+    model: "remy:openrouter:openrouter/auto",
+  });
+  assert.deepEqual(hostedExecutionChoice({ provider: "codex", model: "remy:openrouter:openrouter/auto" }), {
+    provider: "codex",
+    model: "remy:openrouter:openrouter/auto",
+  });
 });

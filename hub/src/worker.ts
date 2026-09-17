@@ -3,7 +3,7 @@ import { validProfileImage } from "./profile-image.js";
 import { HostedStartupError } from "./hosted-startup-error.js";
 import { modelDefaults } from "./model-defaults.js";
 import { modelFavorites } from "./model-favorites.js";
-import { hostedGatewayError, modelAccessIds, publicModelAccess, saveModelAccess, type ModelAccessId } from "./model-access.js";
+import { hostedGatewayError, hostedStartChoice, modelAccessIds, publicModelAccess, saveModelAccess, type ModelAccessId } from "./model-access.js";
 import { routerConnectionSchema, routerModels } from "./router-connection.js";
 import { cloudComputerProvider } from "@remy/contract";
 import { managementCredential } from "./cloud-connection.js";
@@ -1910,19 +1910,20 @@ export class HubCoordinator {
       if (!input || typeof input.workspaceId !== "string" || typeof input.requestId !== "string" || !/^[0-9a-f-]{36}$/.test(input.requestId)) return jsonError("Choose a workspace and retry your thread.", 400);
       const workspace = await new OrganizationService(new D1OrganizationStore(this.env.DB)).workspace(org, actor.id, input.workspaceId);
       if(input.computerId !== undefined && input.computerId !== null && typeof input.computerId !== "string") return jsonError("Choose a computer.",400);
-      if(input.provider !== undefined && !["claude","codex","cursor"].includes(input.provider))return jsonError("Choose a provider.",400);
-      if(input.model !== undefined && (typeof input.model !== "string" || input.model.length>512))return jsonError("Choose a model.",400);
+      const start=hostedStartChoice(input.provider,input.model);
+      if(start.provider !== undefined && !["claude","codex","cursor"].includes(start.provider))return jsonError("Choose a provider.",400);
+      if(start.model !== undefined && (typeof start.model !== "string" || start.model.length>512))return jsonError("Choose a model.",400);
       if(input.branch !== undefined && (typeof input.branch !== "string" || !input.branch || input.branch.length > 255)) return jsonError("Choose a branch.",400);
       if(input.visibility !== undefined && input.visibility !== "private" && input.visibility !== "open") return jsonError("Choose who can read this thread.",400);
-      const gatewayError=hostedGatewayError(input.provider,input.model,await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).secrets(org));
+      const gatewayError=hostedGatewayError(start.provider,start.model,await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).secrets(org));
       if(gatewayError)return jsonError(gatewayError,400);
       const key = `manual-task:${actor.id}:${input.requestId}`;
       const previous = await this.ctx.storage.get<{computerId:string; id:string}>(key);
       if (previous) return Response.json(previous,{status:201});
       try {
-        const choice = await this.taskComputer(actor.id, workspace.id, "manual", `${actor.id}:${input.requestId}`, input.title,input.computerId,input);
+        const choice = await this.taskComputer(actor.id, workspace.id, "manual", `${actor.id}:${input.requestId}`, input.title,input.computerId,start);
         const preferences = await this.env.DB.prepare("SELECT permission_mode FROM member_preferences WHERE user_id=?").bind(actor.id).first<{permission_mode:string}>();
-        const made = await this.dispatchComputer(choice.computerId, actor, "POST", "/hub/threads", {workspaceId:choice.workspaceId, hubTaskId:key, permissionMode:preferences?.permission_mode ?? "default", branch:input.branch, provider:input.provider, model:input.model, visibility:input.visibility ?? "private", title:typeof input.title === "string" ? input.title.slice(0,200) : undefined});
+        const made = await this.dispatchComputer(choice.computerId, actor, "POST", "/hub/threads", {workspaceId:choice.workspaceId, hubTaskId:key, permissionMode:preferences?.permission_mode ?? "default", branch:input.branch, provider:start.provider, model:start.model, visibility:input.visibility ?? "private", title:typeof input.title === "string" ? input.title.slice(0,200) : undefined});
         if (!made.ok) return made;
         const thread = threadSnapshotSchema.parse(await made.json());
         await this.threads.snapshot(choice.computerId, thread);
@@ -1963,7 +1964,7 @@ export class HubCoordinator {
     }
     const allowed = id ? ((request.method === "GET" || request.method === "PATCH" || request.method === "DELETE") && !action) || (request.method === "POST" && !!action) : request.method === "POST";
     if (!allowed) return jsonError("This action is not available.", 404);
-    if(id && request.method==="POST" && !targetAvailable) {
+    if(id && !targetAvailable && (request.method==="POST" || request.method==="PATCH" || request.method==="DELETE")) {
       const state=(await this.hostedService().list()).find(s=>s.computerId===computerId);
       if(state){try{await this.hostedService().ensure(state.workspaceId,state.settings,state.taskId);}catch(error){return jsonError(error instanceof Error?error.message:"Your computer could not resume.",409);}}
     }

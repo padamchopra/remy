@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { hostedGatewayError } from "./model-access.js";
+import { hostedGatewayError, hostedStartChoice } from "./model-access.js";
 
 const enabled = {
   "access:openrouter": JSON.stringify({
@@ -19,6 +19,25 @@ test("hosted start accepts an enabled OpenRouter model that is not in the fetche
     hostedGatewayError("codex", "remy:openrouter:vendor/model", enabled),
     undefined,
   );
+  assert.equal(
+    hostedGatewayError("openrouter", "openrouter/auto", enabled),
+    undefined,
+  );
+  assert.equal(
+    hostedGatewayError(undefined, "remy:openrouter:openrouter/auto", enabled),
+    undefined,
+  );
+});
+
+test("hosted start maps a gateway choice onto Codex before the allowlist", () => {
+  assert.deepEqual(hostedStartChoice("openrouter", "openrouter/auto"), {
+    provider: "codex",
+    model: "remy:openrouter:openrouter/auto",
+  });
+  assert.deepEqual(hostedStartChoice(undefined, "remy:openrouter:openrouter/auto"), {
+    provider: "codex",
+    model: "remy:openrouter:openrouter/auto",
+  });
 });
 
 test("hosted start still refuses a disabled or unconfigured gateway", () => {
@@ -33,11 +52,11 @@ test("hosted start still refuses a disabled or unconfigured gateway", () => {
     "Choose an enabled provider and model.",
   );
   assert.equal(
-    hostedGatewayError("codex", "remy:openrouter:openrouter/auto", {}),
+    hostedGatewayError("openrouter", "openrouter/auto", {}),
     "Choose an enabled provider and model.",
   );
   assert.equal(
-    hostedGatewayError("claude", "remy:openrouter:vendor/model", enabled),
+    hostedGatewayError("codex", "remy:openrouter:openrouter/auto", {}),
     "Choose an enabled provider and model.",
   );
 });

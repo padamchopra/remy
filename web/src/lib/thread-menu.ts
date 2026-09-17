@@ -93,6 +93,21 @@ export interface ThreadMenuFacts {
   spawn?: boolean;
 }
 
+/// Hosted pin/rename/archive/delete go through the hub, which can wake a cloud
+/// computer. A missing, idle, or stale computer is not "the whole menu is off".
+export function hostedThreadMenuFacts(input: {
+  pending?: boolean;
+  writable?: boolean;
+  cloud?: boolean;
+}): Pick<ThreadMenuFacts, "online" | "cloud" | "spawn" | "linkable"> {
+  return {
+    online: !input.pending && input.writable !== false,
+    cloud: Boolean(input.cloud),
+    spawn: false,
+    linkable: !input.pending,
+  };
+}
+
 export function threadMenuGroups(facts: ThreadMenuFacts): ThreadMenuEntry[][] {
   const unavailable = Boolean(facts.busy || !facts.online);
   const copy: ThreadMenuEntry = {

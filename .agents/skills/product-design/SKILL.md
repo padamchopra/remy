@@ -43,6 +43,19 @@ Both: ThreadMenu. Hosted adapts pin, rename, archive, and delete onto hub routes
 Hosted omits Start subthread because that action has no hosted API.
 ```
 
+Hosted menu enablement follows hub ownership, not Mac daemon reachability. Pin, rename, archive, and delete stay usable when a cloud computer is idle, missing from the computers list, or marked stale. The hub can wake that computer. Disable an item only when the person cannot write or the thread is still pending. Copying a link does not need write access.
+
+BAD
+```text
+Hosted: disable every ThreadMenu item unless the computers list has that row online.
+```
+
+GOOD
+```text
+Hosted: enable pin, rename, archive, and delete when you can write.
+A missing or idle cloud computer is not a disabled menu.
+```
+
 ## Organization selection is a viewing filter
 
 Remy presents one place for one user who can belong to multiple organizations. The account switcher filters that shared view: All includes Personal and every accessible organization; selecting Personal or an organization narrows the same surface.

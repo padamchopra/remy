@@ -14,7 +14,7 @@ const bundled = await build({
   format: "esm",
   alias: { "@": resolve(root, "src") },
 });
-const { threadGroup, threadIsRunning, threadLink, threadMenuGroups, threadWorkspace } = await import(
+const { hostedThreadMenuFacts, threadGroup, threadIsRunning, threadLink, threadMenuGroups, threadWorkspace } = await import(
   `data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString("base64")}`
 );
 
@@ -83,5 +83,21 @@ test("Mac and hosted sidebar menus share items, order, and enablement", () => {
   const running = { ...local, running: true, groupRunning: true };
   assert.equal(labels(running)[2][0][1], "Stop agent");
   assert.equal(labels(running)[2][1][1], "Stop and archive…");
+});
+
+test("hosted menus stay usable when the cloud computer is missing, idle, or stale", () => {
+  const labels = (facts) => threadMenuGroups(facts).map((group) => group.map((entry) => [entry.kind, entry.label, Boolean(entry.disabled)]));
+  const hosted = hostedThreadMenuFacts({ writable: true });
+  assert.deepEqual(labels({ ...hosted, pinned: false }), [
+    [["pin", "Pin thread", false], ["rename", "Rename…", false], ["copy", "Copy thread link", false]],
+    [["archive", "Archive thread", false]],
+    [["delete", "Delete thread…", false]],
+  ]);
+  const pending = hostedThreadMenuFacts({ pending: true, writable: true });
+  assert.equal(labels({ ...pending })[0].find((entry) => entry[0] === "rename")[2], true);
+  assert.equal(labels({ ...pending })[0].find((entry) => entry[0] === "copy")[2], true);
+  const reader = hostedThreadMenuFacts({ writable: false });
+  assert.equal(labels({ ...reader })[0].find((entry) => entry[0] === "rename")[2], true);
+  assert.equal(labels({ ...reader })[0].find((entry) => entry[0] === "copy")[2], false);
 });
 

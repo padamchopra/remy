@@ -21,14 +21,31 @@ export function modelAccess(secrets:Record<string,string>) {
 export function publicModelAccess(secrets:Record<string,string>) {
   return modelAccess(secrets).map(({apiKey,...value})=>({...value,configured:!!apiKey}));
 }
+/// Maps a composer or stored gateway choice onto Codex plus a `remy:` model.
+/// OpenRouter auto and other defaults are not a second catalogue allowlist.
+export function hostedStartChoice(provider:string | undefined, model:string | undefined): {provider?: string; model?: string} {
+  const routed=/^remy:(router|openrouter|openai):(.+)$/.exec(model ?? "");
+  if(routed && model)return {provider:"codex", model};
+  if(provider==="anthropic")return {provider:"claude", ...(model !== undefined ? {model} : {})};
+  if(provider==="openai" || provider==="router" || provider==="openrouter") {
+    if(!model)return {provider:"codex"};
+    return {provider:"codex", model: model.startsWith("remy:") ? model : `remy:${provider}:${model}`};
+  }
+  return {
+    ...(provider !== undefined ? {provider} : {}),
+    ...(model !== undefined ? {model} : {}),
+  };
+}
 /// Cloud thread start honors the computer's enabled gateways. The fetched
 /// catalogue is for picking, not a second allowlist that can reject an
 /// enabled OpenRouter or Router model the composer already showed.
 export function hostedGatewayError(provider:string | undefined, model:string | undefined, secrets:Record<string,string>): string | undefined {
-  const routed=/^remy:(router|openrouter|openai):(.+)$/.exec(model ?? "");
+  const choice=hostedStartChoice(provider, model);
+  const routed=/^remy:(router|openrouter|openai):(.+)$/.exec(choice.model ?? "");
   if(!routed)return;
+  if(choice.provider && choice.provider!=="codex")return "Choose an enabled provider and model.";
   const access=publicModelAccess(secrets).find(entry=>entry.id===routed[1]);
-  if(provider!=="codex" || !access?.enabled || !access.configured)return "Choose an enabled provider and model.";
+  if(!access?.enabled || !access.configured)return "Choose an enabled provider and model.";
 }
 export function modelEnvironment(secrets:Record<string,string>) {
   const result:Record<string,string>={};
