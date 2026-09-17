@@ -58,7 +58,7 @@ Skip `VITE_MC_FIXTURE=1`; that is fake data, not your real state.
 
 ## Skills
 
-`.agents/skills` holds the conventions reviews are held to.
+`.agents/skills` holds the conventions reviews are held to. When the user highlights one that belongs there, capture it in the same change — see **`skill-capture`**.
 
 `.claude/skills` is a symlink to this directory so Claude and other agents discover the same skills. Add each skill only under `.agents/skills`; do not add per-skill Claude links.
 
@@ -69,6 +69,7 @@ Skip `VITE_MC_FIXTURE=1`; that is fake data, not your real state.
 - **`performance-diagnosis`** — measure request, payload, render, and freshness waits before choosing a fix.
 - **`qa`** — after an interaction or server behavior change, drive the current code in the running app before calling it done.
 - **`pr-author`** — every PR carries proportional reviewer evidence and reads in one screen; screenshots or recordings are required only for behavior a reviewer can exercise or judge in the running app.
+- **`skill-capture`** — when the user highlights a durable convention, write it into `.agents/skills/` in the same change.
 - **`shadcn`** and **`migrate-radix-to-base`** — vendored from `shadcn/ui` and tracked in `skills-lock.json`. Do not hand-edit them.
 
 ## Terminology
@@ -131,6 +132,7 @@ A server module opens its database at import time, so a test that touches state 
 
 ## Conventions
 
+- **A highlighted house rule lands in a skill in the same change.** When the user points at something that can be added to an existing skill under `.agents/skills/`, or that needs a new skill file, write it down before the change is done. `skill-capture` is when to edit versus create; do not defer it, and do not add a skill for a one-off bug.
 - **Comments** explain why, not what, and use `///` on exported declarations. Match the density of the file you are in; the codebase is sparse.
 - **No shell strings.** The server reaches `git`, `gh`, and `tmux` through `execFile` with an argument array. Never build a command line, and never interpolate a path or a branch name into one.
 - **Loopback only.** The daemon binds `127.0.0.1` behind a bearer token; the way in from another device is `tailscale serve`. Do not widen the bind.
