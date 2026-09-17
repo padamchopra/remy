@@ -29,6 +29,20 @@ Desktop reads images from the checkout; web reads them through an authorized rep
 
 Verify the same user journey on both surfaces, including saved state after refresh. Report remaining differences and their actual platform constraints; do not call a shared-looking subset parity. This is a design and review requirement, not an automated check.
 
+Sidebar thread rows are one of those shared surfaces. Hosted `HubThreadSidebar` and Mac `AppSidebar` both render `ThreadMenu` — the same right-click `ContextMenu` and hover ⋯ `DropdownMenu`. Item order and enablement come from `threadMenuGroups` in `web/src/lib/thread-menu.ts`. A missing hosted endpoint is work to complete, not a reason to drop the item or fork the menu. Allow a difference only when the platform cannot support the action: hosted threads cannot start a subthread.
+
+BAD
+```text
+Mac: ThreadMenu with pin, rename, copy link, start subthread, archive, delete.
+Web: a separate HubThreadMenu, or a shorter list, because hosted routes were never wired.
+```
+
+GOOD
+```text
+Both: ThreadMenu. Hosted adapts pin, rename, archive, and delete onto hub routes.
+Hosted omits Start subthread because that action has no hosted API.
+```
+
 ## Organization selection is a viewing filter
 
 Remy presents one place for one user who can belong to multiple organizations. The account switcher filters that shared view: All includes Personal and every accessible organization; selecting Personal or an organization narrows the same surface.

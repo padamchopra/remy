@@ -103,4 +103,17 @@ test("bounded history resets an expired cursor, and a manifest removes only that
   assert.equal(await store.get("studio", id), undefined);
   assert.ok(await store.get("desk", id));
   assert.equal((await store.replay(131)).frames[0]?.kind, "remove");
+  await store.snapshot("desk", snapshot(2));
+  await store.remove("desk", id);
+  assert.equal(await store.get("desk", id), undefined);
+  const childId = "c1837580-3dba-4e6d-8a9a-b3c84b786510";
+  await store.snapshot("desk", snapshot(3));
+  await store.snapshot("desk", {
+    ...snapshot(1),
+    id: childId,
+    detail: { ...snapshot().detail, id: childId, parentChatId: id },
+  });
+  await store.removeGroup("desk", id);
+  assert.equal(await store.get("desk", id), undefined);
+  assert.equal(await store.get("desk", childId), undefined);
 });

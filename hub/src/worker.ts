@@ -1869,7 +1869,7 @@ export class HubCoordinator {
 
   private async threadRequest(request: Request): Promise<Response | undefined> {
     const url = new URL(request.url);
-    const match = /^\/computers\/([^/]+)\/threads(?:\/([0-9a-f-]{36})(?:\/(join|message|approval|question|interrupt|stop|visibility|options|attachments)(?:\/([0-9a-f-]{36}))?)?)?$/.exec(url.pathname);
+    const match = /^\/computers\/([^/]+)\/threads(?:\/([0-9a-f-]{36})(?:\/(join|message|approval|question|interrupt|stop|visibility|options|attachments|archive)(?:\/([0-9a-f-]{36}))?)?)?$/.exec(url.pathname);
     const branchMatch = /^\/computers\/([^/]+)\/workspaces\/([^/]+)\/branches$/.exec(url.pathname);
     if (!match && !branchMatch && url.pathname !== "/threads" && url.pathname !== "/threads/live") return undefined;
     let actor: ThreadMember;
@@ -1961,7 +1961,7 @@ export class HubCoordinator {
       }
       return jsonError("This action is not available.", 404);
     }
-    const allowed = id ? ((request.method === "GET" || request.method === "PATCH") && !action) || (request.method === "POST" && !!action) : request.method === "POST";
+    const allowed = id ? ((request.method === "GET" || request.method === "PATCH" || request.method === "DELETE") && !action) || (request.method === "POST" && !!action) : request.method === "POST";
     if (!allowed) return jsonError("This action is not available.", 404);
     if(id && request.method==="POST" && !targetAvailable) {
       const state=(await this.hostedService().list()).find(s=>s.computerId===computerId);
@@ -1995,6 +1995,10 @@ export class HubCoordinator {
     if(payload.byteLength){try{input=JSON.parse(new TextDecoder().decode(payload));}catch{return jsonError("Send a valid thread request.",400);}}
     if(input.hubEnvironment!==undefined || input.hubTaskId!==undefined)return jsonError("This thread configuration is unavailable.",403);
     const answer=await this.dispatchComputer(computerId,actor,request.method,`/hub/threads${id?`/${id}`:""}${action?`/${action}`:""}`,input);
+    if (answer.ok && id && (request.method === "DELETE" || action === "archive")) {
+      await this.threads.removeGroup(computerId, id);
+      return answer;
+    }
     if (answer.ok) {
       const updated = threadSnapshotSchema.safeParse(await answer.clone().json());
       if (updated.success && updated.data.access.organizationId === request.headers.get("x-organization-id")) await this.threads.snapshot(computerId, updated.data);

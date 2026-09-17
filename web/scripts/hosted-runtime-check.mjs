@@ -150,7 +150,7 @@ try {
           "/api/organizations": { organizations: [team] },
           [base]: { organization: org },
           [`${base}/threads`]: { threads: process.env.QA_SCOPE_ONLY === "1" ? [{id:`${org.id}-thread`,computerId:`${org.id}-computer`,revision:1,stale:!org.personal,observedAt:Date.now(),access:{organizationId:org.id,owner:{id:"reader",label:"Reader"},participants:[],visibility:"private"},detail:{id:`${org.id}-thread`,title:org.personal?"Personal thread":"Studio thread",state:"idle",provider:"codex",entries:[]}}] : startedThread && startedThread.access.organizationId === org.id ? [startedThread]:[], cursor: 0, member: { id: "reader", role: "owner" } },
-          [`${base}/computers`]: { computers: connected ? [{ computerId: "studio", name: computerName, icon: "laptop", ownership: "personal", availability: online ? "online" : "offline", access: { mode: "owner" }, canUse: online, canManage: false, capabilities: { workspaces: [] } }] : [] },
+          [`${base}/computers`]: { computers: process.env.QA_SCOPE_ONLY === "1" ? [{ computerId: `${org.id}-computer`, name: org.personal ? "Personal Mac" : "Studio Mac", icon: "laptop", ownership: "personal", availability: org.personal ? "available" : "offline", access: { mode: "owner" }, canUse: Boolean(org.personal), canManage: false, capabilities: { workspaces: [] } }] : connected ? [{ computerId: "studio", name: computerName, icon: "laptop", ownership: "personal", availability: online ? "online" : "offline", access: { mode: "owner" }, canUse: online, canManage: false, capabilities: { workspaces: [] } }] : [] },
           [`${base}/computers/options`]: { role: "owner", members: [], teams: [] },
           [`${base}/hosted`]: { settings: { enabled: cloudEnabled, provider: "fly-sprites", region: "", cpu: 1, memoryMiB: 2048, maxComputers: 5, idleMinutes: 12 }, secretNames: [], connections: [...connections], enabledProviders: [...enabledProviders], available },
           [`${base}/members`]: {members:[{id:"reader-member",userId:"reader",name:profile.name,image:profile.image,role:"owner"},...Array.from({length:4},(_,i)=>({id:`m${i}`,userId:`p${i}`,name:`Person ${i}`,image:`data:image/png;base64,${readFileSync(new URL('../public/favicon.png',import.meta.url)).toString('base64')}`,role:"member"}))]},
@@ -239,6 +239,25 @@ try {
           await page.goto(clean("/threads?organization=all"));
           await page.waitForURL(current=>current.pathname==="/app/threads" && current.search==="");
           assert.equal(page.url(),clean("/threads"),"All is the default clean route");
+          if(!mobile) {
+            const personalThread=page.locator(".sidebar-thread").filter({hasText:"Personal thread"});
+            await personalThread.waitFor();
+            await personalThread.click({button:"right"});
+            await page.getByRole("menuitem",{name:"Copy thread link",exact:true}).waitFor();
+            assert.equal(await page.getByRole("menuitem",{name:"Pin thread",exact:true}).count(),1);
+            assert.equal(await page.getByRole("menuitem",{name:"Rename…",exact:true}).count(),1);
+            assert.equal(await page.getByRole("menuitem",{name:"Archive thread",exact:true}).count(),1);
+            assert.equal(await page.getByRole("menuitem",{name:"Delete thread…",exact:true}).count(),1);
+            assert.equal(await page.getByRole("menuitem",{name:"Start subthread…",exact:true}).count(),0,"Hosted threads cannot start a subthread");
+            if(artifacts && !returning) await page.screenshot({path:`${artifacts}/hosted-thread-context-menu.png`});
+            await page.keyboard.press("Escape");
+            await personalThread.hover();
+            await page.getByRole("button",{name:"Thread actions for Personal thread"}).click();
+            await page.getByRole("menuitem",{name:"Copy thread link",exact:true}).waitFor();
+            assert.equal(await page.getByRole("menuitem",{name:"Rename…",exact:true}).count(),1);
+            if(artifacts && !returning) await page.screenshot({path:`${artifacts}/hosted-thread-overflow-menu.png`});
+            await page.keyboard.press("Escape");
+          }
           const threadPane=page.getByRole("region",{name:"Threads",exact:true});
           const composer=page.getByRole("form",{name:"New thread",exact:true});
           await composer.waitFor();

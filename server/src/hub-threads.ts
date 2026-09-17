@@ -12,7 +12,11 @@ import {
   type ThreadSnapshot,
 } from "@remy/contract";
 import {
+  archiveConversation,
+  chatGroup,
   createChat,
+  deleteChat,
+  deleteChatGroup,
   getChat,
   getChatWindow,
   interruptChat,
@@ -20,8 +24,13 @@ import {
   respondToQuestion,
   sendChatMessage,
   stopChat,
+  stopChatGroup,
   updateChat,
 } from "./chat.js";
+import { archiveChat } from "./archives.js";
+import { closeBrowser } from "./browser.js";
+import { clearThreadPullRequestMonitoring } from "./pull-request-monitoring.js";
+import { closeTerminal } from "./terminal.js";
 import { getKv, setKv } from "./db.js";
 import { broadcast } from "./notify.js";
 import { checkoutWorkspaceBranch, listWorkspaces } from "./workspaces.js";
@@ -30,6 +39,11 @@ import type { ChatImageAttachment } from "./transcript.js";
 const KEY = "hubThreadAccess";
 const branchStates = new Map<string, string>();
 const accessRecords = () => getKv<Record<string, ThreadAccess>>(KEY) ?? {};
+const forgetHubThreads = (ids: string[]) => {
+  const rows = accessRecords();
+  for (const id of ids) delete rows[id];
+  setKv(KEY, rows);
+};
 const fail = (status: number, error: string) =>
   Response.json({ error }, { status });
 
@@ -96,7 +110,7 @@ export async function handleHubThreadRequest(
   ) => Promise<ChatImageAttachment>,
 ): Promise<Response> {
   const match =
-    /^\/hub\/threads(?:\/([0-9a-f-]{36})(?:\/(join|message|approval|question|interrupt|stop|visibility|options))?)?$/.exec(
+    /^\/hub\/threads(?:\/([0-9a-f-]{36})(?:\/(join|message|approval|question|interrupt|stop|visibility|options|archive))?)?$/.exec(
       path,
     );
   if (!match) return fail(404, "This thread is no longer available.");
@@ -257,16 +271,82 @@ export async function handleHubThreadRequest(
     } else if (method === "POST" && action === "interrupt")
       await interruptChat(id);
     else if (method === "POST" && action === "stop") stopChat(id);
-    else if (method === "PATCH" && !action) {
-      if (
-        typeof input.title !== "string" ||
-        !input.title.trim() ||
-        input.title.length > 200
-      )
+    else if (method === "POST" && action === "archive") {
+      return retireHubThread(id, "archive");
+    } else if (method === "DELETE" && !action) {
+      return retireHubThread(id, "delete");
+    } else if (method === "PATCH" && !action) {
+      const title = typeof input.title === "string" ? input.title : undefined;
+      const pinned = typeof input.pinned === "boolean" ? input.pinned : undefined;
+      if (title !== undefined && (!title.trim() || title.length > 120))
         return fail(400, "Enter a shorter thread name.");
-      updateChat(id, { title: input.title });
+      if (title === undefined && pinned === undefined)
+        return fail(400, "Choose a thread setting.");
+      updateChat(id, { title, pinned });
     } else return fail(404, "This action is not available.");
     return Response.json(hubThreadSnapshot(id, organizationId));
+  } catch (error) {
+    return fail(
+      409,
+      error instanceof Error ? error.message : "This action failed; try again.",
+    );
+  }
+}
+
+async function retireHubThread(id: string, mode: "archive" | "delete"): Promise<Response> {
+  const chat = getChat(id);
+  if (!chat) return fail(404, "This thread is no longer available.");
+  if (mode === "archive" && chat.parentChatId && (chat.state === "working" || chat.state === "needs_input")) {
+    return fail(409, "this thread is still running");
+  }
+  const ids = chat.parentChatId ? [id] : chatGroup(id).map((member) => member.id);
+  try {
+    if (mode === "archive") {
+      if (chat.parentChatId) {
+        archiveChat({
+          chatId: chat.id,
+          session: chat.title,
+          agent: chat.provider,
+          cwd: chat.cwd,
+          conversation: archiveConversation(chat.id),
+        });
+        void closeBrowser(id);
+        closeTerminal(`thread-${id}`);
+        clearThreadPullRequestMonitoring(id);
+        deleteChat(id);
+      } else {
+        const group = await stopChatGroup(id);
+        await Promise.all(group.map((member) => closeBrowser(member.id).catch(() => undefined)));
+        for (const member of group) {
+          archiveChat({
+            chatId: member.id,
+            session: member.title,
+            agent: member.provider,
+            cwd: member.cwd,
+            conversation: archiveConversation(member.id),
+          });
+          closeTerminal(`thread-${member.id}`);
+          clearThreadPullRequestMonitoring(member.id);
+        }
+        deleteChatGroup(id);
+      }
+    } else if (chat.parentChatId) {
+      void closeBrowser(id);
+      closeTerminal(`thread-${id}`);
+      clearThreadPullRequestMonitoring(id);
+      deleteChat(id);
+    } else {
+      const group = await stopChatGroup(id);
+      await Promise.all(group.map((member) => closeBrowser(member.id).catch(() => undefined)));
+      for (const member of group) {
+        closeTerminal(`thread-${member.id}`);
+        clearThreadPullRequestMonitoring(member.id);
+      }
+      deleteChatGroup(id);
+    }
+    forgetHubThreads(ids);
+    broadcast({ type: "hub-thread", chatId: id });
+    return Response.json({ ok: true });
   } catch (error) {
     return fail(
       409,

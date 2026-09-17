@@ -65,12 +65,26 @@ export class ThreadStore {
     const known = new Set(ids);
     for (const thread of await this.list())
       if (thread.computerId === computerId && !known.has(thread.id))
-        await this.write({
-          kind: "remove",
-          cursor: 0,
-          computerId,
-          threadId: thread.id,
-        });
+        await this.remove(computerId, thread.id);
+  }
+
+  async remove(computerId: string, threadId: string): Promise<void> {
+    await this.write({
+      kind: "remove",
+      cursor: 0,
+      computerId,
+      threadId,
+    });
+  }
+
+  async removeGroup(computerId: string, threadId: string): Promise<void> {
+    const children = (await this.list()).filter(
+      (thread) =>
+        thread.computerId === computerId &&
+        thread.detail.parentChatId === threadId,
+    );
+    await this.remove(computerId, threadId);
+    for (const child of children) await this.remove(computerId, child.id);
   }
 
   async replay(
