@@ -17,7 +17,7 @@ import { ModelPickerButton } from "./ModelPicker";
 import { PROVIDERS, type ModelChoice } from "@/lib/providers";
 import type { ModelAccessEntry } from "./HubModelAccess";
 import { CLOUD_COMPUTERS, cloudComputerProvider } from "@remy/contract";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ComputerSummary } from "@remy/contract";
 import { Button } from "@/components/ui/button";
 import { PaneLoading } from "@/components/PaneLoading";
@@ -106,6 +106,9 @@ export function HubThreadComposer({
     setRequestId(crypto.randomUUID());
     setVisibilityOverride(undefined);
     setError("");
+    select("");
+    setPreferenceLoaded(false);
+    setResolvingBranch(true);
   }, [workspaceId, organizationId]);
   useEffect(() => {
     let cancelled = false;
@@ -126,11 +129,20 @@ export function HubThreadComposer({
   const modelAccess = useHubResource<{providers:ModelAccessEntry[]}>(organizationId,"/model-access");
   const defaults = useHubModelDefaults(organizationId, workspaceId || undefined, selected || undefined);
   const [pickedModel,setPickedModel]=useState<{workspaceId:string;choice:ModelChoice}>();
-  const inheritedModel = resolveModelDefault(defaults.value?.workspace, defaults.value?.remy, {provider:"",model:""}, defaults.value?.computer);
+  const latchedDefaults = useRef(defaults.value);
+  if (defaults.value) latchedDefaults.current = defaults.value;
+  useEffect(() => { latchedDefaults.current = undefined; }, [workspaceId, organizationId]);
+  const resolvedDefaults = defaults.value ?? latchedDefaults.current;
+  const inheritedModel = resolveModelDefault(resolvedDefaults?.workspace, resolvedDefaults?.remy, {provider:"",model:""}, resolvedDefaults?.computer);
   const modelChoice = pickedModel?.workspaceId === workspaceId ? pickedModel.choice : inheritedModel;
-  const cloudModels = hostedModels(modelAccess.value?.providers ?? [], codexAccount.value?.phase === "connected");
   const usingCloud=!!cloudComputerProvider(selected);
-  const modelCatalogue=usingCloud ? cloudModels : (computers.find(c=>c.computerId===selected)?.capabilities.providers ?? []).map(p=>({...PROVIDERS.find(v=>v.id===p.id)!,models:p.models.map(value=>({value,label:value || "Default"}))}));
+  const cloudModels = hostedModels(modelAccess.value?.providers ?? [], codexAccount.value?.phase === "connected", inheritedModel);
+  const localModels = (computers.find(c=>c.computerId===selected)?.capabilities.providers ?? []).flatMap(p=>{
+    const runtime=PROVIDERS.find(v=>v.id===p.id);
+    return runtime ? [{...runtime,models:p.models.map(value=>({value,label:value || "Default"}))}] : [];
+  });
+  const modelCatalogue = usingCloud || !selected ? cloudModels : localModels;
+  const cataloguePending = usingCloud && !modelAccess.value && !modelAccess.error;
   const chosenProvider=modelCatalogue.find(p=>p.id===modelChoice.provider);
   const choiceValid=chosenProvider?.models.some(m=>m.value===modelChoice.model);
   const executionChoice=choiceValid ? {provider:modelChoice.provider==="anthropic"?"claude":["openai","router","openrouter"].includes(modelChoice.provider)?"codex":modelChoice.provider,model:["openai","router","openrouter"].includes(modelChoice.provider)?`remy:${modelChoice.provider}:${modelChoice.model}`:modelChoice.model} : {};
@@ -157,8 +169,6 @@ export function HubThreadComposer({
   ), [computers, workspace?.origin, workspaceId]);
   useEffect(() => {
     let cancelled = false;
-    setPreferenceLoaded(false);
-    select("");
     if (!workspaceId || !computersLoaded || !cloudConnections.value) return () => { cancelled = true; };
     void (async () => {
       try {
@@ -178,7 +188,7 @@ export function HubThreadComposer({
           next ||= eligible[0]?.computerId ?? cloudOptions[0]?.id ?? "";
         }
         if (!next) throw Error("No computer is available for this workspace.");
-        if (!cancelled) select(next);
+        if (!cancelled) select((current) => current && options.includes(current) ? current : next);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Your default computer could not be loaded.");
       } finally {
@@ -197,19 +207,30 @@ export function HubThreadComposer({
     const response = await hubRequest<{ branches: GitBranch[] }>(`${base}/github/workspace-branches?workspace=${encodeURIComponent(id)}`);
     return response.branches;
   }, [base, usingCloud, selected, computers, workspace?.origin]);
+  const branchRef = useRef(branch);
+  branchRef.current = branch;
   useEffect(() => {
-    if (!workspaceId || !selected || !preferenceLoaded || branch) return;
+    if (!workspaceId || !selected || !preferenceLoaded) return;
     let cancelled = false;
-    setResolvingBranch(true);
+    const keepText = !!branchRef.current;
+    if (!keepText) setResolvingBranch(true);
     void loadBranches(workspaceId).then(branches => {
-      if (!cancelled) setBranch(value => value || branches.find(entry => entry.current)?.name || "");
+      if (cancelled) return;
+      setBranch(value => {
+        if (value && branches.some(entry => entry.name === value)) return value;
+        return branches.find(entry => entry.current)?.name || value || "";
+      });
     }).catch(() => {
-      if (!cancelled) toast.error("Couldn't load your branch. Open the branch picker to retry.");
+      if (!cancelled && !keepText) toast.error("Couldn't load your branch. Open the branch picker to retry.");
     }).finally(() => {
       if (!cancelled) setResolvingBranch(false);
     });
     return () => { cancelled = true; };
-  }, [workspaceId, preferenceLoaded, branch, loadBranches]);
+  }, [workspaceId, preferenceLoaded, loadBranches]);
+  const modelAccessReady = !!modelAccess.value || !!modelAccess.error;
+  const defaultsReady = resolvedDefaults !== undefined || !!defaults.error;
+  const toolbarReady = !!selected && defaultsReady && modelAccessReady && (!resolvingBranch || !!branch) && visibilityLoaded;
+  const computerName = cloudOptions.find(c => c.id === selected)?.name ?? eligible.find(c => c.computerId === selected)?.name ?? (preferenceLoaded ? "Computer unavailable" : "");
   if (!catalogue.value)
     return catalogue.error ? (
       <p role="alert">{catalogue.error}</p>
@@ -243,7 +264,7 @@ export function HubThreadComposer({
           !selected ||
           !preferenceLoaded ||
           !visibilityLoaded ||
-          !defaults.value ||
+          !resolvedDefaults ||
           !message.trim() ||
           catalogue.stale ||
           ((usingCloud || !!modelChoice.provider) && !choiceValid)
@@ -260,28 +281,31 @@ export function HubThreadComposer({
     >
       <ThreadComposerEditor
         textarea={{ id: "hub-thread-message", maxLength: 64000, value: message, onChange: e => setMessage(e.target.value), required: true, disabled: false }}
-        canSend={!!memberId && !!workspace && !!selected && preferenceLoaded && visibilityLoaded && !!defaults.value && !!message.trim() && !catalogue.stale && (!(usingCloud || modelChoice.provider) || !!choiceValid)}
+        canSend={!!memberId && !!workspace && !!selected && preferenceLoaded && visibilityLoaded && !!resolvedDefaults && !!message.trim() && !catalogue.stale && (!(usingCloud || modelChoice.provider) || !!choiceValid)}
         busy={false} sendLabel="Send"
-        controls={<ModelPickerButton variant="composer" value={modelChoice} onPick={choice=>setPickedModel({workspaceId,choice})} catalogue={modelCatalogue} disabled={false} />}
-        contextEnd={<BranchPicker workspaceId={workspaceId} branch={branch || "Choose branch"} pending={!branch && resolvingBranch} busy={false} loadBranches={loadBranches} onPick={async value => { setBranch(value); return true; }} />}
-        context={<>
+        controls={toolbarReady
+          ? <ModelPickerButton variant="composer" value={modelChoice} onPick={choice=>setPickedModel({workspaceId,choice})} catalogue={modelCatalogue} cataloguePending={cataloguePending} disabled={false} />
+          : <span className="inline-flex h-6 min-w-40" aria-hidden />}
+        contextEnd={toolbarReady
+          ? <BranchPicker workspaceId={workspaceId} branch={branch || "Choose branch"} pending={false} busy={false} loadBranches={loadBranches} onPick={async value => { setBranch(value); return true; }} />
+          : <span className="inline-flex h-6 min-w-24" aria-hidden />}
+        context={toolbarReady ? <>
           <ComposerMenu ariaLabel="Thread computer" icon={usingCloud ? Cloud : Laptop}
-            label={cloudOptions.find(c => c.id === selected)?.name ?? eligible.find(c => c.computerId === selected)?.name ?? (preferenceLoaded ? "Computer unavailable" : "Choosing computer")}
-            value={selected} disabled={false} pending={!preferenceLoaded}
+            label={computerName || "Computer unavailable"}
+            value={selected} disabled={false} pending={false}
             options={[...cloudOptions.map(c => ({ value: c.id, label: c.name, icon: Cloud })), ...eligible.map(c => ({ value: c.computerId, label: c.name, icon: Laptop }))]}
             onChange={async v => {
               const previous = selected;
-              setBranch(""); select(v); setPreferenceLoaded(false); setError("");
+              select(v); setError("");
               try { await hubRequest(`${base}/routing/preference`, "POST", { workspaceId, computerId: v }); }
               catch { select(previous); toast.error("Your computer choice could not be saved. Try again."); }
-              finally { setPreferenceLoaded(true); }
             }} />
           {sharingControl ?? (!isPersonal && <ComposerMenu ariaLabel="Thread sharing" icon={visibility === "open" ? Users : Lock}
-            label={visibility === "open" ? "Shared" : "Private"} value={visibility} pending={!visibilityLoaded}
+            label={visibility === "open" ? "Shared" : "Private"} value={visibility} pending={false}
             options={[{ value: "open", label: "Shared", icon: Users }, { value: "private", label: "Private", icon: Lock }]}
             onChange={value => setVisibilityOverride(value as "private" | "open")} />)}
           {cloudConnections.value && computersLoaded && !cloudOptions.length && !eligible.length && <InputGroupButton data-link onClick={() => go("settings")}>Set up a computer</InputGroupButton>}
-        </>}
+        </> : <span className="inline-flex h-6 min-w-40" aria-hidden />}
       />
       {defaults.error && <p role="alert">{defaults.error}</p>}
       {cloudConnections.error && <p role="alert">{cloudConnections.error}</p>}

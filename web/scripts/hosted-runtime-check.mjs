@@ -12,7 +12,16 @@ const team = { id: "team", name: "Studio", personal: false, role: "owner" };
 try {
   for (const returning of [false, true]) {
     for (const mobile of [false, true]) {
-      const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1280, height: 850 }, isMobile: mobile, hasTouch: mobile });
+      const captureComposer = artifacts && process.env.QA_COMPOSER_ONLY === "1" && !returning && !mobile;
+      const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1280, height: 850 }, isMobile: mobile, hasTouch: mobile, ...(captureComposer ? { recordVideo: { dir: artifacts, size: { width: 1280, height: 850 } } } : {}) });
+      if (captureComposer) await context.addInitScript(() => {
+        window.addEventListener("pointerdown", (event) => {
+          const mark = document.createElement("div");
+          mark.style.cssText = `position:fixed;left:${event.clientX - 14}px;top:${event.clientY - 14}px;width:28px;height:28px;border:2px solid #ea580c;border-radius:50%;pointer-events:none;z-index:2147483647;`;
+          document.body.appendChild(mark);
+          setTimeout(() => mark.remove(), 450);
+        }, true);
+      });
       if (returning) await context.addInitScript(() => localStorage.setItem("remy.warm-cache", JSON.stringify({
         version: 1, at: Date.now(),
         servers: [{ id: "local", name: "Build Mac", url: "/api", local: true, online: true }],
@@ -44,10 +53,12 @@ try {
       let releaseColdReads;
       let holdColdReads = true;
       const coldReads = new Promise(resolve => { releaseColdReads = resolve; });
-      let releaseWorkspaces, releaseComputers;
+      let releaseWorkspaces, releaseComputers, releaseComposer;
       let holdSetupReads = true;
+      let holdComposerReads = false;
       const workspaceRead = new Promise(resolve => { releaseWorkspaces = resolve; });
       const computerRead = new Promise(resolve => { releaseComputers = resolve; });
+      const composerReads = new Promise(resolve => { releaseComposer = resolve; });
       let remyDefault=null, workspaceDefault=null; const computerDefaults=new Map();
       const connections = new Set();
       const enabledProviders = new Set();
@@ -68,6 +79,7 @@ try {
         }
         const org = path.startsWith("/api/organizations/team") ? team : personal;
         const base = `/api/organizations/${org.id}`;
+        if (holdComposerReads && (path === `${base}/model-access` || path === `${base}/routing/preference` || path === `${base}/github/workspace-branches` || path.startsWith(`${base}/model-defaults`))) await composerReads;
         if(path === `${base}/profile-preferences`) {
           if(route.request().method() === "PATCH") permissionMode=route.request().postDataJSON().permissionMode;
           return route.fulfill({json:{permissionMode}});
@@ -156,21 +168,69 @@ try {
         if (!(path in responses)) unexpected.push(path);
         return route.fulfill({ status: path in responses ? 200 : 404, json: responses[path] ?? { error: "Not found" } });
       });
-      if (process.env.QA_PROFILE_ONLY === "1" || process.env.QA_START_ONLY === "1" || process.env.QA_COMPUTER_ONLY === "1" || process.env.QA_BRANCH_ONLY === "1" || process.env.QA_DEFAULTS_ONLY === "1" || process.env.QA_COMPUTER_DEFAULTS_ONLY === "1" || process.env.QA_EXPLICIT_COMPUTER_ONLY === "1" || process.env.QA_SCOPE_ONLY === "1") {
+      if (process.env.QA_PROFILE_ONLY === "1" || process.env.QA_START_ONLY === "1" || process.env.QA_COMPUTER_ONLY === "1" || process.env.QA_BRANCH_ONLY === "1" || process.env.QA_DEFAULTS_ONLY === "1" || process.env.QA_COMPUTER_DEFAULTS_ONLY === "1" || process.env.QA_EXPLICIT_COMPUTER_ONLY === "1" || process.env.QA_SCOPE_ONLY === "1" || process.env.QA_COMPOSER_ONLY === "1") {
         holdColdReads=false;holdSetupReads=false;releaseColdReads();releaseWorkspaces();releaseComputers();
         hasWorkspace=true;cloudEnabled=true;connections.add("fly-sprites");connections.add("modal");enabledProviders.add("fly-sprites");enabledProviders.add("modal");
+        if(process.env.QA_COMPOSER_ONLY === "1") {
+          holdComposerReads=true;
+          const entry=modelEntries.find(p=>p.id==="openrouter");entry.enabled=true;entry.configured=true;entry.models=["openrouter/auto","test/model-a","test/model-b"];
+          remyDefault={provider:"openrouter",model:"openrouter/auto"};preference="cloud:fly-sprites";
+        }
         if(process.env.QA_SCOPE_ONLY === "1") profile.image="preset:cobalt-cyclops";
         const target=new URL(url);target.hash="/threads?organization=personal";await page.goto(target.href);
         await page.waitForURL(current=>!current.hash);
         assert.equal(new URL(page.url()).hash,"","Hosted navigation removes legacy hash routes");
         assert.equal(new URL(page.url()).pathname,"/app/threads","Hosted navigation uses a clean path");
+        if(process.env.QA_COMPOSER_ONLY === "1") {
+          const composer=page.getByRole("form",{name:"New thread",exact:true});
+          await composer.waitFor();
+          await page.getByRole("button",{name:"Thread workspace",exact:true}).waitFor();
+          assert.equal(await composer.getByRole("button",{name:"Model",exact:true}).count(),0,"Model waits until the catalogue is ready");
+          assert.equal(await composer.getByLabel("Thread computer",{exact:true}).count(),0,"Computer waits until a concrete choice is ready");
+          assert.equal(await composer.getByRole("button",{name:"Branch",exact:true}).count(),0,"Branch waits until a name is ready");
+          assert.equal(await composer.locator('[data-slot="skeleton"]').count(),0);
+          holdComposerReads=false;releaseComposer();
+          const model=composer.getByRole("button",{name:"Model",exact:true});
+          const computer=composer.getByLabel("Thread computer",{exact:true});
+          const branch=composer.getByRole("button",{name:"Branch",exact:true});
+          await model.getByText("openrouter/auto",{exact:true}).waitFor();
+          await computer.getByText("Cloud · Fly.io Sprites",{exact:true}).waitFor();
+          await branch.getByText("main",{exact:true}).waitFor();
+          const snapshot=async()=>({model:((await model.textContent())??"").replace(/\s+/g," ").trim(),computer:((await computer.textContent())??"").replace(/\s+/g," ").trim(),branch:((await branch.textContent())??"").replace(/\s+/g," ").trim()});
+          const first=await snapshot();
+          assert.equal(/Unavailable|Choosing computer/.test(first.model+first.computer),false);
+          assert.equal(await composer.locator('[data-slot="skeleton"]').count(),0);
+          await new Promise(resolve=>setTimeout(resolve,700));
+          for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"ready",cursor:0}));}catch{}
+          await new Promise(resolve=>setTimeout(resolve,400));
+          assert.deepEqual(await snapshot(),first,"Computer, model, and branch keep their first labels");
+          if(artifacts)await page.screenshot({path:`${artifacts}/composer-chips-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
+          await model.click();
+          await page.getByRole("option",{name:/openrouter\/auto/}).waitFor();
+          await page.getByRole("option",{name:/test\/model-a/}).waitFor();
+          assert.equal(await page.getByText("No model by that name.",{exact:true}).count(),0);
+          if(artifacts)await new Promise(resolve=>setTimeout(resolve,500));
+          if(artifacts)await page.screenshot({path:`${artifacts}/composer-picker-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
+          await page.getByRole("option",{name:/test\/model-a/}).click();
+          await model.getByText("test/model-a",{exact:true}).waitFor();
+          await model.click();
+          await page.getByPlaceholder("Search providers and models",{exact:true}).fill("OpenRouter");
+          await page.getByRole("option",{name:/test\/model-b/}).click();
+          await model.getByText("test/model-b",{exact:true}).waitFor();
+          if(artifacts)await new Promise(resolve=>setTimeout(resolve,800));
+          assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);
+          await context.close();console.log(`Composer model picker passed: ${returning?'saved local state':'fresh profile'}, ${mobile?'touch phone':'desktop'}.`);continue;
+        }
         if(process.env.QA_EXPLICIT_COMPUTER_ONLY === "1") {
           const computer=page.getByLabel("Thread computer",{exact:true});
           await computer.getByText("Cloud · Fly.io Sprites",{exact:true}).waitFor();
           await computer.click();
           assert.equal(await page.getByRole("menuitem",{name:"Choose automatically",exact:true}).count(),0,"The composer always shows a concrete computer");
+          const saved=page.waitForResponse(r=>r.request().method()==="POST" && new URL(r.url()).pathname.endsWith("/routing/preference"));
           await page.getByRole("menuitem",{name:"Cloud · Modal",exact:true}).click();
-          await page.waitForFunction(()=>document.querySelector('[aria-label="Thread computer"]')?.getAttribute("disabled")===null);
+          await computer.getByText("Cloud · Modal",{exact:true}).waitFor();
+          assert.equal(await computer.getAttribute("aria-busy"),null);
+          await saved;
           assert.equal(preference,"cloud:modal","An explicit computer remains the workspace preference");
           assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);await context.close();console.log(`Explicit computer passed: ${returning?'saved local state':'fresh profile'}, ${mobile?'touch phone':'desktop'}.`);continue;
         }
@@ -487,10 +547,12 @@ try {
         await page.locator('[aria-label="Thread computer"]:not([disabled])').waitFor();
         const style=()=>control.evaluate(el=>{const s=getComputedStyle(el);return {tag:el.tagName,font:s.font,gap:s.gap,padding:s.padding,height:el.getBoundingClientRect().height};});
         const before=await style();
+        const saved=page.waitForResponse(r=>r.request().method()==="POST" && new URL(r.url()).pathname.endsWith("/routing/preference"));
         await control.click();await page.getByRole("menuitem",{name:"Cloud · Fly.io Sprites",exact:true}).click();
-        await page.locator('[aria-label="Thread computer"][aria-busy="true"]').waitFor();
+        await control.getByText("Cloud · Fly.io Sprites",{exact:true}).waitFor();
+        assert.equal(await control.getAttribute("aria-busy"),null);
         assert.deepEqual(await style(),before);
-        await page.locator('[aria-label="Thread computer"]:not([disabled])').waitFor();
+        await saved;
         assert.equal(preference,"cloud:fly-sprites");assert.deepEqual(await style(),before);
         await page.reload();await control.getByText("Cloud · Fly.io Sprites",{exact:true}).waitFor();
         failPreference=true;await control.click();await page.getByRole("menuitem",{name:"Cloud · Modal",exact:true}).click();
@@ -696,11 +758,14 @@ try {
         await page.reload();
         const computerStyle = () => page.getByLabel("Thread computer",{exact:true}).evaluate(el=>{ const s=getComputedStyle(el);return {tag:el.tagName,font:s.font,fontWeight:s.fontWeight,lineHeight:s.lineHeight,gap:s.gap,padding:s.padding,height:el.getBoundingClientRect().height}; });
         const normalStyle = await computerStyle();
-        await page.getByLabel("Thread computer",{exact:true}).click();
+        const computer=page.getByLabel("Thread computer",{exact:true});
+        const saved=page.waitForResponse(r=>r.request().method()==="POST" && new URL(r.url()).pathname.endsWith("/routing/preference"));
+        await computer.click();
         await page.getByRole("menuitem",{name:"Cloud · Modal",exact:true}).click();
-        await page.locator('[aria-label="Thread computer"][aria-busy="true"]').waitFor();
+        await computer.getByText("Cloud · Modal",{exact:true}).waitFor();
+        assert.equal(await computer.getAttribute("aria-busy"),null);
         assert.deepEqual(await computerStyle(),normalStyle,"Saving keeps the same computer control typography and spacing");
-        await page.waitForFunction(()=>document.querySelector('[aria-label="Thread computer"]')?.getAttribute("disabled")===null);
+        await saved;
         assert.equal(preference,"cloud:modal");
         const composer=page.getByRole("form",{name:"New thread",exact:true});
         await composer.getByRole("button",{name:"Model",exact:true}).click();

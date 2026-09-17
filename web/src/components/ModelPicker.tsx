@@ -60,14 +60,15 @@ function match(value: string, search: string, keywords?: string[]): number {
 function useProviders(override?: Provider[]): Provider[] {
   const providers = useStore((s) => s.providers);
   const loadProviders = useStore((s) => s.loadProviders);
+  const locked = override !== undefined;
 
   useEffect(() => {
-    if (override) return;
+    if (locked) return;
     void loadProviders().catch(() => {
       // The machine says elsewhere that it is unreachable; the built-in
       // catalogue is enough to paint the picker.
     });
-  }, [loadProviders, override]);
+  }, [loadProviders, locked]);
 
   return override ?? providers ?? PROVIDERS;
 }
@@ -164,13 +165,17 @@ export function ModelPicker({
     else setPending(choice);
   };
 
+  if (!open) return null;
+
+  const providerKey = shownProviders.map((provider) => `${provider.id}:${provider.models.map((model) => model.value).join(",")}`).join(";");
+
   if (pending) {
     const provider = providers.find((entry) => entry.id === pending.provider);
     const model = provider?.models.find((entry) => entry.value === pending.model);
     const efforts = effortsFor(providers, pending);
     return (
       <CommandDialog
-        key="effort"
+        key={`effort:${providerKey}`}
         open={open}
         onOpenChange={changeOpen}
         title="Pick effort"
@@ -214,7 +219,7 @@ export function ModelPicker({
 
   return (
     <CommandDialog
-      key="models"
+      key={`models:${providerKey}`}
       open={open}
       onOpenChange={changeOpen}
       title="Pick a model"
@@ -227,7 +232,11 @@ export function ModelPicker({
       {/* A stable viewport for both short built-in catalogues and Cursor's live,
           searchable model list. */}
       <CommandList className="max-h-[440px]">
-        <CommandEmpty>No model by that name.</CommandEmpty>
+        <CommandEmpty>
+          {shownProviders.some((provider) => provider.models.length > 0)
+            ? "No model by that name."
+            : "No models are available on this computer."}
+        </CommandEmpty>
         {allowDefault && (
           <CommandGroup>
             <CommandItem
@@ -355,6 +364,7 @@ export function ModelPickerButton({
   id,
   className,
   catalogue,
+  cataloguePending,
 }: {
   value: ModelChoice;
   onPick: (choice: ModelChoice) => void;
@@ -369,12 +379,14 @@ export function ModelPickerButton({
   id?: string;
   className?: string;
   catalogue?: Provider[];
+  /// Hosted access is still arriving; keep the current name instead of Unavailable.
+  cataloguePending?: boolean;
 }) {
   const providers = useProviders(catalogue);
   const [open, setOpen] = useState(false);
   const inherited = allowDefault && value.provider === REMY_DEFAULT;
   const hasChoice = providers.some(p => p.id === value.provider);
-  const label = catalogue && !hasChoice && !inherited && value.model !== OFF ? (value.provider ? `${value.model || value.provider} · Unavailable` : "Choose a model") : inherited
+  const label = catalogue && !cataloguePending && !hasChoice && !inherited && value.model !== OFF ? (value.provider ? `${value.model || value.provider} · Unavailable` : "Choose a model") : inherited
     ? inheritedLabel(providers, defaultChoice)
     : value.model === OFF ? "Off" : `${modelLabel(providers, value)}${providers.find(p => p.id === value.provider)?.efforts.length ? ` · ${effortLabel(providers, value)}` : ""}`;
   const mark = !hasChoice && !inherited ? <Bot className="size-4 shrink-0" /> : inherited
