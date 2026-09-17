@@ -130,6 +130,6 @@ A shortcut no primitive owns is bound in the component and shown with `Kbd` next
 
 ## Where the window is
 
-Threads, settings tabs, workspaces, and the device scope are hash routes, parsed and formatted by `web/src/lib/route.ts`. A new place a person can be gets a route, so a reload lands back on it.
+Threads, settings tabs, workspaces, and the device scope are routes parsed and formatted by `web/src/lib/route.ts`. Use `navigateLocation`: hosted Remy writes clean paths and Electron writes hashes because `file://` has no server fallback. All is the default account view and adds no query parameter; a narrower account writes `organization` explicitly. A new place a person can be gets a route, so a reload lands back on it.
 
 State that is genuinely transient — an open palette, an open dialog — stays in React.

@@ -2,7 +2,6 @@ import { lazy, useEffect, useMemo, useState } from "react";
 import type {
   BoardProjection,
   ComputerSummary,
-  HubThread,
   Organization,
   RoutingRule,
 } from "@remy/contract";
@@ -11,10 +10,9 @@ import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { watchHubResource } from "@/lib/hub-computers";
 import { HubPersonalContext } from "@/lib/hub-scope";
 import { HubModelFavorites } from "./HubModelFavorites";
-import { HubThreadSidebar } from "./HubThreadSidebar";
 import { Deferred } from "./Deferred";
+import { PaneHeader } from "./PaneHeader";
 import { Button } from "./ui/button";
-import { SidebarMenu } from "./ui/sidebar";
 import { EmptyState } from "./EmptyState";
 import { Spinner } from "./ui/spinner";
 import {
@@ -37,13 +35,16 @@ import {
   Building2,
   Circle,
   Laptop,
+  Lock,
   Plug,
   Route as RouteIcon,
   UserRound,
+  Users,
 } from "lucide-react";
 import { HubAccountPickerDialog } from "./HubAccountPickerDialog";
 import type { ConnectionsState } from "./HubConnections";
-import { HubModelDefault } from "./HubModelDefault";
+import { ComposerMenu } from "./ComposerMenu";
+import type { HubThreadWorkspaceOption } from "./HubThreadComposer";
 
 const Threads = lazy(() => import("./HubThreads"));
 const Board = lazy(() => import("./HubBoard"));
@@ -65,6 +66,7 @@ const Environments = lazy(() =>
     default: module.EnvironmentsSettings,
   })),
 );
+const WorkspaceDetails = lazy(() => import("./HubWorkspaceDetails"));
 
 type Owned<T> = {
   organization: Organization;
@@ -192,84 +194,60 @@ function AccountAction({
 
 function AllThreads({
   organizations,
-  threads,
-  loaded,
   navigate,
 }: {
   organizations: Organization[];
-  threads: HubThread[];
-  loaded: boolean;
   navigate: (route: Route) => void;
 }) {
+  const resources = useOwnedResources<{ workspaces: Omit<HubThreadWorkspaceOption, "key" | "organizationId" | "label">[] }>(organizations, "/workspaces");
+  const workspaceOptions = resources.flatMap(({ organization, value }) => (value?.workspaces ?? []).map((workspace) => ({
+    ...workspace,
+    key: `${organization.id}:${workspace.id}`,
+    organizationId: organization.id,
+    label: `${workspace.name} · ${organization.personal ? "Personal" : organization.name}`,
+  })));
+  const [workspaceKey, setWorkspaceKey] = useState("");
+  const [message, setMessage] = useState("");
+  const [visibility, setVisibility] = useState<"private" | "open">("private");
+  const selectedWorkspace = workspaceOptions.find((workspace) => workspace.key === workspaceKey) ?? workspaceOptions[0];
+  const owner = organizations.find((organization) => organization.id === selectedWorkspace?.organizationId) ?? organizations.find((organization) => organization.personal) ?? organizations[0];
+  const loaded = resources.every((resource) => resource.value || resource.error);
+  useEffect(() => {
+    if (selectedWorkspace && selectedWorkspace.key !== workspaceKey) setWorkspaceKey(selectedWorkspace.key);
+  }, [selectedWorkspace, workspaceKey]);
+  if (!owner) return <EmptyState title="Your account is unavailable" />;
+  if (!loaded) return <div className="flex min-h-0 flex-1 items-center justify-center"><Spinner aria-label="Loading workspaces" /></div>;
+  const scoped = (next: Route) => navigate({
+    ...next,
+    organizationId: "all",
+    ownerOrganizationId: next.organizationId ?? owner.id,
+  });
   return (
-    <section
-      className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-6"
-      aria-label="Threads"
-    >
-      <div className="flex items-center justify-end">
-        <AccountAction
-          organizations={organizations}
-          label="New thread"
-          title="New thread"
-          description="Choose who owns this thread."
-          action="Choose account"
-          onSelect={(organizationId) =>
-            navigate({
-              name: "threads",
-              organizationId: "all",
-              ownerOrganizationId: organizationId,
-            })
-          }
+    <HubPersonalContext value={owner.personal === true}>
+      <HubModelFavorites organizationId={owner.id}>
+        <Threads
+          key={owner.id}
+          organizationId={owner.id}
+          showNavigation={false}
+          canManageWorkspaces={owner.role !== "member"}
+          navigate={scoped}
+          newThreadVisibility={visibility}
+          newThreadMessage={message}
+          onNewThreadMessageChange={setMessage}
+          newThreadSharingControl={<ComposerMenu
+            ariaLabel="Thread sharing"
+            icon={visibility === "private" ? Lock : Users}
+            label={visibility === "private" ? "Private" : "Shared"}
+            value={visibility}
+            options={[{value:"private",label:"Private",icon:Lock},{value:"open",label:"Shared",icon:Users}]}
+            onChange={value => setVisibility(value as "private" | "open")}
+          />}
+          newThreadWorkspaceOptions={workspaceOptions}
+          newThreadWorkspaceId={selectedWorkspace?.id}
+          onNewThreadWorkspaceChange={workspace => setWorkspaceKey(workspace.key)}
         />
-      </div>
-      {!loaded ? (
-        <Spinner aria-label="Loading threads" />
-      ) : threads.length ? (
-        <SidebarMenu>
-          {threads.map((thread) => {
-            const organization = organizations.find(
-              (candidate) => candidate.id === thread.access.organizationId,
-            );
-            if (!organization) return null;
-            return (
-              <HubPersonalContext
-                key={`${organization.id}:${thread.computerId}:${thread.id}`}
-                value={organization.personal === true}
-              >
-                <HubModelFavorites organizationId={organization.id}>
-                  <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
-                    <HubThreadSidebar
-                      organizationId={organization.id}
-                      threads={[thread]}
-                      onSelect={() =>
-                        navigate({
-                          name: "threads",
-                          organizationId: "all",
-                          ownerOrganizationId: organization.id,
-                          computerId: thread.computerId,
-                          threadId: thread.id,
-                        })
-                      }
-                    />
-                    <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <OwnerMark organization={organization} />
-                      <span className="max-w-24 truncate">
-                        {organization.personal ? "Personal" : organization.name}
-                      </span>
-                    </span>
-                  </div>
-                </HubModelFavorites>
-              </HubPersonalContext>
-            );
-          })}
-        </SidebarMenu>
-      ) : (
-        <EmptyState
-          title="No threads yet"
-          description="Start a thread with one of your coding agents."
-        />
-      )}
-    </section>
+      </HubModelFavorites>
+    </HubPersonalContext>
   );
 }
 
@@ -690,15 +668,11 @@ function SettingsSummary({
 
 export default function HubAllView({
   organizations,
-  threads,
-  threadsLoaded,
   route,
   userId,
   navigate,
 }: {
   organizations: Organization[];
-  threads: HubThread[];
-  threadsLoaded: boolean;
   route: Route;
   userId: string;
   navigate: (route: Route) => void;
@@ -720,35 +694,56 @@ export default function HubAllView({
       <HubPersonalContext value={selectedOwner.personal === true}>
         <HubModelFavorites organizationId={selectedOwner.id}>
           <div className="flex min-h-0 flex-1 flex-col overflow-auto">
-            <div className="shrink-0 px-5 pt-3">
-              <Button
-                variant="ghost"
-                data-link
-                onClick={() =>
-                  navigate({
-                    name: route.name === "ticket" ? "board" : route.name,
-                    ...(route.name === "settings" ? { tab: route.tab } : {}),
-                    organizationId: "all",
-                  } as Route)
-                }
-              >
-                Back to all
-              </Button>
-            </div>
+            {section !== "workspaces" && section !== "threads" && (
+              <div className="shrink-0 px-5 pt-3">
+                <Button
+                  variant="ghost"
+                  data-link
+                  onClick={() =>
+                    navigate({
+                      name: route.name === "ticket" ? "board" : route.name,
+                      ...(route.name === "settings" ? { tab: route.tab } : {}),
+                      organizationId: "all",
+                    } as Route)
+                  }
+                >
+                  Back to all
+                </Button>
+              </div>
+            )}
             <Deferred open>
               {section === "threads" && (
-                <Threads
-                  organizationId={selectedOwner.id}
-                  showNavigation={false}
-                  canManageWorkspaces={selectedOwner.role !== "member"}
-                  computerId={
-                    route.name === "threads" ? route.computerId : undefined
-                  }
-                  threadId={
-                    route.name === "threads" ? route.threadId : undefined
-                  }
-                  navigate={scoped}
-                />
+                <>
+                  {route.name === "threads" && !route.threadId && (
+                    <PaneHeader
+                      sidebar
+                      crumbs={[
+                        {
+                          label: "Threads",
+                          onClick: () =>
+                            navigate({ name: "threads", organizationId: "all" }),
+                        },
+                        {
+                          label: selectedOwner.personal
+                            ? "Personal"
+                            : selectedOwner.name,
+                        },
+                      ]}
+                    />
+                  )}
+                  <Threads
+                    organizationId={selectedOwner.id}
+                    showNavigation={false}
+                    canManageWorkspaces={selectedOwner.role !== "member"}
+                    computerId={
+                      route.name === "threads" ? route.computerId : undefined
+                    }
+                    threadId={
+                      route.name === "threads" ? route.threadId : undefined
+                    }
+                    navigate={scoped}
+                  />
+                </>
               )}
               {(section === "board" || section === "ticket") && (
                 <Board
@@ -787,6 +782,18 @@ export default function HubAllView({
               {section === "routing" && (
                 <Routing organizationId={selectedOwner.id} />
               )}
+              {section === "workspaces" &&
+                route.name === "workspaces" &&
+                route.workspaceId && (
+                  <WorkspaceDetails
+                    organizationId={selectedOwner.id}
+                    workspaceId={route.workspaceId}
+                    role={selectedOwner.role}
+                    onBack={() =>
+                      navigate({ name: "workspaces", organizationId: "all" })
+                    }
+                  />
+                )}
             </Deferred>
           </div>
         </HubModelFavorites>
@@ -796,8 +803,6 @@ export default function HubAllView({
     return (
       <AllThreads
         organizations={organizations}
-        threads={threads}
-        loaded={threadsLoaded}
         navigate={navigate}
       />
     );
@@ -813,23 +818,7 @@ export default function HubAllView({
       <HubPersonalContext value={personal.personal === true}>
         <HubModelFavorites organizationId={personal.id}>
           <div className="min-h-0 overflow-auto px-5 py-6">
-            <General organizationId={personal.id} showModelDefault={false} />
-            <section className="mx-auto mt-6 flex w-full max-w-2xl flex-col gap-6" aria-label="Account defaults">
-              {organizations.map((organization) => (
-                <HubPersonalContext
-                  key={organization.id}
-                  value={organization.personal === true}
-                >
-                  <HubModelFavorites organizationId={organization.id}>
-                    <HubModelDefault
-                      organizationId={organization.id}
-                      label={`${organization.personal ? "Personal" : organization.name} default model`}
-                      description="Used when a workspace or agent does not choose another model."
-                    />
-                  </HubModelFavorites>
-                </HubPersonalContext>
-              ))}
-            </section>
+            <General organizationId={personal.id} />
           </div>
         </HubModelFavorites>
       </HubPersonalContext>

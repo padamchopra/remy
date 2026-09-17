@@ -2,7 +2,7 @@ import { modelSwitch, speaker } from "@/lib/thread-message";
 import { BranchName } from "./BranchName";
 import { ReplyComposer, replyComposerFrame, replyComposerForm } from "./ReplyComposer";
 import { organizationArtifactRoute } from "@/lib/artifact-route";
-import { formatLocation } from "@/lib/route";
+import { navigateLocation } from "@/lib/route";
 import type { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, ReactNode, RefObject } from "react";
 import {
   forwardRef,
@@ -1586,7 +1586,7 @@ function ArtifactCard({
   onOpen?: () => void;
 }) {
   const organizationRoute = organizationArtifactRoute(artifact);
-  if (organizationRoute) onOpen = () => { window.location.hash = formatLocation({route:organizationRoute}); };
+  if (organizationRoute) onOpen = () => navigateLocation({ route: organizationRoute });
   const Icon = ARTIFACT_ICON[artifact.kind];
   const body = (
     <>

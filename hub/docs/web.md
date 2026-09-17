@@ -11,7 +11,7 @@ Hosted requests carry the organization in their URL and the web session in an HT
 | Write | Member identity is assigned by the hub. Current access and any new workspace destination are checked before appending. |
 | Live | Board and organization sockets send content-free resets. Open views read authorized state again; membership/session expiry closes the socket. |
 | Reconnect | Lists refresh on connection/reset; transient failures retain an explicitly stale view. |
-| Navigation | Hash routes preserve the selected organization. The last organization is remembered per account. Threads remain in the sidebar while other sections are open. |
+| Navigation | Clean paths reload through the app-shell fallback. All is the default account view with no query parameter; a narrower account writes `organization` explicitly. Legacy hash links and `organization=all` normalize on open. Threads remain in the sidebar while other sections are open. |
 | Sign-out | Only the current session is revoked, its cookie expires, and the organization view is cleared. |
 
 The web UI exposes sign-in methods configured by the deployment. Google and GitHub do not ask for an email first; SSO reveals its own work-email form. Invitation preview requires a signed-in account and the same valid, unexpired, recipient-matching token as acceptance; acceptance revalidates it. New accounts and organizations open Threads with workspace and computer setup actions. A first request creates the thread and sends its initial message; a failed send can retry on the created thread. The composer stays available without an online computer so configured cloud execution can allocate one. Real Google/GitHub/SSO round trips require those providers' credentials and domain setup. Tests exercise production magic-link handling with captured email delivery; they do not pretend to complete an external OAuth provider flow.
@@ -48,7 +48,7 @@ The preview uses the existing device-code authorization flow. Its access and ref
 
 Thread submission opens a pending thread immediately. The first message stays visible while the computer starts. Startup and sending failures can be retried in place using the same request and message IDs. Pending starts survive refresh in the current browser tab for up to one day; they are scoped to the signed-in member and organization.
 
-Organization thread launches choose Organization or Private visibility in the composer. Automatic routing and explicit computer choices default to Organization only when they resolve to a Personal computer shared with that organization; every other launch defaults to Private. The person starting the thread can override that default before sending and change it later.
+Organization thread launches choose Shared or Private visibility in the composer. Automatic routing and explicit computer choices default to Shared only when they resolve to a Personal computer shared with that organization; every other launch defaults to Private. The person starting the thread can override that default before sending and change it later.
 
 Cloud checkout supports repositories imported with GitHub OAuth or a personal access token. Each cloud task uses the initiating member’s connection after checking current workspace access. GitHub credentials remain in the hub; computers receive only short-lived capabilities limited to their assigned repository and allowed branches. Existing GitHub App installations remain supported.
 

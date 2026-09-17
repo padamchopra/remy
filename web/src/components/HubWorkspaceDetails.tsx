@@ -39,7 +39,7 @@ export default function HubWorkspaceDetails({ organizationId, workspaceId, role,
     finally { setBusy(false); }
   };
   return <main className="flex min-w-0 flex-1 flex-col">
-    <PaneHeader crumbs={[{ label: "Workspaces", onClick: onBack }, { label: value?.name ?? "Workspace" }]} />
+    <PaneHeader sidebar crumbs={[{ label: "Workspaces", onClick: onBack }, { label: value?.name ?? "Workspace" }]} />
     {!value ? workspace.error ? <p role="alert" className="p-6">{workspace.error}</p> : <PaneLoading /> :
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-5 py-6">
         <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-3.5 py-3">

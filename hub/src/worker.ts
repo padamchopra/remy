@@ -275,7 +275,11 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     if (request.method === "GET" && /^\/invite\/[^/]+$/.test(url.pathname)) return Response.redirect(new URL(`/?invite=${encodeURIComponent(decodeURIComponent(url.pathname.slice(8)))}`, appOrigin), 302);
     if (env.ASSETS && (request.method === "GET" || request.method === "HEAD") && !url.pathname.startsWith("/api/")) {
       const assetUrl = new URL(request.url);
-      if (env.WEB_APP_URL && url.origin === appOrigin) assetUrl.pathname = `/app${url.pathname}`;
+      if (env.WEB_APP_URL && url.origin === appOrigin) {
+        const leaf = url.pathname.split("/").pop() ?? "";
+        const appDocument = request.headers.get("accept")?.includes("text/html") || !leaf.includes(".");
+        assetUrl.pathname = appDocument ? "/app/" : url.pathname.startsWith("/app/") ? url.pathname : `/app${url.pathname}`;
+      }
       return env.ASSETS.fetch(new Request(assetUrl, request));
     }
     return Response.json(hubErrorSchema.parse({ error: "Not found" }), { status: 404 });
@@ -2008,7 +2012,7 @@ export class HubCoordinator {
 
   private linearWork:Promise<unknown>|undefined;
   private async withLinear<T>(work:()=>Promise<T>):Promise<T> {const before=this.linearWork,job=(async()=>{await before?.catch(()=>undefined);return work();})();this.linearWork=job;try{return await job;}finally{if(this.linearWork===job)this.linearWork=undefined;}}
-  private linearBoard(org:string){return new LinearBoard(org,linearFor(this.env),this.board,new DurableBoardStorage(this.ctx.storage),async(user,workspace,agent,prompt)=>{const row=await this.scopedAgents(org).get(agent,user);if(row.fields.scope==='personal'||row.fields.scope==='workspace'&&row.fields.ownerId!==workspace)throw Error('This agent is unavailable.');return this.startAgentThread(agent,user,workspace,prompt,'agent','linear');},new URL(this.env.BETTER_AUTH_URL).origin);}
+  private linearBoard(org:string){return new LinearBoard(org,linearFor(this.env),this.board,new DurableBoardStorage(this.ctx.storage),async(user,workspace,agent,prompt)=>{const row=await this.scopedAgents(org).get(agent,user);if(row.fields.scope==='personal'||row.fields.scope==='workspace'&&row.fields.ownerId!==workspace)throw Error('This agent is unavailable.');return this.startAgentThread(agent,user,workspace,prompt,'agent','linear');},new URL(this.env.WEB_APP_URL ?? this.env.BETTER_AUTH_URL).origin);}
 
   private readonly githubReplies=new Map<string,Promise<void>>();
   private async replyOnGitHub(org:string,computer:string,thread:string,text:string) {

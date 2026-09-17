@@ -7,7 +7,7 @@ export type ThreadStart = {
   ownerId: string;
   requestId: string;
   workspaceId: string;
-  computerId: string | null;
+  computerId: string;
   computerName: string;
   message: string;
   visibility: "private" | "open";

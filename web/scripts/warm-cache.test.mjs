@@ -47,7 +47,7 @@ test("writes a settled snapshot and opens from it", () => {
   const snapshot = readWarmCache(kept);
   assert.equal(snapshot.version, WARM_CACHE_VERSION);
   assert.deepEqual(snapshot.chats.map((row) => row.id), ["a"]);
-  // Inbox is the agents, and `#/inbox/<handle>` cannot find its conversation
+  // Inbox is the agents, and `/inbox/<handle>` cannot find its conversation
   // without the roster.
   assert.deepEqual(snapshot.agents.map((row) => row.handle), ["scout"]);
   assert.deepEqual(snapshot.projects.map((row) => row.keyPrefix), ["REMY"]);
