@@ -222,7 +222,7 @@ function AllThreads({
   const scoped = (next: Route) => navigate({
     ...next,
     organizationId: "all",
-    ...(next.threadId ? {} : { ownerOrganizationId: next.organizationId ?? owner.id }),
+    ...(next.name === "threads" && next.threadId ? {} : { ownerOrganizationId: next.organizationId ?? owner.id }),
   });
   return (
     <HubPersonalContext value={owner.personal === true}>
@@ -700,7 +700,7 @@ export default function HubAllView({
     navigate({
       ...next,
       organizationId: "all",
-      ...(next.threadId ? {} : { ownerOrganizationId: next.organizationId ?? selectedOwner?.id }),
+      ...(next.name === "threads" && next.threadId ? {} : { ownerOrganizationId: next.organizationId ?? selectedOwner?.id }),
     });
   if (route.name === "threads" && route.threadId && !threadsLoaded && !pendingStart && !route.ownerOrganizationId)
     return <div className="flex min-h-0 flex-1 items-center justify-center"><Spinner aria-label="Loading threads" /></div>;
