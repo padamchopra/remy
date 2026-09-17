@@ -44,10 +44,12 @@ try {
       let releaseColdReads;
       let holdColdReads = true;
       const coldReads = new Promise(resolve => { releaseColdReads = resolve; });
-      let releaseWorkspaces, releaseComputers;
+      let releaseWorkspaces, releaseComputers, releaseComposer;
       let holdSetupReads = true;
+      let holdComposerReads = false;
       const workspaceRead = new Promise(resolve => { releaseWorkspaces = resolve; });
       const computerRead = new Promise(resolve => { releaseComputers = resolve; });
+      const composerReads = new Promise(resolve => { releaseComposer = resolve; });
       let remyDefault=null, workspaceDefault=null; const computerDefaults=new Map();
       const connections = new Set();
       const enabledProviders = new Set();
@@ -68,6 +70,7 @@ try {
         }
         const org = path.startsWith("/api/organizations/team") ? team : personal;
         const base = `/api/organizations/${org.id}`;
+        if (holdComposerReads && (path === `${base}/model-access` || path === `${base}/routing/preference` || path === `${base}/github/workspace-branches` || path.startsWith(`${base}/model-defaults`))) await composerReads;
         if(path === `${base}/profile-preferences`) {
           if(route.request().method() === "PATCH") permissionMode=route.request().postDataJSON().permissionMode;
           return route.fulfill({json:{permissionMode}});
@@ -156,14 +159,55 @@ try {
         if (!(path in responses)) unexpected.push(path);
         return route.fulfill({ status: path in responses ? 200 : 404, json: responses[path] ?? { error: "Not found" } });
       });
-      if (process.env.QA_PROFILE_ONLY === "1" || process.env.QA_START_ONLY === "1" || process.env.QA_COMPUTER_ONLY === "1" || process.env.QA_BRANCH_ONLY === "1" || process.env.QA_DEFAULTS_ONLY === "1" || process.env.QA_COMPUTER_DEFAULTS_ONLY === "1" || process.env.QA_EXPLICIT_COMPUTER_ONLY === "1" || process.env.QA_SCOPE_ONLY === "1") {
+      if (process.env.QA_PROFILE_ONLY === "1" || process.env.QA_START_ONLY === "1" || process.env.QA_COMPUTER_ONLY === "1" || process.env.QA_BRANCH_ONLY === "1" || process.env.QA_DEFAULTS_ONLY === "1" || process.env.QA_COMPUTER_DEFAULTS_ONLY === "1" || process.env.QA_EXPLICIT_COMPUTER_ONLY === "1" || process.env.QA_SCOPE_ONLY === "1" || process.env.QA_COMPOSER_ONLY === "1") {
         holdColdReads=false;holdSetupReads=false;releaseColdReads();releaseWorkspaces();releaseComputers();
         hasWorkspace=true;cloudEnabled=true;connections.add("fly-sprites");connections.add("modal");enabledProviders.add("fly-sprites");enabledProviders.add("modal");
+        if(process.env.QA_COMPOSER_ONLY === "1") {
+          holdComposerReads=true;
+          const entry=modelEntries.find(p=>p.id==="openrouter");entry.enabled=true;entry.configured=true;entry.models=["openrouter/auto","test/model-a","test/model-b"];
+          remyDefault={provider:"openrouter",model:"openrouter/auto"};preference="cloud:fly-sprites";
+        }
         if(process.env.QA_SCOPE_ONLY === "1") profile.image="preset:cobalt-cyclops";
         const target=new URL(url);target.hash="/threads?organization=personal";await page.goto(target.href);
         await page.waitForURL(current=>!current.hash);
         assert.equal(new URL(page.url()).hash,"","Hosted navigation removes legacy hash routes");
         assert.equal(new URL(page.url()).pathname,"/app/threads","Hosted navigation uses a clean path");
+        if(process.env.QA_COMPOSER_ONLY === "1") {
+          const composer=page.getByRole("form",{name:"New thread",exact:true});
+          await composer.waitFor();
+          await page.getByRole("button",{name:"Thread workspace",exact:true}).waitFor();
+          assert.equal(await composer.getByRole("button",{name:"Model",exact:true}).count(),0,"Model waits until the catalogue is ready");
+          assert.equal(await composer.getByLabel("Thread computer",{exact:true}).count(),0,"Computer waits until a concrete choice is ready");
+          assert.equal(await composer.getByRole("button",{name:"Branch",exact:true}).count(),0,"Branch waits until a name is ready");
+          assert.equal(await composer.locator('[data-slot="skeleton"]').count(),0);
+          holdComposerReads=false;releaseComposer();
+          const model=composer.getByRole("button",{name:"Model",exact:true});
+          const computer=composer.getByLabel("Thread computer",{exact:true});
+          const branch=composer.getByRole("button",{name:"Branch",exact:true});
+          await model.getByText("openrouter/auto",{exact:true}).waitFor();
+          await computer.getByText("Cloud · Fly.io Sprites",{exact:true}).waitFor();
+          await branch.getByText("main",{exact:true}).waitFor();
+          const snapshot=async()=>({model:((await model.textContent())??"").replace(/\s+/g," ").trim(),computer:((await computer.textContent())??"").replace(/\s+/g," ").trim(),branch:((await branch.textContent())??"").replace(/\s+/g," ").trim()});
+          const first=await snapshot();
+          assert.equal(/Unavailable|Choosing computer/.test(first.model+first.computer),false);
+          assert.equal(await composer.locator('[data-slot="skeleton"]').count(),0);
+          await new Promise(resolve=>setTimeout(resolve,700));
+          for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot"}));}catch{}
+          await new Promise(resolve=>setTimeout(resolve,400));
+          assert.deepEqual(await snapshot(),first,"Computer, model, and branch keep their first labels");
+          await model.click();
+          await page.getByRole("option",{name:/openrouter\/auto/}).waitFor();
+          await page.getByRole("option",{name:/test\/model-a/}).waitFor();
+          assert.equal(await page.getByText("No model by that name.",{exact:true}).count(),0);
+          await page.getByRole("option",{name:/test\/model-a/}).click();
+          await model.getByText("test/model-a",{exact:true}).waitFor();
+          await model.click();
+          await page.getByPlaceholder("Search providers and models",{exact:true}).fill("OpenRouter");
+          await page.getByRole("option",{name:/test\/model-b/}).click();
+          await model.getByText("test/model-b",{exact:true}).waitFor();
+          assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);
+          await context.close();console.log(`Composer model picker passed: ${returning?'saved local state':'fresh profile'}, ${mobile?'touch phone':'desktop'}.`);continue;
+        }
         if(process.env.QA_EXPLICIT_COMPUTER_ONLY === "1") {
           const computer=page.getByLabel("Thread computer",{exact:true});
           await computer.getByText("Cloud · Fly.io Sprites",{exact:true}).waitFor();

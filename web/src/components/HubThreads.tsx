@@ -179,8 +179,8 @@ export default function HubThreads({
   const runtimeProvider = String(thread?.detail.provider ?? pending?.provider ?? "codex");
   const runtimeModel = String(thread?.detail.model ?? pending?.model ?? "");
   const gateway = /^remy:(openrouter|router|openai):(.+)$/.exec(runtimeModel);
-  const providers = hostedModels(modelAccess.value?.providers ?? [], true);
   const modelProvider = gateway?.[1] ?? (runtimeProvider === "claude" ? "anthropic" : runtimeProvider);
+  const providers = hostedModels(modelAccess.value?.providers ?? [], true, {provider: modelProvider, model: gateway?.[2] ?? runtimeModel});
   const permission = permissionOf(typeof thread?.detail.permissionMode === "string" ? thread.detail.permissionMode : undefined);
   const approval = thread?.detail.approval as Approval | undefined;
   const question = thread?.detail.question as Question | undefined;
