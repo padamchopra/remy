@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { formatBrowserLocation } from "@/lib/route";
 
 type GitHubState = {
   repositories: {
@@ -391,7 +392,7 @@ export function HubGitHub({
                   {a.thread_id && a.computer_id && (
                     <Button asChild variant="link">
                       <a
-                        href={`#/threads/${encodeURIComponent(a.thread_id)}?organization=${encodeURIComponent(organizationId)}&computer=${encodeURIComponent(a.computer_id)}`}
+                        href={formatBrowserLocation({ route: { name: "threads", threadId: a.thread_id, organizationId, computerId: a.computer_id } })}
                       >
                         Open thread
                       </a>

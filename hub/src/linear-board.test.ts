@@ -334,7 +334,7 @@ test("assigned agents use the mapped actor and uncertain replies reconcile by st
   assert.equal(f.comments.size, 2);
   assert.ok(
     [...f.comments.values()].every((c) =>
-      c.body.includes("https://remy.test/#/threads/"),
+      c.body.includes("https://remy.test/threads/"),
     ),
   );
 });

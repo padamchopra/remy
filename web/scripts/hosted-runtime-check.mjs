@@ -137,14 +137,14 @@ try {
           "/api/personal": { personal },
           "/api/organizations": { organizations: [team] },
           [base]: { organization: org },
-          [`${base}/threads`]: { threads: process.env.QA_SCOPE_ONLY === "1" ? [{id:`${org.id}-thread`,computerId:`${org.id}-computer`,revision:1,stale:false,observedAt:Date.now(),access:{organizationId:org.id,owner:{id:"reader",label:"Reader"},participants:[],visibility:"private"},detail:{id:`${org.id}-thread`,title:org.personal?"Personal thread":"Studio thread",state:"idle",provider:"codex",entries:[]}}] : startedThread?[startedThread]:[], cursor: 0, member: { id: "reader", role: "owner" } },
+          [`${base}/threads`]: { threads: process.env.QA_SCOPE_ONLY === "1" ? [{id:`${org.id}-thread`,computerId:`${org.id}-computer`,revision:1,stale:!org.personal,observedAt:Date.now(),access:{organizationId:org.id,owner:{id:"reader",label:"Reader"},participants:[],visibility:"private"},detail:{id:`${org.id}-thread`,title:org.personal?"Personal thread":"Studio thread",state:"idle",provider:"codex",entries:[]}}] : startedThread?[startedThread]:[], cursor: 0, member: { id: "reader", role: "owner" } },
           [`${base}/computers`]: { computers: connected ? [{ computerId: "studio", name: computerName, icon: "laptop", ownership: "personal", availability: online ? "online" : "offline", access: { mode: "owner" }, canUse: online, canManage: false, capabilities: { workspaces: [] } }] : [] },
           [`${base}/computers/options`]: { role: "owner", members: [], teams: [] },
           [`${base}/hosted`]: { settings: { enabled: cloudEnabled, provider: "fly-sprites", region: "", cpu: 1, memoryMiB: 2048, maxComputers: 5, idleMinutes: 12 }, secretNames: [], connections: [...connections], enabledProviders: [...enabledProviders], available },
           [`${base}/members`]: {members:[{id:"reader-member",userId:"reader",name:profile.name,image:profile.image,role:"owner"},...Array.from({length:4},(_,i)=>({id:`m${i}`,userId:`p${i}`,name:`Person ${i}`,image:`data:image/png;base64,${readFileSync(new URL('../public/favicon.png',import.meta.url)).toString('base64')}`,role:"member"}))]},
           [`${base}/teams`]: {teams:[]},
           [`${base}/workspaces/repo`]: {id:"repo",name:"Example",origin:"github.com/example/repo",restricted:false},
-          [`${base}/workspaces`]: { workspaces: hasWorkspace?[{id:"repo",name:"Example",origin:"https://github.com/example/repo"}]:[], canManage: true },
+          [`${base}/workspaces`]: { workspaces: hasWorkspace && !(process.env.QA_SCOPE_ONLY === "1" && org.personal)?[{id:"repo",name:"Example",origin:"https://github.com/example/repo"}]:[], canManage: true },
           [`${base}/notifications`]: { notifications: [], devices: [] },
           [`${base}/environments`]: { environments: [], assignments: [], workspaces: [] },
           [`${base}/board/tickets`]: {items:process.env.QA_SCOPE_ONLY === "1"?[{id:`${org.id}-ticket`,entity:"ticket",fields:{title:org.personal?"Personal ticket":"Studio ticket",status:"todo",number:1,keyPrefix:org.personal?"PER":"STD"},lastActor:{id:"reader",label:"Reader"},activity:[]}]:[]},
@@ -156,68 +156,139 @@ try {
         if (!(path in responses)) unexpected.push(path);
         return route.fulfill({ status: path in responses ? 200 : 404, json: responses[path] ?? { error: "Not found" } });
       });
-      if (process.env.QA_PROFILE_ONLY === "1" || process.env.QA_START_ONLY === "1" || process.env.QA_COMPUTER_ONLY === "1" || process.env.QA_BRANCH_ONLY === "1" || process.env.QA_DEFAULTS_ONLY === "1" || process.env.QA_COMPUTER_DEFAULTS_ONLY === "1" || process.env.QA_SCOPE_ONLY === "1") {
+      if (process.env.QA_PROFILE_ONLY === "1" || process.env.QA_START_ONLY === "1" || process.env.QA_COMPUTER_ONLY === "1" || process.env.QA_BRANCH_ONLY === "1" || process.env.QA_DEFAULTS_ONLY === "1" || process.env.QA_COMPUTER_DEFAULTS_ONLY === "1" || process.env.QA_EXPLICIT_COMPUTER_ONLY === "1" || process.env.QA_SCOPE_ONLY === "1") {
         holdColdReads=false;holdSetupReads=false;releaseColdReads();releaseWorkspaces();releaseComputers();
         hasWorkspace=true;cloudEnabled=true;connections.add("fly-sprites");connections.add("modal");enabledProviders.add("fly-sprites");enabledProviders.add("modal");
         if(process.env.QA_SCOPE_ONLY === "1") profile.image="preset:cobalt-cyclops";
         const target=new URL(url);target.hash="/threads?organization=personal";await page.goto(target.href);
+        await page.waitForURL(current=>!current.hash);
+        assert.equal(new URL(page.url()).hash,"","Hosted navigation removes legacy hash routes");
+        assert.equal(new URL(page.url()).pathname,"/app/threads","Hosted navigation uses a clean path");
+        if(process.env.QA_EXPLICIT_COMPUTER_ONLY === "1") {
+          const computer=page.getByLabel("Thread computer",{exact:true});
+          await computer.getByText("Cloud · Fly.io Sprites",{exact:true}).waitFor();
+          await computer.click();
+          assert.equal(await page.getByRole("menuitem",{name:"Choose automatically",exact:true}).count(),0,"The composer always shows a concrete computer");
+          await page.getByRole("menuitem",{name:"Cloud · Modal",exact:true}).click();
+          await page.waitForFunction(()=>document.querySelector('[aria-label="Thread computer"]')?.getAttribute("disabled")===null);
+          assert.equal(preference,"cloud:modal","An explicit computer remains the workspace preference");
+          assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);await context.close();console.log(`Explicit computer passed: ${returning?'saved local state':'fresh profile'}, ${mobile?'touch phone':'desktop'}.`);continue;
+        }
         if(process.env.QA_SCOPE_ONLY === "1") {
-          const all=new URL(url);all.hash="/threads?organization=all";await page.goto(all.href);
-          const combinedThreads=page.getByRole("region",{name:"Threads",exact:true});
-          await combinedThreads.getByText("Personal thread",{exact:true}).waitFor();
-          await combinedThreads.getByText("Studio thread",{exact:true}).waitFor();
-          assert.equal(await combinedThreads.getByRole("button",{name:"New thread",exact:true}).count(),1,"Threads has one primary action");
-          assert.equal(await page.getByRole("heading",{name:"Personal",exact:true}).count(),0);
-          assert.equal(await page.getByRole("heading",{name:"Studio",exact:true}).count(),0);
-          if(artifacts)await page.screenshot({path:`${artifacts}/unified-threads-${mobile?'phone':'desktop'}.png`});
-          await combinedThreads.getByRole("button",{name:"New thread",exact:true}).click();
-          const ownerDialog=page.getByRole("dialog");
-          await ownerDialog.getByRole("combobox",{name:"Account",exact:true}).click();
-          await page.getByRole("option",{name:"Studio",exact:true}).click();
-          await ownerDialog.getByRole("button",{name:"Choose account",exact:true}).click();
-          await page.waitForURL(/organization=all.*owner=team/);
-          const visibility=page.getByLabel("Thread visibility",{exact:true});
-          await visibility.getByText("Organization",{exact:true}).waitFor();
-          if(artifacts)await page.screenshot({path:`${artifacts}/thread-visibility-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
-          await visibility.click();await page.getByRole("menuitem",{name:"Keep private",exact:true}).click();
-          await visibility.getByText("Private",{exact:true}).waitFor();
-          await page.getByRole("button",{name:"Back to all",exact:true}).click();
-          await combinedThreads.getByText("Personal thread",{exact:true}).waitFor();
-          all.hash="/board?organization=all";await page.goto(all.href);
+          const clean=path=>new URL(`/app${path}`,url).href;
+          await page.goto(clean("/threads?organization=all"));
+          await page.waitForURL(current=>current.pathname==="/app/threads" && current.search==="");
+          assert.equal(page.url(),clean("/threads"),"All is the default clean route");
+          const threadPane=page.getByRole("region",{name:"Threads",exact:true});
+          const composer=page.getByRole("form",{name:"New thread",exact:true});
+          await composer.waitFor();
+          assert.equal(await page.locator('[data-slot="pane-header"]').count(),1,"Threads uses the shared pane header");
+          assert.equal(await threadPane.getByText("Personal thread",{exact:true}).count(),0,"The main pane does not repeat Personal threads");
+          assert.equal(await threadPane.getByText("Studio thread",{exact:true}).count(),0,"The main pane does not repeat organization threads");
+          assert.equal(await page.getByRole("dialog").count(),0,"New thread does not ask for an account first");
+          const sharing=page.getByLabel("Thread sharing",{exact:true});
+          await sharing.getByText("Private",{exact:true}).waitFor();
+          await composer.getByLabel("Message",{exact:true}).fill("Keep this draft while sharing");
+          await sharing.click();
+          await page.getByRole("menuitem",{name:"Shared",exact:true}).click();
+          await sharing.getByText("Shared",{exact:true}).waitFor();
+          assert.equal(await composer.getByLabel("Message",{exact:true}).inputValue(),"Keep this draft while sharing");
+          assert.equal(new URL(page.url()).searchParams.has("owner"),false,"Sharing stays a composer choice");
+          assert.ok(requests.includes("/api/organizations/team/workspaces"),"Sharing loads the selected organization composer");
+          if(artifacts)await page.screenshot({path:`${artifacts}/new-thread-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
+          await sharing.click();await page.getByRole("menuitem",{name:"Private",exact:true}).click();
+          await sharing.getByText("Private",{exact:true}).waitFor();
+          await page.reload();
+          await composer.waitFor();
+          assert.equal(await threadPane.getByText("Studio thread",{exact:true}).count(),0,"A reload keeps the new-thread view");
+          await page.goto(clean("/threads/team-thread?computer=team-computer&owner=team"));
+          await page.getByRole("tab",{name:"Studio thread",exact:true}).waitFor();
+          assert.equal(await page.getByRole("button",{name:"Back to all",exact:true}).count(),0,"Thread details do not add a second navigation row");
+          assert.equal(await page.getByText("This computer is offline; you’re reading its last saved update.",{exact:true}).count(),0,"Offline threads do not add a redundant status row");
+          await page.goto(clean("/board"));
           await page.getByText("Personal ticket",{exact:false}).waitFor();
           await page.getByText("Studio ticket",{exact:false}).waitFor();
+          assert.equal(await page.locator('[data-slot="pane-header"]').count(),1,"Tasks uses the shared pane header");
           assert.equal(await page.getByRole("button",{name:"Create ticket",exact:true}).count(),1);
           assert.equal(await page.getByRole("region",{name:"Tasks",exact:true}).count(),1);
           if(artifacts)await page.screenshot({path:`${artifacts}/unified-tasks-${mobile?'phone':'desktop'}.png`});
-          all.hash="/inbox?organization=all";await page.goto(all.href);
+          await page.goto(clean("/inbox"));
           await page.getByText("Personal agent",{exact:true}).waitFor();
           await page.getByText("Studio agent",{exact:true}).waitFor();
+          assert.equal(await page.locator('[data-slot="pane-header"]').count(),1,"Inbox uses the shared pane header");
           assert.equal(await page.getByRole("button",{name:"Create agent",exact:true}).count(),1);
           assert.equal(await page.getByRole("region",{name:"Inbox",exact:true}).count(),1);
-          all.hash="/workspaces?organization=all";await page.goto(all.href);
-          await page.getByText("Personal · https://github.com/example/repo",{exact:true}).waitFor();
+          await page.goto(clean("/workspaces"));
           await page.getByText("Studio · https://github.com/example/repo",{exact:true}).waitFor();
+          assert.equal(await page.locator('[data-slot="pane-header"]').count(),1,"Workspace list uses the shared pane header");
+          assert.equal(await page.getByText("Personal · https://github.com/example/repo",{exact:true}).count(),0);
           assert.equal(await page.getByRole("button",{name:"Add workspace",exact:true}).count(),1);
           assert.equal(await page.getByRole("heading",{name:"Personal",exact:true}).count(),0);
           assert.equal(await page.getByRole("heading",{name:"Studio",exact:true}).count(),0);
-          all.hash="/settings/general?organization=all";await page.goto(all.href);
+          const workspaceSection=page.locator('main section[aria-label="Workspaces"]').first();
+          const workspaceLayout=await workspaceSection.evaluate(section=>{
+            const button=section.querySelector(':scope > button');
+            const item=section.querySelector('[data-slot="item"]');
+            const outer=section.getBoundingClientRect(),action=button.getBoundingClientRect(),row=item.getBoundingClientRect();
+            return {top:action.top-outer.top,bottom:row.top-action.bottom,right:row.right-action.right,overflow:section.scrollWidth-section.clientWidth};
+          });
+          assert.ok(Math.abs(workspaceLayout.right)<1,"Add workspace aligns with the workspace rows");
+          assert.ok(Math.abs(workspaceLayout.top-workspaceLayout.bottom)<1,"Add workspace has equal space above and below");
+          assert.ok(workspaceLayout.overflow<=0,"Workspace actions do not overflow the pane");
+          const studioWorkspace=page.locator('[data-slot="item"]',{hasText:"Studio · https://github.com/example/repo"});
+          await studioWorkspace.getByRole("button",{name:"Open Example workspace details",exact:true}).click();
+          await page.waitForURL(/\/app\/workspaces\/repo\?owner=team$/);
+          await page.getByText("Repository",{exact:true}).waitFor();
+          await page.getByText("github.com/example/repo",{exact:true}).waitFor();
+          let workspaceBreadcrumb=page.getByRole("navigation",{name:"breadcrumb",exact:true});
+          await workspaceBreadcrumb.getByRole("button",{name:"Workspaces",exact:true}).waitFor();
+          await workspaceBreadcrumb.getByRole("link",{name:"Example",exact:true}).waitFor();
+          assert.equal(await page.getByRole("button",{name:"Back to all",exact:true}).count(),0);
+          assert.equal(await page.getByRole("heading",{name:"Workspaces",exact:true}).count(),0);
+          await page.reload();
+          await page.getByText("Repository",{exact:true}).waitFor();
+          workspaceBreadcrumb=page.getByRole("navigation",{name:"breadcrumb",exact:true});
+          await workspaceBreadcrumb.getByRole("button",{name:"Workspaces",exact:true}).click();
+          await page.getByText("Studio · https://github.com/example/repo",{exact:true}).waitFor();
+          await page.goto(clean("/settings/general"));
+          const generalSettings=page.getByRole("region",{name:"General settings",exact:true});
+          await generalSettings.getByText("Default model",{exact:true}).waitFor();
+          const generalTitlebar=page.locator('[data-slot="pane-header"]');
+          assert.equal(await generalTitlebar.count(),1,"General uses the shared pane header");
+          const titlebarLayout=await generalTitlebar.evaluate(header=>{
+            const toggle=header.querySelector('button[data-slot="sidebar-trigger"]');
+            const breadcrumb=header.querySelector('[data-slot="breadcrumb"]');
+            if(!(toggle instanceof HTMLElement) || !(breadcrumb instanceof HTMLElement)) return null;
+            return {visible:getComputedStyle(toggle).display!=="none",toggle:toggle.getBoundingClientRect().left,breadcrumb:breadcrumb.getBoundingClientRect().left};
+          });
+          assert.ok(titlebarLayout,"The shared titlebar owns the sidebar trigger");
+          if(mobile) assert.ok(titlebarLayout.visible && titlebarLayout.toggle<titlebarLayout.breadcrumb,"The sidebar trigger stays left of the title");
+          assert.equal(await generalSettings.getByText("Default model",{exact:true}).count(),1,"General has one default model setting");
+          assert.equal(await page.getByText("Personal default model",{exact:true}).count(),0);
+          assert.equal(await page.getByText("Studio default model",{exact:true}).count(),0);
+          assert.equal(await page.getByRole("region",{name:"Account defaults",exact:true}).count(),0);
+          await page.goto(clean("/settings/general?organization=team"));
           await page.getByRole("region",{name:"General settings",exact:true}).waitFor();
-          assert.equal(await page.getByRole("region",{name:"General settings",exact:true}).count(),1);
-          const defaults=page.getByRole("region",{name:"Account defaults",exact:true});
-          await defaults.getByText("Personal default model",{exact:true}).waitFor();
-          await defaults.getByText("Studio default model",{exact:true}).waitFor();
-          assert.equal(await defaults.count(),1);
-          all.hash="/settings/devices?organization=all";await page.goto(all.href);
+          assert.equal(await page.getByText("Default model",{exact:true}).count(),0,"Organization-filtered General does not duplicate the organization default");
+          await page.goto(clean("/settings/organization?section=general&owner=team"));
+          const organizationGeneral=page.getByRole("region",{name:"Organization general settings",exact:true});
+          await organizationGeneral.getByText("Default model",{exact:true}).waitFor();
+          assert.equal(await page.locator('[data-slot="pane-header"]').count(),1,"Organization settings uses the shared pane header");
+          assert.equal(await organizationGeneral.getByText("Default model",{exact:true}).count(),1,"Organization settings owns its default model");
+          await page.reload();
+          await organizationGeneral.getByText("Default model",{exact:true}).waitFor();
+          await page.goto(clean("/settings/devices"));
           await page.getByRole("button",{name:"Manage computers",exact:true}).waitFor();
+          assert.equal(await page.locator('[data-slot="pane-header"]').count(),1,"Computers uses the shared pane header");
           assert.equal(await page.getByRole("button",{name:"Manage computers",exact:true}).count(),1);
           assert.equal(await page.getByRole("heading",{name:"Personal",exact:true}).count(),0);
           assert.equal(await page.getByRole("heading",{name:"Studio",exact:true}).count(),0);
-          all.hash="/settings/organization?organization=all&section=members&owner=team";await page.goto(all.href);
+          await page.goto(clean("/settings/organization?section=members&owner=team"));
           const readerMember=page.locator('[data-slot="item"]',{hasText:"Reader"});
           await readerMember.locator('[data-slot="avatar-image"]').waitFor();
           assert.match(await readerMember.locator('[data-slot="avatar-image"]').getAttribute("src"),/cobalt-cyclops/);
           if(artifacts)await page.screenshot({path:`${artifacts}/member-avatar-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
-          all.hash="/settings/organization?organization=all&section=computers&owner=team";await page.goto(all.href);
+          await page.goto(clean("/settings/organization?section=computers&owner=team"));
           const computerShare=page.getByRole("switch",{name:"Share Personal Mac",exact:true});
           const cloudShare=page.getByRole("switch",{name:"Share Modal",exact:true});
           await computerShare.waitFor();await cloudShare.waitFor();
@@ -269,6 +340,7 @@ try {
           const at=Date.now();await page.getByRole("button",{name:"Send",exact:true}).click();
           await page.getByLabel("Thread transcript",{exact:true}).waitFor();
           assert.ok(Date.now()-at<1500,"Thread view must open before provisioning returns");
+          assert.equal(threadInput.computerId,"cloud:fly-sprites","Thread creation submits the displayed computer");
           await page.getByLabel("Starting thread",{exact:true}).waitFor();
           await page.getByRole("tab", {name:"Hello startup QA", exact:true}).waitFor();
           assert.equal(await page.getByRole("heading", {name:"Threads", exact:true}).count(), 0);
@@ -456,19 +528,19 @@ try {
         target.hash = `/threads?organization=${org.id}`;
         await page.goto(target.href);
         await page.getByText("Set up your first computer", { exact: true }).waitFor();
-        await page.getByRole("heading", { name: "Threads", exact: true }).waitFor();
+        await page.locator('[data-slot="pane-header"]').getByText("Threads", { exact: true }).waitFor();
         if (artifacts && returning && mobile && org.personal) await page.screenshot({ path: `${artifacts}/threads-phone.png` });
-        assert.equal(await page.locator("main header").count(), 1, "Threads has one title bar");
+        assert.equal(await page.locator('[data-slot="pane-header"]').count(), 1, "Threads has one title bar");
         if (mobile) await page.getByRole("button", { name: "Toggle Sidebar" }).click();
         await page.getByRole("button", { name: "Settings", exact: true }).waitFor();
         if (!mobile) {
           const sidebar = page.locator('[data-slot="sidebar"]');
-          assert.equal(await page.locator("main header").getByRole("button", { name: "Toggle Sidebar", exact: true }).count(), 0);
+          assert.equal(await page.locator('[data-slot="pane-header"]').getByRole("button", { name: "Toggle Sidebar", exact: true }).count(), 0);
           await sidebar.getByRole("button", { name: "Toggle Sidebar", exact: true }).click();
           await page.locator('[data-slot="sidebar"][data-collapsible="icon"]').waitFor();
           assert.ok(await sidebar.getByRole("button", { name: "Settings", exact: true }).isVisible());
           await sidebar.getByRole("button", { name: "Settings", exact: true }).click();
-          await page.getByRole("heading", { name: "Computers", exact: true }).waitFor();
+          await page.locator('[data-slot="pane-header"]').getByText("Computers", { exact: true }).waitFor();
           await sidebar.getByRole("button", { name: "Back", exact: true }).click();
           await sidebar.getByRole("button", { name: "Toggle Sidebar", exact: true }).click();
           await page.locator('[data-slot="sidebar"][data-state="expanded"]').waitFor();
@@ -476,10 +548,10 @@ try {
         assert.equal(await page.getByRole("button", { name: "Computers", exact: true }).count(), 0, "Settings sections stay out of the main sidebar");
         assert.equal(await page.getByRole("button", { name: "Notifications", exact: true }).count(), 0);
         await page.getByRole("button", { name: "Settings", exact: true }).click();
-        await page.getByRole("heading", { name: "Computers", exact: true }).waitFor();
+        await page.locator('[data-slot="pane-header"]').getByText("Computers", { exact: true }).waitFor();
         if (mobile) await page.getByRole("button", { name: "Toggle Sidebar" }).click();
         await page.getByRole("button", { name: "Back", exact: true }).click();
-        await page.getByRole("heading", { name: "Threads", exact: true }).waitFor();
+        await page.locator('[data-slot="pane-header"]').getByText("Threads", { exact: true }).waitFor();
         assert.equal(await page.locator("main").getByRole("button", { name: "Notifications", exact: true }).count(), 0);
         assert.equal(await page.getByRole("button", { name: "Add a workspace", exact: true }).count(), 0);
         await page.reload();

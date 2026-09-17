@@ -5,6 +5,7 @@ import type { BoardProjection } from "@remy/contract";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { watchHubResource } from "@/lib/hub-computers";
 import { Button } from "@/components/ui/button";
+import { formatBrowserLocation } from "@/lib/route";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Field, FieldLabel } from "@/components/ui/field";
@@ -329,7 +330,7 @@ export function HubInbox({
                   aria-disabled={!run.available}
                   href={
                     run.available
-                      ? `#/threads/${run.threadId}?organization=${encodeURIComponent(organizationId)}&computer=${encodeURIComponent(run.computerId)}`
+                      ? formatBrowserLocation({ route: { name: "threads", threadId: run.threadId, organizationId, computerId: run.computerId } })
                       : undefined
                   }
                 >

@@ -8,6 +8,7 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
+import { SidebarTrigger } from "@/components/ui/sidebar";
 
 /// The strip across the top of the main pane.
 ///
@@ -25,6 +26,7 @@ export interface Crumb {
 
 export function PaneHeader({
   crumbs,
+  sidebar = false,
   /// Views of the same section, when it has more than one. Beside the crumbs
   /// rather than inside them: a tab strip is a place you go, not a place you
   /// have been, and a breadcrumb's last item is not something to click.
@@ -33,12 +35,14 @@ export function PaneHeader({
   children,
 }: {
   crumbs: Crumb[];
+  sidebar?: boolean;
   tabs?: ReactNode;
   selection?: ReactNode;
   children?: ReactNode;
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-3 border-b border-border px-5 py-4">
+    <div data-slot="pane-header" className="flex shrink-0 items-center gap-3 border-b border-border px-5 py-4">
+      {sidebar && <SidebarTrigger className="shrink-0 md:hidden" />}
       {selection ? selection : <>
       <Breadcrumb className="min-w-0">
         <BreadcrumbList className="flex-nowrap gap-1.5 sm:gap-1.5">

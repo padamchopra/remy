@@ -36,7 +36,7 @@ import {
   watchHubThreads,
 } from "@/lib/hub-threads";
 import { watchHubResource } from "@/lib/hub-computers";
-import { parseLocation, formatLocation, type Route } from "@/lib/route";
+import { currentLocation, listenToLocationChanges, navigateLocation, normalizeLocation, parseLocation, type Route } from "@/lib/route";
 import { apiError } from "@/lib/api-error";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -88,7 +88,6 @@ import { HubComputerApproval } from "./HubComputerApproval";
 import { HubInvitation } from "./HubInvitation";
 import { HubSignIn } from "./HubSignIn";
 import { HubNotifications } from "./HubNotifications";
-import { HubAccountPickerDialog } from "./HubAccountPickerDialog";
 const WorkspacesList = lazy(() => import("./HubWorkspaces"));
 const OrganizationAdmin = lazy(() => import("./HubOrganizationAdmin"));
 const AllView = lazy(() => import("./HubAllView"));
@@ -120,11 +119,6 @@ function NotificationButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-function MobileSidebarTrigger() {
-  const { isMobile } = useSidebar();
-  return isMobile ? <SidebarTrigger /> : null;
-}
-
 function SidebarNavigation({ route }: { route: Route }) {
   const { setOpenMobile } = useSidebar();
   useEffect(() => setOpenMobile(false), [route, setOpenMobile]);
@@ -133,7 +127,7 @@ function SidebarNavigation({ route }: { route: Route }) {
 
 export default function HubApp({ runtime }: { runtime: HubRuntime }) {
   const [route, setRoute] = useState<Route>(
-    parseLocation(window.location.hash).route,
+    normalizeLocation().route,
   );
   const previousSurface = useRef<Route | undefined>(undefined);
   useEffect(() => {
@@ -150,7 +144,6 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
   const [error, setError] = useState("");
   const [threads, setThreads] = useState<HubThread[]>([]);
   const [create, setCreate] = useState(false);
-  const [createThread, setCreateThread] = useState(false);
   const [notificationsAccount, setNotificationsAccount] = useState<string>();
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -162,7 +155,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
         : null),
   );
   const navigate = (next: Route) => {
-    window.location.hash = formatLocation({ route: next });
+    navigateLocation({ route: next });
   };
   const reload = async () => {
     try {
@@ -181,9 +174,8 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
     }
   };
   useEffect(() => {
-    const changed = () => setRoute(parseLocation(window.location.hash).route);
-    window.addEventListener("hashchange", changed);
-    return () => window.removeEventListener("hashchange", changed);
+    const changed = () => setRoute(parseLocation(currentLocation()).route);
+    return listenToLocationChanges(changed);
   }, []);
   useEffect(() => {
     void (async () => {
@@ -203,13 +195,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
     })();
   }, []);
   const contexts = personal ? [personal, ...organizations] : organizations;
-  const remembered = profile
-    ? localStorage.getItem(`remy.organization:${profile.id}`)
-    : null;
-  const organizationId =
-    route.organizationId ??
-    (remembered === "all" ? "all" : contexts.find((o) => o.id === remembered)?.id) ??
-    personal?.id;
+  const organizationId = route.organizationId ?? "all";
   const isAll = organizationId === "all";
   const organization = isAll ? {...personal, id:"all", name:"All", role:"owner", personal:false} as Organization : contexts.find((o) => o.id === organizationId);
   const contextIds = contexts.map(o => o.id).join(",");
@@ -219,9 +205,6 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
     setThreadsLoaded(false);
     setError("");
     if (!organization) return;
-    localStorage.setItem(`remy.organization:${profile?.id}`, organization.id);
-    if (!route.organizationId)
-      navigate({ ...route, organizationId: organization.id });
     if (isAll) {
       const values = new Map<string, HubThread[]>();
       const settled = new Set<string>();
@@ -340,6 +323,13 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
         },
       ]
     : [];
+  const paneLabel = links.find((link) => link.selected)?.label ?? "Remy";
+  const showPaneHeader =
+    !(route.name === "threads" && (route.threadId || (isAll && route.ownerOrganizationId))) &&
+    !(route.name === "workspaces" && route.workspaceId);
+  const paneCrumbs = route.name === "settings"
+    ? [{ label: "Settings" }, { label: paneLabel }]
+    : [{ label: paneLabel }];
   return (
     <HubPersonalContext value={isPersonal}>
       <HubModelFavorites key={`${profile?.id}:${organizationId}`} organizationId={isAll ? undefined : organizationId}>
@@ -398,7 +388,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                         <span className="min-w-0 flex-1 truncate">{o.name}</span>
                         {o.id === organizationId && <Check />}
                       </DropdownMenuItem>
-                      <DropdownMenuItem className="shrink-0 justify-center" aria-label={`${o.name} settings`} title={`${o.name} settings`} onSelect={() => navigate({name:"settings",tab:"organization",organizationTab:"members",organizationId:o.id})}>
+                      <DropdownMenuItem className="shrink-0 justify-center" aria-label={`${o.name} settings`} title={`${o.name} settings`} onSelect={() => navigate({name:"settings",tab:"organization",organizationTab:"general",organizationId:o.id})}>
                         <OrganizationSettingsIcon />
                         <span className="sr-only">{o.name} settings</span>
                       </DropdownMenuItem>
@@ -418,8 +408,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               title="New thread"
               data-link
               onClick={() => {
-                if (isAll) setCreateThread(true);
-                else navigate({ name: "threads", organizationId });
+                navigate({ name: "threads", organizationId });
               }}
             >
               <SquarePen />
@@ -536,11 +525,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           </SidebarFooter>
         </Sidebar>
         <SidebarInset className="h-svh min-w-0 overflow-hidden">
-          {route.name === "settings" && route.tab === "general" && <PaneHeader crumbs={[{label:"Settings"},{label:"General"}]}><MobileSidebarTrigger /></PaneHeader>}
-          {!(route.name === "threads" && route.threadId) && !(route.name === "settings" && route.tab === "general") && <header className={`flex shrink-0 items-center gap-2 border-b p-3 ${route.name === "workspaces" && route.workspaceId ? "md:hidden" : ""}`}>
-            <MobileSidebarTrigger />
-            <h1 className="min-w-0 truncate">{links.find((link) => link.selected)?.label ?? "Remy"}</h1>
-          </header>}
+          {showPaneHeader && <PaneHeader sidebar crumbs={paneCrumbs} />}
           {error && (
             <p role="alert" className="px-4 py-2">
               {error}
@@ -559,14 +544,14 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               )}
             </EmptyState>
           ) : organizationSettings && route.name === "settings" ? (
-            <Deferred open><OrganizationAdmin organizations={organizations} selectedId={isAll ? route.ownerOrganizationId : organizationId} tab={route.organizationTab ?? "members"} onSelect={owner => navigate({...route,tab:"organization",organizationId:isAll ? "all" : owner,...(isAll ? {ownerOrganizationId:owner} : {})})} onTab={organizationTab => navigate({...route,tab:"organization",organizationTab,ownerOrganizationId:isAll ? route.ownerOrganizationId ?? organizations[0]?.id : undefined})} /></Deferred>
+            <Deferred open><OrganizationAdmin organizations={organizations} selectedId={isAll ? route.ownerOrganizationId : organizationId} tab={route.organizationTab ?? "general"} onSelect={owner => navigate({...route,tab:"organization",organizationId:isAll ? "all" : owner,...(isAll ? {ownerOrganizationId:owner} : {})})} onTab={organizationTab => navigate({...route,tab:"organization",organizationTab,ownerOrganizationId:isAll ? route.ownerOrganizationId ?? organizations[0]?.id : undefined})} /></Deferred>
           ) : route.name === "workspaces" && !route.workspaceId ? (
             <div className="min-h-0 flex-1 overflow-auto"><Deferred open><WorkspacesList organizations={contexts} filter={organizationId ?? "all"} onOpenWorkspace={(owner,id) => navigate({name:"workspaces",workspaceId:id,organizationId:isAll ? "all" : owner,...(isAll ? {ownerOrganizationId:owner} : {})})} onAdded={owner => {if (!isAll && owner !== organizationId) navigate({name:"workspaces",organizationId:owner});}} /></Deferred></div>
           ) : isAll ? (
-            <Deferred open><AllView organizations={contexts} threads={threads} threadsLoaded={threadsLoaded} route={route} userId={profile?.id ?? ""} navigate={navigate} /></Deferred>
+            <Deferred open><AllView organizations={contexts} route={route} userId={profile?.id ?? ""} navigate={navigate} /></Deferred>
           ) : (
             <div key={organization.id} className="flex min-h-0 flex-1 flex-col">
-              <div hidden={section !== "general"} className="min-h-0 overflow-auto px-5 py-6"><Deferred open={section === "general"}><GeneralSettings organizationId={organization.id} /></Deferred></div>
+              <div hidden={section !== "general"} className="min-h-0 overflow-auto px-5 py-6"><Deferred open={section === "general"}><GeneralSettings organizationId={organization.id} showModelDefault={organization.personal === true} /></Deferred></div>
               <div
                 hidden={section !== "threads"}
                 className={
@@ -732,22 +717,6 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
             </form>
           </DialogContent>
         </Dialog>
-        <HubAccountPickerDialog
-          open={createThread}
-          onOpenChange={setCreateThread}
-          organizations={contexts}
-          title="New thread"
-          description="Choose who owns this thread."
-          action="Choose account"
-          onSelect={(ownerOrganizationId) => {
-            setCreateThread(false);
-            navigate({
-              name: "threads",
-              organizationId: "all",
-              ownerOrganizationId,
-            });
-          }}
-        />
         {computerCode && <HubComputerApproval preview={new URLSearchParams(window.location.search).get("preview") === "1"} code={computerCode} accountName={profile?.name ?? "your account"} close={() => {
           setComputerCode(null);
           const url = new URL(window.location.href);

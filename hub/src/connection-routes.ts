@@ -81,7 +81,7 @@ export async function connectionRoute(
       return new Response(null, {
         status: 303,
         headers: {
-          location: `${new URL(env.BETTER_AUTH_URL).origin}/#/settings/connections?organization=${encodeURIComponent(org)}`,
+          location: `${new URL(env.WEB_APP_URL ?? env.BETTER_AUTH_URL).origin}/settings/connections?organization=${encodeURIComponent(org)}`,
           "cache-control": "no-store",
           "referrer-policy": "no-referrer",
         },

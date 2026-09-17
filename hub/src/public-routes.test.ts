@@ -6,7 +6,7 @@ const env = { DB: {}, WEB_APP_URL: "https://app.remy.example", ASSETS: { fetch: 
 
 test("serves the website and app from their own hostnames", async () => {
   const route = createRouteHandler();
-  for (const [url, asset] of [["https://remy.example/", "/"], ["https://remy.example/docs/", "/docs/"], ["https://app.remy.example/", "/app/"], ["https://app.remy.example/assets/index.js", "/app/assets/index.js"]]) {
+  for (const [url, asset] of [["https://remy.example/", "/"], ["https://remy.example/docs/", "/docs/"], ["https://app.remy.example/", "/app/"], ["https://app.remy.example/workspaces/remy?organization=all", "/app/"], ["https://app.remy.example/assets/index.js", "/app/assets/index.js"]]) {
     const response = await route(new Request(url), env);
     assert.equal(response.status, 200);
     assert.equal(await response.text(), asset);

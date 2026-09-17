@@ -34,7 +34,7 @@ jobs:
         working-directory: web
       - name: Check public home and web app
         run: |
-          python3 -m http.server 5180 --bind 127.0.0.1 --directory web/dist &
+          node web/scripts/serve-hub.mjs web/dist 5180 &
           server_pid=$!
           trap 'kill "$server_pid"' EXIT
           node web/scripts/hub-website-check.mjs

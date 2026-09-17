@@ -1,12 +1,12 @@
 import type { AnalyticsTab } from "@/components/AnalyticsSettings";
+import { isHostedRuntime } from "@/lib/hub-session";
 import type { SettingsTab } from "@/lib/settings-sections";
 
 /// Where the window is, written down so a reload lands back on it.
 ///
-/// The routes live in the hash rather than the path. Electron loads the built
-/// app from a `file://` URL, where a path a server never sees cannot survive a
-/// reload; a hash is the same string in both places, so the browser and the
-/// desktop window agree without either needing a rewrite rule.
+/// Electron keeps routes in the hash because it loads the build from `file://`.
+/// The hosted app uses normal paths and its server returns the app shell for a
+/// direct route, so browser URLs stay clean without weakening desktop reloads.
 
 export type Route = (
   // Inbox is a list of agents and the conversation with one, so which agent is
@@ -21,7 +21,7 @@ export type Route = (
   | { name: "board"; scope?: string }
   | { name: "ticket"; key: string }
   | { name: "prs" }
-  | { name: "settings"; tab: SettingsTab; organizationTab?: "members" | "teams" | "computers"; analyticsTab?: AnalyticsTab; deviceId?: string; organizationId?: string }) & { organizationId?: string; ownerOrganizationId?: string };
+  | { name: "settings"; tab: SettingsTab; organizationTab?: "general" | "members" | "teams" | "computers"; analyticsTab?: AnalyticsTab; deviceId?: string; organizationId?: string }) & { organizationId?: string; ownerOrganizationId?: string };
 
 export interface AppLocation {
   route: Route;
@@ -71,7 +71,7 @@ function parseRoute(hash: string): AppLocation {
         name: "settings",
         tab,
         ...(tab === "devices" && params.get("organization") ? { organizationId: params.get("organization")! } : {}),
-        ...(tab === "organization" ? {organizationTab: params.get("section") === "teams" ? "teams" as const : params.get("section") === "computers" ? "computers" as const : "members" as const} : {}),
+        ...(tab === "organization" ? {organizationTab: params.get("section") === "members" ? "members" as const : params.get("section") === "teams" ? "teams" as const : params.get("section") === "computers" ? "computers" as const : "general" as const} : {}),
         ...(tab === "analytics" ? { analyticsTab } : {}),
         ...((tab === "providers" || tab === "devices") && deviceId ? { deviceId } : {}),
       },
@@ -86,46 +86,106 @@ function parseRoute(hash: string): AppLocation {
       name: "threads",
       threadId: head === "threads" ? rest : undefined,
       ...(focus ? { focus } : {}),
-      ...(params.get("organization") ? { organizationId: params.get("organization")!, computerId: params.get("computer") || undefined } : {}),
+      ...(params.get("organization") ? { organizationId: params.get("organization")! } : {}),
+      ...(params.get("computer") ? { computerId: params.get("computer")! } : {}),
     },
   };
 }
 
-export function formatLocation({ route }: AppLocation): string {
+export function formatPathLocation({ route }: AppLocation): string {
   const path =
     route.name === "threads"
-      ? `/threads${route.threadId ? `/${encodeURIComponent(route.threadId)}` : ""}${
-          route.organizationId ? `?${new URLSearchParams({ organization: route.organizationId, ...(route.computerId ? { computer: route.computerId } : {}) }).toString()}` : route.focus ? `?${new URLSearchParams({ focus: route.focus }).toString()}` : ""
-        }`
+      ? `/threads${route.threadId ? `/${encodeURIComponent(route.threadId)}` : ""}`
       : route.name === "workspaces"
         ? `/workspaces${route.workspaceId ? `/${encodeURIComponent(route.workspaceId)}` : ""}`
         : route.name === "board"
           ? `/board${route.scope ? `/${encodeURIComponent(route.scope)}` : ""}`
           : route.name === "ticket"
             ? `/tickets/${encodeURIComponent(route.key)}`
-            : route.name === "settings"
-              ? `/settings/${route.tab}${
-                  route.tab === "analytics" && route.analyticsTab === "usage"
-                    ? "?tab=usage"
-                    : (route.tab === "providers" || route.tab === "devices") && route.deviceId
-                      ? `?device=${encodeURIComponent(route.deviceId)}`
-                      : ""
-                }`
+          : route.name === "settings"
+              ? `/settings/${route.tab}`
               : route.name === "prs"
                 ? "/pull-requests"
                 : `/inbox${route.agent ? `/${encodeURIComponent(route.agent)}` : ""}`;
-  if (!route.organizationId) return `#${path}`;
-  const [base, query] = path.split("?");
-  const params = new URLSearchParams(query); params.set("organization", route.organizationId);
+  const params = new URLSearchParams();
+  if (route.name === "threads") {
+    if (route.focus && !route.organizationId) params.set("focus", route.focus);
+    if (route.computerId) params.set("computer", route.computerId);
+  }
+  if (route.name === "settings" && route.tab === "analytics" && route.analyticsTab === "usage") params.set("tab", "usage");
+  if (route.name === "settings" && (route.tab === "providers" || route.tab === "devices") && route.deviceId) params.set("device", route.deviceId);
+  if (route.organizationId && route.organizationId !== "all") params.set("organization", route.organizationId);
   if (route.name === "settings" && route.tab === "organization" && route.organizationTab) params.set("section", route.organizationTab);
   if (route.ownerOrganizationId) params.set("owner", route.ownerOrganizationId);
-  return `#${base}?${params}`;
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
+}
+
+export function formatLocation(location: AppLocation): string {
+  return `#${formatPathLocation(location)}`;
 }
 
 export function parseLocation(hash: string): AppLocation {
   const result = parseRoute(hash);
   const params = new URLSearchParams(hash.split("?")[1] ?? "");
-  const org = params.get("organization");
-  const owner = org === "all" ? params.get("owner") : null;
+  const owner = params.get("owner");
+  const org = params.get("organization") ?? (owner ? "all" : null);
   return org ? { route: { ...result.route, organizationId: org, ...(owner ? {ownerOrganizationId:owner} : {}) } } : result;
+}
+
+export const LOCATION_CHANGE_EVENT = "remy:location-change";
+
+function hostedBasePath(): string {
+  return window.location.pathname === "/app" || window.location.pathname.startsWith("/app/") ? "/app" : "";
+}
+
+export function currentLocation(): string {
+  if (!isHostedRuntime()) return window.location.hash;
+  if (window.location.hash.startsWith("#/")) return window.location.hash;
+  const base = hostedBasePath();
+  const path = window.location.pathname.slice(base.length) || "/";
+  return `${path}${window.location.search}`;
+}
+
+export function normalizeLocation(): AppLocation {
+  const legacyHash = window.location.hash.startsWith("#/");
+  const redundantAll = new URLSearchParams(window.location.search).get("organization") === "all";
+  const location = parseLocation(currentLocation());
+  if (isHostedRuntime() && (legacyHash || redundantAll)) {
+    window.history.replaceState(null, "", `${hostedBasePath()}${formatPathLocation(location)}`);
+  }
+  return location;
+}
+
+export function formatBrowserLocation(location: AppLocation): string {
+  return isHostedRuntime() ? `${hostedBasePath()}${formatPathLocation(location)}` : formatLocation(location);
+}
+
+export function navigateLocation(location: AppLocation, replace = false): void {
+  if (!isHostedRuntime()) {
+    const hash = formatLocation(location);
+    if (hash === window.location.hash) return;
+    if (replace) {
+      window.history.replaceState(null, "", hash);
+      window.dispatchEvent(new Event(LOCATION_CHANGE_EVENT));
+    } else {
+      window.location.hash = hash;
+    }
+    return;
+  }
+  const path = formatBrowserLocation(location);
+  if (`${window.location.pathname}${window.location.search}` === path && !window.location.hash) return;
+  window.history[replace ? "replaceState" : "pushState"](null, "", path);
+  window.dispatchEvent(new Event(LOCATION_CHANGE_EVENT));
+}
+
+export function listenToLocationChanges(listener: () => void): () => void {
+  window.addEventListener("hashchange", listener);
+  window.addEventListener("popstate", listener);
+  window.addEventListener(LOCATION_CHANGE_EVENT, listener);
+  return () => {
+    window.removeEventListener("hashchange", listener);
+    window.removeEventListener("popstate", listener);
+    window.removeEventListener(LOCATION_CHANGE_EVENT, listener);
+  };
 }

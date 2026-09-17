@@ -64,13 +64,13 @@ import {
 import { DEVICE_ICON_IDS, deviceIcon, type DeviceIconId } from "@/lib/devices";
 import { hubRequest, hubThreadBase, watchHubThreads } from "@/lib/hub-threads";
 import { watchHubComputers } from "@/lib/hub-computers";
-import { formatLocation, parseLocation } from "@/lib/route";
+import { currentLocation, listenToLocationChanges, navigateLocation, parseLocation } from "@/lib/route";
 import { transport } from "@/lib/transport";
 import { useStore } from "@/state/store";
 
 const HostedComputers = lazy(() => import("./HubHostedComputers").then((m) => ({ default: m.HubHostedComputers })));
 const computerPane = () => {
-  const route = parseLocation(window.location.hash).route;
+  const route = parseLocation(currentLocation()).route;
   return route.name === "settings" && route.tab === "devices" ? route.deviceId ?? "cloud" : "cloud";
 };
 
@@ -113,12 +113,11 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
   const [pane, setPane] = useState(computerPane);
   useEffect(() => {
     const changed = () => setPane(computerPane());
-    window.addEventListener("hashchange", changed);
-    return () => window.removeEventListener("hashchange", changed);
+    return listenToLocationChanges(changed);
   }, []);
   const choosePane = (deviceId: string) => {
     setPane(deviceId);
-    window.location.hash = formatLocation({ route: { name: "settings", tab: "devices", organizationId: org, deviceId } });
+    navigateLocation({ route: { name: "settings", tab: "devices", organizationId: org, deviceId } });
   };
   useEffect(() => {
     if (organizationId) setOrg(organizationId);
@@ -178,7 +177,7 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
     };
   }, [org, local?.id]);
   const openThread = (thread: HubThread) => {
-    window.location.hash = formatLocation({
+    navigateLocation({
       route: {
         name: "threads",
         organizationId: org,
@@ -228,7 +227,7 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
               value={org}
               onValueChange={(value) => {
                 setOrg(value);
-                window.location.hash = formatLocation({
+                navigateLocation({
                   route: {
                     name: "settings",
                     tab: "devices",

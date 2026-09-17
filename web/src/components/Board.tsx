@@ -93,7 +93,7 @@ const DONE_PREVIEW_COUNT = 5;
 ///
 /// Every project at once by default — work does not arrive one repository at a
 /// time — with a filter for narrowing it. The filter lives in the URL as the
-/// key prefixes it kept, so `#/board/REMY,ATLAS` is a view you can send someone.
+/// key prefixes it kept, so `/board/REMY,ATLAS` is a view you can send someone.
 ///
 /// Cards drag between columns and also move by menu. The menu is not a fallback:
 /// it is the keyboard path, and both call the same move.

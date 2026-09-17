@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/item";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { watchHubResource } from "@/lib/hub-computers";
-import { formatLocation } from "@/lib/route";
+import { navigateLocation } from "@/lib/route";
 const announced = new Set<string>();
 export function HubNotifications({
   organizationId,
@@ -54,7 +54,7 @@ export function HubNotifications({
   const read = async (item: HubNotification & {ownerOrganizationId:string}) => {
     await hubRequest(`${hubThreadBase(item.ownerOrganizationId)}/notifications/${item.id}/read`, "POST");
     setOpen(false);
-    window.location.hash = formatLocation({
+    navigateLocation({
       route: {
         name: "threads",
         organizationId: organizationIds ? "all" : organizationId,

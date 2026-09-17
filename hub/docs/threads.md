@@ -42,9 +42,14 @@ thread frames to an older hub that lacks it.
 
 ## Client surface
 
-`#/threads/:threadId?organization=:organizationId&computer=:computerId` opens the
-team thread and survives reload. `#/threads?organization=:organizationId` lists
-team threads and the available workspace starts. These routes use a same-origin
+`/threads` opens the combined All view, while `/threads?organization=:organizationId`
+narrows it to one account. `/threads/:threadId?organization=:organizationId&computer=:computerId`
+opens that account’s thread and survives reload. A narrowed account lists its
+threads and available workspace starts. The new-thread composer resolves the
+workspace preference and routing rules before it appears ready, preselects the
+resulting concrete computer or cloud provider, and submits that explicit choice.
+Its picker contains only available execution choices; it has no automatic value.
+These routes use a same-origin
 hub session, with native API clients using their bearer session. The existing
 local thread sidebar stays available. Full organization sign-in/navigation and
 the native phone's hub navigation remain owned by their later roadmap tickets.
