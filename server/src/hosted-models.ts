@@ -6,6 +6,15 @@ export function hostedModelSelection(model:string | undefined) {
   if(!process.env[key])throw Error("This model provider is unavailable on this computer.");
   return {model:match[2],provider:`remy_${match[1]}`};
 }
+/// True when this computer has the gateway key, even if the model is not in
+/// the last fetched catalogue.
+export function hostedGatewayAvailable(model: string | undefined): boolean {
+  try {
+    return !!hostedModelSelection(model).provider;
+  } catch {
+    return false;
+  }
+}
 export function hostedGatewayModels() {
   return ["router","openrouter"].flatMap(gateway=>{
     const prefix=gateway==="router"?"RAMP_ROUTER":"OPENROUTER";

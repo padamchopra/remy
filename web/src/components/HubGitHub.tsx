@@ -392,7 +392,7 @@ export function HubGitHub({
                   {a.thread_id && a.computer_id && (
                     <Button asChild variant="link">
                       <a
-                        href={formatBrowserLocation({ route: { name: "threads", threadId: a.thread_id, organizationId, computerId: a.computer_id } })}
+                        href={formatBrowserLocation({ route: { name: "threads", threadId: a.thread_id, organizationId } })}
                       >
                         Open thread
                       </a>

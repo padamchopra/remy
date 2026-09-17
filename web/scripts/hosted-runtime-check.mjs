@@ -263,6 +263,8 @@ try {
           assert.equal(await threadPane.getByText("Studio thread",{exact:true}).count(),0,"A reload keeps the new-thread view");
           await page.goto(clean("/threads/team-thread?computer=team-computer&owner=team"));
           await page.getByRole("tab",{name:"Studio thread",exact:true}).waitFor();
+          assert.equal(new URL(page.url()).pathname.endsWith("/threads/team-thread"), true, "A thread address names only the thread");
+          assert.equal(new URL(page.url()).search, "", "Thread URLs drop computer and owner query");
           assert.equal(await page.getByRole("button",{name:"Back to all",exact:true}).count(),0,"Thread details do not add a second navigation row");
           assert.equal(await page.getByText("This computer is offline; you’re reading its last saved update.",{exact:true}).count(),0,"Offline threads do not add a redundant status row");
           await page.goto(clean("/board"));
@@ -416,6 +418,9 @@ try {
           assert.equal(await page.getByText("Preparing your thread…",{exact:true}).count(),0);
           releaseStart();await page.getByRole("alert").getByText("Fly.io could not start. Retry to continue.").waitFor();
           const pendingUrl=page.url();
+          const pending=new URL(pendingUrl);
+          assert.match(pending.pathname,/\/threads\/[0-9a-f-]{36}$/,"Pending start uses a thread path");
+          assert.equal(pending.search,"","Pending start does not add computer or owner query");
           await page.goto(target.href);
           await page.locator("#hub-thread-message").waitFor();
           assert.equal(await page.getByLabel("Thread transcript",{exact:true}).count(),0);
@@ -423,7 +428,10 @@ try {
           await page.reload();await page.getByRole("button",{name:"Retry",exact:true}).click();
           await page.getByText("Connection interrupted. Retry to send.",{exact:true}).waitFor();
           await page.getByRole("button",{name:"Retry",exact:true}).click();
-          await page.waitForURL(/computer=sprite/);
+          await page.waitForURL((current) => {
+            const url = new URL(current.href);
+            return url.pathname.endsWith("/threads/12345678-1234-1234-1234-123456789012") && url.search === "";
+          });
           await page.getByRole("button",{name:"Send",exact:true}).waitFor();
           assert.equal(startCalls,2);assert.equal(new Set(startIds).size,1);assert.equal(messageCalls,2);assert.equal(new Set(messageIds).size,1);
           assert.equal(await page.getByRole("button",{name:"Retry",exact:true}).count(),0);

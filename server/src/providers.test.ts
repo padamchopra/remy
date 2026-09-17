@@ -32,6 +32,19 @@ test("an unknown provider falls back rather than being stored", () => {
   assert.equal(providerId(undefined, "codex"), "codex");
 });
 
+test("a hosted Codex gateway model stays selected when its key is present", () => {
+  const before = process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_API_KEY = "private-openrouter";
+  try {
+    assert.equal(providerModel("codex", "remy:openrouter:openrouter/auto"), "remy:openrouter:openrouter/auto");
+    assert.equal(knowsModel("codex", "remy:openrouter:openrouter/auto"), true);
+  } finally {
+    if (before === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = before;
+  }
+  assert.equal(providerModel("codex", "remy:openrouter:openrouter/auto"), "");
+});
+
 test("a model only ever belongs to the provider that answers to it", () => {
   assert.equal(providerModel("claude", "sonnet"), "sonnet");
   assert.equal(providerModel("claude", "claude-fable-5-1[1m]"), "claude-fable-5-1[1m]");

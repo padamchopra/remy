@@ -3,7 +3,7 @@ import { validProfileImage } from "./profile-image.js";
 import { HostedStartupError } from "./hosted-startup-error.js";
 import { modelDefaults } from "./model-defaults.js";
 import { modelFavorites } from "./model-favorites.js";
-import { modelAccessIds, publicModelAccess, saveModelAccess, type ModelAccessId } from "./model-access.js";
+import { hostedGatewayError, modelAccessIds, publicModelAccess, saveModelAccess, type ModelAccessId } from "./model-access.js";
 import { routerConnectionSchema, routerModels } from "./router-connection.js";
 import { cloudComputerProvider } from "@remy/contract";
 import { managementCredential } from "./cloud-connection.js";
@@ -1914,11 +1914,8 @@ export class HubCoordinator {
       if(input.model !== undefined && (typeof input.model !== "string" || input.model.length>512))return jsonError("Choose a model.",400);
       if(input.branch !== undefined && (typeof input.branch !== "string" || !input.branch || input.branch.length > 255)) return jsonError("Choose a branch.",400);
       if(input.visibility !== undefined && input.visibility !== "private" && input.visibility !== "open") return jsonError("Choose who can read this thread.",400);
-      const routed=/^remy:(router|openrouter|openai):(.+)$/.exec(input.model ?? "");
-      if(routed) {
-        const access=publicModelAccess(await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).secrets(org)).find(p=>p.id===routed[1]);
-        if(input.provider!=="codex" || !access?.enabled || (routed[1]!=="openai" && !access.models.includes(routed[2])))return jsonError("Choose an enabled provider and model.",400);
-      }
+      const gatewayError=hostedGatewayError(input.provider,input.model,await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).secrets(org));
+      if(gatewayError)return jsonError(gatewayError,400);
       const key = `manual-task:${actor.id}:${input.requestId}`;
       const previous = await this.ctx.storage.get<{computerId:string; id:string}>(key);
       if (previous) return Response.json(previous,{status:201});

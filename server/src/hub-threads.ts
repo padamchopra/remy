@@ -1,6 +1,6 @@
 import { hubThreadBranch } from "./hub-thread-branch.js";
 import { prepareHostedBranch } from "./hosted-branch.js";
-import { hostedGatewayModels } from "./hosted-models.js";
+import { hostedGatewayAvailable } from "./hosted-models.js";
 import { setTaskEnvironment } from "./environments.js";
 import {
   canReadThread,
@@ -119,7 +119,7 @@ export async function handleHubThreadRequest(
       )
         return fail(400, "Choose who can read this thread.");
       if(typeof input.model === "string" && input.model.startsWith("remy:")) {
-        if(input.provider !== "codex" || !(hostedGatewayModels().some(model=>model.value===input.model) || input.model.startsWith("remy:openai:") && !!process.env.OPENAI_API_KEY)) return fail(400,"This model provider is unavailable on this computer.");
+        if(input.provider !== "codex" || !hostedGatewayAvailable(input.model)) return fail(400,"This model provider is unavailable on this computer.");
       }
       if (input.branch !== undefined) {
         if (typeof input.branch !== "string" || !input.branch || input.branch.length > 255) return fail(400, "Choose a branch.");

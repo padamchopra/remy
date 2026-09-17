@@ -279,7 +279,7 @@ test("a routine's last attempt keeps its day and time", options, async () => {
 test("hub notification taps preserve organization ownership and never open a local thread", options, async () => {
   const { hubNotificationUrl, notificationDestination } = await load("lib/navigation-destination.ts");
   const data = { hubUrl: "https://teams.example.com", organizationId: "release", computerId: "studio", threadId: "thread-1" };
-  assert.equal(hubNotificationUrl(data), "https://teams.example.com/#/threads/thread-1?organization=release&computer=studio");
+  assert.equal(hubNotificationUrl(data), "https://teams.example.com/threads/thread-1");
   assert.equal(notificationDestination(data), undefined);
   assert.equal(hubNotificationUrl({ ...data, hubUrl: "http://unsafe.example.com" }), undefined);
   assert.equal(hubNotificationUrl({ ...data, hubUrl: "https://user:password@teams.example.com" }), undefined);

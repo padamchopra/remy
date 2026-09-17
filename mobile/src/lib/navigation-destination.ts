@@ -78,8 +78,9 @@ export function hubNotificationUrl(data: unknown): string | undefined {
   try {
     const url = new URL(row.hubUrl);
     if (url.protocol !== "https:" || url.username || url.password) return undefined;
-    url.pathname = "/"; url.search = "";
-    url.hash = `/threads/${encodeURIComponent(row.threadId)}?${new URLSearchParams({ organization: row.organizationId, computer: row.computerId })}`;
+    url.pathname = `/threads/${encodeURIComponent(row.threadId)}`;
+    url.search = "";
+    url.hash = "";
     return url.toString();
   } catch { return undefined; }
 }

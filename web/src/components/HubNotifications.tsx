@@ -58,8 +58,6 @@ export function HubNotifications({
       route: {
         name: "threads",
         organizationId: organizationIds ? "all" : organizationId,
-        ...(organizationIds ? {ownerOrganizationId:item.ownerOrganizationId} : {}),
-        computerId: item.computerId,
         threadId: item.threadId,
       },
     });

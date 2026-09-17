@@ -21,6 +21,15 @@ export function modelAccess(secrets:Record<string,string>) {
 export function publicModelAccess(secrets:Record<string,string>) {
   return modelAccess(secrets).map(({apiKey,...value})=>({...value,configured:!!apiKey}));
 }
+/// Cloud thread start honors the computer's enabled gateways. The fetched
+/// catalogue is for picking, not a second allowlist that can reject an
+/// enabled OpenRouter or Router model the composer already showed.
+export function hostedGatewayError(provider:string | undefined, model:string | undefined, secrets:Record<string,string>): string | undefined {
+  const routed=/^remy:(router|openrouter|openai):(.+)$/.exec(model ?? "");
+  if(!routed)return;
+  const access=publicModelAccess(secrets).find(entry=>entry.id===routed[1]);
+  if(provider!=="codex" || !access?.enabled || !access.configured)return "Choose an enabled provider and model.";
+}
 export function modelEnvironment(secrets:Record<string,string>) {
   const result:Record<string,string>={};
   for(const value of modelAccess(secrets)) {

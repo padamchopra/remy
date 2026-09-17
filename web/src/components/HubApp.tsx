@@ -325,7 +325,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
     : [];
   const paneLabel = links.find((link) => link.selected)?.label ?? "Remy";
   const showPaneHeader =
-    !(route.name === "threads" && (route.threadId || (isAll && route.ownerOrganizationId))) &&
+    !(route.name === "threads" && route.threadId) &&
     !(route.name === "workspaces" && route.workspaceId);
   const paneCrumbs = route.name === "settings"
     ? [{ label: "Settings" }, { label: paneLabel }]
@@ -467,9 +467,9 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                       </p>
                     )}
                     <SidebarMenu>
-                      {isAll ? contexts.map(owner => <HubThreadSidebar key={owner.id} organizationId={owner.id} threads={threads.filter(t => t.access.organizationId === owner.id)} selected={route.name === "threads" ? {id:route.threadId,computerId:route.computerId} : undefined} onSelect={thread => navigate({name:"threads",organizationId:"all",ownerOrganizationId:owner.id,computerId:thread.computerId,threadId:thread.id})} />) : <HubThreadSidebar organizationId={organizationId ?? "personal"} threads={threads}
-                        selected={route.name === "threads" ? {id: route.threadId, computerId: route.computerId} : undefined}
-                        onSelect={thread => navigate({name: "threads", organizationId, computerId: thread.computerId, threadId: thread.id})} />}
+                      {isAll ? contexts.map(owner => <HubThreadSidebar key={owner.id} organizationId={owner.id} threads={threads.filter(t => t.access.organizationId === owner.id)} selected={route.name === "threads" ? {id:route.threadId} : undefined} onSelect={thread => navigate({name:"threads",organizationId:"all",threadId:thread.id})} />) : <HubThreadSidebar organizationId={organizationId ?? "personal"} threads={threads}
+                        selected={route.name === "threads" ? {id: route.threadId} : undefined}
+                        onSelect={thread => navigate({name: "threads", organizationId, threadId: thread.id})} />}
                     </SidebarMenu>
                   </SidebarGroupContent>
                 </SidebarGroup>}
@@ -548,7 +548,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           ) : route.name === "workspaces" && !route.workspaceId ? (
             <div className="min-h-0 flex-1 overflow-auto"><Deferred open><WorkspacesList organizations={contexts} filter={organizationId ?? "all"} onOpenWorkspace={(owner,id) => navigate({name:"workspaces",workspaceId:id,organizationId:isAll ? "all" : owner,...(isAll ? {ownerOrganizationId:owner} : {})})} onAdded={owner => {if (!isAll && owner !== organizationId) navigate({name:"workspaces",organizationId:owner});}} /></Deferred></div>
           ) : isAll ? (
-            <Deferred open><AllView organizations={contexts} route={route} userId={profile?.id ?? ""} navigate={navigate} /></Deferred>
+            <Deferred open><AllView organizations={contexts} route={route} userId={profile?.id ?? ""} navigate={navigate} threads={threads} threadsLoaded={threadsLoaded} /></Deferred>
           ) : (
             <div key={organization.id} className="flex min-h-0 flex-1 flex-col">
               <div hidden={section !== "general"} className="min-h-0 overflow-auto px-5 py-6"><Deferred open={section === "general"}><GeneralSettings organizationId={organization.id} showModelDefault={organization.personal === true} /></Deferred></div>
@@ -563,9 +563,6 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                     showNavigation={false}
                     canManageWorkspaces={organization.role !== "member"}
                     organizationId={organization.id}
-                    computerId={
-                      route.name === "threads" ? route.computerId : undefined
-                    }
                     threadId={
                       route.name === "threads" ? route.threadId : undefined
                     }

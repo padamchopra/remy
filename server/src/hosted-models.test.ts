@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {hostedGatewayModels,hostedModelSelection} from "./hosted-models.js";
+import {hostedGatewayAvailable,hostedGatewayModels,hostedModelSelection} from "./hosted-models.js";
 test("gateway models coexist and resolve only the selected provider",()=>{
   const names=["OPENROUTER_API_KEY","OPENROUTER_MODELS","RAMP_ROUTER_API_KEY","RAMP_ROUTER_MODELS"];
   const before=names.map(name=>process.env[name]);
@@ -13,6 +13,7 @@ test("gateway models coexist and resolve only the selected provider",()=>{
     assert.deepEqual(hostedModelSelection("remy:router:vendor/model"),{model:"vendor/model",provider:"remy_router"});
     assert.deepEqual(hostedModelSelection("remy:openrouter:vendor/model"),{model:"vendor/model",provider:"remy_openrouter"});
     assert.deepEqual(hostedModelSelection("gpt-5.6-sol"),{model:"gpt-5.6-sol",provider:undefined});
+    assert.equal(hostedGatewayAvailable("remy:openrouter:openrouter/auto"),true);
     delete process.env.OPENROUTER_API_KEY;
     assert.throws(()=>hostedModelSelection("remy:openrouter:vendor/model"),/unavailable/);
   }finally{names.forEach((name,i)=>{if(before[i]===undefined)delete process.env[name];else process.env[name]=before[i];});}

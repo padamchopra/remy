@@ -188,6 +188,54 @@ test("thread creation checks out the requested branch before creating and dedupl
   deleteChat(thread.id);
 });
 
+test("hosted OpenRouter starts even when the selected model is not in the fetched catalogue", async () => {
+  const { addWorkspace } = await import("./workspaces.js");
+  const cwd = mkdtempSync(join(state, "gateway-"));
+  const workspace = await addWorkspace("Gateway QA", cwd);
+  const before = {
+    key: process.env.OPENROUTER_API_KEY,
+    models: process.env.OPENROUTER_MODELS,
+  };
+  process.env.OPENROUTER_API_KEY = "private-openrouter";
+  process.env.OPENROUTER_MODELS = JSON.stringify(["vendor/model"]);
+  try {
+    const accepted = await handleHubThreadRequest(
+      "org",
+      owner,
+      "POST",
+      "/hub/threads",
+      {
+        workspaceId: workspace.id,
+        provider: "codex",
+        model: "remy:openrouter:openrouter/auto",
+        hubTaskId: "openrouter-qa",
+      },
+      noAttachment,
+    );
+    assert.equal(accepted.status, 201);
+    const thread = (await accepted.json()) as { id: string };
+    assert.equal(getChat(thread.id)?.model, "remy:openrouter:openrouter/auto");
+    deleteChat(thread.id);
+    const refused = await handleHubThreadRequest(
+      "org",
+      owner,
+      "POST",
+      "/hub/threads",
+      {
+        workspaceId: workspace.id,
+        provider: "claude",
+        model: "remy:openrouter:openrouter/auto",
+      },
+      noAttachment,
+    );
+    assert.equal(refused.status, 400);
+  } finally {
+    if (before.key === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = before.key;
+    if (before.models === undefined) delete process.env.OPENROUTER_MODELS;
+    else process.env.OPENROUTER_MODELS = before.models;
+  }
+});
 
 test("thread snapshots retain the confirmed branch", async () => {
   execFileSync("git", ["init", "-b", "feature/snapshot", state], {stdio: "pipe"});
