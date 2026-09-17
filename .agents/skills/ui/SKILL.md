@@ -58,7 +58,11 @@ GOOD
 
 `Palette.tsx` is the reference for a searchable list, `AppSidebar.tsx` for app chrome, and `PathPicker.tsx` for choosing a folder.
 
-A composed screen assembles primitives; it never replaces one that exists. A control that appears on two screens moves into its own module rather than being copied — `ComposerMenu.tsx` and `PathPicker.tsx` are shared this way.
+A composed screen assembles primitives; it never replaces one that exists. A control that appears on two screens moves into its own module rather than being copied — `ComposerMenu.tsx`, `PathPicker.tsx`, and `ThreadMenu.tsx` are shared this way.
+
+## Sidebar row menus
+
+Thread rows in the app sidebar use `ThreadMenu`: right-click is a `ContextMenu`, and the hover ⋯ is the same items as a `DropdownMenu`. Hosted `HubThreadSidebar` and Mac `AppSidebar` both render that one component so the menu cannot drift. Navigation items in those menus use `data-link`.
 
 ## First paint
 

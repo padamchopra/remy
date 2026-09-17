@@ -477,9 +477,10 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                       </p>
                     )}
                     <SidebarMenu>
-                      {isAll ? contexts.map(owner => <HubThreadSidebar key={owner.id} organizationId={owner.id} threads={threads.filter(t => t.access.organizationId === owner.id)} selected={route.name === "threads" ? {id:route.threadId} : undefined} onSelect={thread => navigate({name:"threads",organizationId:"all",threadId:thread.id})} />) : <HubThreadSidebar organizationId={organizationId ?? "personal"} threads={threads}
+                      {isAll ? contexts.map(owner => <HubThreadSidebar key={owner.id} organizationId={owner.id} threads={threads.filter(t => t.access.organizationId === owner.id)} selected={route.name === "threads" ? {id:route.threadId} : undefined} onSelect={thread => navigate({name:"threads",organizationId:"all",threadId:thread.id})} onOpenWorkspace={workspaceId => navigate({name:"workspaces",workspaceId,organizationId:"all",ownerOrganizationId:owner.id})} />) : <HubThreadSidebar organizationId={organizationId ?? "personal"} threads={threads}
                         selected={route.name === "threads" ? {id: route.threadId} : undefined}
-                        onSelect={thread => navigate({name: "threads", organizationId, threadId: thread.id})} />}
+                        onSelect={thread => navigate({name: "threads", organizationId, threadId: thread.id})}
+                        onOpenWorkspace={workspaceId => navigate({name:"workspaces",workspaceId,organizationId})} />}
                     </SidebarMenu>
                   </SidebarGroupContent>
                 </SidebarGroup>}

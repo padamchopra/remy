@@ -125,7 +125,26 @@ test("thread reads, joins and mutations enforce both organization and member acc
     200,
   );
   assert.equal((await route(teammate, "GET")).status, 200);
-  deleteChat(chat.id);
+  assert.equal((await route(owner, "PATCH", "", { pinned: true })).status, 200);
+  assert.equal(getChat(chat.id)?.pinned, true);
+  assert.equal((await route(owner, "POST", "archive")).status, 200);
+  assert.equal(getChat(chat.id), undefined);
+});
+
+test("hosted delete removes the thread and its access record", async () => {
+  const chat = createChat({ cwd: state });
+  shareHubThread(chat.id, "org", owner, "manual");
+  const response = await handleHubThreadRequest(
+    "org",
+    owner,
+    "DELETE",
+    `/hub/threads/${chat.id}`,
+    {},
+    noAttachment,
+  );
+  assert.equal(response.status, 200);
+  assert.equal(getChat(chat.id), undefined);
+  assert.equal(hubThreadSnapshot(chat.id, "org"), undefined);
 });
 
 test("a retried prompt records its authenticated member once in durable storage", async () => {
