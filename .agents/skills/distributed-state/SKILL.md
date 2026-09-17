@@ -35,7 +35,7 @@ Do not put a peer token in the renderer or widen the loopback bind. Only the nat
 
 ## Hosted thread start uses the computer's providers
 
-A hosted new thread runs on the computer the composer chose. That computer's enabled providers are the start allowlist: org model access for a cloud computer, the Mac's advertised providers for a paired computer. If OpenRouter (or another gateway) is enabled there, start accepts the selected model. Do not reject it because a fetched catalogue is stale, incomplete, or missing a default such as `openrouter/auto`.
+A hosted new thread runs on the computer the composer chose. That computer's enabled providers are the start allowlist: org model access for a cloud computer, the Mac's advertised providers for a paired computer. If OpenRouter (or another gateway) is enabled there, start accepts the selected model. Do not reject it because a fetched catalogue is stale, incomplete, or missing a default such as `openrouter/auto`. Normalize a gateway provider such as `openrouter` onto Codex plus a `remy:` model before the allowlist; a missing runtime provider is not a refusal when the model already names that gateway.
 
 BAD
 ```text

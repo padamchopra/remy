@@ -149,7 +149,7 @@ try {
           "/api/personal": { personal },
           "/api/organizations": { organizations: [team] },
           [base]: { organization: org },
-          [`${base}/threads`]: { threads: process.env.QA_SCOPE_ONLY === "1" ? [{id:`${org.id}-thread`,computerId:`${org.id}-computer`,revision:1,stale:!org.personal,observedAt:Date.now(),access:{organizationId:org.id,owner:{id:"reader",label:"Reader"},participants:[],visibility:"private"},detail:{id:`${org.id}-thread`,title:org.personal?"Personal thread":"Studio thread",state:"idle",provider:"codex",entries:[]}}] : startedThread && startedThread.access.organizationId === org.id ? [startedThread]:[], cursor: 0, member: { id: "reader", role: "owner" } },
+          [`${base}/threads`]: { threads: process.env.QA_SCOPE_ONLY === "1" ? [{id:`${org.id}-thread`,computerId:`${org.id}-computer`,revision:1,stale:!org.personal,observedAt:Date.now(),access:{organizationId:org.id,owner:{id:"reader",label:"Reader"},participants:[],visibility:"private"},detail:{id:`${org.id}-thread`,title:org.personal?"Personal thread":"Studio thread",state:"idle",provider:"codex",entries:[]}}, ...(org.personal ? [{id:"cloud-thread",computerId:"sprite-gone",revision:1,stale:true,observedAt:Date.now(),access:{organizationId:org.id,owner:{id:"reader",label:"Reader"},participants:[],visibility:"private"},detail:{id:"cloud-thread",title:"Cloud thread",state:"idle",provider:"codex",model:"remy:openrouter:openrouter/auto",entries:[]}}] : [])] : startedThread && startedThread.access.organizationId === org.id ? [startedThread]:[], cursor: 0, member: { id: "reader", role: "owner" } },
           [`${base}/computers`]: { computers: process.env.QA_SCOPE_ONLY === "1" ? [{ computerId: `${org.id}-computer`, name: org.personal ? "Personal Mac" : "Studio Mac", icon: "laptop", ownership: "personal", availability: org.personal ? "available" : "offline", access: { mode: "owner" }, canUse: Boolean(org.personal), canManage: false, capabilities: { workspaces: [] } }] : connected ? [{ computerId: "studio", name: computerName, icon: "laptop", ownership: "personal", availability: online ? "online" : "offline", access: { mode: "owner" }, canUse: online, canManage: false, capabilities: { workspaces: [] } }] : [] },
           [`${base}/computers/options`]: { role: "owner", members: [], teams: [] },
           [`${base}/hosted`]: { settings: { enabled: cloudEnabled, provider: "fly-sprites", region: "", cpu: 1, memoryMiB: 2048, maxComputers: 5, idleMinutes: 12 }, secretNames: [], connections: [...connections], enabledProviders: [...enabledProviders], available },
@@ -244,12 +244,23 @@ try {
             await personalThread.waitFor();
             await personalThread.click({button:"right"});
             await page.getByRole("menuitem",{name:"Copy thread link",exact:true}).waitFor();
-            assert.equal(await page.getByRole("menuitem",{name:"Pin thread",exact:true}).count(),1);
-            assert.equal(await page.getByRole("menuitem",{name:"Rename…",exact:true}).count(),1);
-            assert.equal(await page.getByRole("menuitem",{name:"Archive thread",exact:true}).count(),1);
-            assert.equal(await page.getByRole("menuitem",{name:"Delete thread…",exact:true}).count(),1);
+            assert.equal(await page.getByRole("menuitem",{name:"Pin thread",exact:true}).isDisabled(),false);
+            assert.equal(await page.getByRole("menuitem",{name:"Rename…",exact:true}).isDisabled(),false);
+            assert.equal(await page.getByRole("menuitem",{name:"Archive thread",exact:true}).isDisabled(),false);
+            assert.equal(await page.getByRole("menuitem",{name:"Delete thread…",exact:true}).isDisabled(),false);
             assert.equal(await page.getByRole("menuitem",{name:"Start subthread…",exact:true}).count(),0,"Hosted threads cannot start a subthread");
             if(artifacts && !returning) await page.screenshot({path:`${artifacts}/hosted-thread-context-menu.png`});
+            await page.getByRole("menuitem",{name:"Rename…",exact:true}).click();
+            await page.getByRole("dialog").getByText("Rename thread",{exact:true}).waitFor();
+            await page.keyboard.press("Escape");
+            await page.getByRole("dialog").waitFor({state:"hidden"});
+            const cloudThread=page.locator(".sidebar-thread").filter({hasText:"Cloud thread"});
+            await cloudThread.click({button:"right"});
+            await page.getByRole("menuitem",{name:"Rename…",exact:true}).waitFor();
+            assert.equal(await page.getByRole("menuitem",{name:"Rename…",exact:true}).isDisabled(),false);
+            assert.equal(await page.getByRole("menuitem",{name:"Archive thread",exact:true}).isDisabled(),false);
+            assert.equal(await page.getByRole("menuitem",{name:"Delete thread…",exact:true}).isDisabled(),false);
+            if(artifacts && !returning) await page.screenshot({path:`${artifacts}/hosted-cloud-thread-menu.png`});
             await page.keyboard.press("Escape");
             await personalThread.hover();
             await page.getByRole("button",{name:"Thread actions for Personal thread"}).click();
@@ -423,6 +434,8 @@ try {
           await page.getByLabel("Thread transcript",{exact:true}).waitFor();
           assert.ok(Date.now()-at<1500,"Thread view must open before provisioning returns");
           assert.equal(threadInput.computerId,"cloud:fly-sprites","Thread creation submits the displayed computer");
+          assert.equal(threadInput.provider,"codex");
+          assert.equal(threadInput.model,"remy:openrouter:openrouter/auto");
           await page.getByLabel("Starting thread",{exact:true}).waitFor();
           await page.getByRole("tab", {name:"Hello startup QA", exact:true}).waitFor();
           assert.equal(await page.getByRole("heading", {name:"Threads", exact:true}).count(), 0);

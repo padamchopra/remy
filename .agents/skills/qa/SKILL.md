@@ -75,6 +75,8 @@ For shared local and hosted UI, exercise runtime selection with both a fresh bro
 
 `web/scripts/hosted-runtime-check.mjs` is the built-app regression for this boundary, run by `.github/workflows/hub.yml`. Its controlled API responses prove client behavior; use the isolated hosted setup for real authentication and backend integration, and report external provider steps separately.
 
+A shared menu check that only counts items will miss a fully disabled hosted menu. Assert `isDisabled()` on pin, rename, archive, and delete, including a stale cloud thread whose computer is missing from `/computers`.
+
 BAD
 ```text
 The sign-in screen loads in a fresh browser. The web tests pass.

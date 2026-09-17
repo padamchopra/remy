@@ -1,5 +1,5 @@
 import { startHubThread } from "@/lib/hub-thread-start";
-import { hostedModels } from "@/lib/hub-models";
+import { hostedExecutionChoice, hostedModels } from "@/lib/hub-models";
 import { resolveModelDefault } from "@/lib/model-defaults";
 import { useHubModelDefaults } from "./HubModelDefault";
 import { BranchPicker } from "./BranchPicker";
@@ -145,7 +145,7 @@ export function HubThreadComposer({
   const cataloguePending = usingCloud && !modelAccess.value && !modelAccess.error;
   const chosenProvider=modelCatalogue.find(p=>p.id===modelChoice.provider);
   const choiceValid=chosenProvider?.models.some(m=>m.value===modelChoice.model);
-  const executionChoice=choiceValid ? {provider:modelChoice.provider==="anthropic"?"claude":["openai","router","openrouter"].includes(modelChoice.provider)?"codex":modelChoice.provider,model:["openai","router","openrouter"].includes(modelChoice.provider)?`remy:${modelChoice.provider}:${modelChoice.model}`:modelChoice.model} : {};
+  const executionChoice=choiceValid ? hostedExecutionChoice(modelChoice) : {};
   const cloudConnections = useHubResource<{settings?:{provider?:string};enabledProviders?: string[]}>(organizationId, "/hosted");
   const cloudOptions = useMemo(() => CLOUD_COMPUTERS.filter(c => cloudConnections.value?.enabledProviders?.includes(c.provider)), [cloudConnections.value?.enabledProviders]);
   const workspaceChoices = workspaceOptions ?? workspaces.map((item) => ({

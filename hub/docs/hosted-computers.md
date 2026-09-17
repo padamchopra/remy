@@ -10,7 +10,7 @@ Computers → Model access gives each provider its own key field. Keys autosave 
 
 Choose the provider and model when starting a thread. Anthropic, OpenAI, Router.com and OpenRouter remain independent; gateway connections do not override one another or ChatGPT. Model catalogs for gateways load when a key is saved. Cloud threads retain their explicit choice when resumed. Existing computers keep their startup credentials; newly allocated task computers receive the current enabled connections.
 
-OpenRouter uses its [Responses API](https://openrouter.ai/docs/api/api-reference/responses/create-responses). Both the hub and computer runtime must be updated before using this integration. Real model execution requires a valid key.
+OpenRouter uses its [Responses API](https://openrouter.ai/docs/api/api-reference/responses/create-responses). Real model execution requires a valid key.
 
 ## Router.com (unreleased)
 
