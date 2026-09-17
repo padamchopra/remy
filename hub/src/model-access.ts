@@ -23,15 +23,18 @@ export function publicModelAccess(secrets:Record<string,string>) {
 }
 /// Maps a composer or stored gateway choice onto Codex plus a `remy:` model.
 /// OpenRouter auto and other defaults are not a second catalogue allowlist.
-export function hostedStartChoice(provider:string | undefined, model:string | undefined): {provider:string | undefined; model:string | undefined} {
+export function hostedStartChoice(provider:string | undefined, model:string | undefined): {provider?: string; model?: string} {
   const routed=/^remy:(router|openrouter|openai):(.+)$/.exec(model ?? "");
-  if(routed)return {provider:"codex", model};
-  if(provider==="anthropic")return {provider:"claude", model};
+  if(routed && model)return {provider:"codex", model};
+  if(provider==="anthropic")return {provider:"claude", ...(model !== undefined ? {model} : {})};
   if(provider==="openai" || provider==="router" || provider==="openrouter") {
-    if(!model)return {provider:"codex", model};
+    if(!model)return {provider:"codex"};
     return {provider:"codex", model: model.startsWith("remy:") ? model : `remy:${provider}:${model}`};
   }
-  return {provider, model};
+  return {
+    ...(provider !== undefined ? {provider} : {}),
+    ...(model !== undefined ? {model} : {}),
+  };
 }
 /// Cloud thread start honors the computer's enabled gateways. The fetched
 /// catalogue is for picking, not a second allowlist that can reject an
