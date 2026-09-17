@@ -60,6 +60,12 @@ GOOD
 
 A composed screen assembles primitives; it never replaces one that exists. A control that appears on two screens moves into its own module rather than being copied — `ComposerMenu.tsx` and `PathPicker.tsx` are shared this way.
 
+## First paint
+
+Composer, model, computer, and branch controls keep their size and label from first paint. They do not shimmer, jump layout, or swap a placeholder for a different-width string once they are on screen.
+
+The `shimmer` class is for text that has no settled value yet, not for a control whose choice is already known.
+
 ## Text containment
 
 Every flex or grid child that owns variable text must be able to shrink. Use `min-w-0` on the text-bearing flex child and `minmax(0, 1fr)` for the corresponding grid track; keep icons and trailing actions `shrink-0`.
