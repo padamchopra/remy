@@ -192,7 +192,7 @@ try {
           assert.equal(/Unavailable|Choosing computer/.test(first.model+first.computer),false);
           assert.equal(await composer.locator('[data-slot="skeleton"]').count(),0);
           await new Promise(resolve=>setTimeout(resolve,700));
-          for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot"}));}catch{}
+          for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"ready",cursor:0}));}catch{}
           await new Promise(resolve=>setTimeout(resolve,400));
           assert.deepEqual(await snapshot(),first,"Computer, model, and branch keep their first labels");
           await model.click();
@@ -213,8 +213,11 @@ try {
           await computer.getByText("Cloud · Fly.io Sprites",{exact:true}).waitFor();
           await computer.click();
           assert.equal(await page.getByRole("menuitem",{name:"Choose automatically",exact:true}).count(),0,"The composer always shows a concrete computer");
+          const saved=page.waitForResponse(r=>r.request().method()==="POST" && new URL(r.url()).pathname.endsWith("/routing/preference"));
           await page.getByRole("menuitem",{name:"Cloud · Modal",exact:true}).click();
-          await page.waitForFunction(()=>document.querySelector('[aria-label="Thread computer"]')?.getAttribute("disabled")===null);
+          await computer.getByText("Cloud · Modal",{exact:true}).waitFor();
+          assert.equal(await computer.getAttribute("aria-busy"),null);
+          await saved;
           assert.equal(preference,"cloud:modal","An explicit computer remains the workspace preference");
           assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);await context.close();console.log(`Explicit computer passed: ${returning?'saved local state':'fresh profile'}, ${mobile?'touch phone':'desktop'}.`);continue;
         }
@@ -531,10 +534,12 @@ try {
         await page.locator('[aria-label="Thread computer"]:not([disabled])').waitFor();
         const style=()=>control.evaluate(el=>{const s=getComputedStyle(el);return {tag:el.tagName,font:s.font,gap:s.gap,padding:s.padding,height:el.getBoundingClientRect().height};});
         const before=await style();
+        const saved=page.waitForResponse(r=>r.request().method()==="POST" && new URL(r.url()).pathname.endsWith("/routing/preference"));
         await control.click();await page.getByRole("menuitem",{name:"Cloud · Fly.io Sprites",exact:true}).click();
-        await page.locator('[aria-label="Thread computer"][aria-busy="true"]').waitFor();
+        await control.getByText("Cloud · Fly.io Sprites",{exact:true}).waitFor();
+        assert.equal(await control.getAttribute("aria-busy"),null);
         assert.deepEqual(await style(),before);
-        await page.locator('[aria-label="Thread computer"]:not([disabled])').waitFor();
+        await saved;
         assert.equal(preference,"cloud:fly-sprites");assert.deepEqual(await style(),before);
         await page.reload();await control.getByText("Cloud · Fly.io Sprites",{exact:true}).waitFor();
         failPreference=true;await control.click();await page.getByRole("menuitem",{name:"Cloud · Modal",exact:true}).click();
@@ -740,11 +745,14 @@ try {
         await page.reload();
         const computerStyle = () => page.getByLabel("Thread computer",{exact:true}).evaluate(el=>{ const s=getComputedStyle(el);return {tag:el.tagName,font:s.font,fontWeight:s.fontWeight,lineHeight:s.lineHeight,gap:s.gap,padding:s.padding,height:el.getBoundingClientRect().height}; });
         const normalStyle = await computerStyle();
-        await page.getByLabel("Thread computer",{exact:true}).click();
+        const computer=page.getByLabel("Thread computer",{exact:true});
+        const saved=page.waitForResponse(r=>r.request().method()==="POST" && new URL(r.url()).pathname.endsWith("/routing/preference"));
+        await computer.click();
         await page.getByRole("menuitem",{name:"Cloud · Modal",exact:true}).click();
-        await page.locator('[aria-label="Thread computer"][aria-busy="true"]').waitFor();
+        await computer.getByText("Cloud · Modal",{exact:true}).waitFor();
+        assert.equal(await computer.getAttribute("aria-busy"),null);
         assert.deepEqual(await computerStyle(),normalStyle,"Saving keeps the same computer control typography and spacing");
-        await page.waitForFunction(()=>document.querySelector('[aria-label="Thread computer"]')?.getAttribute("disabled")===null);
+        await saved;
         assert.equal(preference,"cloud:modal");
         const composer=page.getByRole("form",{name:"New thread",exact:true});
         await composer.getByRole("button",{name:"Model",exact:true}).click();

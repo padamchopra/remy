@@ -131,6 +131,7 @@ export function HubThreadComposer({
   const [pickedModel,setPickedModel]=useState<{workspaceId:string;choice:ModelChoice}>();
   const latchedDefaults = useRef(defaults.value);
   if (defaults.value) latchedDefaults.current = defaults.value;
+  useEffect(() => { latchedDefaults.current = undefined; }, [workspaceId, organizationId]);
   const resolvedDefaults = defaults.value ?? latchedDefaults.current;
   const inheritedModel = resolveModelDefault(resolvedDefaults?.workspace, resolvedDefaults?.remy, {provider:"",model:""}, resolvedDefaults?.computer);
   const modelChoice = pickedModel?.workspaceId === workspaceId ? pickedModel.choice : inheritedModel;
@@ -227,7 +228,7 @@ export function HubThreadComposer({
     return () => { cancelled = true; };
   }, [workspaceId, preferenceLoaded, loadBranches]);
   const modelAccessReady = !!modelAccess.value || !!modelAccess.error;
-  const defaultsReady = defaults.value !== undefined || !!defaults.error;
+  const defaultsReady = resolvedDefaults !== undefined || !!defaults.error;
   const toolbarReady = !!selected && defaultsReady && modelAccessReady && (!resolvingBranch || !!branch) && visibilityLoaded;
   const computerName = cloudOptions.find(c => c.id === selected)?.name ?? eligible.find(c => c.computerId === selected)?.name ?? (preferenceLoaded ? "Computer unavailable" : "");
   if (!catalogue.value)
@@ -263,7 +264,7 @@ export function HubThreadComposer({
           !selected ||
           !preferenceLoaded ||
           !visibilityLoaded ||
-          !defaults.value ||
+          !resolvedDefaults ||
           !message.trim() ||
           catalogue.stale ||
           ((usingCloud || !!modelChoice.provider) && !choiceValid)
@@ -280,7 +281,7 @@ export function HubThreadComposer({
     >
       <ThreadComposerEditor
         textarea={{ id: "hub-thread-message", maxLength: 64000, value: message, onChange: e => setMessage(e.target.value), required: true, disabled: false }}
-        canSend={!!memberId && !!workspace && !!selected && preferenceLoaded && visibilityLoaded && !!defaults.value && !!message.trim() && !catalogue.stale && (!(usingCloud || modelChoice.provider) || !!choiceValid)}
+        canSend={!!memberId && !!workspace && !!selected && preferenceLoaded && visibilityLoaded && !!resolvedDefaults && !!message.trim() && !catalogue.stale && (!(usingCloud || modelChoice.provider) || !!choiceValid)}
         busy={false} sendLabel="Send"
         controls={toolbarReady
           ? <ModelPickerButton variant="composer" value={modelChoice} onPick={choice=>setPickedModel({workspaceId,choice})} catalogue={modelCatalogue} cataloguePending={cataloguePending} disabled={false} />
@@ -291,14 +292,13 @@ export function HubThreadComposer({
         context={toolbarReady ? <>
           <ComposerMenu ariaLabel="Thread computer" icon={usingCloud ? Cloud : Laptop}
             label={computerName || "Computer unavailable"}
-            value={selected} disabled={false} pending={!preferenceLoaded}
+            value={selected} disabled={false} pending={false}
             options={[...cloudOptions.map(c => ({ value: c.id, label: c.name, icon: Cloud })), ...eligible.map(c => ({ value: c.computerId, label: c.name, icon: Laptop }))]}
             onChange={async v => {
               const previous = selected;
-              select(v); setPreferenceLoaded(false); setError("");
+              select(v); setError("");
               try { await hubRequest(`${base}/routing/preference`, "POST", { workspaceId, computerId: v }); }
               catch { select(previous); toast.error("Your computer choice could not be saved. Try again."); }
-              finally { setPreferenceLoaded(true); }
             }} />
           {sharingControl ?? (!isPersonal && <ComposerMenu ariaLabel="Thread sharing" icon={visibility === "open" ? Users : Lock}
             label={visibility === "open" ? "Shared" : "Private"} value={visibility} pending={false}
