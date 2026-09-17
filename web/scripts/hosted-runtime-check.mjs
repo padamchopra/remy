@@ -12,7 +12,16 @@ const team = { id: "team", name: "Studio", personal: false, role: "owner" };
 try {
   for (const returning of [false, true]) {
     for (const mobile of [false, true]) {
-      const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1280, height: 850 }, isMobile: mobile, hasTouch: mobile });
+      const captureComposer = artifacts && process.env.QA_COMPOSER_ONLY === "1" && !returning && !mobile;
+      const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1280, height: 850 }, isMobile: mobile, hasTouch: mobile, ...(captureComposer ? { recordVideo: { dir: artifacts, size: { width: 1280, height: 850 } } } : {}) });
+      if (captureComposer) await context.addInitScript(() => {
+        window.addEventListener("pointerdown", (event) => {
+          const mark = document.createElement("div");
+          mark.style.cssText = `position:fixed;left:${event.clientX - 14}px;top:${event.clientY - 14}px;width:28px;height:28px;border:2px solid #ea580c;border-radius:50%;pointer-events:none;z-index:2147483647;`;
+          document.body.appendChild(mark);
+          setTimeout(() => mark.remove(), 450);
+        }, true);
+      });
       if (returning) await context.addInitScript(() => localStorage.setItem("remy.warm-cache", JSON.stringify({
         version: 1, at: Date.now(),
         servers: [{ id: "local", name: "Build Mac", url: "/api", local: true, online: true }],
@@ -195,16 +204,20 @@ try {
           for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"ready",cursor:0}));}catch{}
           await new Promise(resolve=>setTimeout(resolve,400));
           assert.deepEqual(await snapshot(),first,"Computer, model, and branch keep their first labels");
+          if(artifacts)await page.screenshot({path:`${artifacts}/composer-chips-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
           await model.click();
           await page.getByRole("option",{name:/openrouter\/auto/}).waitFor();
           await page.getByRole("option",{name:/test\/model-a/}).waitFor();
           assert.equal(await page.getByText("No model by that name.",{exact:true}).count(),0);
+          if(artifacts)await new Promise(resolve=>setTimeout(resolve,500));
+          if(artifacts)await page.screenshot({path:`${artifacts}/composer-picker-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
           await page.getByRole("option",{name:/test\/model-a/}).click();
           await model.getByText("test/model-a",{exact:true}).waitFor();
           await model.click();
           await page.getByPlaceholder("Search providers and models",{exact:true}).fill("OpenRouter");
           await page.getByRole("option",{name:/test\/model-b/}).click();
           await model.getByText("test/model-b",{exact:true}).waitFor();
+          if(artifacts)await new Promise(resolve=>setTimeout(resolve,800));
           assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);
           await context.close();console.log(`Composer model picker passed: ${returning?'saved local state':'fresh profile'}, ${mobile?'touch phone':'desktop'}.`);continue;
         }
