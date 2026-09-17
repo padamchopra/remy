@@ -1,12 +1,19 @@
 import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 const state = mkdtempSync(join(tmpdir(), "remy-hub-threads-"));
 process.env.MC_CONFIG_DIR = state;
+const binDir = mkdtempSync(join(tmpdir(), "remy-hub-threads-bin-"));
+for (const command of ["claude", "codex", "agent"]) {
+  const path = join(binDir, command);
+  writeFileSync(path, "#!/bin/sh\nexit 0\n");
+  chmodSync(path, 0o755);
+}
+process.env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
 const { createChat, deleteChat, getChat } = await import("./chat.js");
 const { shareHubThread, hubThreadSnapshot, handleHubThreadRequest } =
   await import("./hub-threads.js");
@@ -15,7 +22,10 @@ const teammate = { id: "grace", label: "Grace" };
 const noAttachment = async () => {
   throw new Error("Unexpected image transfer");
 };
-test.after(() => rmSync(state, { recursive: true, force: true }));
+test.after(() => {
+  rmSync(state, { recursive: true, force: true });
+  rmSync(binDir, { recursive: true, force: true });
+});
 
 test("manual starts are private; trusted automatic and external starts default open", () => {
   for (const source of ["manual", "automatic", "external"] as const) {
