@@ -209,7 +209,17 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
       const values = new Map<string, HubThread[]>();
       const settled = new Set<string>();
       const emit = () => {
-        setThreads([...values.values()].flat().sort((a,b) => Number(b.detail.updatedAt ?? b.observedAt) - Number(a.detail.updatedAt ?? a.observedAt)));
+        const seen = new Set<string>();
+        setThreads(
+          [...values.values()]
+            .flat()
+            .filter((thread) => {
+              if (seen.has(thread.id)) return false;
+              seen.add(thread.id);
+              return true;
+            })
+            .sort((a,b) => Number(b.detail.updatedAt ?? b.observedAt) - Number(a.detail.updatedAt ?? a.observedAt)),
+        );
         setThreadsLoaded(settled.size === contexts.length);
       };
       const off = contexts.map(owner => watchHubThreads(owner.id, value => { values.set(owner.id,value); settled.add(owner.id); emit(); }, message => { settled.add(owner.id); setError(`${owner.name}: ${message}`); emit(); }));
