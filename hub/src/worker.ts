@@ -667,7 +667,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       if (tail === "model-access" || tail.startsWith("model-access/")) {
         const member=await organizations.member(organizationId,identity.userId);
         const store=new HostedSettingsStore(env.DB,()=>env.AUTH_SECRET.get());
-        if(tail === "model-access" && request.method === "GET") return Response.json({providers:publicModelAccess(await store.secrets(organizationId))});
+        if(tail === "model-access" && request.method === "GET") return Response.json({providers:publicModelAccess(await store.executionSecrets(organizationId))});
         const id=tail.slice("model-access/".length) as ModelAccessId;
         if(!modelAccessIds.includes(id) || request.method !== "PATCH") return jsonError("This model action is unavailable.",405);
         if(member.role === "member" || identity.clientKind === "computer") return jsonError("Only an administrator can configure model access.",403);
@@ -739,7 +739,12 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         const workspaceId = hostedMatch[1] ? decodeURIComponent(hostedMatch[1]) : "";
         if (workspaceId) await organizations.workspace(organizationId, identity.userId, workspaceId);
         const settings = new HostedSettingsStore(env.DB, () => env.AUTH_SECRET.get());
-        if (request.method === "GET" && (!workspaceId || hostedMatch[2] === "settings")) return Response.json({ settings: await settings.settings(organizationId,workspaceId), secretNames: member.role !== "member" ? (await settings.secretNames(organizationId)).filter(name => !name.startsWith("cloud:") && !name.startsWith("model:") && !name.startsWith("access:")) : [], enabledProviders: await settings.enabledProviders(organizationId), routerConfigured: (await settings.secretNames(organizationId)).includes("model:router"), openrouterConfigured: (await settings.secretNames(organizationId)).includes("model:openrouter"), connections: (await settings.secretNames(organizationId)).filter(name => name.startsWith("cloud:")).map(name => name.slice(6)), available: !!env.HOSTED_IMAGE && (!!env.PROVIDER_RUNTIME || (!!env.HOSTED_CONTROL_URL && !!env.HOSTED_CONTROL_TOKEN)) });
+        if (request.method === "GET" && (!workspaceId || hostedMatch[2] === "settings")) {
+          const names = await settings.secretNames(organizationId);
+          const enabledProviders = await settings.enabledProviders(organizationId);
+          const access = publicModelAccess(await settings.executionSecrets(organizationId));
+          return Response.json({ settings: await settings.settings(organizationId,workspaceId), secretNames: member.role !== "member" ? names.filter(name => !name.startsWith("cloud:") && !name.startsWith("model:") && !name.startsWith("access:")) : [], enabledProviders, routerConfigured: !!access.find(entry => entry.id === "router")?.configured, openrouterConfigured: !!access.find(entry => entry.id === "openrouter")?.configured, connections: names.filter(name => name.startsWith("cloud:")).map(name => name.slice(6)), available: !!env.HOSTED_IMAGE && (!!env.PROVIDER_RUNTIME || (!!env.HOSTED_CONTROL_URL && !!env.HOSTED_CONTROL_TOKEN)) });
+        }
         if (request.method === "PUT" && (!workspaceId || hostedMatch[2] === "settings")) {
           if (member.role === "member") return jsonError("Ask an admin to change hosted computers.",403);
           const input = await body<{settings?:unknown;secret?:{name?:unknown;value?:unknown}}>(request);
@@ -1783,11 +1788,11 @@ export class HubCoordinator {
         await this.ctx.storage.put(`hosted-git-owner:${state.computerId}`, {userId: taskOwner, workspaceId: workspace.id});
       }
       const actual=await this.computers.computer(org,state.computerId);
-      const environment={...modelSecrets(await settings.secrets(org)),MC_CONFIG_DIR:"/data/remy",REMY_HOSTED_BOOTSTRAP:JSON.stringify({registration:{...actual,hubUrl:this.env.BETTER_AUTH_URL},privateKey:keys.privateKey,...(state.taskId?{taskId:state.taskId}:{}),workspace:{id:workspace.id,name:workspace.name,origin:workspace.origin}})};
-      const domains=[new URL(this.env.BETTER_AUTH_URL).hostname,"api.anthropic.com","api.openai.com","api.router.com","openrouter.ai","auth.openai.com","chatgpt.com","ab.chatgpt.com","github.com","api.github.com","objects.githubusercontent.com","release-assets.githubusercontent.com","registry.npmjs.org"];
+      const environment={...modelSecrets(await settings.executionSecrets(org)),MC_CONFIG_DIR:"/data/remy",REMY_HOSTED_BOOTSTRAP:JSON.stringify({registration:{...actual,hubUrl:this.env.BETTER_AUTH_URL},privateKey:keys.privateKey,...(state.taskId?{taskId:state.taskId}:{}),workspace:{id:workspace.id,name:workspace.name,origin:workspace.origin}})};
+      const domains=[new URL(this.env.BETTER_AUTH_URL).hostname,"api.anthropic.com","api.openai.com","api.router.com","openrouter.ai","api.openrouter.ai","auth.openai.com","chatgpt.com","ab.chatgpt.com","github.com","api.github.com","codeload.github.com","objects.githubusercontent.com","release-assets.githubusercontent.com","github-releases.githubusercontent.com","ghcr.io","pkg-containers.githubusercontent.com","registry.npmjs.org"];
       return {organizationId:org,computerId:state.computerId,settings:state.settings,image:this.env.HOSTED_IMAGE,archive:this.env.HOSTED_ARCHIVE??"",environment,allowedDomains:domains};
     }, async id=>{
-      for(let attempt=0;attempt<300;attempt++){if(this.computerSocket(id))return;await new Promise(resolve=>setTimeout(resolve,100));}
+      for(let attempt=0;attempt<900;attempt++){if(this.computerSocket(id))return;await new Promise(resolve=>setTimeout(resolve,100));}
       throw new HostedStartupError("Your cloud computer started but did not connect to Remy. Retry to reconnect.");
     }, Date.now, id => !!this.computerSocket(id));return this.hosted;
   }
@@ -1915,7 +1920,7 @@ export class HubCoordinator {
       if(start.model !== undefined && (typeof start.model !== "string" || start.model.length>512))return jsonError("Choose a model.",400);
       if(input.branch !== undefined && (typeof input.branch !== "string" || !input.branch || input.branch.length > 255)) return jsonError("Choose a branch.",400);
       if(input.visibility !== undefined && input.visibility !== "private" && input.visibility !== "open") return jsonError("Choose who can read this thread.",400);
-      const gatewayError=hostedGatewayError(start.provider,start.model,await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).secrets(org));
+      const gatewayError=hostedGatewayError(start.provider,start.model,await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSecrets(org));
       if(gatewayError)return jsonError(gatewayError,400);
       const key = `manual-task:${actor.id}:${input.requestId}`;
       const previous = await this.ctx.storage.get<{computerId:string; id:string}>(key);
