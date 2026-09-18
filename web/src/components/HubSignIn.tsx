@@ -250,14 +250,6 @@ function AccountSignIn({ runtime }: { runtime: HubRuntime }) {
                 : "Continue with single sign-on"}
             </Button>
           )}
-          {busy && (
-            <p
-              role="status"
-              className="text-center text-sm text-muted-foreground"
-            >
-              Connecting to your sign-in provider…
-            </p>
-          )}
           {!Object.values(runtime.auth).some(Boolean) ? (
             <p role="alert" className="text-center text-sm">
               Sign-in is unavailable; contact your Remy administrator.

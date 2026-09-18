@@ -56,26 +56,28 @@ GOOD
 | Transient status | `toast()` from `sonner` |
 | Loading text | the `shimmer` class from `shadcn/tailwind.css` |
 
-## Confirmations
+## Transient status
 
-An action confirmation is a Sonner toast, not a line of status text under the form. Import `toast` from `sonner` and keep the existing `<Toaster />` from `web/src/components/ui/sonner`. Do not add a second toast stack.
+Never show a temporary line of status text. Success, failure, and in-progress copy for an action are a Sonner toast, or they live on the control that is busy (disabled, with a spinner). A paragraph that appears under a form and then vanishes is bad UX.
+
+Import `toast` from `sonner` and keep the existing `<Toaster />` from `web/src/components/ui/sonner`. Do not add a second toast stack.
 
 BAD
 ```tsx
-const [invited, setInvited] = useState(false);
-await sendInvite();
-setInvited(true);
-// ...
 {invited && <p role="status">Your invitation is sent.</p>}
+{busy && <p role="status">Connecting to your sign-in provider…</p>}
 ```
 
 GOOD
 ```tsx
-await sendInvite();
 toast.success("Your invitation is sent.");
+<Button disabled={busy}>
+  {busy && <Spinner data-icon="inline-start" />}
+  Continue with Google
+</Button>
 ```
 
-Keep inline copy for durable page state — loading, stale, reconnect — and for a result the person still needs on screen, such as an invitation link to copy. Form field validation stays on the field.
+Keep inline copy only for durable page state — loading, stale, reconnect — and for a result the person still needs on screen, such as an invitation link to copy. Form field validation stays on the field.
 
 `Palette.tsx` is the reference for a searchable list, `AppSidebar.tsx` for app chrome, and `PathPicker.tsx` for choosing a folder.
 

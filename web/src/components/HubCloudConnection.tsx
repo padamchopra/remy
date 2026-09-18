@@ -54,7 +54,7 @@ function ProviderConnection({ provider, organizationId, admin, configured, enabl
         {provider.id === "modal" ? <Box className="size-4 shrink-0 text-muted-foreground" /> : <Cloud className="size-4 shrink-0 text-muted-foreground" />}
         {provider.name}
       </FieldLabel>
-      <span className="shrink-0 text-xs text-muted-foreground">{pendingEnabled !== null ? "Saving…" : expanded ? (configured ? "Enabled" : "Setup required") : "Off"}</span>
+      <span className="shrink-0 text-xs text-muted-foreground">{expanded ? (configured ? "Enabled" : "Setup required") : "Off"}</span>
       <Switch id={`cloud-${provider.id}`} checked={expanded} disabled={!admin || !supported || busy} onCheckedChange={async value => {
         if (!configured) { setSetupRequested(value); if (!value) { setToken(""); setTokenId(""); } return; }
         setPendingEnabled(value); setBusy(true);
