@@ -24,6 +24,7 @@ import {
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { watchHubResource } from "@/lib/hub-computers";
 import { navigateLocation } from "@/lib/route";
+import { apiError } from "@/lib/api-error";
 const announced = new Set<string>();
 export function HubNotifications({
   organizationId,
@@ -92,13 +93,13 @@ export function HubNotifications({
               action: {
                 label: "Open thread",
                 onClick: () => {
-                  void read(item).catch((e) => setError(e.message));
+                  void read(item).catch((e) => toast.error("Couldn't open that thread", { description: apiError(e) }));
                 },
               },
             });
           if (loaded && !item.readAt && !announced.has(id) && localStorage.getItem(key) !== "off" && document.hidden && notificationsEnabled() && notifyPermission() === "granted") {
             const banner = new Notification(item.title, { body: item.message, tag: id });
-            banner.onclick = () => { window.focus(); void read(item).catch(e => setError(e.message)); banner.close(); };
+            banner.onclick = () => { window.focus(); void read(item).catch(e => toast.error("Couldn't open that thread", { description: apiError(e) })); banner.close(); };
           }
           announced.add(id);
         }
@@ -170,7 +171,7 @@ export function HubNotifications({
                     setDevices((old) =>
                       old.map((d) => (d.id === device.id && d.ownerOrganizationId === device.ownerOrganizationId ? device : d)),
                     );
-                    setError(e.message);
+                    toast.error("Couldn't change notifications", { description: apiError(e) });
                   })
                   .finally(() => setSavingDevice(undefined));
               }}
@@ -202,7 +203,7 @@ export function HubNotifications({
                   variant="link"
                   className="justify-start p-0"
                   onClick={() => {
-                    void read(item).catch((e) => setError(e.message));
+                    void read(item).catch((e) => toast.error("Couldn't open that thread", { description: apiError(e) }));
                   }}
                 >
                   <MessageSquare />

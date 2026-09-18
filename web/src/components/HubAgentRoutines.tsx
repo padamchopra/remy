@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import type { BoardProjection } from "@remy/contract";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
+import { toast } from "sonner";
+import { apiError } from "@/lib/api-error";
 import { watchHubResource } from "@/lib/hub-computers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,9 +21,9 @@ export function HubAgentRoutines({
   organizationId: string;
   agentId: string;
 }) {
-  const base = hubThreadBase(organizationId),
-    [routines, setRoutines] = useState<BoardProjection[]>([]),
-    [error, setError] = useState("");
+  const base = hubThreadBase(organizationId);
+  const [routines, setRoutines] = useState<BoardProjection[]>([]);
+  const [error, setError] = useState("");
   useEffect(
     () =>
       watchHubResource<{ items: BoardProjection[] }>(
@@ -47,11 +49,8 @@ export function HubAgentRoutines({
         kind,
         payload,
       });
-      setError("");
     } catch (e) {
-      setError(
-        e instanceof Error ? e.message : "This routine could not be saved.",
-      );
+      toast.error("Couldn't save that routine", { description: apiError(e) });
     }
   };
   return (

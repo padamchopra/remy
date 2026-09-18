@@ -25,6 +25,8 @@ import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { watchHubResource } from "@/lib/hub-computers";
 import { transport } from "@/lib/transport";
 import { useStore } from "@/state/store";
+import { toast } from "sonner";
+import { apiError } from "@/lib/api-error";
 type Profile = { id: string; name: string; variables: { name: string }[] };
 type Data = {
   environments: Profile[];
@@ -91,9 +93,7 @@ export function EnvironmentsSettings({
       await action();
       await load();
     } catch (e) {
-      setError(
-        e instanceof Error ? e.message : "Your environment could not be saved.",
-      );
+      toast.error("Couldn't save the environment", { description: apiError(e) });
     } finally {
       setBusy(false);
     }

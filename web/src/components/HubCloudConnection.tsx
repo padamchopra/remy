@@ -8,6 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { Field, FieldLabel, FieldDescription } from "@/components/ui/field";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { useHubResource } from "@/lib/hub-organization";
+import { toast } from "sonner";
 
 const providers = [{ id: "fly-sprites", name: "Fly.io Sprites", href: "https://sprites.dev" }, { id: "modal", name: "Modal", href: "https://modal.com/settings" }] as const;
 type Connections = { connections?: string[]; enabledProviders?: string[] };
@@ -39,14 +40,13 @@ function ProviderConnection({ provider, organizationId, admin, configured, enabl
   const [tokenId, setTokenId] = useState("");
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
   const path = `${hubThreadBase(organizationId)}/cloud-connection`;
   return <form className="flex min-w-0 flex-col gap-4 p-4" aria-label={`${provider.name} connection`} onSubmit={async event => {
-    event.preventDefault(); setBusy(true); setError("");
+    event.preventDefault(); setBusy(true);
     try {
       await hubRequest(path, "PUT", provider.id === "modal" ? { provider: provider.id, tokenId, tokenSecret: token, enabled: true } : { provider: provider.id, token, enabled: true });
       setToken(""); setTokenId(""); setEditing(false); await refresh(); setSetupRequested(false);
-    } catch { setError("Your cloud connection could not be saved. Try again."); }
+    } catch { toast.error("Couldn't save that cloud connection", { description: "Your cloud connection could not be saved. Try again." }); }
     finally { setBusy(false); }
   }}>
     <Field orientation="horizontal">
@@ -56,11 +56,10 @@ function ProviderConnection({ provider, organizationId, admin, configured, enabl
       </FieldLabel>
       <span className="shrink-0 text-xs text-muted-foreground">{pendingEnabled !== null ? "Saving…" : expanded ? (configured ? "Enabled" : "Setup required") : "Off"}</span>
       <Switch id={`cloud-${provider.id}`} checked={expanded} disabled={!admin || !supported || busy} onCheckedChange={async value => {
-        setError("");
         if (!configured) { setSetupRequested(value); if (!value) { setToken(""); setTokenId(""); } return; }
         setPendingEnabled(value); setBusy(true);
         try { await hubRequest(path, "PATCH", { provider: provider.id, enabled: value }); await refresh(); }
-        catch { setError("Your provider preference could not be saved. Try again."); }
+        catch { toast.error("Couldn't save that provider", { description: "Your provider preference could not be saved. Try again." }); }
         finally { setPendingEnabled(null); setBusy(false); }
       }} />
     </Field>
@@ -79,6 +78,5 @@ function ProviderConnection({ provider, organizationId, admin, configured, enabl
     {configured && <HubModelDefault organizationId={organizationId} computerId={`cloud:${provider.id}`} />}
     {!admin && <p>Ask an organization administrator to manage this connection.</p>}
     </div>}
-    {error && <p role="alert">{error}</p>}
   </form>;
 }

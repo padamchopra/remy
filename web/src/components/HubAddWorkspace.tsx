@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Field, FieldLabel } from "@/components/ui/field";
 import { useHubResource } from "@/lib/hub-organization";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
+import { toast } from "sonner";
 import { apiError } from "@/lib/api-error";
 import type { ConnectionsState } from "./HubConnections";
 
@@ -34,11 +35,9 @@ function ManualRepository({organizationId,onAdded}:{organizationId:string;onAdde
   const [name,setName]=useState("");
   const [origin,setOrigin]=useState("");
   const [busy,setBusy]=useState(false);
-  const [error,setError]=useState("");
-  return <form className="flex flex-col gap-4" onSubmit={event => {event.preventDefault();setBusy(true);setError("");void hubRequest(`${hubThreadBase(organizationId)}/workspaces`,"POST",{name:name.trim(),origin:origin.trim()}).then(onAdded).catch(e=>setError(apiError(e))).finally(()=>setBusy(false));}}>
+  return <form className="flex flex-col gap-4" onSubmit={event => {event.preventDefault();setBusy(true);void hubRequest(`${hubThreadBase(organizationId)}/workspaces`,"POST",{name:name.trim(),origin:origin.trim()}).then(onAdded).catch(e=>toast.error("Couldn't add that workspace",{description:apiError(e)})).finally(()=>setBusy(false));}}>
     <Field><FieldLabel htmlFor="workspace-name">Name</FieldLabel><Input id="workspace-name" required value={name} onChange={event=>setName(event.target.value)} disabled={busy} /></Field>
     <Field><FieldLabel htmlFor="workspace-repository">Repository URL</FieldLabel><Input id="workspace-repository" required value={origin} onChange={event=>setOrigin(event.target.value)} disabled={busy} /></Field>
-    {error && <p role="alert">{error}</p>}
     <Button disabled={busy || !name.trim() || !origin.trim()} type="submit">{busy && <Spinner />}Add workspace</Button>
   </form>;
 }
@@ -55,8 +54,8 @@ function RepositoryPicker({organizationId, onAdded, onManual}: {organizationId:s
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const run = async (work:()=>Promise<void>) => {
-    setBusy(true); setError("");
-    try { await work(); } catch(e) { setError(apiError(e)); } finally { setBusy(false); }
+    setBusy(true);
+    try { await work(); } catch(e) { toast.error("Couldn't update GitHub", { description: apiError(e) }); } finally { setBusy(false); }
   };
   const load = async (page:number) => {
     const result = await hubRequest<{repositories:Repository[];nextPage:number|null}>(`${root}/accessible-repositories?page=${page}`);

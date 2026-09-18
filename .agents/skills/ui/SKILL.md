@@ -56,6 +56,27 @@ GOOD
 | Transient status | `toast()` from `sonner` |
 | Loading text | the `shimmer` class from `shadcn/tailwind.css` |
 
+## Confirmations
+
+An action confirmation is a Sonner toast, not a line of status text under the form. Import `toast` from `sonner` and keep the existing `<Toaster />` from `web/src/components/ui/sonner`. Do not add a second toast stack.
+
+BAD
+```tsx
+const [invited, setInvited] = useState(false);
+await sendInvite();
+setInvited(true);
+// ...
+{invited && <p role="status">Your invitation is sent.</p>}
+```
+
+GOOD
+```tsx
+await sendInvite();
+toast.success("Your invitation is sent.");
+```
+
+Keep inline copy for durable page state — loading, stale, reconnect — and for a result the person still needs on screen, such as an invitation link to copy. Form field validation stays on the field.
+
 `Palette.tsx` is the reference for a searchable list, `AppSidebar.tsx` for app chrome, and `PathPicker.tsx` for choosing a folder.
 
 A composed screen assembles primitives; it never replaces one that exists. A control that appears on two screens moves into its own module rather than being copied — `ComposerMenu.tsx`, `PathPicker.tsx`, and `ThreadMenu.tsx` are shared this way.

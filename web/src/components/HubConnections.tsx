@@ -5,6 +5,8 @@ import { HubGitHub } from "./HubGitHub";
 import { useState } from "react";
 import { useHubResource } from "@/lib/hub-organization";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
+import { toast } from "sonner";
+import { apiError } from "@/lib/api-error";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -52,13 +54,11 @@ export function HubConnections({ organizationId }: { organizationId: string }) {
     error: readError,
   } = useHubResource<ConnectionsState>(organizationId, "/connections");
   const [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
     [remove, setRemove] = useState<{ provider: string; scope: string } | null>(
       null,
     );
   const start = async (provider: string, scope: string) => {
     setBusy(true);
-    setError("");
     try {
       const result = await hubRequest<{ url: string }>(
         `${hubThreadBase(organizationId)}/connections/${provider}`,
@@ -67,9 +67,7 @@ export function HubConnections({ organizationId }: { organizationId: string }) {
       );
       window.location.assign(result.url);
     } catch (e) {
-      setError(
-        e instanceof Error ? e.message : "Your account could not connect.",
-      );
+      toast.error("Couldn't connect that account", { description: apiError(e) });
       setBusy(false);
     }
   };
@@ -82,7 +80,7 @@ export function HubConnections({ organizationId }: { organizationId: string }) {
       <p className="text-sm text-muted-foreground">
         Connect your tools and choose the account you use.
       </p>
-      {(error || readError) && <p role="alert">{error || readError}</p>}
+      {readError && <p role="alert">{readError}</p>}
       {stale && (
         <p role="status">
           Your connections are out of date; reconnect to make changes.
@@ -174,7 +172,6 @@ export function HubConnections({ organizationId }: { organizationId: string }) {
                 event.preventDefault();
                 if (!remove) return;
                 setBusy(true);
-                setError("");
                 try {
                   await hubRequest(
                     `${hubThreadBase(organizationId)}/connections/${remove.provider}`,
@@ -183,11 +180,7 @@ export function HubConnections({ organizationId }: { organizationId: string }) {
                   );
                   setRemove(null);
                 } catch (e) {
-                  setError(
-                    e instanceof Error
-                      ? e.message
-                      : "Your account could not disconnect.",
-                  );
+                  toast.error("Couldn't disconnect that account", { description: apiError(e) });
                 } finally {
                   setBusy(false);
                 }

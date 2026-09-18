@@ -23,7 +23,7 @@ const request = (p, path, method = "GET", body) => p.evaluate(async ({ path, met
 await nav(ada.p, "Create organization"); await ada.p.getByLabel("Name", { exact: true }).fill("Studio team"); await ada.p.getByRole("dialog").getByRole("button", { name: "Create organization" }).click();
 await ada.p.getByRole("heading", { name: "Tasks", exact: true }).waitFor();
 const org = new URL(ada.p.url()).hash.split("organization=")[1]; assert.ok(org); const base = `/api/organizations/${org}`;
-await nav(ada.p, "Members"); await nav(ada.p, "Invite member"); await ada.p.getByLabel("Email (optional)").fill("grace@example.test"); await nav(ada.p, "Create invitation");
+await nav(ada.p, "Members"); await nav(ada.p, "Invite member"); await ada.p.getByLabel("Email (optional)").fill("grace@example.test"); await nav(ada.p, "Send invitation");
 await ada.p.getByText("Your invitation is sent.", { exact: true }).waitFor();
 const invitation = (await (await fetch(`${info.controlUrl}/mail?email=grace%40example.test`, { headers: { authorization: `Bearer ${info.controlToken}` } })).json()).url;
 await grace.p.goto(invitation); await nav(grace.p, "Accept invitation"); await grace.p.getByRole("heading", { name: "Tasks", exact: true }).waitFor();

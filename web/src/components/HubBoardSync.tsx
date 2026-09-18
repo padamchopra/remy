@@ -15,6 +15,7 @@ import {
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { transport } from "@/lib/transport";
 import { apiError } from "@/lib/api-error";
+import { toast } from "sonner";
 
 type State = {
   enabled: boolean;
@@ -72,7 +73,6 @@ export function HubBoardSync({
   }, [localId, organizationId]);
   const save = async (enabled: boolean) => {
     setBusy(true);
-    setError("");
     try {
       await hubRequest(
         `${hubThreadBase(organizationId)}/computers/${encodeURIComponent(computerId)}/board-access`,
@@ -86,7 +86,7 @@ export function HubBoardSync({
       );
       setOpen(false);
     } catch (e) {
-      setError(apiError(e));
+      toast.error("Couldn't update Tasks sync", { description: apiError(e) });
     } finally {
       setBusy(false);
     }

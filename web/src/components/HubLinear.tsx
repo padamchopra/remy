@@ -11,6 +11,8 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
+import { toast } from "sonner";
+import { apiError } from "@/lib/api-error";
 export type LinearState = {
   canManage: boolean;
   connected: boolean;
@@ -53,8 +55,6 @@ export function HubLinear({ organizationId }: { organizationId: string }) {
     error: readError,
   } = useHubResource<LinearState>(organizationId, "/linear");
   const [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
-    [notice, setNotice] = useState(""),
     [workspace, setWorkspace] = useState(""),
     [team, setTeam] = useState(""),
     [group, setGroup] = useState("none"),
@@ -64,16 +64,12 @@ export function HubLinear({ organizationId }: { organizationId: string }) {
     disabled = busy || stale || !value?.canManage;
   const run = async (work: () => Promise<unknown>) => {
     setBusy(true);
-    setError("");
-    setNotice("");
     try {
       await work();
     } catch (e) {
-      setError(
-        e instanceof Error
-          ? e.message
-          : "Your Linear connection could not update.",
-      );
+      toast.error("Couldn't update Linear", {
+        description: apiError(e),
+      });
     } finally {
       setBusy(false);
     }
@@ -129,8 +125,7 @@ export function HubLinear({ organizationId }: { organizationId: string }) {
         <CardTitle>Linear mappings</CardTitle>
       </CardHeader>
       <CardContent className="flex min-w-0 flex-col gap-4">
-        {(error || readError) && <p role="alert">{error || readError}</p>}
-        {notice && <p role="status">{notice}</p>}
+        {readError && <p role="alert">{readError}</p>}
         {stale && <p role="status">Reconnect to update your mappings.</p>}
         {value?.canManage ? (
           <>
@@ -140,7 +135,7 @@ export function HubLinear({ organizationId }: { organizationId: string }) {
               onClick={() =>
                 void run(async () => {
                   await hubRequest(`${root}/refresh`, "POST", {});
-                  setNotice("Your Linear teams and members are refreshed.");
+                  toast.success("Your Linear teams and members are refreshed.");
                 })
               }
             >
@@ -234,7 +229,7 @@ export function HubLinear({ organizationId }: { organizationId: string }) {
                                   remyTeam === "none" ? null : remyTeam,
                                 statusMap: statuses,
                               });
-                              setNotice("Your workspace mapping is saved.");
+                              toast.success("Your workspace mapping is saved.");
                             })
                           }
                         >
@@ -257,7 +252,7 @@ export function HubLinear({ organizationId }: { organizationId: string }) {
                             linearUserId: u.id,
                             memberId: member === "none" ? null : member,
                           });
-                          setNotice("Your member match is saved.");
+                          toast.success("Your member match is saved.");
                         }),
                       [
                         { id: "none", name: `Unmatched · ${u.name}` },

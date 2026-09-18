@@ -91,6 +91,20 @@ Pick a folder on this machine.
 
 `AddWorkspace.tsx` is the reference for a short dialog: title, one-line description, primary button.
 
+## Confirmations
+
+A confirmation of an action is a toast, not a line of status text under the form. Keep the same second-person present sentence; only the surface changes.
+
+BAD
+```
+{invited && <p role="status">Your invitation is sent.</p>}
+```
+
+GOOD
+```
+toast.success("Your invitation is sent.");
+```
+
 ## Errors
 
 What failed, then what to do about it. No stack traces, no raw JSON.
