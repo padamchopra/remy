@@ -1,6 +1,7 @@
 import { Agent as HttpAgent, type IncomingMessage, type ServerResponse } from 'node:http';
 import { Agent as HttpsAgent } from 'node:https';
 import type { Plugin, ProxyOptions } from 'vite';
+import { QA_ACCOUNT_ERROR, qaHostedAccount, qaHostedAccountAvailable, signInWithPassword } from './hosted-account.mjs';
 
 export function hostedPreview(target: string): { plugin: Plugin; proxy: ProxyOptions } {
   const hub = new URL(target);
@@ -39,7 +40,19 @@ export function hostedPreview(target: string): { plugin: Plugin; proxy: ProxyOpt
         if (!request.url?.startsWith('/api/')) return next();
         if (!trusted(request)) return json(response, 403, {error:'Open the preview on this Mac.'});
         try {
-          if (request.url === '/api/runtime') return json(response, 200, {mode:'hub', preview:true, auth:{magicLink:false,google:false,github:false,sso:false}});
+          if (request.url === '/api/runtime') return json(response, 200, {mode:'hub', preview:true, auth:{magicLink:false,google:false,github:false,sso:false,password:qaHostedAccountAvailable()}});
+          if (request.url === '/api/preview/password' && request.method === 'POST') {
+            try {
+              const account = qaHostedAccount();
+              accept(await signInWithPassword({hub:hub.origin, email:account.email, password:account.password, userAgent:'Remy local web preview'}));
+              deviceCode = '';
+              return json(response, 200, {status:'approved'});
+            } catch (error) {
+              if (error instanceof Error && error.message === QA_ACCOUNT_ERROR) return json(response, 400, {error:QA_ACCOUNT_ERROR});
+              if (error instanceof Error && error.message === 'Could not sign in; try again.') return json(response, 401, {error:error.message});
+              throw error;
+            }
+          }
           if (request.url === '/api/preview/sign-in' && request.method === 'POST') {
             const result = await call('/api/device/authorization', {clientKind:'cli',clientName:'Remy local web preview'});
             deviceCode = result.deviceCode;
@@ -53,9 +66,13 @@ export function hostedPreview(target: string): { plugin: Plugin; proxy: ProxyOpt
           }
           if (!token) return json(response, 401, {error:'Sign in to continue.'});
           if (Date.now() > expiresAt - 60000) {
-            refreshing ??= call('/api/sessions/refresh', {refreshToken}).then(accept).catch(() => { token=''; refreshToken=''; }).finally(() => {refreshing=undefined;});
-            await refreshing;
-            if (!token) return json(response, 401, {error:'Sign in again.'});
+            if (!refreshToken) {
+              if (Date.now() > expiresAt) { token=''; return json(response, 401, {error:'Sign in again.'}); }
+            } else {
+              refreshing ??= call('/api/sessions/refresh', {refreshToken}).then(accept).catch(() => { token=''; refreshToken=''; }).finally(() => {refreshing=undefined;});
+              await refreshing;
+              if (!token) return json(response, 401, {error:'Sign in again.'});
+            }
           }
           next();
         } catch { json(response, 502, {error:'Could not connect to Remy; try again.'}); }

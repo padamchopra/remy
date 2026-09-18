@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { authOptionsFor, authFor, readOAuthSecret } from "./auth.js";
 
-test("configures magic-link, Google, GitHub, and SSO sign-in", () => {
+test("configures magic-link, Google, GitHub, password, and SSO sign-in", () => {
   const options = authOptionsFor({
     BETTER_AUTH_URL: "https://hub.example",
     DB: {} as D1Database,
@@ -11,6 +11,8 @@ test("configures magic-link, Google, GitHub, and SSO sign-in", () => {
     GITHUB_CLIENT_ID: "github-id",
   }, "test-secret-with-at-least-thirty-two-characters", { google: "google-secret", github: "github-secret" });
 
+  assert.equal(options.emailAndPassword?.enabled, true);
+  assert.equal(options.emailAndPassword?.disableSignUp, true);
   assert.deepEqual(options.plugins?.map((plugin) => plugin.id), ["magic-link", "sso"]);
   assert.deepEqual(Object.keys(options.socialProviders ?? {}).sort(), ["github", "google"]);
   assert.equal(options.account?.accountLinking?.allowDifferentEmails, false);

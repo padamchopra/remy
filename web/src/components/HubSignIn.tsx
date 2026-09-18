@@ -17,22 +17,38 @@ import {
 } from "@/components/ui/field";
 
 export function HubSignIn({ runtime }: { runtime: HubRuntime }) {
-  if (runtime.preview) return <HubPreviewSignIn />;
+  if (runtime.preview) return <HubPreviewSignIn password={runtime.auth.password} />;
   return <AccountSignIn runtime={runtime} />;
 }
 
 function AccountSignIn({ runtime }: { runtime: HubRuntime }) {
   const [email, setEmail] = useState("");
+  const [passwordValue, setPasswordValue] = useState("");
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState<string>();
   const [useSso, setUseSso] = useState(false);
   const busy = !!pending;
-  const signIn = async (method: "magic-link" | "google" | "github" | "sso") => {
-    if (busy || !runtime.auth[method === "magic-link" ? "magicLink" : method])
-      return;
+  const hasPassword = runtime.auth.password === true && !useSso;
+  const signIn = async (method: "magic-link" | "google" | "github" | "sso" | "password") => {
+    const enabled =
+      method === "magic-link"
+        ? runtime.auth.magicLink
+        : method === "password"
+          ? hasPassword
+          : runtime.auth[method];
+    if (busy || !enabled) return;
     setPending(method);
     setMessage("");
     try {
+      if (method === "password") {
+        await hubRequest("/api/auth/sign-in/email", "POST", {
+          email,
+          password: passwordValue,
+        });
+        await hubRequest("/api/sessions/web", "POST");
+        window.location.reload();
+        return;
+      }
       const callback = new URL(window.location.href);
       callback.searchParams.set("signin", "complete");
       const callbackURL = callback.href;
@@ -56,7 +72,7 @@ function AccountSignIn({ runtime }: { runtime: HubRuntime }) {
   const socialMethods = (["google", "github"] as const).filter(
     (method) => runtime.auth[method],
   );
-  const hasEmailForm = useSso || runtime.auth.magicLink;
+  const hasEmailForm = useSso || runtime.auth.magicLink || hasPassword;
   return (
     <main className="h-svh overflow-y-auto bg-background text-foreground">
       <div className="flex min-h-full flex-col items-center px-6 pb-8 pt-8 sm:pb-10 sm:pt-16">
@@ -112,7 +128,7 @@ function AccountSignIn({ runtime }: { runtime: HubRuntime }) {
               aria-label="Sign in with email"
               onSubmit={(e) => {
                 e.preventDefault();
-                void signIn(useSso ? "sso" : "magic-link");
+                void signIn(useSso ? "sso" : hasPassword ? "password" : "magic-link");
               }}
             >
               <FieldGroup className="gap-7">
@@ -126,30 +142,61 @@ function AccountSignIn({ runtime }: { runtime: HubRuntime }) {
                     type="email"
                     autoComplete="email"
                     placeholder="you@company.com"
-                    aria-describedby="signin-email-help"
+                    aria-describedby={useSso || (!hasPassword && runtime.auth.magicLink) ? "signin-email-help" : undefined}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
                     disabled={busy}
                   />
-                  <FieldDescription id="signin-email-help">
-                    {useSso
-                      ? "Use the email your organization uses for single sign-on."
-                      : "We’ll send you a sign-in link."}
-                  </FieldDescription>
+                  {(useSso || (!hasPassword && runtime.auth.magicLink)) && (
+                    <FieldDescription id="signin-email-help">
+                      {useSso
+                        ? "Use the email your organization uses for single sign-on."
+                        : "We’ll send you a sign-in link."}
+                    </FieldDescription>
+                  )}
                 </Field>
+                {hasPassword && (
+                  <Field className="gap-2.5" data-disabled={busy}>
+                    <FieldLabel htmlFor="signin-password">Password</FieldLabel>
+                    <Input
+                      id="signin-password"
+                      className="h-12 rounded-lg px-3.5"
+                      type="password"
+                      autoComplete="current-password"
+                      value={passwordValue}
+                      onChange={(e) => setPasswordValue(e.target.value)}
+                      required
+                      disabled={busy}
+                    />
+                  </Field>
+                )}
                 <Button
                   className="h-12 rounded-lg"
-                  disabled={busy || !email.trim()}
+                  disabled={busy || !email.trim() || (hasPassword && !passwordValue)}
                   type="submit"
                 >
-                  {(pending === "sso" || pending === "magic-link") && (
+                  {(pending === "sso" || pending === (hasPassword ? "password" : "magic-link")) && (
                     <Spinner data-icon="inline-start" />
                   )}
                   {useSso
                     ? "Sign in with single sign-on"
-                    : "Email sign-in link"}
+                    : hasPassword
+                      ? "Sign in"
+                      : "Email sign-in link"}
                 </Button>
+                {hasPassword && runtime.auth.magicLink && (
+                  <Button
+                    className="h-12 rounded-lg"
+                    disabled={busy || !email.trim()}
+                    type="button"
+                    variant="outline"
+                    onClick={() => void signIn("magic-link")}
+                  >
+                    {pending === "magic-link" && <Spinner data-icon="inline-start" />}
+                    Email sign-in link
+                  </Button>
+                )}
               </FieldGroup>
             </form>
           )}

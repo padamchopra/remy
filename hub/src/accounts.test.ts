@@ -110,7 +110,7 @@ test("a device code can be approved once and returns a refreshable pair", async 
   assert.equal((await service.pollDevice(authorization.deviceCode)).status, "expired");
 });
 
-test("an enforced verified domain rejects magic links before Better Auth", async () => {
+test("an enforced verified domain rejects magic links and passwords before Better Auth", async () => {
   const store = new MemoryAccountStore();
   store.policies.set("example.com", { organizationId: "org-1", domain: "example.com", enforced: true, verified: true, providerId: "example-sso", protocol: "saml" });
   let reachedBetterAuth = false;
@@ -118,13 +118,19 @@ test("an enforced verified domain rejects magic links before Better Auth", async
     accountStore: () => store,
     betterAuth: async () => ({ handler: async () => { reachedBetterAuth = true; return new Response(null); } }) as never,
   });
-  const response = await route(new Request("https://hub.example/api/auth/sign-in/magic-link", {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "person@example.com" }),
-  }), env());
+  for (const [path, body] of [
+    ["/api/auth/sign-in/magic-link", { email: "person@example.com" }],
+    ["/api/auth/sign-in/email", { email: "person@example.com", password: "unused-password" }],
+  ] as const) {
+    reachedBetterAuth = false;
+    const response = await route(new Request(`https://hub.example${path}`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    }), env());
 
-  assert.equal(response.status, 403);
-  assert.deepEqual(await response.json(), { error: "Use your organization’s single sign-on.", providerId: "example-sso" });
-  assert.equal(reachedBetterAuth, false);
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: "Use your organization’s single sign-on.", providerId: "example-sso" });
+    assert.equal(reachedBetterAuth, false);
+  }
 });
 
 test("profile routes expose verified emails without credential material", async () => {
