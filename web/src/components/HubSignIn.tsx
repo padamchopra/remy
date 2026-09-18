@@ -27,24 +27,32 @@ function AccountSignIn({ runtime }: { runtime: HubRuntime }) {
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState<string>();
   const [useSso, setUseSso] = useState(false);
+  const [createAccount, setCreateAccount] = useState(false);
   const busy = !!pending;
   const hasPassword = runtime.auth.password === true && !useSso;
-  const signIn = async (method: "magic-link" | "google" | "github" | "sso" | "password") => {
+  const creating = hasPassword && createAccount;
+  const passwordMethod = creating ? "signup" : "password";
+  const signIn = async (method: "magic-link" | "google" | "github" | "sso" | "password" | "signup") => {
     const enabled =
       method === "magic-link"
         ? runtime.auth.magicLink
-        : method === "password"
+        : method === "password" || method === "signup"
           ? hasPassword
           : runtime.auth[method];
     if (busy || !enabled) return;
     setPending(method);
     setMessage("");
     try {
-      if (method === "password") {
-        await hubRequest("/api/auth/sign-in/email", "POST", {
-          email,
-          password: passwordValue,
-        });
+      if (method === "password" || method === "signup") {
+        await hubRequest(
+          method === "signup" ? "/api/auth/sign-up/email" : "/api/auth/sign-in/email",
+          "POST",
+          {
+            email,
+            password: passwordValue,
+            ...(method === "signup" ? { name: accountNameFromEmail(email) } : {}),
+          },
+        );
         await hubRequest("/api/sessions/web", "POST");
         window.location.reload();
         return;
@@ -64,7 +72,7 @@ function AccountSignIn({ runtime }: { runtime: HubRuntime }) {
       if (result.url) window.location.assign(result.url);
       else setMessage("Check your email for your sign-in link.");
     } catch (e) {
-      setMessage(apiError(e));
+      setMessage(accountAuthMessage(e));
     } finally {
       setPending(undefined);
     }
@@ -91,7 +99,7 @@ function AccountSignIn({ runtime }: { runtime: HubRuntime }) {
               id="signin-title"
               className="text-[32px] leading-10 font-semibold tracking-[-0.045em]"
             >
-              Sign in to Remy
+              {creating ? "Create your Remy account" : "Sign in to Remy"}
             </h1>
             <p className="text-[15px] leading-[23px] text-muted-foreground">
               Your coding agents, within reach.
@@ -125,10 +133,10 @@ function AccountSignIn({ runtime }: { runtime: HubRuntime }) {
           )}
           {hasEmailForm && (
             <form
-              aria-label="Sign in with email"
+              aria-label={creating ? "Create your account" : "Sign in with email"}
               onSubmit={(e) => {
                 e.preventDefault();
-                void signIn(useSso ? "sso" : hasPassword ? "password" : "magic-link");
+                void signIn(useSso ? "sso" : hasPassword ? passwordMethod : "magic-link");
               }}
             >
               <FieldGroup className="gap-7">
@@ -163,12 +171,19 @@ function AccountSignIn({ runtime }: { runtime: HubRuntime }) {
                       id="signin-password"
                       className="h-12 rounded-lg px-3.5"
                       type="password"
-                      autoComplete="current-password"
+                      autoComplete={creating ? "new-password" : "current-password"}
+                      minLength={creating ? 8 : undefined}
+                      aria-describedby={creating ? "signin-password-help" : undefined}
                       value={passwordValue}
                       onChange={(e) => setPasswordValue(e.target.value)}
                       required
                       disabled={busy}
                     />
+                    {creating && (
+                      <FieldDescription id="signin-password-help">
+                        Use at least 8 characters.
+                      </FieldDescription>
+                    )}
                   </Field>
                 )}
                 <Button
@@ -176,16 +191,18 @@ function AccountSignIn({ runtime }: { runtime: HubRuntime }) {
                   disabled={busy || !email.trim() || (hasPassword && !passwordValue)}
                   type="submit"
                 >
-                  {(pending === "sso" || pending === (hasPassword ? "password" : "magic-link")) && (
+                  {(pending === "sso" || pending === (hasPassword ? passwordMethod : "magic-link")) && (
                     <Spinner data-icon="inline-start" />
                   )}
                   {useSso
                     ? "Sign in with single sign-on"
                     : hasPassword
-                      ? "Sign in"
+                      ? creating
+                        ? "Create account"
+                        : "Sign in"
                       : "Email sign-in link"}
                 </Button>
-                {hasPassword && runtime.auth.magicLink && (
+                {hasPassword && runtime.auth.magicLink && !creating && (
                   <Button
                     className="h-12 rounded-lg"
                     disabled={busy || !email.trim()}
@@ -200,6 +217,20 @@ function AccountSignIn({ runtime }: { runtime: HubRuntime }) {
               </FieldGroup>
             </form>
           )}
+          {hasPassword && (
+            <Button
+              type="button"
+              variant="ghost"
+              className="self-center"
+              disabled={busy}
+              onClick={() => {
+                setCreateAccount(!createAccount);
+                setMessage("");
+              }}
+            >
+              {creating ? "Sign in instead" : "Create your account"}
+            </Button>
+          )}
           {runtime.auth.sso && (
             <Button
               type="button"
@@ -209,6 +240,7 @@ function AccountSignIn({ runtime }: { runtime: HubRuntime }) {
               aria-expanded={useSso}
               onClick={() => {
                 setUseSso(!useSso);
+                setCreateAccount(false);
                 setMessage("");
               }}
             >
@@ -235,11 +267,11 @@ function AccountSignIn({ runtime }: { runtime: HubRuntime }) {
             <p role="alert" className="text-center text-sm">
               Sign-in is unavailable; contact your Remy administrator.
             </p>
-          ) : (
+          ) : !hasPassword ? (
             <p className="text-center text-[13px] text-muted-foreground">
               You can sign in or create your account.
             </p>
-          )}
+          ) : null}
         </section>
         <footer className="mt-auto flex shrink-0 flex-wrap items-center justify-center gap-x-1.5 gap-y-1 pt-16 text-[13px]">
           <span className="text-muted-foreground">Need help connecting?</span>
@@ -256,6 +288,21 @@ function AccountSignIn({ runtime }: { runtime: HubRuntime }) {
       </div>
     </main>
   );
+}
+
+function accountNameFromEmail(email: string) {
+  return email.trim().split("@")[0]?.trim() || "Remy";
+}
+
+function accountAuthMessage(error: unknown) {
+  const text = apiError(error);
+  if (/already exists/i.test(text)) {
+    return "An account with this email already exists. Sign in instead.";
+  }
+  if (/password.{0,24}(short|least)/i.test(text) || /at least \d+ character/i.test(text)) {
+    return "Use a password with at least 8 characters.";
+  }
+  return text;
 }
 
 function SignInProviderIcon({ provider }: { provider: "google" | "github" }) {

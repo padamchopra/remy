@@ -15,7 +15,7 @@ Agent-driven hosted QA against start, organizations, computers, or providers use
 
 `npm run qa:web` and isolated hub sessions (`QA_SESSION`, `qa-hub-*.mjs`, `hosted-runtime-check.mjs`) are not a substitute for that account. If either secret is missing, fail with `set REMY_QA_EMAIL and REMY_QA_PASSWORD` instead of falling back to sample state.
 
-Sign in through production’s email and password path. For `npm run dev:hosted`, export the secrets in that Vite process, open `http://127.0.0.1:5174`, choose **Sign in**, and keep that session. For production `app.tryremy.dev`, fill the same email and password on the sign-in form. `npm run qa:hosted` does that check; set `QA_HOSTED_URL` when the preview is not on 5174. Isolated magic-link adapters remain for hub implementation checks that capture mail locally.
+Sign in through production’s email and password path. Create that account on `app.tryremy.dev` with **Create your account**; there is no password-reset form. For `npm run dev:hosted`, export the secrets in that Vite process, open `http://127.0.0.1:5174`, choose **Sign in**, and keep that session. For production `app.tryremy.dev`, fill the same email and password on the sign-in form. `npm run qa:hosted` does that check; set `QA_HOSTED_URL` when the preview is not on 5174. Isolated magic-link adapters remain for hub implementation checks that capture mail locally.
 
 BAD
 ```text

@@ -28,7 +28,7 @@ export function authOptionsFor(
     database: env.DB,
     secret: authSecret,
     socialProviders,
-    emailAndPassword: { enabled: true, disableSignUp: true },
+    emailAndPassword: { enabled: true },
     account: { accountLinking: { enabled: true, allowDifferentEmails: false, requireLocalEmailVerified: true } },
     emailVerification: {
       sendVerificationEmail: async ({ user, url }) => send("auth.verify-email", user.email, url),

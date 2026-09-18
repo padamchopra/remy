@@ -215,7 +215,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
   const computerStore = (dependencies.computerStore ?? ((current) => new D1ComputerStore(current.DB)))(env);
   const computers = new ComputerService(computerStore, Date.now, env.MINIMUM_DAEMON_VERSION ?? "0.1.0", organizationStore);
 
-  if ((url.pathname === "/api/auth/sign-in/magic-link" || url.pathname === "/api/auth/sign-in/email") && request.method === "POST") {
+  if ((url.pathname === "/api/auth/sign-in/magic-link" || url.pathname === "/api/auth/sign-in/email" || url.pathname === "/api/auth/sign-up/email") && request.method === "POST") {
     const cloned = request.clone();
     const input = await body<{ email?: string }>(cloned);
     const domain = typeof input?.email === "string" ? domainOf(input.email) : undefined;

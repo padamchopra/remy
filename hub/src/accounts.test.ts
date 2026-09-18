@@ -121,6 +121,7 @@ test("an enforced verified domain rejects magic links and passwords before Bette
   for (const [path, body] of [
     ["/api/auth/sign-in/magic-link", { email: "person@example.com" }],
     ["/api/auth/sign-in/email", { email: "person@example.com", password: "unused-password" }],
+    ["/api/auth/sign-up/email", { email: "person@example.com", password: "unused-password", name: "Person" }],
   ] as const) {
     reachedBetterAuth = false;
     const response = await route(new Request(`https://hub.example${path}`, {
@@ -131,6 +132,21 @@ test("an enforced verified domain rejects magic links and passwords before Bette
     assert.deepEqual(await response.json(), { error: "Use your organization’s single sign-on.", providerId: "example-sso" });
     assert.equal(reachedBetterAuth, false);
   }
+});
+
+test("password signup reaches Better Auth when SSO is not enforced", async () => {
+  const store = new MemoryAccountStore();
+  let reachedBetterAuth = false;
+  const route = createRouteHandler({
+    accountStore: () => store,
+    betterAuth: async () => ({ handler: async () => { reachedBetterAuth = true; return new Response(JSON.stringify({ user: { id: "person-1" } }), { status: 200 }); } }) as never,
+  });
+  const response = await route(new Request("https://hub.example/api/auth/sign-up/email", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "person@example.com", password: "long-enough-password", name: "Person" }),
+  }), env());
+
+  assert.equal(response.status, 200);
+  assert.equal(reachedBetterAuth, true);
 });
 
 test("profile routes expose verified emails without credential material", async () => {

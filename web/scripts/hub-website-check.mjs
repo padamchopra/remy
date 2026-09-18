@@ -40,7 +40,7 @@ try {
   await passwordPage.route('**/api/**', route => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/runtime') return route.fulfill({ json: { mode: 'hub', auth: { password: true, magicLink: true, google: false, github: false, sso: false } } });
-    if (path.startsWith('/api/auth/sign-in/')) {
+    if (path.startsWith('/api/auth/sign-in/') || path.startsWith('/api/auth/sign-up/')) {
       passwordSignIns.push({ path, input: route.request().postDataJSON() });
       return route.fulfill({ json: { user: { id: 'qa' } } });
     }
@@ -49,6 +49,7 @@ try {
   });
   await passwordPage.goto(new URL('/app/', url).href, { waitUntil: 'networkidle' });
   await passwordPage.getByRole('button', { name: 'Email sign-in link', exact: true }).waitFor();
+  await passwordPage.getByRole('button', { name: 'Create your account', exact: true }).waitFor();
   await passwordPage.getByLabel('Email', { exact: true }).fill('qa@example.test');
   await passwordPage.getByLabel('Password', { exact: true }).fill('qa-test-password');
   const posted = passwordPage.waitForRequest((request) => new URL(request.url()).pathname === '/api/auth/sign-in/email');
@@ -57,6 +58,41 @@ try {
   assert.equal(passwordSignIns.some(request => request.path.endsWith('/email')), true);
   assert.equal(passwordSignIns.find(request => request.path.endsWith('/email')).input.email, 'qa@example.test');
   assert.equal(passwordSignIns.find(request => request.path.endsWith('/email')).input.password, 'qa-test-password');
+
+  const signupPage = await browser.newPage();
+  signupPage.on('pageerror', error => errors.push(error.message));
+  await signupPage.route('**/api/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/runtime') return route.fulfill({ json: { mode: 'hub', auth: { password: true, magicLink: true, google: false, github: false, sso: false } } });
+    if (path === '/api/auth/sign-up/email' || path === '/api/sessions/web') {
+      return route.fulfill({ json: path === '/api/sessions/web' ? { expiresIn: 60 } : { user: { id: 'qa' } } });
+    }
+    return route.fulfill({ status: 401, json: { error: 'Sign in again.' } });
+  });
+  await signupPage.goto(new URL('/app/', url).href, { waitUntil: 'networkidle' });
+  await signupPage.getByRole('button', { name: 'Create your account', exact: true }).click();
+  await signupPage.getByRole('heading', { name: 'Create your Remy account', exact: true }).waitFor();
+  await signupPage.getByLabel('Email', { exact: true }).fill('new@example.test');
+  await signupPage.getByLabel('Password', { exact: true }).fill('qa-new-password');
+  const signedUp = signupPage.waitForRequest((request) => new URL(request.url()).pathname === '/api/auth/sign-up/email');
+  await signupPage.getByRole('button', { name: 'Create account', exact: true }).click();
+  const signup = await signedUp;
+  assert.deepEqual(signup.postDataJSON(), { email: 'new@example.test', password: 'qa-new-password', name: 'new' });
+
+  const errorPage = await browser.newPage();
+  errorPage.on('pageerror', error => errors.push(error.message));
+  await errorPage.route('**/api/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/runtime') return route.fulfill({ json: { mode: 'hub', auth: { password: true, magicLink: false, google: false, github: false, sso: false } } });
+    if (path === '/api/auth/sign-up/email') return route.fulfill({ status: 422, json: { message: 'User already exists.' } });
+    return route.fulfill({ status: 401, json: { error: 'Sign in again.' } });
+  });
+  await errorPage.goto(new URL('/app/', url).href, { waitUntil: 'networkidle' });
+  await errorPage.getByRole('button', { name: 'Create your account', exact: true }).click();
+  await errorPage.getByLabel('Email', { exact: true }).fill('existing@example.test');
+  await errorPage.getByLabel('Password', { exact: true }).fill('qa-test-password');
+  await errorPage.getByRole('button', { name: 'Create account', exact: true }).click();
+  await errorPage.getByText('An account with this email already exists. Sign in instead.', { exact: true }).waitFor();
   assert.deepEqual(errors, []);
   console.log('Combined deployment checks passed: public home, /app/ sign-in, Google/GitHub controls, email/password.');
 } finally { await browser.close(); }
