@@ -37,7 +37,7 @@ try {
       const profile={id:"reader",name:"Reader",image:null}; let permissionMode="default";
       let lastMessage;
       let threadInput;
-      let startCalls=0, messageCalls=0, startReleased=false;
+      let startCalls=0, messageCalls=0, startStatusCalls=0, startReleased=false;
       const releaseStart=()=>{startReleased=true;};
       const startIds=[], messageIds=[];
       let startedThread;
@@ -123,7 +123,8 @@ try {
           return route.fulfill({status:409,json:{error:"Preview request captured."}});
         }
         if(process.env.QA_START_ONLY === "1" && /\/threads\/starts\/[0-9a-f-]{36}$/.test(path) && route.request().method()==="GET") {
-          if(startCalls===1 && !startReleased) return route.fulfill({json:{phase:"waking"}});
+          startStatusCalls++;
+          if(startCalls===1 && !startReleased) return route.fulfill({json:{phase: startStatusCalls < 3 ? "creating" : "waking"}});
           if(startCalls===1) return route.fulfill({status:409,json:{error:"Fly.io could not start. Retry to continue."}});
           return route.fulfill({json:{phase:"ready",id:"12345678-1234-1234-1234-123456789012",computerId:"sprite"}});
         }
@@ -474,8 +475,8 @@ try {
           assert.equal(threadInput.provider,"codex");
           assert.equal(threadInput.model,"remy:openrouter:openrouter/auto");
           assert.equal(threadInput.visibility,"private");
-          await page.getByLabel("Creating thread…",{exact:true}).waitFor();
-          await page.getByLabel("Waking computer…",{exact:true}).waitFor();
+          await page.getByRole("status",{name:"Creating thread…",exact:true}).waitFor();
+          await page.getByRole("status",{name:"Waking computer…",exact:true}).waitFor();
           if(artifacts)await page.screenshot({path:`${artifacts}/start-progress-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
           await page.getByRole("tab", {name:"Hello startup QA", exact:true}).waitFor();
           assert.equal(await page.getByRole("heading", {name:"Threads", exact:true}).count(), 0);
