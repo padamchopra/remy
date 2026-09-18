@@ -3,6 +3,15 @@ import { hostedSettingsSchema, type HostedSettings } from "@remy/contract";
 const encode = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
 const decode = (text: string) =>
   Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
+const modelSecretName = (name: string) =>
+  name.startsWith("access:") ||
+  name.startsWith("model:") ||
+  name === "ANTHROPIC_API_KEY" ||
+  name === "OPENAI_API_KEY" ||
+  name === "RAMP_ROUTER_API_KEY" ||
+  name === "OPENROUTER_API_KEY" ||
+  name === "RAMP_ROUTER_MODELS" ||
+  name === "OPENROUTER_MODELS";
 export class HostedSettingsStore {
   constructor(
     private readonly db: D1Database,
@@ -55,6 +64,34 @@ export class HostedSettingsStore {
       const parsed = cloudConnectionSchema.safeParse(JSON.parse(saved));
       if (parsed.success && parsed.data.enabled) return parsed.data;
     }
+  }
+  /// Model keys the org can start with: its own, then any enabled shared
+  /// cloud computer's source account. Organization records win on conflict.
+  async executionSecrets(org: string): Promise<Record<string, string>> {
+    const merged: Record<string, string> = {};
+    const shared = (
+      await this.db
+        .prepare(
+          "SELECT source_organization_id,provider FROM organization_cloud_shares WHERE organization_id=? ORDER BY created_at",
+        )
+        .bind(org)
+        .all<{ source_organization_id: string; provider: HostedSettings["provider"] }>()
+    ).results;
+    const seen = new Set<string>();
+    for (const row of shared) {
+      if (row.source_organization_id === org || seen.has(row.source_organization_id)) continue;
+      const connection = await this.connection(row.source_organization_id, row.provider);
+      if (!connection?.enabled) continue;
+      seen.add(row.source_organization_id);
+      Object.assign(
+        merged,
+        Object.fromEntries(
+          Object.entries(await this.secrets(row.source_organization_id)).filter(([name]) => modelSecretName(name)),
+        ),
+      );
+    }
+    Object.assign(merged, await this.secrets(org));
+    return merged;
   }
   async executionSettings(org: string, workspace: string, provider?: HostedSettings["provider"]): Promise<HostedSettings> {
     const settings = await this.settings(org, workspace);
