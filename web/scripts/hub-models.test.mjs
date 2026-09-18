@@ -14,7 +14,7 @@ const bundled = await build({
   format: "esm",
   alias: { "@": resolve(root, "src") },
 });
-const { hostedExecutionChoice, hostedModels } = await import(
+const { hostedComposerChoice, hostedExecutionChoice, hostedModels } = await import(
   `data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString("base64")}`
 );
 
@@ -44,6 +44,38 @@ test("hosted models omit providers that are turned off", () => {
     false,
   );
   assert.deepEqual(models.map((entry) => entry.id), []);
+});
+
+test("hosted models do not paint an unconfigured saved default once access has arrived", () => {
+  const models = hostedModels(
+    [
+      { id: "anthropic", enabled: true, configured: true, models: [] },
+      { id: "openrouter", enabled: false, configured: false, models: [] },
+    ],
+    false,
+    { provider: "openrouter", model: "openrouter/auto" },
+  );
+  assert.deepEqual(models.map((entry) => entry.id), ["anthropic"]);
+});
+
+test("hosted composer start uses an enabled provider instead of an unconfigured default", () => {
+  const choice = hostedComposerChoice(
+    [
+      { id: "anthropic", enabled: true, configured: true, models: [] },
+      { id: "openrouter", enabled: false, configured: false, models: [] },
+    ],
+    false,
+    { provider: "openrouter", model: "openrouter/auto" },
+  );
+  assert.equal(choice.provider, "anthropic");
+  assert.equal(
+    hostedComposerChoice(
+      [{ id: "openrouter", enabled: true, configured: true, models: ["vendor/model"] }],
+      false,
+      { provider: "openrouter", model: "openrouter/auto" },
+    ).model,
+    "openrouter/auto",
+  );
 });
 
 test("hosted execution maps OpenRouter onto Codex without a double remy prefix", () => {

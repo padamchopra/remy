@@ -1,5 +1,5 @@
 import { startHubThread } from "@/lib/hub-thread-start";
-import { hostedExecutionChoice, hostedModels } from "@/lib/hub-models";
+import { hostedComposerChoice, hostedExecutionChoice, hostedModels } from "@/lib/hub-models";
 import { resolveModelDefault } from "@/lib/model-defaults";
 import { useHubModelDefaults } from "./HubModelDefault";
 import { BranchPicker } from "./BranchPicker";
@@ -134,9 +134,11 @@ export function HubThreadComposer({
   useEffect(() => { latchedDefaults.current = undefined; }, [workspaceId, organizationId]);
   const resolvedDefaults = defaults.value ?? latchedDefaults.current;
   const inheritedModel = resolveModelDefault(resolvedDefaults?.workspace, resolvedDefaults?.remy, {provider:"",model:""}, resolvedDefaults?.computer);
-  const modelChoice = pickedModel?.workspaceId === workspaceId ? pickedModel.choice : inheritedModel;
   const usingCloud=!!cloudComputerProvider(selected);
-  const cloudModels = hostedModels(modelAccess.value?.providers ?? [], codexAccount.value?.phase === "connected", inheritedModel);
+  const chatgpt = codexAccount.value?.phase === "connected";
+  const resolvedChoice = hostedComposerChoice(modelAccess.value?.providers ?? [], chatgpt, inheritedModel);
+  const modelChoice = pickedModel?.workspaceId === workspaceId ? pickedModel.choice : resolvedChoice;
+  const cloudModels = hostedModels(modelAccess.value?.providers ?? [], chatgpt, modelChoice);
   const localModels = (computers.find(c=>c.computerId===selected)?.capabilities.providers ?? []).flatMap(p=>{
     const runtime=PROVIDERS.find(v=>v.id===p.id);
     return runtime ? [{...runtime,models:p.models.map(value=>({value,label:value || "Default"}))}] : [];
@@ -267,6 +269,7 @@ export function HubThreadComposer({
           !resolvedDefaults ||
           !message.trim() ||
           catalogue.stale ||
+          (usingCloud && !modelAccess.value) ||
           ((usingCloud || !!modelChoice.provider) && !choiceValid)
         )
           return;
@@ -281,7 +284,7 @@ export function HubThreadComposer({
     >
       <ThreadComposerEditor
         textarea={{ id: "hub-thread-message", maxLength: 64000, value: message, onChange: e => setMessage(e.target.value), required: true, disabled: false }}
-        canSend={!!memberId && !!workspace && !!selected && preferenceLoaded && visibilityLoaded && !!resolvedDefaults && !!message.trim() && !catalogue.stale && (!(usingCloud || modelChoice.provider) || !!choiceValid)}
+        canSend={!!memberId && !!workspace && !!selected && preferenceLoaded && visibilityLoaded && !!resolvedDefaults && !!message.trim() && !catalogue.stale && !(usingCloud && !modelAccess.value) && (!(usingCloud || modelChoice.provider) || !!choiceValid)}
         busy={false} sendLabel="Send"
         controls={toolbarReady
           ? <ModelPickerButton variant="composer" value={modelChoice} onPick={choice=>setPickedModel({workspaceId,choice})} catalogue={modelCatalogue} cataloguePending={cataloguePending} disabled={false} />

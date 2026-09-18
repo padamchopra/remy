@@ -60,3 +60,20 @@ test("hosted start still refuses a disabled or unconfigured gateway", () => {
     "Choose an enabled provider and model.",
   );
 });
+
+test("hosted start uses a legacy OpenRouter key when the access record has none", () => {
+  assert.equal(
+    hostedGatewayError("openrouter", "openrouter/auto", {
+      "access:openrouter": JSON.stringify({
+        apiKey: "",
+        enabled: true,
+        models: [],
+      }),
+      "model:openrouter": JSON.stringify({
+        apiKey: "legacy-openrouter-key",
+        model: "openrouter/auto",
+      }),
+    }),
+    undefined,
+  );
+});
