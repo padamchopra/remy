@@ -472,7 +472,10 @@ test("hosted model keys are encrypted per organization and settings inherit expl
  test("cloud connections enable independently and placement uses an enabled provider", async () => {
   const {sqlite,db}=database();
   const {HostedSettingsStore}=await import('./hosted-settings.js');
+  const {saveModelAccess,publicModelAccess,hostedGatewayError,modelEnvironment}=await import('./model-access.js');
   const store=new HostedSettingsStore(db,async()=>"test-encryption-root-with-at-least-thirty-two-characters");
+  const before=globalThis.fetch;
+  globalThis.fetch=(async()=>Response.json({data:[{id:"openrouter/auto"}]})) as typeof fetch;
   const fly={provider:'fly-sprites',enabled:true,token:'private-fly-token'};
   const modal={provider:'modal',enabled:true,tokenId:'private-modal-id',tokenSecret:'private-modal-secret'};
   try {
@@ -494,7 +497,18 @@ test("hosted model keys are encrypted per organization and settings inherit expl
     assert.deepEqual(await store.enabledProviders('other'),['modal']);
     assert.deepEqual(await store.connection('other','modal'),modal);
     assert.deepEqual(await store.secretNames('other'),[]);
-  } finally {sqlite.close();}
+    await saveModelAccess(store,"org","openrouter",{enabled:true,apiKey:"source-openrouter-key"});
+    const sharedAccess = publicModelAccess(await store.executionSecrets("other"));
+    assert.equal(sharedAccess.find(entry => entry.id === "openrouter")?.enabled, true);
+    assert.equal(sharedAccess.find(entry => entry.id === "openrouter")?.configured, true);
+    assert.equal(hostedGatewayError("openrouter", "openrouter/auto", await store.executionSecrets("other")), undefined);
+    assert.equal(modelEnvironment(await store.executionSecrets("other")).OPENROUTER_API_KEY, "source-openrouter-key");
+    assert.equal("cloud:modal" in (await store.executionSecrets("other")), false);
+    await saveModelAccess(store,"other","openrouter",{enabled:false,apiKey:"org-openrouter-key"});
+    assert.equal(publicModelAccess(await store.executionSecrets("other")).find(entry => entry.id === "openrouter")?.enabled, false);
+    assert.equal(hostedGatewayError("openrouter", "openrouter/auto", await store.executionSecrets("other")), "Choose an enabled provider and model.");
+    assert.equal(modelEnvironment(await store.executionSecrets("other")).OPENROUTER_API_KEY, undefined);
+  } finally {globalThis.fetch=before;sqlite.close();}
 });
 
 test("OpenRouter routes enforce admin access and persist only encrypted credentials", async () => {
@@ -550,6 +564,21 @@ test("OpenRouter routes enforce admin access and persist only encrypted credenti
     assert.equal(access.providers.find(p=>p.id==="openrouter")?.configured,true);
     assert.equal(access.providers.find(p=>p.id==="openrouter")?.enabled,false);
     assert.ok(!JSON.stringify(access).includes(input.apiKey));
+    sqlite.exec("INSERT INTO user(id,name,email,createdAt,updatedAt) VALUES('user','User','user@example.test',1,1); INSERT INTO organizations(id,name,createdAt,updatedAt) VALUES('team','Team',1,1); INSERT INTO memberships VALUES('team-user','team','user','member',1,1)");
+    await store.setSecret("org","cloud:fly-sprites",JSON.stringify({provider:"fly-sprites",enabled:true,token:"private-fly-token"}));
+    sqlite.prepare("INSERT INTO organization_cloud_shares(organization_id,source_organization_id,provider,shared_by,created_at) VALUES(?,?,?,?,?)").run("team","org","fly-sprites","user",1);
+    role="owner";
+    assert.equal((await call("model-access/openrouter","PATCH",{enabled:true})).status,200);
+    const teamCall = (path:string) => route(new Request(`https://hub.example/api/organizations/team/${path}`, {headers:{authorization:"Bearer test",origin:"https://hub.example"}}),env);
+    role="member";
+    const teamAccess=await (await teamCall("model-access")).json() as {providers:{id:string;configured:boolean;enabled:boolean}[]};
+    assert.equal(teamAccess.providers.find(p=>p.id==="openrouter")?.enabled,true);
+    assert.equal(teamAccess.providers.find(p=>p.id==="openrouter")?.configured,true);
+    assert.ok(!JSON.stringify(teamAccess).includes(input.apiKey));
+    const hosted=await (await teamCall("hosted")).json() as {enabledProviders:string[];connections:string[];openrouterConfigured:boolean};
+    assert.deepEqual(hosted.enabledProviders,["fly-sprites"]);
+    assert.equal(hosted.connections.includes("fly-sprites"), false);
+    assert.equal(hosted.openrouterConfigured,true);
   } finally {globalThis.fetch=originalFetch;sqlite.close();}
 });
 

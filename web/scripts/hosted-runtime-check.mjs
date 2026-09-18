@@ -176,7 +176,13 @@ try {
           const entry=modelEntries.find(p=>p.id==="openrouter");entry.enabled=true;entry.configured=true;entry.models=["openrouter/auto","test/model-a","test/model-b"];
           remyDefault={provider:"openrouter",model:"openrouter/auto"};preference="cloud:fly-sprites";
         }
-        if(process.env.QA_SCOPE_ONLY === "1") profile.image="preset:cobalt-cyclops";
+        if(process.env.QA_SCOPE_ONLY === "1") {
+          profile.image="preset:cobalt-cyclops";
+          const entry=modelEntries.find(p=>p.id==="openrouter");
+          entry.enabled=true;entry.configured=true;entry.models=["openrouter/auto"];
+          remyDefault={provider:"openrouter",model:"openrouter/auto"};
+          preference="cloud:fly-sprites";
+        }
         const target=new URL(url);target.hash="/threads?organization=personal";await page.goto(target.href);
         await page.waitForURL(current=>!current.hash);
         assert.equal(new URL(page.url()).hash,"","Hosted navigation removes legacy hash routes");
@@ -394,6 +400,21 @@ try {
           await page.getByText("Connection credentials stay private.",{exact:false}).waitFor();
           if(artifacts)await page.screenshot({path:`${artifacts}/organization-computers-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
           assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+          await page.goto(clean("/threads"));
+          await composer.waitFor();
+          await sharing.click();
+          await page.getByRole("menuitem",{name:"Shared",exact:true}).click();
+          await sharing.getByText("Shared",{exact:true}).waitFor();
+          await composer.getByRole("button",{name:"Model",exact:true}).getByText("openrouter/auto",{exact:true}).waitFor();
+          await composer.getByLabel("Thread computer",{exact:true}).getByText("Cloud · Fly.io Sprites",{exact:true}).waitFor();
+          await composer.getByLabel("Message",{exact:true}).fill("Share this organization thread");
+          await page.getByRole("button",{name:"Send",exact:true}).click();
+          await page.getByText("Preview request captured.",{exact:true}).waitFor();
+          assert.equal(threadInput.visibility,"open");
+          assert.equal(threadInput.computerId,"cloud:fly-sprites");
+          assert.equal(threadInput.provider,"codex");
+          assert.equal(threadInput.model,"remy:openrouter:openrouter/auto");
+          if(artifacts && !returning && !mobile) await page.screenshot({path:`${artifacts}/shared-start-openrouter.png`});
           assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);
           await context.close();console.log(`Unified account scope passed: ${returning?'saved local state':'fresh profile'}, ${mobile?'touch phone':'desktop'}.`);continue;
         }
@@ -436,6 +457,7 @@ try {
           assert.equal(threadInput.computerId,"cloud:fly-sprites","Thread creation submits the displayed computer");
           assert.equal(threadInput.provider,"codex");
           assert.equal(threadInput.model,"remy:openrouter:openrouter/auto");
+          assert.equal(threadInput.visibility,"private");
           await page.getByLabel("Starting thread",{exact:true}).waitFor();
           await page.getByRole("tab", {name:"Hello startup QA", exact:true}).waitFor();
           assert.equal(await page.getByRole("heading", {name:"Threads", exact:true}).count(), 0);
