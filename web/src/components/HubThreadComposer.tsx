@@ -10,7 +10,7 @@ import { NewThreadSurface, ComposerWorkspaceTrigger } from "./NewThreadSurface";
 import { HubWorkspaceIcon } from "./HubWorkspaceIcon";
 import { ComposerMenu } from "./ComposerMenu";
 import { Check, Cloud, Laptop, Lock, Users } from "lucide-react";
-import { InputGroupButton } from "./ui/input-group";
+import { InputGroupButton, InputGroupText } from "./ui/input-group";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "./ui/dropdown-menu";
 import { EmptyState } from "@/components/EmptyState";
 import { ModelPickerButton } from "./ModelPicker";
@@ -135,6 +135,7 @@ export function HubThreadComposer({
   const resolvedDefaults = defaults.value ?? latchedDefaults.current;
   const inheritedModel = resolveModelDefault(resolvedDefaults?.workspace, resolvedDefaults?.remy, {provider:"",model:""}, resolvedDefaults?.computer);
   const usingCloud=!!cloudComputerProvider(selected);
+  const usingCursorCloud=cloudComputerProvider(selected)==="cursor-cloud";
   const chatgpt = codexAccount.value?.phase === "connected";
   const cloudConnections = useHubResource<{settings?:{provider?:string};enabledProviders?: string[];cloudStart?: Record<string, {owner:boolean;providers:{id:string;allowed:boolean}[]}>}>(organizationId, "/hosted");
   const cloudStart = usingCloud ? cloudConnections.value?.cloudStart?.[cloudComputerProvider(selected) ?? ""] : undefined;
@@ -146,7 +147,7 @@ export function HubThreadComposer({
     const runtime=PROVIDERS.find(v=>v.id===p.id);
     return runtime ? [{...runtime,models:p.models.map(value=>({value,label:value || "Default"}))}] : [];
   });
-  const modelCatalogue = usingCloud || !selected ? cloudModels : localModels;
+  const modelCatalogue = usingCursorCloud ? [] : usingCloud || !selected ? cloudModels : localModels;
   const cataloguePending = usingCloud && !modelAccess.value && !modelAccess.error;
   const selectedChoice = modelCatalogue.some(p=>p.id===modelChoice.provider && p.models.some(m=>m.value===modelChoice.model))
     ? modelChoice
@@ -275,25 +276,27 @@ export function HubThreadComposer({
           !resolvedDefaults ||
           !message.trim() ||
           catalogue.stale ||
-          (usingCloud && !modelAccess.value) ||
-          ((usingCloud || !!selectedChoice.provider) && !choiceValid)
+          (usingCloud && !usingCursorCloud && !modelAccess.value) ||
+          (!usingCursorCloud && (usingCloud || !!selectedChoice.provider) && !choiceValid)
         )
           return;
         startHubThread({
           organizationId, ownerId: memberId, requestId, workspaceId,
           computerId: selected,
           computerName: cloudOptions.find(c => c.id === selected)?.name ?? eligible.find(c => c.computerId === selected)?.name ?? "Computer unavailable",
-          message: message.trim(), visibility, ...(branch ? {branch} : {}), ...executionChoice,
+          message: message.trim(), visibility, ...(branch ? {branch} : {}), ...(usingCursorCloud ? {provider: "cursor"} : executionChoice),
         });
         open("pending", requestId);
       }}
     >
       <ThreadComposerEditor
         textarea={{ id: "hub-thread-message", maxLength: 64000, value: message, onChange: e => setMessage(e.target.value), required: true, disabled: false }}
-        canSend={!!memberId && !!workspace && !!selected && preferenceLoaded && visibilityLoaded && !!resolvedDefaults && !!message.trim() && !catalogue.stale && !(usingCloud && !modelAccess.value) && (!(usingCloud || selectedChoice.provider) || !!choiceValid)}
+        canSend={!!memberId && !!workspace && !!selected && preferenceLoaded && visibilityLoaded && !!resolvedDefaults && !!message.trim() && !catalogue.stale && !(usingCloud && !usingCursorCloud && !modelAccess.value) && (usingCursorCloud || !(usingCloud || selectedChoice.provider) || !!choiceValid)}
         busy={false} sendLabel="Send"
         controls={toolbarReady
-          ? <ModelPickerButton variant="composer" value={selectedChoice} onPick={choice=>setPickedModel({workspaceId,choice})} catalogue={modelCatalogue} cataloguePending={cataloguePending} disabled={false} />
+          ? (usingCursorCloud
+            ? <InputGroupText>Cursor Cloud default</InputGroupText>
+            : <ModelPickerButton variant="composer" value={selectedChoice} onPick={choice=>setPickedModel({workspaceId,choice})} catalogue={modelCatalogue} cataloguePending={cataloguePending} disabled={false} />)
           : <span className="inline-flex h-6 min-w-40" aria-hidden />}
         contextEnd={toolbarReady
           ? <BranchPicker workspaceId={workspaceId} branch={branch || "Choose branch"} pending={false} busy={false} loadBranches={loadBranches} onPick={async value => { setBranch(value); return true; }} />

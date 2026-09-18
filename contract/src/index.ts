@@ -444,9 +444,18 @@ export function foldBoardEvents(entity: BoardLogEntity, id: string, events: Boar
   return { entity, id, fields, activity, createdAt, updatedAt, lastActor };
 }
 
+export const CLOUD_COMPUTER_PROVIDERS = ["fly-sprites", "modal", "cursor-cloud"] as const;
+export type CloudComputerProvider = (typeof CLOUD_COMPUTER_PROVIDERS)[number];
+export const GUEST_CLOUD_PROVIDERS = ["fly-sprites", "modal"] as const;
+export type GuestCloudProvider = (typeof GUEST_CLOUD_PROVIDERS)[number];
+export const isGuestCloudProvider = (provider: string | undefined | null): provider is GuestCloudProvider =>
+  provider === "fly-sprites" || provider === "modal";
+export const isCursorCloudProvider = (provider: string | undefined | null): provider is "cursor-cloud" =>
+  provider === "cursor-cloud";
+
 export const hostedSettingsSchema = z.object({
   enabled: z.boolean().default(false),
-  provider: z.enum(["fly-sprites", "modal"]).default("fly-sprites"),
+  provider: z.enum(CLOUD_COMPUTER_PROVIDERS).default("fly-sprites"),
   region: z.string().regex(/^[a-z0-9-]{0,40}$/).default(""),
   cpu: z.number().min(0.25).max(16).default(1),
   memoryMiB: z.number().int().min(512).max(32768).default(2048),
@@ -493,5 +502,8 @@ export type HubRoutine = z.infer<typeof hubRoutineSchema>;
 export const CLOUD_COMPUTERS = [
   { id: "cloud:fly-sprites", provider: "fly-sprites", name: "Cloud · Fly.io Sprites" },
   { id: "cloud:modal", provider: "modal", name: "Cloud · Modal" },
+  { id: "cloud:cursor-cloud", provider: "cursor-cloud", name: "Cloud · Cursor" },
 ] as const;
+export const CURSOR_CLOUD_COMPUTER_ID = "cloud:cursor-cloud";
 export const cloudComputerProvider = (id: string | undefined | null) => CLOUD_COMPUTERS.find(c => c.id === id)?.provider;
+export const cloudComputerName = (id: string | undefined | null) => CLOUD_COMPUTERS.find(c => c.id === id)?.name;

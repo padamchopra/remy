@@ -108,4 +108,6 @@ test("cloud computer choices retain the selected provider and reject disabled co
   assert.equal(resolveComputer([], [computer("mini")], selected).hostedProvider,"modal");
   assert.equal(resolveComputer([], [], {...selected,enabledProviders:["fly-sprites"]}).hostedWorkspaceId,undefined);
   assert.equal(resolveComputer([{id:"cloud",name:"Modal",target:{computerId:"cloud:modal"}}],[],{...input,enabledProviders:["modal"]}).hostedProvider,"modal");
+  assert.equal(resolveComputer([], [], {...input,override:"cloud:cursor-cloud",enabledProviders:["cursor-cloud"]}).hostedProvider,"cursor-cloud");
+  assert.equal(resolveComputer([], [], {...input,override:"cloud:cursor-cloud",enabledProviders:["modal"]}).reason.includes("disabled"), true);
 });

@@ -35,6 +35,8 @@ import { deviceIcon, type DeviceIconId } from "@/lib/devices";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   canWriteThread,
+  cloudComputerName,
+  CURSOR_CLOUD_COMPUTER_ID,
   type HubThread,
   type ThreadMember,
   type ComputerSummary,
@@ -171,6 +173,8 @@ export default function HubThreads({
     followsLatest.current = true;
   }, [threadId]);
   const computer = computers.find((c) => c.computerId === thread?.computerId);
+  const computerName = computer?.name ?? cloudComputerName(thread?.computerId) ?? pending?.computerName ?? "Computer unavailable";
+  const cursorCloud = (thread?.computerId ?? pending?.computerId) === CURSOR_CLOUD_COMPUTER_ID;
   const branch = useHubThreadBranch(organizationId, savedThread, computer) ?? pending?.branch;
   const ComputerIcon = deviceIcon((computer?.icon ?? (pending?.computerId?.startsWith("cloud:") ? "cloud" : undefined)) as DeviceIconId);
   const writable =
@@ -235,7 +239,7 @@ export default function HubThreads({
                 <DropdownMenuLabel className="font-normal text-muted-foreground">Started by {thread.access.owner.label}</DropdownMenuLabel>
                 {!isPersonal && thread.access.participants.length > 0 && <DropdownMenuLabel className="font-normal text-muted-foreground">{thread.access.participants.map(person => person.label).join(", ")}</DropdownMenuLabel>}
                 <DropdownMenuItem onSelect={() => navigate({ name: "settings", tab: "devices", organizationId })}>
-                  <ComputerIcon />{computer?.name ?? pending?.computerName ?? "Computer unavailable"}
+                  <ComputerIcon />{computerName}
                 </DropdownMenuItem>
                 {!pending && !isPersonal && member?.id === thread.access.owner.id && <>
                   <DropdownMenuSeparator />
@@ -438,12 +442,12 @@ export default function HubThreads({
                 onStop={() => void act("interrupt")}
                 canSend={!disabled && !draft.uploading && !!draft.text.trim()}
                 controls={<>
-                  <ModelPickerButton variant="composer" catalogue={providers} onlyProvider={modelProvider} value={{provider:modelProvider,model:gateway?.[2] ?? runtimeModel,effort:String(thread.detail.effort ?? "")}} disabled={disabled}
-                    onPick={choice => void act("options", {model:gateway ? `remy:${gateway[1]}:${choice.model}` : choice.model,effort:choice.effort ?? null})} />
+                  {cursorCloud ? <InputGroupText>Cursor Cloud default</InputGroupText> : <ModelPickerButton variant="composer" catalogue={providers} onlyProvider={modelProvider} value={{provider:modelProvider,model:gateway?.[2] ?? runtimeModel,effort:String(thread.detail.effort ?? "")}} disabled={disabled}
+                    onPick={choice => void act("options", {model:gateway ? `remy:${gateway[1]}:${choice.model}` : choice.model,effort:choice.effort ?? null})} />}
                   <ComposerMenu icon={permission.icon} label={permission.label} value={permission.value} options={PERMISSIONS} disabled={disabled} onChange={permissionMode => void act("options", {permissionMode})} />
                 </>}
                 context={<>
-                  <InputGroupText className="hidden @3xl:flex"><ComputerIcon />{computer?.name ?? pending?.computerName ?? "Computer unavailable"}</InputGroupText>
+                  <InputGroupText className="hidden @3xl:flex"><ComputerIcon />{computerName}</InputGroupText>
                   {branch && <BranchName branch={branch} />}
                   <ContextMeter context={thread.detail.context as ContextUsage | undefined} />
                 </>}

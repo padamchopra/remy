@@ -43,7 +43,7 @@ type ComputeShares = {
   cloudConnections: SharedCloud[];
 };
 
-const cloudLabel = (provider: string) => provider === "fly-sprites" ? "Fly.io Sprites" : provider === "modal" ? "Modal" : provider;
+const cloudLabel = (provider: string) => provider === "fly-sprites" ? "Fly.io Sprites" : provider === "modal" ? "Modal" : provider === "cursor-cloud" ? "Cursor Cloud" : provider;
 
 export function HubOrganizationComputers({ organizationId }: { organizationId: string }) {
   const resource = useHubResource<ComputeShares>(organizationId, "/compute-shares", "/computers/live");

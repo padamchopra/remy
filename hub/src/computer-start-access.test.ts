@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  advertisedCloudProvidersFor,
   advertisedCloudStartProviders,
   advertisedProviderIds,
   canStartWithShareGrant,
@@ -44,4 +45,14 @@ test("cloud model access advertises Claude and Codex, and a share grant is start
   assert.equal(canStartWithShareGrant(false, ["claude"], advertised, "codex"), false);
   assert.equal(canStartWithShareGrant(false, ["claude"], advertised, "claude"), true);
   assert.equal(canStartWithShareGrant(false, null, advertised, "codex"), true);
+});
+
+test("Cursor Cloud advertises only Cursor regardless of model access", () => {
+  assert.deepEqual(advertisedCloudProvidersFor("cursor-cloud", [
+    { id: "anthropic", enabled: true, configured: true },
+    { id: "openrouter", enabled: true, configured: true },
+  ]), ["cursor"]);
+  assert.deepEqual(advertisedCloudProvidersFor("modal", [
+    { id: "anthropic", enabled: true, configured: true },
+  ]), ["claude"]);
 });

@@ -8,6 +8,8 @@ test("cloud credentials cannot become guest environment variables", () => {
 test("provider credentials are complete and reject unknown fields", () => {
   assert.equal(cloudConnectionSchema.safeParse({ provider: "modal", tokenId: "id" }).success, false);
   assert.equal(cloudConnectionSchema.safeParse({ provider: "fly-sprites", token: "token", endpoint: "https://other.invalid" }).success, false);
+  assert.equal(cloudConnectionSchema.safeParse({ provider: "cursor-cloud", token: "cursor-secret" }).success, true);
+  assert.equal(cloudConnectionSchema.safeParse({ provider: "cursor-cloud", token: "cursor-secret", tokenId: "extra" }).success, false);
 });
 test("each operation obtains the account connection separately from guest input", async () => {
   const sent: unknown[] = [];
