@@ -34,6 +34,7 @@ try {
     await click(auth, `Continue with ${provider}`);
     await auth.getByText("Connecting to your sign-in provider…").waitFor();
     await auth.getByText("Sign-in provider unavailable; try again.", { exact: true }).waitFor();
+    assert.equal(await auth.locator("main").getByText("Sign-in provider unavailable; try again.", { exact: true }).count(), 0);
     assert.equal(authRequests.at(-1).input.provider, provider.toLowerCase());
     assert.equal("email" in authRequests.at(-1).input, false);
   }

@@ -72,6 +72,7 @@ function AccountSignIn({ runtime }: { runtime: HubRuntime }) {
       else toast.success("Check your email for your sign-in link.");
     } catch (e) {
       toast.error(method === "signup" ? "Couldn't create your account" : "Couldn't sign in", {
+        id: "hub-sign-in",
         description: accountAuthMessage(e),
       });
     } finally {
