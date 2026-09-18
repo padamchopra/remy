@@ -12,10 +12,11 @@ const native = () => {
 test("native email delivery exposes passwordless signup without social providers", async () => {
   const mail = native();
   const response = await createRouteHandler()(new Request("https://app.remy.example/api/runtime"), { DB: {}, ...mail } as unknown as Env);
-  const runtime = await response.json() as { auth: { magicLink: boolean; google: boolean; github: boolean } };
+  const runtime = await response.json() as { auth: { magicLink: boolean; google: boolean; github: boolean; password: boolean } };
   assert.equal(runtime.auth.magicLink, true);
   assert.equal(runtime.auth.google, false);
   assert.equal(runtime.auth.github, false);
+  assert.equal(runtime.auth.password, true);
 });
 
 test("verification emails use the native binding and escape the action URL", async () => {

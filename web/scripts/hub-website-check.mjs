@@ -33,5 +33,30 @@ try {
   assert.equal(signIns.at(-1).path, '/api/auth/sign-in/sso');
   assert.equal(signIns.some(request => request.path.endsWith('/magic-link')), false);
   assert.deepEqual(errors, []);
-  console.log('Combined deployment checks passed: public home, /app/ sign-in, Google/GitHub controls.');
+
+  const passwordPage = await browser.newPage();
+  const passwordSignIns = [];
+  passwordPage.on('pageerror', error => errors.push(error.message));
+  await passwordPage.route('**/api/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/runtime') return route.fulfill({ json: { mode: 'hub', auth: { password: true, magicLink: true, google: false, github: false, sso: false } } });
+    if (path.startsWith('/api/auth/sign-in/')) {
+      passwordSignIns.push({ path, input: route.request().postDataJSON() });
+      return route.fulfill({ json: { user: { id: 'qa' } } });
+    }
+    if (path === '/api/sessions/web') return route.fulfill({ json: { expiresIn: 60 } });
+    return route.fulfill({ status: 401, json: { error: 'Sign in again.' } });
+  });
+  await passwordPage.goto(new URL('/app/', url).href, { waitUntil: 'networkidle' });
+  await passwordPage.getByRole('button', { name: 'Email sign-in link', exact: true }).waitFor();
+  await passwordPage.getByLabel('Email', { exact: true }).fill('qa@example.test');
+  await passwordPage.getByLabel('Password', { exact: true }).fill('qa-test-password');
+  const posted = passwordPage.waitForRequest((request) => new URL(request.url()).pathname === '/api/auth/sign-in/email');
+  await passwordPage.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await posted;
+  assert.equal(passwordSignIns.some(request => request.path.endsWith('/email')), true);
+  assert.equal(passwordSignIns.find(request => request.path.endsWith('/email')).input.email, 'qa@example.test');
+  assert.equal(passwordSignIns.find(request => request.path.endsWith('/email')).input.password, 'qa-test-password');
+  assert.deepEqual(errors, []);
+  console.log('Combined deployment checks passed: public home, /app/ sign-in, Google/GitHub controls, email/password.');
 } finally { await browser.close(); }

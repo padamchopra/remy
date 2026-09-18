@@ -215,7 +215,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
   const computerStore = (dependencies.computerStore ?? ((current) => new D1ComputerStore(current.DB)))(env);
   const computers = new ComputerService(computerStore, Date.now, env.MINIMUM_DAEMON_VERSION ?? "0.1.0", organizationStore);
 
-  if (url.pathname === "/api/auth/sign-in/magic-link" && request.method === "POST") {
+  if ((url.pathname === "/api/auth/sign-in/magic-link" || url.pathname === "/api/auth/sign-in/email") && request.method === "POST") {
     const cloned = request.clone();
     const input = await body<{ email?: string }>(cloned);
     const domain = typeof input?.email === "string" ? domainOf(input.email) : undefined;
@@ -255,7 +255,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     return Response.json(result, { status });
   }
 
-  if (url.pathname === "/api/runtime" && request.method === "GET") return Response.json({ mode: "hub", auth: { magicLink: emailAvailable(env), google: !!env.GOOGLE_CLIENT_ID && !!env.GOOGLE_CLIENT_SECRET, github: !!env.GITHUB_CLIENT_ID && !!env.GITHUB_CLIENT_SECRET, sso: true } }, { headers: { "cache-control": "no-store" } });
+  if (url.pathname === "/api/runtime" && request.method === "GET") return Response.json({ mode: "hub", auth: { magicLink: emailAvailable(env), google: !!env.GOOGLE_CLIENT_ID && !!env.GOOGLE_CLIENT_SECRET, github: !!env.GITHUB_CLIENT_ID && !!env.GITHUB_CLIENT_SECRET, sso: true, password: true } }, { headers: { "cache-control": "no-store" } });
   const protectedRoute = isGitHubConnectionCallback(url)
     || url.pathname === "/api/device/approve"
     || url.pathname === "/api/sessions"
