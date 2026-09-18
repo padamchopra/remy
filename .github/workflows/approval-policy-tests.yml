@@ -3,6 +3,12 @@ name: Approval policy tests
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+    paths:
+      - ".github/owner-approval.md"
+      - ".github/scripts/owner-approval.cjs"
+      - ".github/scripts/owner-approval.test.cjs"
+      - ".github/workflows/approval-policy-tests.yml"
+      - ".github/workflows/owner-approval.yml"
   pull_request_review:
     types: [submitted, edited, dismissed]
 
@@ -22,9 +28,3 @@ jobs:
         with:
           node-version: "22"
       - run: node --test .github/scripts/owner-approval.test.cjs
-  review-activity:
-    if: github.event_name == 'pull_request_review'
-    runs-on: ubuntu-latest
-    steps:
-      # The trusted workflow_run listener reads reviews itself, including on fork PRs.
-      - run: echo "A review changed; reevaluate current approvals."

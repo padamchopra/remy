@@ -11,15 +11,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  changes:
-    name: Decide whether the Mac app changed
-    runs-on: ubuntu-latest
-    outputs:
-      build: ${{ steps.paths.outputs.build }}
+  # One job so GitHub publishes a single Build Mac app check. Path decide still
+  # skips install, tests, and pack:mac when the Mac app did not change.
+  build:
+    name: Build Mac app
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - id: paths
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -36,15 +37,8 @@ jobs:
             echo "The Mac app changed."
           fi
 
-  package:
-    name: Package Mac app
-    needs: changes
-    if: needs.changes.outputs.build == 'true'
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
+        if: steps.paths.outputs.build == 'true'
         with:
           node-version: "22"
           cache: npm
@@ -55,9 +49,11 @@ jobs:
             desktop/package-lock.json
 
       - name: Install
+        if: steps.paths.outputs.build == 'true'
         run: npm run install:mac
 
       - name: Test update handoff
+        if: steps.paths.outputs.build == 'true'
         env:
           NODE_OPTIONS: --import=${{ github.workspace }}/contract/node_modules/tsx/dist/loader.mjs
         run: |
@@ -66,30 +62,5 @@ jobs:
           node --test server/dist/hub-thread-branch.test.js server/dist/hosted-git-config.test.js server/dist/hosted-sprite-lease.test.js server/dist/app-update.test.js server/dist/service-restart*.test.js server/dist/ticket-tool-auth.test.js
 
       - name: Build unsigned app
+        if: steps.paths.outputs.build == 'true'
         run: npm run pack:mac
-
-  required:
-    name: Build Mac app
-    needs: [changes, package]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require the relevant result
-        env:
-          BUILD_NEEDED: ${{ needs.changes.outputs.build }}
-          CHANGES_RESULT: ${{ needs.changes.result }}
-          PACKAGE_RESULT: ${{ needs.package.result }}
-        run: |
-          if [ "$CHANGES_RESULT" != "success" ]; then
-            echo "The Mac build decision failed."
-            exit 1
-          fi
-          if [ "$BUILD_NEEDED" = "true" ] && [ "$PACKAGE_RESULT" != "success" ]; then
-            echo "The Mac app did not build successfully."
-            exit 1
-          fi
-          if [ "$BUILD_NEEDED" = "true" ]; then
-            echo "The Mac app built successfully."
-          else
-            echo "The Mac app did not change."
-          fi

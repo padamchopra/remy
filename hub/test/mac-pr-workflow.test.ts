@@ -10,7 +10,16 @@ const hubRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const macPack = readFileSync(join(hubRoot, "../desktop/scripts/pack-mac.mjs"), "utf8");
 const workflow = parse(readFileSync(join(hubRoot, "../.github/workflows/mac-pr.yml"), "utf8")) as {
   on: { pull_request: null | { paths?: string[] } };
-  jobs: Record<string, { if?: string; name?: string; needs?: string | string[] }>;
+  jobs: Record<
+    string,
+    {
+      if?: string;
+      name?: string;
+      needs?: string | string[];
+      "runs-on"?: string;
+      steps?: Array<{ id?: string; if?: string; name?: string; run?: string }>;
+    }
+  >;
 };
 const releaseWorkflow = parse(readFileSync(join(hubRoot, "../.github/workflows/mac.yml"), "utf8")) as {
   on: { push: { paths: string[] } };
@@ -23,14 +32,21 @@ const testflightWorkflow = parse(readFileSync(join(hubRoot, "../.github/workflow
 test("the required Mac check reports on every pull request", () => {
   assert.ok("pull_request" in workflow.on);
   assert.equal(workflow.on.pull_request, null);
-  assert.equal(workflow.jobs.required?.name, "Build Mac app");
-  assert.equal(workflow.jobs.required?.if, "always()");
-  assert.deepEqual(workflow.jobs.required?.needs, ["changes", "package"]);
+  assert.deepEqual(Object.keys(workflow.jobs), ["build"]);
+  assert.equal(workflow.jobs.build?.name, "Build Mac app");
+  assert.equal(workflow.jobs.build?.if, undefined);
 });
 
-test("the expensive package job runs only for relevant changes", () => {
-  assert.equal(workflow.jobs.package?.if, "needs.changes.outputs.build == 'true'");
-  assert.equal(workflow.jobs.package?.needs, "changes");
+test("the expensive package steps run only for relevant changes", () => {
+  const steps = workflow.jobs.build?.steps ?? [];
+  assert.equal(steps[1]?.id, "paths");
+  assert.match(steps[1]?.run ?? "", /desktop\/\*\*/);
+  assert.match(steps[1]?.run ?? "", /echo "build=false"/);
+  const expensive = steps.filter((step) => step.if === "steps.paths.outputs.build == 'true'");
+  assert.ok(expensive.some((step) => step.name === "Install"));
+  assert.ok(expensive.some((step) => step.name === "Test update handoff"));
+  assert.ok(expensive.some((step) => step.name === "Build unsigned app"));
+  assert.ok(expensive.some((step) => step.run === "npm run pack:mac"));
 });
 
 test("main release workflows do not preflight unrelated changes", () => {
