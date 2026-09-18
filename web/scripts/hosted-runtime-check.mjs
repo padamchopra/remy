@@ -142,6 +142,11 @@ try {
           if(patch.apiKey){savedKeys.set(id,patch.apiKey);entry.configured=true;entry.models=["test/model-a","test/model-b"];}
           return route.fulfill({json:{providers:modelEntries}});
         }
+        if (path === `${base}/invites` && route.request().method() === "POST") {
+          const input = route.request().postDataJSON() ?? {};
+          if (input.email) return route.fulfill({ status: 201, json: { id: "invite-1", organizationId: org.id, role: input.role ?? "member" } });
+          return route.fulfill({ status: 201, json: { id: "invite-1", organizationId: org.id, role: input.role ?? "member", token: "invite-token" } });
+        }
         const responses = {
           [`${base}/model-access`]: {providers:modelEntries},
           "/api/runtime": { mode: "hub", auth: { google: true } },
@@ -380,6 +385,12 @@ try {
           const readerMember=page.locator('[data-slot="item"]',{hasText:"Reader"});
           await readerMember.locator('[data-slot="avatar-image"]').waitFor();
           assert.match(await readerMember.locator('[data-slot="avatar-image"]').getAttribute("src"),/cobalt-cyclops/);
+          await page.getByRole("button", { name: "Invite member", exact: true }).click();
+          await page.getByLabel("Email (optional)").fill("ada@example.test");
+          await page.getByRole("button", { name: "Send invitation", exact: true }).click();
+          await page.getByText("Your invitation is sent.", { exact: true }).waitFor();
+          assert.equal(await page.getByRole("region", { name: "Members", exact: true }).getByText("Your invitation is sent.", { exact: true }).count(), 0, "Invitation confirmation is a toast");
+          if(artifacts)await page.screenshot({path:`${artifacts}/invite-toast-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
           if(artifacts)await page.screenshot({path:`${artifacts}/member-avatar-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
           await page.goto(clean("/settings/organization?section=computers&owner=team"));
           const computerShare=page.getByRole("switch",{name:"Share Personal Mac",exact:true});
@@ -748,7 +759,8 @@ try {
         failToggle=true;
         await flyForm.getByRole("switch").click();
         assert.equal(await flyForm.getByRole("switch").getAttribute("aria-checked"),"false","Switch responds before the server");
-        await flyForm.getByRole("alert").waitFor();
+        await page.getByText("Couldn't save that provider", { exact: true }).waitFor();
+        assert.equal(await flyForm.getByRole("alert").count(), 0, "Provider save failure is a toast");
         assert.equal(await flyForm.getByRole("switch").getAttribute("aria-checked"),"true","Failed writes restore the saved value");
         failToggle=false;
         available = true;
