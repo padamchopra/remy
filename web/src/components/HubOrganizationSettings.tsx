@@ -54,6 +54,7 @@ import {
   ItemMedia,
   ItemActions,
 } from "@/components/ui/item";
+import { toast } from "sonner";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { apiError } from "@/lib/api-error";
 import {
@@ -110,10 +111,8 @@ export default function HubOrganizationSettings({
   const [addingWorkspace, setAddingWorkspace] = useState(false);
   const [edit, setEdit] = useState<Edit>();
   const [remove, setRemove] = useState<{ id: string; name: string }>();
-  const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [invite, setInvite] = useState("");
-  const [invited, setInvited] = useState(false);
   const [inviteRole, setInviteRole] = useState("member");
   const [teamMembers, setTeamMembers] = useState<string[]>([]);
   const base = hubThreadBase(organizationId);
@@ -121,15 +120,13 @@ export default function HubOrganizationSettings({
   useEffect(() => {
     setEdit(undefined);
     setInvite("");
-    setError("");
   }, [organizationId, kind]);
-  const perform = async (work: () => Promise<void>) => {
+  const perform = async (work: () => Promise<void>, failure: string) => {
     setBusy(true);
-    setError("");
     try {
       await work();
     } catch (e) {
-      setError(apiError(e));
+      toast.error(failure, { description: apiError(e) });
     } finally {
       setBusy(false);
     }
@@ -138,7 +135,6 @@ export default function HubOrganizationSettings({
     if (!item && kind === "workspaces" && !manual) { setAddingWorkspace(true); return; }
     if (!item) {
       setTeamMembers([]);
-      setInvited(false);
       setInvite("");
       setEdit({
         name: "",
@@ -177,7 +173,7 @@ export default function HubOrganizationSettings({
         });
       }
     } catch (e) {
-      setError(apiError(e));
+      toast.error("Couldn't open that", { description: apiError(e) });
     }
   };
   const save = () =>
@@ -194,7 +190,11 @@ export default function HubOrganizationSettings({
             ? `${window.location.origin}/?invite=${encodeURIComponent(result.token)}`
             : "",
         );
-        setInvited(true);
+        toast.success(
+          result.token
+            ? "Your invitation link is ready."
+            : "Your invitation is sent.",
+        );
       } else if (kind === "workspaces") {
         await hubRequest(
           `${base}/workspaces${edit.id ? `/${edit.id}` : ""}`,
@@ -226,7 +226,7 @@ export default function HubOrganizationSettings({
             await hubRequest(`${base}/teams/${id}/members/${userId}`, "DELETE");
       }
       setEdit(undefined);
-    });
+    }, kind === "members" ? "Couldn't send that invitation" : "Couldn't save those changes");
   const title =
     kind === "members" ? "Members" : kind === "teams" ? "Teams" : "Workspaces";
   const items =
@@ -250,9 +250,9 @@ export default function HubOrganizationSettings({
       >
         {admin && <Button disabled={busy} onClick={() => void open()}>Add a workspace</Button>}
       </EmptyState>}
-      {(error || members.error || teams.error || workspaces.error) && (
+      {(members.error || teams.error || workspaces.error) && (
         <p role="alert">
-          {error || members.error || teams.error || workspaces.error}
+          {members.error || teams.error || workspaces.error}
         </p>
       )}
       {(members.stale || teams.stale || workspaces.stale) && (
@@ -270,13 +270,6 @@ export default function HubOrganizationSettings({
               ? "Create team"
               : "Add workspace"}
         </Button>
-      )}
-      {invited && (
-        <p role="status">
-          {invite
-            ? "Your invitation link is ready."
-            : "Your invitation is sent."}
-        </p>
       )}
       {invite && (
         <Field>
@@ -331,7 +324,7 @@ export default function HubOrganizationSettings({
                       await hubRequest(`${base}/members/${item.id}`, "PATCH", {
                         role: v,
                       });
-                    })
+                    }, "Couldn't change that role")
                   }
                 >
                   <SelectTrigger
@@ -483,7 +476,6 @@ export default function HubOrganizationSettings({
                     onChange={(access) => setEdit({ ...edit, access })}
                   />
                 )}
-                {error && <p role="alert">{error}</p>}
               </fieldset>
                 <DialogFooter>
                   <Button
@@ -526,7 +518,7 @@ export default function HubOrganizationSettings({
                 void perform(async () => {
                   await hubRequest(`${base}/${kind}/${remove!.id}`, "DELETE");
                   setRemove(undefined);
-                });
+                }, "Couldn't remove that");
               }}
             >
               Remove

@@ -5,6 +5,7 @@ import remyMark from "@/assets/remy-mark.png";
 import type { HubRuntime } from "@/lib/hub-session";
 import { hubRequest } from "@/lib/hub-threads";
 import { apiError } from "@/lib/api-error";
+import { toast } from "sonner";
 import { Spinner } from "@/components/ui/spinner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,7 +25,6 @@ export function HubSignIn({ runtime }: { runtime: HubRuntime }) {
 function AccountSignIn({ runtime }: { runtime: HubRuntime }) {
   const [email, setEmail] = useState("");
   const [passwordValue, setPasswordValue] = useState("");
-  const [message, setMessage] = useState("");
   const [pending, setPending] = useState<string>();
   const [useSso, setUseSso] = useState(false);
   const [createAccount, setCreateAccount] = useState(false);
@@ -41,7 +41,6 @@ function AccountSignIn({ runtime }: { runtime: HubRuntime }) {
           : runtime.auth[method];
     if (busy || !enabled) return;
     setPending(method);
-    setMessage("");
     try {
       if (method === "password" || method === "signup") {
         await hubRequest(
@@ -70,9 +69,12 @@ function AccountSignIn({ runtime }: { runtime: HubRuntime }) {
         input,
       );
       if (result.url) window.location.assign(result.url);
-      else setMessage("Check your email for your sign-in link.");
+      else toast.success("Check your email for your sign-in link.");
     } catch (e) {
-      setMessage(accountAuthMessage(e));
+      toast.error(method === "signup" ? "Couldn't create your account" : "Couldn't sign in", {
+        id: "hub-sign-in",
+        description: accountAuthMessage(e),
+      });
     } finally {
       setPending(undefined);
     }
@@ -225,7 +227,6 @@ function AccountSignIn({ runtime }: { runtime: HubRuntime }) {
               disabled={busy}
               onClick={() => {
                 setCreateAccount(!createAccount);
-                setMessage("");
               }}
             >
               {creating ? "Sign in instead" : "Create your account"}
@@ -241,7 +242,6 @@ function AccountSignIn({ runtime }: { runtime: HubRuntime }) {
               onClick={() => {
                 setUseSso(!useSso);
                 setCreateAccount(false);
-                setMessage("");
               }}
             >
               <Building2 data-icon="inline-start" />
@@ -249,19 +249,6 @@ function AccountSignIn({ runtime }: { runtime: HubRuntime }) {
                 ? "Use another sign-in method"
                 : "Continue with single sign-on"}
             </Button>
-          )}
-          {message && (
-            <p role="status" className="text-center text-sm">
-              {message}
-            </p>
-          )}
-          {busy && (
-            <p
-              role="status"
-              className="text-center text-sm text-muted-foreground"
-            >
-              Connecting to your sign-in provider…
-            </p>
           )}
           {!Object.values(runtime.auth).some(Boolean) ? (
             <p role="alert" className="text-center text-sm">

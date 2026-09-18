@@ -24,12 +24,14 @@ try {
   });
   await page.getByRole('button', { name: 'Continue with Google' }).click();
   await page.getByText('Sign-in provider unavailable; try again.', { exact: true }).waitFor();
+  assert.equal(await page.locator('main').getByText('Sign-in provider unavailable; try again.', { exact: true }).count(), 0, 'Sign-in errors are toasts');
   assert.equal(signIns[0].input.provider, 'google');
   assert.equal('email' in signIns[0].input, false);
   await page.getByRole('button', { name: 'Continue with single sign-on' }).click();
   await page.getByLabel('Work email').fill('qa@example.test');
   await page.getByLabel('Work email').press('Enter');
   await page.getByText('Sign-in provider unavailable; try again.', { exact: true }).waitFor();
+  assert.equal(await page.getByText('Sign-in provider unavailable; try again.', { exact: true }).count(), 1, 'A later sign-in error replaces the toast');
   assert.equal(signIns.at(-1).path, '/api/auth/sign-in/sso');
   assert.equal(signIns.some(request => request.path.endsWith('/magic-link')), false);
   assert.deepEqual(errors, []);
@@ -93,6 +95,7 @@ try {
   await errorPage.getByLabel('Password', { exact: true }).fill('qa-test-password');
   await errorPage.getByRole('button', { name: 'Create account', exact: true }).click();
   await errorPage.getByText('An account with this email already exists. Sign in instead.', { exact: true }).waitFor();
+  assert.equal(await errorPage.locator('main').getByText('An account with this email already exists. Sign in instead.', { exact: true }).count(), 0, 'Signup errors are toasts');
   assert.deepEqual(errors, []);
   console.log('Combined deployment checks passed: public home, /app/ sign-in, Google/GitHub controls, email/password.');
 } finally { await browser.close(); }

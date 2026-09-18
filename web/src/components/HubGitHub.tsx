@@ -15,6 +15,8 @@ import {
 } from "@/components/ui/select";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { formatBrowserLocation } from "@/lib/route";
+import { toast } from "sonner";
+import { apiError } from "@/lib/api-error";
 
 type GitHubState = {
   repositories: {
@@ -53,8 +55,7 @@ export function HubGitHub({
   const { value: agents } = useHubResource<{
     agents: { id: string; fields: { name?: string; scope?: string } }[];
   }>(organizationId, "/agents", "/board/live");
-  const [error, setError] = useState(""),
-    [busy, setBusy] = useState(false),
+  const [busy, setBusy] = useState(false),
     [installations, setInstallations] = useState<
       { id: number; account: { login: string } }[]
     >([]),
@@ -70,17 +71,14 @@ export function HubGitHub({
     [head, setHead] = useState(""),
     [base, setBase] = useState("main"),
     [body, setBody] = useState(""),
-    [review, setReview] = useState("COMMENT"),
-    [notice, setNotice] = useState("");
+    [review, setReview] = useState("COMMENT");
   const root = `${hubThreadBase(organizationId)}/github`;
   const run = async (work: () => Promise<unknown>) => {
     setBusy(true);
-    setError("");
-    setNotice("");
     try {
       await work();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "GitHub is unavailable.");
+      toast.error("Couldn't update GitHub", { description: apiError(e) });
     } finally {
       setBusy(false);
     }
@@ -114,11 +112,10 @@ export function HubGitHub({
         <CardTitle>GitHub repositories</CardTitle>
       </CardHeader>
       <CardContent className="flex min-w-0 flex-col gap-4">
-        {(error || readError) && <p role="alert">{error || readError}</p>}
+        {readError && <p role="alert">{readError}</p>}
         {stale && (
           <p role="status">Reconnect to update your GitHub settings.</p>
         )}
-        {notice && <p role="status">{notice}</p>}
         {canManage && (
           <>
             <Button
@@ -186,7 +183,7 @@ export function HubGitHub({
                       installation: Number(installation),
                       repositoryIds: selected,
                     });
-                    setNotice("Your repository selection is saved.");
+                    toast.success("Your repository selection is saved.");
                   })
                 }
               >
@@ -255,7 +252,7 @@ export function HubGitHub({
                           pullNumber: Number(pull),
                           inherit: true,
                         });
-                        setNotice(
+                        toast.success(
                           "This pull request uses your workspace default.",
                         );
                       })
@@ -275,7 +272,7 @@ export function HubGitHub({
                           enabled: true,
                           agentId: agent,
                         });
-                        setNotice("Pull request monitoring is on.");
+                        toast.success("Pull request monitoring is on.");
                       })
                     }
                   >
@@ -291,7 +288,7 @@ export function HubGitHub({
                           pullNumber: Number(pull),
                           enabled: false,
                         });
-                        setNotice("Pull request monitoring is off.");
+                        toast.success("Pull request monitoring is off.");
                       })
                     }
                   >
@@ -373,7 +370,7 @@ export function HubGitHub({
                         body,
                         event: review,
                       });
-                      setNotice("Your GitHub action is complete.");
+                      toast.success("Your GitHub action is complete.");
                       setBody("");
                     })
                   }

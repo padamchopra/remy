@@ -1,7 +1,9 @@
 import { CLOUD_COMPUTERS } from "@remy/contract";
 import { useEffect, useState } from "react";
 import type { ComputerSummary, RoutingRule } from "@remy/contract";
+import { toast } from "sonner";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
+import { apiError } from "@/lib/api-error";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field, FieldLabel } from "@/components/ui/field";
@@ -20,8 +22,7 @@ export function HubRouting({ organizationId }: { organizationId: string }) {
     [workspaces, setWorkspaces] = useState<{ id: string; name: string }[]>([]),
     [teams, setTeams] = useState<{ id: string; name: string }[]>([]),
     [canEdit, setCanEdit] = useState(false),
-    [testWorkspace, setTestWorkspace] = useState(""),
-    [message, setMessage] = useState("");
+    [testWorkspace, setTestWorkspace] = useState("");
   useEffect(() => {
     void Promise.all([
       hubRequest<{ rules: RoutingRule[]; canEdit: boolean; enabledProviders?: string[] }>(`${base}/routing`),
@@ -39,7 +40,7 @@ export function HubRouting({ organizationId }: { organizationId: string }) {
         setWorkspaces(w.workspaces);
         setTeams(t.teams);
       })
-      .catch((e) => setMessage(e.message));
+      .catch((e) => toast.error("Couldn't load routing", { description: apiError(e) }));
   }, [base]);
   const update = (i: number, patch: Partial<RoutingRule>) =>
     setRules((old) => old.map((r, n) => (n === i ? { ...r, ...patch } : r)));
@@ -205,8 +206,8 @@ export function HubRouting({ organizationId }: { organizationId: string }) {
           <Button
             onClick={() => {
               void hubRequest(`${base}/routing`, "PUT", { rules })
-                .then(() => setMessage("Your routing rules are saved."))
-                .catch((e) => setMessage(e.message));
+                .then(() => toast.success("Your routing rules are saved."))
+                .catch((e) => toast.error("Couldn't save routing", { description: apiError(e) }));
             }}
           >
             Save routing
@@ -238,16 +239,15 @@ export function HubRouting({ organizationId }: { organizationId: string }) {
             { workspaceId: testWorkspace },
           )
             .then((r) =>
-              setMessage(
+              toast(
                 `${computers.find((c) => c.computerId === r.computerId)?.name ?? "Hosted computer"}: ${r.reason}`,
               ),
             )
-            .catch((e) => setMessage(e.message));
+            .catch((e) => toast.error("Couldn't test routing", { description: apiError(e) }));
         }}
       >
         Test saved rules
       </Button>
-      {message && <p role="status">{message}</p>}
     </section>
   );
 }

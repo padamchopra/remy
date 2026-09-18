@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useHubResource } from "@/lib/hub-organization";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
+import { toast } from "sonner";
+import { apiError } from "@/lib/api-error";
 import type { LinearState } from "./HubLinear";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -31,15 +33,13 @@ export function HubLinearBoard({ organizationId }: { organizationId: string }) {
     { value: agents } = useHubResource<{
       agents: { id: string; fields: Record<string, unknown> }[];
     }>(organizationId, "/agents", "/board/live");
-  const [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
   const save = async (
     workspaceId: string,
     enabled: boolean,
     agentMap: Record<string, string>,
   ) => {
     setBusy(true);
-    setError("");
     try {
       await hubRequest(
         `${hubThreadBase(organizationId)}/linear-board`,
@@ -47,11 +47,7 @@ export function HubLinearBoard({ organizationId }: { organizationId: string }) {
         { workspaceId, enabled, agentMap },
       );
     } catch (e) {
-      setError(
-        e instanceof Error
-          ? e.message
-          : "Your sync preference could not be saved.",
-      );
+      toast.error("Couldn't save Linear sync", { description: apiError(e) });
     } finally {
       setBusy(false);
     }
@@ -69,7 +65,6 @@ export function HubLinearBoard({ organizationId }: { organizationId: string }) {
         <p className="text-sm text-muted-foreground">
           Turning sync off keeps your tickets in both apps.
         </p>
-        {error && <p role="alert">{error}</p>}
         {mapping?.mappings.map((map) => {
           const policy = value?.settings.find(
               (p) => p.workspace_id === map.workspace_id,

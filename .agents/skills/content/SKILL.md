@@ -91,6 +91,23 @@ Pick a folder on this machine.
 
 `AddWorkspace.tsx` is the reference for a short dialog: title, one-line description, primary button.
 
+## Transient status
+
+Never write a line of text that exists only to say an action worked, failed, or is in progress. That sentence is a toast, or it lives on the busy control. Temporary inline status is bad UX.
+
+Keep the same second-person present sentence; only the surface changes.
+
+BAD
+```
+{invited && <p role="status">Your invitation is sent.</p>}
+{busy && <p role="status">Connecting to your sign-in provider…</p>}
+```
+
+GOOD
+```
+toast.success("Your invitation is sent.");
+```
+
 ## Errors
 
 What failed, then what to do about it. No stack traces, no raw JSON.
