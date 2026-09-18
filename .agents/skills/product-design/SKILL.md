@@ -5,7 +5,7 @@ description: Product structure, platform parity, and ownership in Remy. Use befo
 
 # Product design
 
-`ui` owns layout and interaction. `content` owns the words. `qa` owns proving the result. This skill owns the product model they express.
+`ui` owns layout and interaction. `content` owns the words. `qa` owns proving the result. This skill owns the product model they express. Redesigns and new capabilities' UI use Base UI; see `ui`.
 
 ## Web and desktop parity
 
