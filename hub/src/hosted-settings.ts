@@ -51,20 +51,30 @@ export class HostedSettingsStore {
     return [...new Set(direct)];
   }
 
-  async connection(org: string, provider: HostedSettings["provider"]) {
+  async ownConnection(org: string, provider: HostedSettings["provider"]) {
     const direct = (await this.secrets(org))[`cloud:${provider}`];
-    if (direct) {
-      const parsed = cloudConnectionSchema.safeParse(JSON.parse(direct));
-      if (parsed.success && parsed.data.enabled) return parsed.data;
-    }
-    const shares = await this.db.prepare("SELECT source_organization_id FROM organization_cloud_shares WHERE organization_id=? AND provider=? ORDER BY created_at").bind(org, provider).all<{source_organization_id:string}>();
+    if (!direct) return;
+    const parsed = cloudConnectionSchema.safeParse(JSON.parse(direct));
+    if (parsed.success && parsed.data.enabled) return parsed.data;
+  }
+
+  async connection(org: string, provider: HostedSettings["provider"]) {
+    const direct = await this.ownConnection(org, provider);
+    if (direct) return direct;
+    const share = await this.cloudShare(org, provider);
+    if (!share) return;
+    return this.ownConnection(share.source_organization_id, provider);
+  }
+
+  /// First enabled Personal share for this cloud provider. Org-scoped keys and
+  /// named Fly credentials are a follow-up; this grant still uses one Personal connection.
+  async cloudShare(org: string, provider: HostedSettings["provider"]) {
+    const shares = await this.db.prepare("SELECT source_organization_id,shared_by,start_providers FROM organization_cloud_shares WHERE organization_id=? AND provider=? ORDER BY created_at").bind(org, provider).all<{source_organization_id:string;shared_by:string;start_providers:string|null}>();
     for (const share of shares.results) {
-      const saved = (await this.secrets(share.source_organization_id))[`cloud:${provider}`];
-      if (!saved) continue;
-      const parsed = cloudConnectionSchema.safeParse(JSON.parse(saved));
-      if (parsed.success && parsed.data.enabled) return parsed.data;
+      if (await this.ownConnection(share.source_organization_id, provider)) return share;
     }
   }
+
   /// Model keys the org can start with: its own, then any enabled shared
   /// cloud computer's source account. Organization records win on conflict.
   async executionSecrets(org: string): Promise<Record<string, string>> {

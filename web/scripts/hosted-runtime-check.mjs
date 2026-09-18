@@ -85,8 +85,8 @@ try {
           return route.fulfill({json:{permissionMode}});
         }
         if(path === `${base}/github/profile`) return route.fulfill({json:{image:"https://avatars.githubusercontent.com/u/1"}});
-        if(path === `${base}/compute-shares/computers/personal-mac` && ["PUT","DELETE"].includes(route.request().method())) {sharedComputer=route.request().method()==="PUT";return route.fulfill({json:{ok:true}});}
-        if(path === `${base}/compute-shares/cloud/modal` && ["PUT","DELETE"].includes(route.request().method())) {sharedCloud=route.request().method()==="PUT";return route.fulfill({json:{ok:true}});}
+        if(path === `${base}/compute-shares/computers/personal-mac` && ["PUT","PATCH","DELETE"].includes(route.request().method())) {sharedComputer=route.request().method()!=="DELETE";return route.fulfill({json:{ok:true}});}
+        if(path === `${base}/compute-shares/cloud/modal` && ["PUT","PATCH","DELETE"].includes(route.request().method())) {sharedCloud=route.request().method()!=="DELETE";return route.fulfill({json:{ok:true}});}
         if (path === `${base}/cloud-connection` && ["PUT", "PATCH"].includes(route.request().method())) {
           const connection = route.request().postDataJSON();
           if (route.request().method() === "PATCH") {
@@ -174,7 +174,7 @@ try {
           [`${base}/agents`]: {agents:process.env.QA_SCOPE_ONLY === "1"?[{id:`${org.id}-agent`,entity:"agent",fields:{name:org.personal?"Personal agent":"Studio agent",role:"Builder",scope:"org"},lastActor:{id:"reader",label:"Reader"},activity:[]}]:[]},
           [`${base}/connections`]: {canManage:true,providers:[],connections:[]},
           [`${base}/routing`]: {rules:[],canEdit:true,enabledProviders:[]},
-          [`${base}/compute-shares`]: {canManage:true,computers:[{id:"personal-mac",name:"Personal Mac",icon:"laptop",platform:"darwin",shared:sharedComputer,available:true,sharedBy:sharedComputer?"Reader":null}],cloudConnections:[{provider:"modal",shared:sharedCloud,available:true,sharedBy:sharedCloud?"Reader":null}]},
+          [`${base}/compute-shares`]: {canManage:true,computers:[{id:"personal-mac",name:"Personal Mac",icon:"laptop",platform:"darwin",shared:sharedComputer,available:true,sharedBy:sharedComputer?"Reader":null,canShare:true,canRevoke:true,providers:sharedComputer?[{id:"claude",label:"Claude",allowed:true},{id:"codex",label:"Codex",allowed:true}]:[]}],cloudConnections:[{provider:"modal",shared:sharedCloud,available:true,sharedBy:sharedCloud?"Reader":null,canShare:true,canRevoke:true,providers:sharedCloud?[{id:"claude",label:"Claude",allowed:true},{id:"codex",label:"Codex",allowed:true}]:[]}]},
         };
         if (!(path in responses)) unexpected.push(path);
         return route.fulfill({ status: path in responses ? 200 : 404, json: responses[path] ?? { error: "Not found" } });
@@ -413,8 +413,11 @@ try {
           await page.reload();
           assert.equal(await page.getByRole("switch",{name:"Share Personal Mac",exact:true}).isChecked(),true);
           assert.equal(await page.getByRole("switch",{name:"Share Modal",exact:true}).isChecked(),true);
+          assert.equal(await page.getByRole("switch",{name:"Start Claude on Personal Mac",exact:true}).isChecked(),true);
+          assert.equal(await page.getByRole("switch",{name:"Start Claude on Modal",exact:true}).isChecked(),true);
+          assert.equal(await page.getByRole("switch",{name:"Start Codex on Modal",exact:true}).isChecked(),true);
           assert.equal(await page.getByText("private-modal-secret",{exact:false}).count(),0);
-          await page.getByText("Connection credentials stay private.",{exact:false}).waitFor();
+          await page.getByText("Others start with the providers you turn on",{exact:false}).waitFor();
           if(artifacts)await page.screenshot({path:`${artifacts}/organization-computers-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
           assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
           await page.goto(clean("/threads"));

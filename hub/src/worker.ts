@@ -5,7 +5,7 @@ import { modelDefaults } from "./model-defaults.js";
 import { modelFavorites } from "./model-favorites.js";
 import { hostedGatewayError, hostedStartChoice, modelAccessIds, publicModelAccess, saveModelAccess, type ModelAccessId } from "./model-access.js";
 import { routerConnectionSchema, routerModels } from "./router-connection.js";
-import { cloudComputerProvider } from "@remy/contract";
+import { cloudComputerProvider, type HostedSettings } from "@remy/contract";
 import { managementCredential } from "./cloud-connection.js";
 import { cloudToggleSchema, cloudConnectionSchema, cloudConnectionKey, modelSecrets } from "./cloud-connection.js";
 import { allowedRequestOrigin } from "./request-origin.js";
@@ -24,6 +24,7 @@ import { hubRoutineSchema } from "@remy/contract";
 import { seedHubAgents } from "./remy-agent.js";
 import { ScopedAgents } from "./scoped-agents.js";
 import { resolveComputer } from "./routing.js";
+import { advertisedCloudStartProviders, advertisedProviderIds, canStartWithShareGrant, parseStartProviderInput, parseStartProviders, providersFromCapabilities, publicStartProviders, serializeStartProviders, START_PROVIDER_DENIED } from "./computer-start-access.js";
 import { routingRuleSchema } from "@remy/contract";
 import { GitCapabilities, GithubInstallation, githubRepository, proxyGit } from "./hosted-git.js";
 import { HostedSettingsStore } from "./hosted-settings.js";
@@ -154,6 +155,35 @@ export async function healthFor(env: Env): Promise<HubHealth> {
 
 function jsonError(error: string, status: number): Response {
   return Response.json({ error }, { status });
+}
+
+async function cloudStartGrant(
+  settings: HostedSettingsStore,
+  org: string,
+  provider: HostedSettings["provider"],
+  userId: string,
+) {
+  if (await settings.ownConnection(org, provider)) {
+    return { owner: true, advertised: advertisedCloudStartProviders(publicModelAccess(await settings.secrets(org))), stored: null };
+  }
+  const share = await settings.cloudShare(org, provider);
+  if (!share) return { owner: true, advertised: advertisedCloudStartProviders([]), stored: null };
+  return {
+    owner: share.shared_by === userId,
+    advertised: advertisedCloudStartProviders(publicModelAccess(await settings.secrets(share.source_organization_id))),
+    stored: parseStartProviders(share.start_providers),
+  };
+}
+
+async function canStartOnCloud(
+  settings: HostedSettingsStore,
+  org: string,
+  userId: string,
+  provider: HostedSettings["provider"],
+  runtimeProvider?: string,
+) {
+  const grant = await cloudStartGrant(settings, org, provider, userId);
+  return canStartWithShareGrant(grant.owner, grant.stored, grant.advertised, runtimeProvider);
 }
 
 function encodeWireBody(value: ArrayBuffer): string {
@@ -525,67 +555,121 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       if (tail === "compute-shares" && request.method === "GET") {
         const member = await organizations.member(organizationId, identity.userId);
         const personal = await personalSpace(env.DB, identity.userId);
-        const ownComputers = member.role === "member" ? [] : (await computers.list(personal.id, identity.userId)).filter(computer => computer.ownerUserId === identity.userId && computer.ownership === "personal");
-        const computerShares = (await env.DB.prepare(`SELECT s.computer_id,s.shared_by,c.name,c.icon,c.platform,c.last_seen_at
+        const ownComputers = (await computers.list(personal.id, identity.userId)).filter(computer => computer.ownerUserId === identity.userId && computer.ownership === "personal");
+        const computerShares = (await env.DB.prepare(`SELECT s.computer_id,s.shared_by,s.start_providers,c.name,c.icon,c.platform,c.last_seen_at,c.capabilities,c.owner_user_id
           FROM organization_computer_shares s JOIN organization_computers c ON c.id=s.computer_id
-          WHERE s.organization_id=? ORDER BY lower(c.name),c.id`).bind(organizationId).all<{computer_id:string;shared_by:string;name:string;icon:string;platform:string;last_seen_at:number|null}>()).results;
-        const cloudShares = (await env.DB.prepare("SELECT source_organization_id,provider,shared_by FROM organization_cloud_shares WHERE organization_id=? ORDER BY provider,created_at").bind(organizationId).all<{source_organization_id:string;provider:string;shared_by:string}>()).results;
+          WHERE s.organization_id=? ORDER BY lower(c.name),c.id`).bind(organizationId).all<{computer_id:string;shared_by:string;start_providers:string|null;name:string;icon:string;platform:string;last_seen_at:number|null;capabilities:string;owner_user_id:string|null}>()).results;
+        const cloudShares = (await env.DB.prepare("SELECT source_organization_id,provider,shared_by,start_providers FROM organization_cloud_shares WHERE organization_id=? ORDER BY provider,created_at").bind(organizationId).all<{source_organization_id:string;provider:HostedSettings["provider"];shared_by:string;start_providers:string|null}>()).results;
         const settings = new HostedSettingsStore(env.DB, () => env.AUTH_SECRET.get());
-        const ownCloud = member.role === "member" ? [] : Object.entries(await settings.secrets(personal.id)).flatMap(([name, value]) => {
+        const personalSecrets = await settings.secrets(personal.id);
+        const ownCloud = Object.entries(personalSecrets).flatMap(([name, value]) => {
           if (!name.startsWith("cloud:")) return [];
           const parsed = cloudConnectionSchema.safeParse(JSON.parse(value));
           return parsed.success && parsed.data.enabled ? [parsed.data.provider] : [];
         });
+        const cloudSecretCache = new Map<string, Record<string, string>>([[personal.id, personalSecrets]]);
+        const cloudSecrets = async (org: string) => {
+          const cached = cloudSecretCache.get(org);
+          if (cached) return cached;
+          const next = await settings.secrets(org);
+          cloudSecretCache.set(org, next);
+          return next;
+        };
         const sharedCloudAvailability = new Map<string, boolean>();
+        const sharedCloudAdvertised = new Map<string, ReturnType<typeof advertisedCloudStartProviders>>();
         for (const share of cloudShares) {
-          const saved = (await settings.secrets(share.source_organization_id))[cloudConnectionKey(share.provider)];
+          const sourceSecrets = await cloudSecrets(share.source_organization_id);
+          const saved = sourceSecrets[cloudConnectionKey(share.provider)];
           const parsed = saved ? cloudConnectionSchema.safeParse(JSON.parse(saved)) : null;
           sharedCloudAvailability.set(`${share.source_organization_id}:${share.provider}`, !!parsed?.success && parsed.data.enabled);
+          sharedCloudAdvertised.set(`${share.source_organization_id}:${share.provider}`, advertisedCloudStartProviders(publicModelAccess(sourceSecrets)));
         }
         const names = new Map<string,string>();
         for (const userId of new Set([...computerShares.map(share => share.shared_by), ...cloudShares.map(share => share.shared_by)])) names.set(userId, (await store.profile(userId))?.name ?? "Member");
+        const admin = member.role !== "member";
+        const ownCloudAdvertised = advertisedCloudStartProviders(publicModelAccess(personalSecrets));
         return Response.json({
-          canManage: member.role !== "member",
+          canManage: admin,
           computers: [
-            ...computerShares.map(share => ({ id: share.computer_id, name: share.name, icon: share.icon, platform: share.platform, shared: true, available: share.last_seen_at !== null && Date.now() - share.last_seen_at <= COMPUTER_HEARTBEAT_TIMEOUT_MS, sharedBy: names.get(share.shared_by) ?? "Member", canUnshare: member.role !== "member" })),
-            ...ownComputers.filter(computer => !computerShares.some(share => share.computer_id === computer.computerId)).map(computer => ({ id: computer.computerId, name: computer.name, icon: computer.icon, platform: computer.platform, shared: false, available: computer.availability !== "offline", sharedBy: (null as string | null), canUnshare: false })),
+            ...computerShares.map(share => {
+              const canShare = share.owner_user_id === identity.userId;
+              return { id: share.computer_id, name: share.name, icon: share.icon, platform: share.platform, shared: true, available: share.last_seen_at !== null && Date.now() - share.last_seen_at <= COMPUTER_HEARTBEAT_TIMEOUT_MS, sharedBy: names.get(share.shared_by) ?? "Member", canShare, canRevoke: admin, providers: publicStartProviders(providersFromCapabilities(share.capabilities), parseStartProviders(share.start_providers)) };
+            }),
+            ...ownComputers.filter(computer => !computerShares.some(share => share.computer_id === computer.computerId)).map(computer => ({ id: computer.computerId, name: computer.name, icon: computer.icon, platform: computer.platform, shared: false, available: computer.availability !== "offline", sharedBy: (null as string | null), canShare: true, canRevoke: false, providers: publicStartProviders(advertisedProviderIds(computer), null) })),
           ],
           cloudConnections: [
-            ...cloudShares.map(share => ({ provider: share.provider, shared: true, available: sharedCloudAvailability.get(`${share.source_organization_id}:${share.provider}`) ?? false, sharedBy: names.get(share.shared_by) ?? "Member", canUnshare: member.role !== "member" })),
-            ...ownCloud.filter(provider => !cloudShares.some(share => share.source_organization_id === personal.id && share.provider === provider)).map(provider => ({ provider, shared: false, available: true, sharedBy: (null as string | null), canUnshare: false })),
+            ...cloudShares.map(share => {
+              const canShare = share.shared_by === identity.userId || share.source_organization_id === personal.id;
+              return { provider: share.provider, shared: true, available: sharedCloudAvailability.get(`${share.source_organization_id}:${share.provider}`) ?? false, sharedBy: names.get(share.shared_by) ?? "Member", canShare, canRevoke: admin, providers: publicStartProviders(sharedCloudAdvertised.get(`${share.source_organization_id}:${share.provider}`) ?? [], parseStartProviders(share.start_providers)) };
+            }),
+            ...ownCloud.filter(provider => !cloudShares.some(share => share.source_organization_id === personal.id && share.provider === provider)).map(provider => ({ provider, shared: false, available: true, sharedBy: (null as string | null), canShare: true, canRevoke: false, providers: publicStartProviders(ownCloudAdvertised, null) })),
           ],
         });
       }
       const computerShare = /^compute-shares\/computers\/([^/]+)$/.exec(tail);
       const cloudShare = /^compute-shares\/cloud\/([^/]+)$/.exec(tail);
-      if ((computerShare || cloudShare) && (request.method === "PUT" || request.method === "DELETE")) {
+      if ((computerShare && ["PUT", "PATCH", "DELETE"].includes(request.method)) || (cloudShare && ["PUT", "PATCH", "DELETE"].includes(request.method))) {
         const member = await organizations.member(organizationId, identity.userId);
-        if (member.role === "member") return jsonError("Ask an organization admin to share computers.", 403);
+        const admin = member.role !== "member";
         if (!allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Open organization settings in Remy.", 403);
         const personal = await personalSpace(env.DB, identity.userId);
         let sourceOrganizationId = personal.id;
         let computerId: string | undefined;
         if (computerShare) {
           computerId = decodeURIComponent(computerShare[1]);
+          const existing = await env.DB.prepare("SELECT source_organization_id,shared_by FROM organization_computer_shares WHERE organization_id=? AND computer_id=?").bind(organizationId, computerId).first<{source_organization_id:string;shared_by:string}>();
+          const computer = await computerStore.computer(personal.id, computerId) ?? (existing ? await computerStore.computer(organizationId, computerId) : undefined);
+          const owns = !!computer && computer.organizationId === personal.id && computer.ownerUserId === identity.userId && computer.ownership === "personal";
           if (request.method === "PUT") {
-            const computer = await computerStore.computer(personal.id, computerId);
-            if (!computer || computer.organizationId !== personal.id || computer.ownerUserId !== identity.userId || computer.ownership !== "personal") return jsonError("Choose one of your personal computers.", 404);
-            await env.DB.prepare("INSERT INTO organization_computer_shares(organization_id,source_organization_id,computer_id,shared_by,created_at) VALUES(?,?,?,?,?) ON CONFLICT(organization_id,computer_id) DO NOTHING").bind(organizationId, personal.id, computerId, identity.userId, Date.now()).run();
+            if (!owns || !computer) return jsonError("Choose one of your personal computers.", 404);
+            const advertised = advertisedProviderIds(computer);
+            let startProviders;
+            try { startProviders = parseStartProviderInput((await body<{startProviders?:unknown}>(request))?.startProviders, advertised); }
+            catch (error) { return jsonError(error instanceof Error ? error.message : "Choose the providers others may start.", 400); }
+            await env.DB.prepare("INSERT INTO organization_computer_shares(organization_id,source_organization_id,computer_id,shared_by,created_at,start_providers) VALUES(?,?,?,?,?,?) ON CONFLICT(organization_id,computer_id) DO UPDATE SET start_providers=excluded.start_providers").bind(organizationId, personal.id, computerId, identity.userId, Date.now(), startProviders === undefined ? null : serializeStartProviders(startProviders)).run();
+          } else if (request.method === "PATCH") {
+            if (!owns || !computer) return jsonError("Choose one of your personal computers.", 404);
+            if (!existing) return jsonError("Share this computer first.", 409);
+            const advertised = advertisedProviderIds(computer);
+            let startProviders;
+            try { startProviders = parseStartProviderInput((await body<{startProviders?:unknown}>(request))?.startProviders, advertised); }
+            catch (error) { return jsonError(error instanceof Error ? error.message : "Choose the providers others may start.", 400); }
+            if (startProviders === undefined) return jsonError("Choose the providers others may start.", 400);
+            await env.DB.prepare("UPDATE organization_computer_shares SET start_providers=? WHERE organization_id=? AND computer_id=?").bind(serializeStartProviders(startProviders), organizationId, computerId).run();
           } else {
-            const existing = await env.DB.prepare("SELECT source_organization_id FROM organization_computer_shares WHERE organization_id=? AND computer_id=?").bind(organizationId, computerId).first<{source_organization_id:string}>();
-            sourceOrganizationId = existing?.source_organization_id ?? personal.id;
-            if (existing) await board().fetch(new Request("https://internal/shared-threads/manifest", { method: "POST", headers: { "content-type": "application/json", "x-organization-id": organizationId, "x-source-organization-id": sourceOrganizationId, "x-computer-id": computerId }, body: JSON.stringify({ ids: [] }) }));
+            if (!existing) return Response.json({ ok: true });
+            if (!owns && !admin) return jsonError("Ask an organization admin to change this computer’s sharing.", 403);
+            sourceOrganizationId = existing.source_organization_id;
+            await board().fetch(new Request("https://internal/shared-threads/manifest", { method: "POST", headers: { "content-type": "application/json", "x-organization-id": organizationId, "x-source-organization-id": sourceOrganizationId, "x-computer-id": computerId }, body: JSON.stringify({ ids: [] }) }));
             await env.DB.prepare("DELETE FROM organization_computer_shares WHERE organization_id=? AND computer_id=?").bind(organizationId, computerId).run();
           }
         } else {
-          const provider = decodeURIComponent(cloudShare![1]);
-          if (!['fly-sprites','modal'].includes(provider)) return jsonError("Choose a cloud connection.", 400);
+          const provider = decodeURIComponent(cloudShare![1]) as HostedSettings["provider"];
+          if (!["fly-sprites", "modal"].includes(provider)) return jsonError("Choose a cloud connection.", 400);
+          const settings = new HostedSettingsStore(env.DB, () => env.AUTH_SECRET.get());
+          const existing = await env.DB.prepare("SELECT source_organization_id,shared_by FROM organization_cloud_shares WHERE organization_id=? AND source_organization_id=? AND provider=?").bind(organizationId, personal.id, provider).first<{source_organization_id:string;shared_by:string}>();
+          const owns = !!(await settings.ownConnection(personal.id, provider));
           if (request.method === "PUT") {
-            const saved = (await new HostedSettingsStore(env.DB, () => env.AUTH_SECRET.get()).secrets(personal.id))[cloudConnectionKey(provider)];
-            const connection = saved ? cloudConnectionSchema.safeParse(JSON.parse(saved)) : null;
-            if (!connection?.success || !connection.data.enabled) return jsonError("Enable this cloud provider in Personal first.", 409);
-            await env.DB.prepare("INSERT INTO organization_cloud_shares(organization_id,source_organization_id,provider,shared_by,created_at) VALUES(?,?,?,?,?) ON CONFLICT(organization_id,source_organization_id,provider) DO NOTHING").bind(organizationId, personal.id, provider, identity.userId, Date.now()).run();
-          } else await env.DB.prepare("DELETE FROM organization_cloud_shares WHERE organization_id=? AND provider=?").bind(organizationId, provider).run();
+            if (!owns) return jsonError("Enable this cloud provider in Personal first.", 409);
+            const advertised = advertisedCloudStartProviders(publicModelAccess(await settings.secrets(personal.id)));
+            let startProviders;
+            try { startProviders = parseStartProviderInput((await body<{startProviders?:unknown}>(request))?.startProviders, advertised); }
+            catch (error) { return jsonError(error instanceof Error ? error.message : "Choose the providers others may start.", 400); }
+            await env.DB.prepare("INSERT INTO organization_cloud_shares(organization_id,source_organization_id,provider,shared_by,created_at,start_providers) VALUES(?,?,?,?,?,?) ON CONFLICT(organization_id,source_organization_id,provider) DO UPDATE SET start_providers=excluded.start_providers").bind(organizationId, personal.id, provider, identity.userId, Date.now(), startProviders === undefined ? null : serializeStartProviders(startProviders)).run();
+          } else if (request.method === "PATCH") {
+            if (!owns) return jsonError("Choose one of your cloud connections.", 404);
+            if (!existing) return jsonError("Share this connection first.", 409);
+            const advertised = advertisedCloudStartProviders(publicModelAccess(await settings.secrets(personal.id)));
+            let startProviders;
+            try { startProviders = parseStartProviderInput((await body<{startProviders?:unknown}>(request))?.startProviders, advertised); }
+            catch (error) { return jsonError(error instanceof Error ? error.message : "Choose the providers others may start.", 400); }
+            if (startProviders === undefined) return jsonError("Choose the providers others may start.", 400);
+            await env.DB.prepare("UPDATE organization_cloud_shares SET start_providers=? WHERE organization_id=? AND source_organization_id=? AND provider=?").bind(serializeStartProviders(startProviders), organizationId, personal.id, provider).run();
+          } else if (existing && owns) {
+            await env.DB.prepare("DELETE FROM organization_cloud_shares WHERE organization_id=? AND source_organization_id=? AND provider=?").bind(organizationId, personal.id, provider).run();
+          } else if (admin) {
+            await env.DB.prepare("DELETE FROM organization_cloud_shares WHERE organization_id=? AND provider=?").bind(organizationId, provider).run();
+          } else return jsonError("Ask an organization admin to change this computer’s sharing.", 403);
         }
         await board().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId } }));
         if (computerId) await env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${sourceOrganizationId}`)).fetch(new Request("https://internal/shared-computers/changed", { method: "POST", headers: { "x-organization-id": sourceOrganizationId, "x-computer-id": computerId } }));
@@ -744,7 +828,12 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           const names = await settings.secretNames(organizationId);
           const enabledProviders = await settings.enabledProviders(organizationId);
           const access = publicModelAccess(await settings.executionSecrets(organizationId));
-          return Response.json({ settings: await settings.settings(organizationId,workspaceId), secretNames: member.role !== "member" ? names.filter(name => !name.startsWith("cloud:") && !name.startsWith("model:") && !name.startsWith("access:")) : [], enabledProviders, routerConfigured: !!access.find(entry => entry.id === "router")?.configured, openrouterConfigured: !!access.find(entry => entry.id === "openrouter")?.configured, connections: names.filter(name => name.startsWith("cloud:")).map(name => name.slice(6)), available: !!env.HOSTED_IMAGE && (!!env.PROVIDER_RUNTIME || (!!env.HOSTED_CONTROL_URL && !!env.HOSTED_CONTROL_TOKEN)) });
+          const cloudStart: Record<string, { owner: boolean; providers: ReturnType<typeof publicStartProviders> }> = {};
+          for (const provider of enabledProviders) {
+            const grant = await cloudStartGrant(settings, organizationId, provider, identity.userId);
+            cloudStart[provider] = { owner: grant.owner, providers: publicStartProviders(grant.advertised, grant.stored) };
+          }
+          return Response.json({ settings: await settings.settings(organizationId,workspaceId), secretNames: member.role !== "member" ? names.filter(name => !name.startsWith("cloud:") && !name.startsWith("model:") && !name.startsWith("access:")) : [], enabledProviders, cloudStart, routerConfigured: !!access.find(entry => entry.id === "router")?.configured, openrouterConfigured: !!access.find(entry => entry.id === "openrouter")?.configured, connections: names.filter(name => name.startsWith("cloud:")).map(name => name.slice(6)), available: !!env.HOSTED_IMAGE && (!!env.PROVIDER_RUNTIME || (!!env.HOSTED_CONTROL_URL && !!env.HOSTED_CONTROL_TOKEN)) });
         }
         if (request.method === "PUT" && (!workspaceId || hostedMatch[2] === "settings")) {
           if (member.role === "member") return jsonError("Ask an admin to change hosted computers.",403);
@@ -1704,8 +1793,14 @@ export class HubCoordinator {
       const settings=await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSettings(org,workspaceId);
       choice={reason:"A cloud computer can run your selected model.",hostedWorkspaceId:workspaceId,hostedProvider:settings.provider};
     }
+    if(target && target.ownership !== "hosted" && !await this.computerService().canStartWithProvider(target, userId, org, modelChoice?.provider)) {
+      if(override)throw Error(START_PROVIDER_DENIED);
+      const settings=await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSettings(org,workspaceId);
+      choice={reason:START_PROVIDER_DENIED,hostedWorkspaceId:workspaceId,hostedProvider:settings.provider};
+    }
     if (choice.hostedWorkspaceId || target?.ownership === "hosted") {
       const settings = await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSettings(org,workspaceId,choice.hostedProvider);
+      if(!await canStartOnCloud(new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()),org,userId,settings.provider,modelChoice?.provider)) throw Error(START_PROVIDER_DENIED);
       await this.ctx.storage.put(`hosted-task-owner:${taskId}`, userId);
       const state = await this.hostedService().ensure(workspaceId,settings,taskId,title);
       const computer = await this.computers.computer(org,state.computerId);
@@ -2005,6 +2100,15 @@ export class HubCoordinator {
       if(input.visibility !== undefined && input.visibility !== "private" && input.visibility !== "open") return jsonError("Choose who can read this thread.",400);
       const gatewayError=hostedGatewayError(start.provider,start.model,await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSecrets(org));
       if(gatewayError)return jsonError(gatewayError,400);
+      if(input.computerId) {
+        const cloud=cloudComputerProvider(input.computerId);
+        if(cloud) {
+          if(!await canStartOnCloud(new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()),org,actor.id,cloud,start.provider)) return jsonError(START_PROVIDER_DENIED,403);
+        } else {
+          const target=await this.computers.computer(org,input.computerId);
+          if(target && !await this.computerService().canStartWithProvider(target,actor.id,org,start.provider)) return jsonError(START_PROVIDER_DENIED,403);
+        }
+      }
       const key = `manual-task:${actor.id}:${input.requestId}`;
       const previous = await this.ctx.storage.get<ManualThreadStart>(key);
       if (previous?.id && previous.computerId) return Response.json({computerId: previous.computerId, id: previous.id, phase: "ready"}, {status: 201});
@@ -2070,6 +2174,13 @@ export class HubCoordinator {
       try { input = JSON.parse(new TextDecoder().decode(payload)); } catch { return jsonError("Choose a workspace.", 400); }
       if(input.hubInstructions!==undefined || input.hubInbox!==undefined || input.hubEnvironment!==undefined || input.hubTaskId!==undefined)return jsonError("This thread configuration is unavailable.",403);
       if (typeof input.workspaceId !== "string" || !await this.computerService().canUseWorkspace(target, actor.id, input.workspaceId, request.headers.get("x-organization-id")!)) return jsonError("This workspace is not available to you.", 404);
+      const start=hostedStartChoice(typeof input.provider === "string" ? input.provider : undefined, typeof input.model === "string" ? input.model : undefined);
+      if(!await this.computerService().canStartWithProvider(target, actor.id, request.headers.get("x-organization-id")!, start.provider)) return jsonError(START_PROVIDER_DENIED,403);
+      if(target.ownership === "hosted") {
+        const org=request.headers.get("x-organization-id")!;
+        const state=(await this.hostedService().list()).find(s=>s.computerId===computerId);
+        if(state?.settings.provider && !await canStartOnCloud(new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()),org,actor.id,state.settings.provider,start.provider)) return jsonError(START_PROVIDER_DENIED,403);
+      }
     }
     if(id && action==="message" && snapshot) {
       const org=request.headers.get("x-organization-id")!;
