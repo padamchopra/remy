@@ -306,7 +306,9 @@ test("members share their own computers and start-provider grants block only new
     const denied = await handle(request("ada", "/threads", "POST", { workspaceId: "org-release", requestId: crypto.randomUUID(), computerId, provider: "cursor", visibility: "open" }));
     assert.equal(denied?.status, 403);
     assert.equal((await denied!.json() as { error: string }).error, START_PROVIDER_DENIED);
-    assert.equal((await handle(request("grace", "/threads", "POST", { workspaceId: "org-release", requestId: crypto.randomUUID(), computerId, provider: "cursor", visibility: "open" })))?.status, 201);
+    const ownerStart = await handle(request("grace", "/threads", "POST", { workspaceId: "org-release", requestId: crypto.randomUUID(), computerId, provider: "cursor", visibility: "open" }));
+    assert.equal(ownerStart?.status, 202);
+    assert.equal((await ownerStart!.json() as { phase?: string }).phase, "creating");
     const threads = (coordinator as unknown as { threads: import("./thread-store.js").ThreadStore }).threads;
     await threads.snapshot(computerId, { id: threadId, revision: 1, access: { organizationId: "org", owner: { id: "grace", label: "Grace" }, visibility: "open", participants: [{ id: "ada", label: "Ada" }] }, detail: { id: threadId, title: "Release", cwd: "/src/release", entries: [] } });
     const replied = await handle(request("ada", `/computers/${computerId}/threads/${threadId}/message`, "POST", { text: "Continue this thread.", messageId: `u-${crypto.randomUUID()}` }));
