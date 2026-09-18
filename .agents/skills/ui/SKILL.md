@@ -7,11 +7,11 @@ description: Layout and keyboard for the Remy web UI. Use when adding or changin
 
 `product-design` owns web and desktop parity; apply it before changing a surface or its controls. `content` owns the words. `qa` owns clicking the result. `.agents/skills/shadcn` owns the CLI, composition rules, and component APIs — read it before adding or rewriting a primitive.
 
-The UI is shadcn New York (Radix, not Base) in `web/src/components/ui`, configured by `web/components.json`. Run CLI commands from `web/`.
+Existing primitives in `web/src/components/ui` are still largely shadcn New York (Radix), configured by `web/components.json`. New components, new screens, and redesigns use Base UI (`@base-ui/react` / shadcn base style). Do not add new Radix-based primitives or redesign existing ones onto Radix. Converting an existing Radix surface is a redesign — follow `.agents/skills/migrate-radix-to-base`. Run CLI commands from `web/`.
 
 ## Primitives
 
-Every control comes from `web/src/components/ui`. A primitive that is missing is added with `npx shadcn@latest add <name>` from `web/`, then used.
+Every control comes from `web/src/components/ui`. A primitive that is missing for new work or a redesign is added as Base UI (shadcn base style / `@base-ui/react`) from `web/`, then used. Do not add a new Radix primitive, including via the default New York `shadcn add` path while `components.json` still names that style.
 
 Answer the prompt to overwrite an existing file with no: the CLI pulls a component's dependencies, and this project has edited some of them.
 

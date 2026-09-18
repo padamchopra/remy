@@ -47,7 +47,7 @@ Skip `VITE_MC_FIXTURE=1`; that is fake data, not your real state.
 
 | Path | What it is |
 |---|---|
-| `web/` | The UI. React 19, Tailwind v4, [shadcn/ui](https://ui.shadcn.com) New York (Radix) in `web/src/components/ui`, Zustand store in `web/src/state`. |
+| `web/` | The UI. React 19, Tailwind v4, [shadcn/ui](https://ui.shadcn.com) in `web/src/components/ui` (still largely New York / Radix; **new work and redesigns use Base UI**), Zustand store in `web/src/state`. |
 | `server/` | The daemon. Node and TypeScript, binds `127.0.0.1` only, SQLite at `~/.remy/remy.db` through `node:sqlite`. Threads run on the Claude Agent SDK, Codex app-server, or Cursor ACP — see **Providers**. |
 | `desktop/` | The Electron shell (`me.padamchopra.Remy`). Owns the window and the tokens, and ships the `web/` build plus the daemon in the DMG. |
 | `mobile/` | The iPhone app (Expo / React Native). A remote for a Mac daemon — it cannot run standalone. |
@@ -62,7 +62,7 @@ Skip `VITE_MC_FIXTURE=1`; that is fake data, not your real state.
 
 `.claude/skills` is a symlink to this directory so Claude and other agents discover the same skills. Add each skill only under `.agents/skills`; do not add per-skill Claude links.
 
-- **`ui`** — layout and keyboard. Every control comes from a shadcn primitive; a custom `div` is the last resort.
+- **`ui`** — layout and keyboard. Every control comes from a shadcn primitive; a custom `div` is the last resort. New surfaces and redesigns use Base UI, not Radix.
 - **`content`** — every user-facing string. Second person, present tense, one short sentence.
 - **`product-design`** — ownership, settings placement, defaults, actors, and deletion behavior. Read it before shaping a capability or integration.
 - **`distributed-state`** — complete read, write, live-update, and reconnect paths across devices and process boundaries.
@@ -71,6 +71,8 @@ Skip `VITE_MC_FIXTURE=1`; that is fake data, not your real state.
 - **`pr-author`** — every PR carries proportional reviewer evidence and reads in one screen; screenshots or recordings are required only for behavior a reviewer can exercise or judge in the running app.
 - **`skill-capture`** — when the user highlights a durable convention, write it into `.agents/skills/` in the same change.
 - **`shadcn`** and **`migrate-radix-to-base`** — vendored from `shadcn/ui` and tracked in `skills-lock.json`. Do not hand-edit them.
+
+**Base UI for new work:** New UI surfaces and redesigns use Base UI (`@base-ui/react` / shadcn base style). Do not add new Radix-based primitives or redesign existing ones onto Radix. Migrating an existing Radix surface is a redesign — use Base UI and follow `.agents/skills/migrate-radix-to-base`. Existing Radix/shadcn New York surfaces may remain until they are redesigned.
 
 ## Terminology
 
@@ -140,6 +142,7 @@ A server module opens its database at import time, so a test that touches state 
 - **Where the window is lives in the URL**, parsed and formatted by `web/src/lib/route.ts`. The hosted app uses clean paths with a server-side app-shell fallback; Electron keeps hash routes because its `file://` URL has no server to resolve a path. Shared navigation goes through `navigateLocation` so each surface uses its valid form. All is the default account view and adds no query parameter; a narrower account writes `organization` explicitly. A hosted thread is `/threads/<id>` only.
 - **Worktrees** Remy creates go in a `.remy` folder, inside the workspace or under the `worktreeRoot` setting, hidden by a rule in the repo's `.git/info/exclude` — per-clone and never committed, so no tracked `.gitignore` changes. Worktrees already checked out elsewhere are left where they are.
 - **The words a person reads** are not always the words the code uses — see **Terminology** above, and check it before naming a label, an error or an empty state.
+- **Base UI for new work.** New UI surfaces and redesigns use Base UI (`@base-ui/react` / shadcn base style). Do not add new Radix-based primitives or redesign existing ones onto Radix. Migrating an existing Radix surface is a redesign — use Base UI and follow `.agents/skills/migrate-radix-to-base`. Existing Radix/shadcn New York surfaces may remain until they are redesigned.
 - **A provider and a model are one choice.** `server/src/providers.ts` is the only list of what a thread may run on; `config.ts`, `agents.ts` and `chat.ts` validate against it, `GET /server/providers` serves it with what the machine actually has installed, and every picker in the window is `web/src/components/ModelPicker.tsx`. Moving to another provider takes the model to that provider's default rather than keeping one it would refuse.
 - **Threads are the product; nothing displaces them.** The sidebar's thread
   list is on screen in every section, and a thread is always one click away.
