@@ -35,18 +35,18 @@ Do not put a peer token in the renderer or widen the loopback bind. Only the nat
 
 ## Hosted thread start uses the computer's providers
 
-A hosted new thread runs on the computer the composer chose. That computer's enabled providers are the start allowlist: org model access for a cloud computer, the Mac's advertised providers for a paired computer. If OpenRouter (or another gateway) is enabled there, start accepts the selected model. Do not reject it because a fetched catalogue is stale, incomplete, or missing a default such as `openrouter/auto`. Normalize a gateway provider such as `openrouter` onto Codex plus a `remy:` model before the allowlist; a missing runtime provider is not a refusal when the model already names that gateway.
+A hosted new thread runs on the computer the composer chose. That computer's enabled providers are the start allowlist: org model access for a cloud computer, the Mac's advertised providers for a paired computer. If OpenRouter (or another gateway) is enabled there, start accepts the selected model. Do not reject it because a fetched catalogue is stale, incomplete, or missing a default such as `openrouter/auto`. Normalize a gateway provider such as `openrouter` onto Codex plus a `remy:` model before the allowlist; a missing runtime provider is not a refusal when the model already names that gateway. A saved default is not itself allowlist: once model access has arrived, only enabled and configured providers are sendable, and an unconfigured default falls back to one that is. Read the same access records start uses, including a legacy OpenRouter key when the newer access row has none.
 
 BAD
 ```text
-OpenRouter is on for the cloud computer. The composer shows the selected model.
-POST /threads returns 400 because that model is not in the last /models/user list.
+OpenRouter is the saved default. The composer shows it on an organization with no OpenRouter key.
+POST /threads returns 400 Choose an enabled provider and model.
 ```
 
 GOOD
 ```text
-OpenRouter is on for the cloud computer. The composer shows the selected model.
-POST /threads starts that thread on Codex through OpenRouter.
+OpenRouter is the saved default. The organization has Anthropic on and OpenRouter off.
+The composer starts Anthropic. Turning OpenRouter on with a key keeps that default.
 ```
 
 ## Choose freshness deliberately

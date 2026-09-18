@@ -7,15 +7,30 @@ export type ModelAccessId = typeof modelAccessIds[number];
 const connection = z.object({apiKey:z.string().trim().max(8192), enabled:z.boolean(), models:z.array(z.string())});
 export const modelAccessPatch = z.object({enabled:z.boolean().optional(), apiKey:z.string().trim().min(1).max(8192).optional()}).strict();
 const keys = {anthropic:"ANTHROPIC_API_KEY",openai:"OPENAI_API_KEY",router:"RAMP_ROUTER_API_KEY",openrouter:"OPENROUTER_API_KEY"};
+function parsedAccess(saved:string | undefined) {
+  if(!saved)return;
+  try {
+    const parsed=connection.safeParse(JSON.parse(saved));
+    return parsed.success ? parsed.data : undefined;
+  } catch { return; }
+}
+function parsedLegacy(saved:string | undefined) {
+  if(!saved)return;
+  try {
+    const value=JSON.parse(saved) as {apiKey?:unknown;model?:unknown};
+    if(typeof value.apiKey !== "string")return;
+    return {apiKey:value.apiKey, ...(typeof value.model === "string" ? {model:value.model} : {})};
+  } catch { return; }
+}
 export function modelAccess(secrets:Record<string,string>) {
   return modelAccessIds.map(id => {
-    const saved=secrets[`access:${id}`];
-    if(saved) return {id,...connection.parse(JSON.parse(saved))};
-    if(id === "router" || id === "openrouter") {
-      const legacy=secrets[`model:${id}`];
-      if(legacy) {const value=JSON.parse(legacy);return {id,apiKey:value.apiKey as string,enabled:true,models:[value.model as string]};}
-    }
-    return {id,apiKey:secrets[keys[id]] ?? "",enabled:!!secrets[keys[id]],models:[] as string[]};
+    const fromAccess=parsedAccess(secrets[`access:${id}`]);
+    const legacy=id === "router" || id === "openrouter" ? parsedLegacy(secrets[`model:${id}`]) : undefined;
+    const envKey=secrets[keys[id]] ?? "";
+    const apiKey=(fromAccess?.apiKey || legacy?.apiKey || envKey).trim();
+    const models=fromAccess?.models.length ? fromAccess.models : legacy?.model ? [legacy.model] : [];
+    const enabled=fromAccess ? fromAccess.enabled : !!(legacy || envKey);
+    return {id,apiKey,enabled,models};
   });
 }
 export function publicModelAccess(secrets:Record<string,string>) {

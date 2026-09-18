@@ -26,8 +26,10 @@ function withEnsuredModel(models: ProviderModel[], model?: string): ProviderMode
   return [{ value: model, label: model }, ...models];
 }
 
-/// Cloud thread catalogue: enabled providers, plus the current choice so a
-/// default is never painted as missing while access is still arriving.
+/// Cloud thread catalogue: enabled and configured providers. Keep a saved
+/// default selectable only while access is still arriving, or by adding its
+/// model onto a provider that is already on. An unconfigured gateway is not a
+/// start choice.
 export function hostedModels(entries: ModelAccessEntry[], chatgpt = false, ensure?: ModelChoice): Provider[] {
   const cloudModels: Provider[] = entries.filter((entry) => entry.enabled && entry.configured).flatMap((entry) => {
     const runtime = runtimeFor(entry.id);
@@ -40,7 +42,7 @@ export function hostedModels(entries: ModelAccessEntry[], chatgpt = false, ensur
       models: withEnsuredModel(hostedModelsFor(entry), ensure?.provider === entry.id ? ensure.model : undefined),
     }];
   });
-  if (ensure?.provider && HOSTED_LABELS[ensure.provider] && !cloudModels.some((entry) => entry.id === ensure.provider)) {
+  if (!entries.length && ensure?.provider && HOSTED_LABELS[ensure.provider] && !cloudModels.some((entry) => entry.id === ensure.provider)) {
     const runtime = runtimeFor(ensure.provider);
     if (runtime) {
       cloudModels.unshift({
@@ -57,6 +59,18 @@ export function hostedModels(entries: ModelAccessEntry[], chatgpt = false, ensur
     if (runtime) cloudModels.push({ ...runtime, label: "ChatGPT" });
   }
   return cloudModels;
+}
+
+/// The model a new cloud thread should send: the saved default when that
+/// account can run it, otherwise the first enabled provider.
+export function hostedComposerChoice(entries: ModelAccessEntry[], chatgpt: boolean, inherited: ModelChoice): ModelChoice {
+  const catalogue = hostedModels(entries, chatgpt, inherited);
+  const match = catalogue.find((entry) => entry.id === inherited.provider);
+  if (match?.models.some((model) => model.value === inherited.model)) return inherited;
+  if (match) return { provider: match.id, model: match.models[0]?.value ?? "" };
+  const first = catalogue[0];
+  if (!first) return inherited;
+  return { provider: first.id, model: first.models[0]?.value ?? "" };
 }
 
 /// Maps a composer or stored gateway choice onto the runtime pair POST /threads

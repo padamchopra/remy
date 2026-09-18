@@ -85,7 +85,7 @@ Name the capability, its durable owner, the actor that performs it, the event th
 
 A setting lives with the thing whose behavior it controls. The actor that carries out that behavior is a reference, not the owner, when another actor could reasonably take its place.
 
-- A machine integration belongs to that machine's settings. Hosted thread start uses the providers enabled on the chosen computer, including a cloud computer's OpenRouter, Router, OpenAI, and Anthropic access.
+- A machine integration belongs to that machine's settings. Hosted thread start uses the providers enabled on the chosen computer, including a cloud computer's OpenRouter, Router, OpenAI, and Anthropic access. Model access is that account's: a Remy-wide OpenRouter default does not start on an organization that has no OpenRouter key.
 - Repository behavior belongs to the workspace or repository identity it follows.
 - Personal behavior and instructions belong to an agent.
 - One conversation's presentation or execution state belongs to that thread.
