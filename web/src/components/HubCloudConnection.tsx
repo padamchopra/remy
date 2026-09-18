@@ -1,6 +1,6 @@
 import { HubModelDefault } from "./HubModelDefault";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Cloud, Box } from "lucide-react";
+import { Cloud, Box, Sparkles, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +10,12 @@ import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { useHubResource } from "@/lib/hub-organization";
 import { toast } from "sonner";
 
-const providers = [{ id: "fly-sprites", name: "Fly.io Sprites", href: "https://sprites.dev" }, { id: "modal", name: "Modal", href: "https://modal.com/settings" }] as const;
+const providers = [
+  { id: "fly-sprites", name: "Fly.io Sprites", href: "https://sprites.dev", tokenLabel: "Sprites token", icon: Cloud },
+  { id: "modal", name: "Modal", href: "https://modal.com/settings", tokenLabel: "Token secret", tokenIdLabel: "Token ID", icon: Box },
+  { id: "cursor-cloud", name: "Cursor Cloud", href: "https://cursor.com/dashboard", tokenLabel: "API key", icon: Sparkles, description: "Cursor clones this workspace from its git remote onto a Cursor-hosted VM." },
+] as const;
+type Provider = (typeof providers)[number];
 type Connections = { connections?: string[]; enabledProviders?: string[] };
 export function HubCloudConnection({ organizationId, admin, onChange }: { organizationId: string; admin: boolean; onChange?: (providers: string[]) => void }) {
   const resource = useHubResource<Connections>(organizationId, "/hosted");
@@ -31,7 +36,7 @@ export function HubCloudConnection({ organizationId, admin, onChange }: { organi
   </section>;
 }
 function ProviderConnection({ provider, organizationId, admin, configured, enabled, supported, refresh }: {
-  provider: typeof providers[number]; organizationId: string; admin: boolean; configured: boolean; enabled: boolean; supported: boolean; refresh: () => Promise<void>;
+  provider: Provider; organizationId: string; admin: boolean; configured: boolean; enabled: boolean; supported: boolean; refresh: () => Promise<void>;
 }) {
   const [setupRequested, setSetupRequested] = useState(false);
   const [pendingEnabled, setPendingEnabled] = useState<boolean | null>(null);
@@ -41,6 +46,8 @@ function ProviderConnection({ provider, organizationId, admin, configured, enabl
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const path = `${hubThreadBase(organizationId)}/cloud-connection`;
+  const Icon: LucideIcon = provider.icon;
+  const needsTokenId = "tokenIdLabel" in provider;
   return <form className="flex min-w-0 flex-col gap-4 p-4" aria-label={`${provider.name} connection`} onSubmit={async event => {
     event.preventDefault(); setBusy(true);
     try {
@@ -51,7 +58,7 @@ function ProviderConnection({ provider, organizationId, admin, configured, enabl
   }}>
     <Field orientation="horizontal">
       <FieldLabel htmlFor={`cloud-${provider.id}`} className="min-w-0 gap-3">
-        {provider.id === "modal" ? <Box className="size-4 shrink-0 text-muted-foreground" /> : <Cloud className="size-4 shrink-0 text-muted-foreground" />}
+        <Icon className="size-4 shrink-0 text-muted-foreground" />
         {provider.name}
       </FieldLabel>
       <span className="shrink-0 text-xs text-muted-foreground">{expanded ? (configured ? "Enabled" : "Setup required") : "Off"}</span>
@@ -64,18 +71,19 @@ function ProviderConnection({ provider, organizationId, admin, configured, enabl
       }} />
     </Field>
     {expanded && <div className="flex min-w-0 flex-col gap-3 border-t pt-4 sm:pl-7">
-    {!configured && <FieldDescription>Save your credentials to finish enabling this provider.</FieldDescription>}
+    {!configured && <FieldDescription>{"description" in provider ? provider.description : "Save your credentials to finish enabling this provider."}</FieldDescription>}
+    {configured && "description" in provider && <FieldDescription>{provider.description}</FieldDescription>}
     {admin && (!configured || editing) && <>
-      {provider.id === "modal" && <Field><FieldLabel htmlFor="modal-token-id">Token ID</FieldLabel><Input id="modal-token-id" autoComplete="off" value={tokenId} onChange={e => setTokenId(e.target.value)} disabled={busy} required /></Field>}
-      <Field><FieldLabel htmlFor={`${provider.id}-token`}>{provider.id === "modal" ? "Token secret" : "Sprites token"}</FieldLabel><Input id={`${provider.id}-token`} type="password" autoComplete="new-password" value={token} onChange={e => setToken(e.target.value)} disabled={busy} required /><FieldDescription>Your credentials are encrypted and kept out of your computers.</FieldDescription></Field>
+      {needsTokenId && <Field><FieldLabel htmlFor="modal-token-id">{provider.tokenIdLabel}</FieldLabel><Input id="modal-token-id" autoComplete="off" value={tokenId} onChange={e => setTokenId(e.target.value)} disabled={busy} required /></Field>}
+      <Field><FieldLabel htmlFor={`${provider.id}-token`}>{provider.tokenLabel}</FieldLabel><Input id={`${provider.id}-token`} type="password" autoComplete="new-password" value={token} onChange={e => setToken(e.target.value)} disabled={busy} required /><FieldDescription>Your credentials are encrypted and kept out of your computers.</FieldDescription></Field>
       <div className="flex flex-wrap items-center justify-between gap-3">
       <Button asChild variant="link" className="h-auto p-0"><a target="_blank" rel="noreferrer" href={provider.href}>Open {provider.name}</a></Button>
-      <Button className="self-start" disabled={!supported || busy || !token.trim() || (provider.id === "modal" && !tokenId.trim())}>{busy ? "Saving connection…" : "Save connection"}</Button>
+      <Button className="self-start" disabled={!supported || busy || !token.trim() || (needsTokenId && !tokenId.trim())}>{busy ? "Saving connection…" : "Save connection"}</Button>
       </div>
       {configured && <Button type="button" variant="ghost" onClick={() => { setEditing(false); setToken(""); setTokenId(""); }}>Cancel</Button>}
     </>}
     {admin && configured && !editing && <div className="flex items-center justify-between gap-3"><span className="text-sm text-muted-foreground">Credentials saved</span><Button type="button" variant="outline" size="sm" onClick={() => setEditing(true)}>Update credentials</Button></div>}
-    {configured && <HubModelDefault organizationId={organizationId} computerId={`cloud:${provider.id}`} />}
+    {configured && provider.id !== "cursor-cloud" && <HubModelDefault organizationId={organizationId} computerId={`cloud:${provider.id}`} />}
     {!admin && <p>Ask an organization administrator to manage this connection.</p>}
     </div>}
   </form>;

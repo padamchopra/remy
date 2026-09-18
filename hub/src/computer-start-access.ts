@@ -101,6 +101,15 @@ export function advertisedCloudStartProviders(
   return COMPUTER_START_PROVIDERS.filter((id) => seen.has(id));
 }
 
+/// Cursor Cloud always runs Cursor; Fly and Modal advertise from model access.
+export function advertisedCloudProvidersFor(
+  provider: string,
+  access: { id: string; enabled?: boolean; configured?: boolean }[],
+): ComputerStartProvider[] {
+  if (provider === "cursor-cloud") return ["cursor"];
+  return advertisedCloudStartProviders(access);
+}
+
 /// Owners and org-owned connections keep every advertised provider.
 export function canStartWithShareGrant(
   owner: boolean,

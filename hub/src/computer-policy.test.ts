@@ -832,3 +832,94 @@ test("branch reads only forward an authorized workspace and never neighboring ac
     assert.equal(forwarded.length,1);
   } finally { sqlite.close(); }
 });
+
+test("Cursor Cloud connects, stays encrypted, starts without a guest computer, and fails without a key", async () => {
+  const { sqlite, db, organizations } = database();
+  const { createRouteHandler, HubCoordinator } = await import("./worker.js");
+  const { OrganizationService } = await import("./organizations.js");
+  const { HostedSettingsStore } = await import("./hosted-settings.js");
+  const { setCursorCloudApiForTest } = await import("./cursor-cloud.js");
+  const { CURSOR_CLOUD_COMPUTER_ID } = await import("@remy/contract");
+  const secret = "test-encryption-root-with-at-least-thirty-two-characters";
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: unknown) => {
+    assert.equal(String(input), "https://api.cursor.com/v1/me");
+    return Response.json({ apiKeyName: "qa-key" });
+  }) as typeof fetch;
+  setCursorCloudApiForTest({
+    me: async () => ({ apiKeyName: "qa-key" }),
+    create: async () => ({ agentId: "agent-1", runId: "run-1" }),
+    followUp: async () => ({ runId: "run-2" }),
+    stream: async function* () {},
+    getRun: async () => ({ status: "FINISHED", result: "Done." }),
+    cancel: async () => {},
+    archive: async () => {},
+  });
+  try {
+    sqlite.prepare("INSERT INTO organization_workspaces(id,organization_id,name,origin,created_at,updated_at) VALUES(?,?,?,?,?,?)").run("org-release", "org", "Release", "github.com/example/release", 1, 1);
+    const route = createRouteHandler({
+      accountService: () => ({ authenticate: async () => ({ userId: "ada", sessionId: "session", clientKind: "web" }) }) as never,
+      organizationStore: () => organizations,
+      organizationService: () => new OrganizationService(organizations),
+    });
+    const env = { DB: db, AUTH_SECRET: { get: async () => secret }, BETTER_AUTH_URL: "https://hub.example", COORDINATOR: { idFromName: () => ({}), get: () => ({ fetch: async () => Response.json({ ok: true }) }) } } as never;
+    const call = (path: string, method = "GET", payload?: unknown) => route(new Request(`https://hub.example/api/organizations/org/${path}`, { method, headers: { authorization: "Bearer test", origin: "https://hub.example", "content-type": "application/json" }, ...(payload === undefined ? {} : { body: JSON.stringify(payload) }) }), env);
+    assert.equal((await call("cloud-connection", "PUT", { provider: "cursor-cloud", token: "cursor-secret", enabled: true })).status, 200);
+    const hosted = await (await call("hosted")).json() as { enabledProviders: string[]; connections: string[]; available: boolean };
+    assert.deepEqual(hosted.enabledProviders, ["cursor-cloud"]);
+    assert.ok(hosted.connections.includes("cursor-cloud"));
+    assert.equal(hosted.available, true);
+    assert.equal(JSON.stringify(hosted).includes("cursor-secret"), false);
+    const store = new HostedSettingsStore(db, async () => secret);
+    assert.equal(JSON.parse((await store.secrets("org"))["cloud:cursor-cloud"]).token, "cursor-secret");
+    assert.equal((await call("cloud-connection", "PATCH", { provider: "cursor-cloud", enabled: false })).status, 200);
+    assert.deepEqual((await (await call("hosted")).json() as { enabledProviders: string[] }).enabledProviders, []);
+    assert.equal(JSON.parse((await store.secrets("org"))["cloud:cursor-cloud"]).token, "cursor-secret");
+    assert.equal((await call("cloud-connection", "PATCH", { provider: "cursor-cloud", enabled: true })).status, 200);
+    const personal = await (await import("./personal-space.js")).personalSpace(db, "ada");
+    await store.setSecret(personal.id, "cloud:cursor-cloud", JSON.stringify({ provider: "cursor-cloud", enabled: true, token: "cursor-secret" }));
+    assert.equal((await call("compute-shares/cloud/cursor-cloud", "PUT")).status, 200);
+    const shares = await (await call("compute-shares")).json() as { cloudConnections: { provider: string; providers: { id: string }[] }[] };
+    assert.deepEqual(shares.cloudConnections.find(connection => connection.provider === "cursor-cloud")?.providers.map(provider => provider.id), ["cursor"]);
+
+    const values = new Map<string, unknown>([["organizationId", "org"]]);
+    let ensured = 0;
+    const coordinator = new HubCoordinator({ storage: { get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); }, delete: async (key: string) => values.delete(key), list: async () => new Map([...values]), getAlarm: async () => null, setAlarm: async () => {}, transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn({ get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); } }) }, getWebSockets: () => [], waitUntil: (work: Promise<unknown>) => { void work; } } as unknown as DurableObjectState, { DB: db, AUTH_SECRET: { get: async () => secret }, BETTER_AUTH_URL: "https://hub.example" } as never);
+    (coordinator as unknown as { hostedService: () => { ensure: () => Promise<unknown> } }).hostedService = () => ({ ensure: async () => { ensured += 1; throw new Error("guest computers must not start for Cursor Cloud"); } });
+    const handle = (coordinator as unknown as { threadRequest: (r: Request) => Promise<Response | undefined> }).threadRequest.bind(coordinator);
+    const request = (path: string, method: string, payload: unknown) => new Request(`https://internal${path}`, { method, headers: { "content-type": "application/json", "x-thread-member": encodeURIComponent(JSON.stringify({ id: "ada", label: "Ada" })), "x-organization-id": "org" }, body: JSON.stringify(payload) });
+    const requestId = crypto.randomUUID();
+    const started = await handle(request("/threads", "POST", { workspaceId: "org-release", requestId, computerId: CURSOR_CLOUD_COMPUTER_ID, provider: "cursor", visibility: "private" }));
+    assert.equal(started?.status, 202);
+    const key = `manual-task:ada:${requestId}`;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const stored = values.get(key) as { id?: string; computerId?: string; error?: string } | undefined;
+      if (stored?.id || stored?.error) break;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    const created = values.get(key) as { id?: string; computerId?: string; error?: string };
+    assert.equal(created.error, undefined);
+    assert.equal(created.computerId, CURSOR_CLOUD_COMPUTER_ID);
+    assert.equal(ensured, 0);
+    const thread = await (coordinator as unknown as { threads: import("./thread-store.js").ThreadStore }).threads.get(CURSOR_CLOUD_COMPUTER_ID, created.id!);
+    assert.equal(thread?.detail.provider, "cursor");
+    const claude = await handle(request("/threads", "POST", { workspaceId: "org-release", requestId: crypto.randomUUID(), computerId: CURSOR_CLOUD_COMPUTER_ID, provider: "claude", visibility: "private" }));
+    assert.equal(claude?.status, 403);
+
+    await store.setSecret("org", "cloud:cursor-cloud", null);
+    await store.setSecret(personal.id, "cloud:cursor-cloud", null);
+    const missingId = crypto.randomUUID();
+    const missing = await handle(request("/threads", "POST", { workspaceId: "org-release", requestId: missingId, computerId: CURSOR_CLOUD_COMPUTER_ID, provider: "cursor" }));
+    assert.equal(missing?.status, 202);
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const stored = values.get(`manual-task:ada:${missingId}`) as { error?: string } | undefined;
+      if (stored?.error) break;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    const failed = values.get(`manual-task:ada:${missingId}`) as { error?: string };
+    assert.match(failed.error ?? "", /Enable a cloud provider|Connect Cursor Cloud|disabled/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    sqlite.close();
+  }
+});

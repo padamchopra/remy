@@ -5,9 +5,10 @@ import { modelDefaults } from "./model-defaults.js";
 import { modelFavorites } from "./model-favorites.js";
 import { hostedGatewayError, hostedStartChoice, modelAccessIds, publicModelAccess, saveModelAccess, type ModelAccessId } from "./model-access.js";
 import { routerConnectionSchema, routerModels } from "./router-connection.js";
-import { cloudComputerProvider, type HostedSettings } from "@remy/contract";
+import { CLOUD_COMPUTER_PROVIDERS, CURSOR_CLOUD_COMPUTER_ID, cloudComputerProvider, isCursorCloudProvider, isGuestCloudProvider, type HostedSettings } from "@remy/contract";
 import { managementCredential } from "./cloud-connection.js";
 import { cloudToggleSchema, cloudConnectionSchema, cloudConnectionKey, modelSecrets } from "./cloud-connection.js";
+import { CursorCloudThreads, verifyCursorCloudKey } from "./cursor-cloud.js";
 import { allowedRequestOrigin } from "./request-origin.js";
 import { emailAvailable, sendAccountEmail, type AccountEmail } from "./email.js";
 import { EnvironmentStore } from "./environments.js";
@@ -24,7 +25,7 @@ import { hubRoutineSchema } from "@remy/contract";
 import { seedHubAgents } from "./remy-agent.js";
 import { ScopedAgents } from "./scoped-agents.js";
 import { resolveComputer } from "./routing.js";
-import { advertisedCloudStartProviders, advertisedProviderIds, canStartWithShareGrant, parseStartProviderInput, parseStartProviders, providersFromCapabilities, publicStartProviders, serializeStartProviders, START_PROVIDER_DENIED } from "./computer-start-access.js";
+import { advertisedCloudProvidersFor, advertisedProviderIds, canStartWithShareGrant, parseStartProviderInput, parseStartProviders, providersFromCapabilities, publicStartProviders, serializeStartProviders, START_PROVIDER_DENIED } from "./computer-start-access.js";
 import { routingRuleSchema } from "@remy/contract";
 import { GitCapabilities, GithubInstallation, githubRepository, proxyGit } from "./hosted-git.js";
 import { HostedSettingsStore } from "./hosted-settings.js";
@@ -163,16 +164,22 @@ async function cloudStartGrant(
   provider: HostedSettings["provider"],
   userId: string,
 ) {
+  const advertisedFor = async (source: string) => advertisedCloudProvidersFor(provider, publicModelAccess(await settings.secrets(source)));
   if (await settings.ownConnection(org, provider)) {
-    return { owner: true, advertised: advertisedCloudStartProviders(publicModelAccess(await settings.secrets(org))), stored: null };
+    return { owner: true, advertised: await advertisedFor(org), stored: null };
   }
   const share = await settings.cloudShare(org, provider);
-  if (!share) return { owner: true, advertised: advertisedCloudStartProviders([]), stored: null };
+  if (!share) return { owner: true, advertised: advertisedCloudProvidersFor(provider, []), stored: null };
   return {
     owner: share.shared_by === userId,
-    advertised: advertisedCloudStartProviders(publicModelAccess(await settings.secrets(share.source_organization_id))),
+    advertised: await advertisedFor(share.source_organization_id),
     stored: parseStartProviders(share.start_providers),
   };
+}
+
+async function cursorCloudApiKey(settings: HostedSettingsStore, org: string): Promise<string | undefined> {
+  const connection = await settings.connection(org, "cursor-cloud");
+  return connection?.provider === "cursor-cloud" && connection.enabled ? connection.token : undefined;
 }
 
 async function canStartOnCloud(
@@ -576,18 +583,17 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           return next;
         };
         const sharedCloudAvailability = new Map<string, boolean>();
-        const sharedCloudAdvertised = new Map<string, ReturnType<typeof advertisedCloudStartProviders>>();
+        const sharedCloudAdvertised = new Map<string, ReturnType<typeof advertisedCloudProvidersFor>>();
         for (const share of cloudShares) {
           const sourceSecrets = await cloudSecrets(share.source_organization_id);
           const saved = sourceSecrets[cloudConnectionKey(share.provider)];
           const parsed = saved ? cloudConnectionSchema.safeParse(JSON.parse(saved)) : null;
           sharedCloudAvailability.set(`${share.source_organization_id}:${share.provider}`, !!parsed?.success && parsed.data.enabled);
-          sharedCloudAdvertised.set(`${share.source_organization_id}:${share.provider}`, advertisedCloudStartProviders(publicModelAccess(sourceSecrets)));
+          sharedCloudAdvertised.set(`${share.source_organization_id}:${share.provider}`, advertisedCloudProvidersFor(share.provider, publicModelAccess(sourceSecrets)));
         }
         const names = new Map<string,string>();
         for (const userId of new Set([...computerShares.map(share => share.shared_by), ...cloudShares.map(share => share.shared_by)])) names.set(userId, (await store.profile(userId))?.name ?? "Member");
         const admin = member.role !== "member";
-        const ownCloudAdvertised = advertisedCloudStartProviders(publicModelAccess(personalSecrets));
         return Response.json({
           canManage: admin,
           computers: [
@@ -602,7 +608,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
               const canShare = share.shared_by === identity.userId || share.source_organization_id === personal.id;
               return { provider: share.provider, shared: true, available: sharedCloudAvailability.get(`${share.source_organization_id}:${share.provider}`) ?? false, sharedBy: names.get(share.shared_by) ?? "Member", canShare, canRevoke: admin, providers: publicStartProviders(sharedCloudAdvertised.get(`${share.source_organization_id}:${share.provider}`) ?? [], parseStartProviders(share.start_providers)) };
             }),
-            ...ownCloud.filter(provider => !cloudShares.some(share => share.source_organization_id === personal.id && share.provider === provider)).map(provider => ({ provider, shared: false, available: true, sharedBy: (null as string | null), canShare: true, canRevoke: false, providers: publicStartProviders(ownCloudAdvertised, null) })),
+            ...ownCloud.filter(provider => !cloudShares.some(share => share.source_organization_id === personal.id && share.provider === provider)).map(provider => ({ provider, shared: false, available: true, sharedBy: (null as string | null), canShare: true, canRevoke: false, providers: publicStartProviders(advertisedCloudProvidersFor(provider, publicModelAccess(personalSecrets)), null) })),
           ],
         });
       }
@@ -645,13 +651,13 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           }
         } else {
           const provider = decodeURIComponent(cloudShare![1]) as HostedSettings["provider"];
-          if (!["fly-sprites", "modal"].includes(provider)) return jsonError("Choose a cloud connection.", 400);
+          if (!(CLOUD_COMPUTER_PROVIDERS as readonly string[]).includes(provider)) return jsonError("Choose a cloud connection.", 400);
           const settings = new HostedSettingsStore(env.DB, () => env.AUTH_SECRET.get());
           const existing = await env.DB.prepare("SELECT source_organization_id,shared_by FROM organization_cloud_shares WHERE organization_id=? AND source_organization_id=? AND provider=?").bind(organizationId, personal.id, provider).first<{source_organization_id:string;shared_by:string}>();
           const owns = !!(await settings.ownConnection(personal.id, provider));
           if (request.method === "PUT") {
             if (!owns) return jsonError("Enable this cloud provider in Personal first.", 409);
-            const advertised = advertisedCloudStartProviders(publicModelAccess(await settings.secrets(personal.id)));
+            const advertised = advertisedCloudProvidersFor(provider, publicModelAccess(await settings.secrets(personal.id)));
             let startProviders;
             try { startProviders = parseStartProviderInput((await body<{startProviders?:unknown}>(request))?.startProviders, advertised); }
             catch (error) { return jsonError(error instanceof Error ? error.message : "Choose the providers others may start.", 400); }
@@ -659,7 +665,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           } else if (request.method === "PATCH") {
             if (!owns) return jsonError("Choose one of your cloud connections.", 404);
             if (!existing) return jsonError("Share this connection first.", 409);
-            const advertised = advertisedCloudStartProviders(publicModelAccess(await settings.secrets(personal.id)));
+            const advertised = advertisedCloudProvidersFor(provider, publicModelAccess(await settings.secrets(personal.id)));
             let startProviders;
             try { startProviders = parseStartProviderInput((await body<{startProviders?:unknown}>(request))?.startProviders, advertised); }
             catch (error) { return jsonError(error instanceof Error ? error.message : "Choose the providers others may start.", 400); }
@@ -811,6 +817,10 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         } else {
           const parsed = cloudConnectionSchema.safeParse(input);
           if (!parsed.success) return jsonError("Enter the credentials for your cloud provider.", 400);
+          if (parsed.data.provider === "cursor-cloud") {
+            try { await verifyCursorCloudKey(parsed.data.token); }
+            catch (error) { return jsonError(error instanceof Error ? error.message : "Enter a valid Cursor API key.", 400); }
+          }
           const saved = (await store.secrets(organizationId))[cloudConnectionKey(parsed.data.provider)];
           const enabled = saved ? cloudConnectionSchema.parse(JSON.parse(saved)).enabled : parsed.data.enabled;
           await store.setSecret(organizationId, cloudConnectionKey(parsed.data.provider), JSON.stringify({ ...parsed.data, enabled }));
@@ -833,7 +843,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
             const grant = await cloudStartGrant(settings, organizationId, provider, identity.userId);
             cloudStart[provider] = { owner: grant.owner, providers: publicStartProviders(grant.advertised, grant.stored) };
           }
-          return Response.json({ settings: await settings.settings(organizationId,workspaceId), secretNames: member.role !== "member" ? names.filter(name => !name.startsWith("cloud:") && !name.startsWith("model:") && !name.startsWith("access:")) : [], enabledProviders, cloudStart, routerConfigured: !!access.find(entry => entry.id === "router")?.configured, openrouterConfigured: !!access.find(entry => entry.id === "openrouter")?.configured, connections: names.filter(name => name.startsWith("cloud:")).map(name => name.slice(6)), available: !!env.HOSTED_IMAGE && (!!env.PROVIDER_RUNTIME || (!!env.HOSTED_CONTROL_URL && !!env.HOSTED_CONTROL_TOKEN)) });
+          return Response.json({ settings: await settings.settings(organizationId,workspaceId), secretNames: member.role !== "member" ? names.filter(name => !name.startsWith("cloud:") && !name.startsWith("model:") && !name.startsWith("access:")) : [], enabledProviders, cloudStart, routerConfigured: !!access.find(entry => entry.id === "router")?.configured, openrouterConfigured: !!access.find(entry => entry.id === "openrouter")?.configured, connections: names.filter(name => name.startsWith("cloud:")).map(name => name.slice(6)), available: enabledProviders.includes("cursor-cloud") || (!!env.HOSTED_IMAGE && (!!env.PROVIDER_RUNTIME || (!!env.HOSTED_CONTROL_URL && !!env.HOSTED_CONTROL_TOKEN))) });
         }
         if (request.method === "PUT" && (!workspaceId || hostedMatch[2] === "settings")) {
           if (member.role === "member") return jsonError("Ask an admin to change hosted computers.",403);
@@ -1151,6 +1161,7 @@ export class HubCoordinator {
   private readonly threads: ThreadStore;
   private threadPublishing = Promise.resolve();
   private hosted?: HostedLifecycle;
+  private cursorCloud?: CursorCloudThreads;
   private routines?: HubRoutines;
   private readonly computers: D1ComputerStore;
   private readonly notifications: HubNotifications;
@@ -1478,9 +1489,10 @@ export class HubCoordinator {
       const workspace=decodeURIComponent(hostedMatch[1]);
       const safe=(state:Awaited<ReturnType<HostedLifecycle["get"]>>)=>state?{workspaceId:state.workspaceId,computerId:state.computerId,provider:state.provider,phase:state.phase,lastUsedAt:state.lastUsedAt,error:state.error,usage:state.usage,timing:state.timing}:null;
       if(request.method==="POST") {
-        const input=await body<{provider?:"fly-sprites"|"modal"}>(request);
+        const input=await body<{provider?:HostedSettings["provider"]}>(request);
         const settings=await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSettings(org,workspace,input?.provider);
         if(!settings.enabled) return jsonError("Enable hosted computers for this workspace.",409);
+        if (isCursorCloudProvider(settings.provider)) return Response.json({state:null},{status:202});
         this.ctx.waitUntil(this.hostedService().ensure(workspace,settings).catch(()=>undefined).finally(()=>this.invalidateComputers()));
         await this.scheduleAlarm(Date.now()+60_000);
         return Response.json({state:safe(await this.hostedService().get(workspace))},{status:202});
@@ -1801,6 +1813,10 @@ export class HubCoordinator {
     if (choice.hostedWorkspaceId || target?.ownership === "hosted") {
       const settings = await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSettings(org,workspaceId,choice.hostedProvider);
       if(!await canStartOnCloud(new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()),org,userId,settings.provider,modelChoice?.provider)) throw Error(START_PROVIDER_DENIED);
+      if (isCursorCloudProvider(settings.provider)) {
+        if (modelChoice?.provider && modelChoice.provider !== "cursor") throw Error(START_PROVIDER_DENIED);
+        return {computerId:CURSOR_CLOUD_COMPUTER_ID,workspaceId,reason:choice.reason};
+      }
       await this.ctx.storage.put(`hosted-task-owner:${taskId}`, userId);
       const state = await this.hostedService().ensure(workspaceId,settings,taskId,title);
       const computer = await this.computers.computer(org,state.computerId);
@@ -1813,6 +1829,13 @@ export class HubCoordinator {
     const org=(await this.ctx.storage.get<string>("organizationId"))!,agent=await this.scopedAgents(org).get(agentId,userId);
     const choice=await this.taskComputer(userId,workspaceId,trigger,crypto.randomUUID());
     const profile=await new D1AccountStore(this.env.DB).profile(userId),actor={id:userId,label:profile?.name??"Member"};
+    if (choice.computerId === CURSOR_CLOUD_COMPUTER_ID) {
+      const workspace=await new OrganizationService(new D1OrganizationStore(this.env.DB)).workspace(org,userId,workspaceId);
+      const started=await this.startCursorCloudThread(org,actor,{workspaceId:choice.workspaceId,origin:workspace.origin,title:String(agent.fields.name),visibility:agent.fields.scope!=="personal" || kind==="routine" ? "open" : "private",text:prompt});
+      await this.ctx.storage.put(`agent-run:${started.threadId}`,{computerId:started.computerId,userId,agentId,workspaceId,orchestrator:agent.fields.builtIn==="orchestrator",kind,createdAt:Date.now()});
+      for(const socket of this.ctx.getWebSockets())void this.sendOrganizationReset(socket);
+      return {computerId:started.computerId,threadId:started.threadId,reason:choice.reason};
+    }
     const memories=(await this.board.list("memories")).items.filter(m=>m.fields.agentId===agentId).map(m=>m.fields.content).join("\n");
     const made=await this.dispatchComputer(choice.computerId,actor,"POST","/hub/threads",{workspaceId:choice.workspaceId,title:String(agent.fields.name),visibility:"private",hubInbox:kind==="inbox",hubInstructions:`${String(agent.fields.instructions??"")}\nAgent memories:\n${memories}`, ...(agent.fields.provider && agent.fields.provider!=="default"?{provider:agent.fields.provider,model:agent.fields.model}:{})});
     if(!made.ok)throw Error("This agent's thread could not start.");const thread=threadSnapshotSchema.parse(await made.json());
@@ -1851,21 +1874,72 @@ export class HubCoordinator {
   private async prewarmWorkspace(workspaceId:string):Promise<void> {
     const org=await this.ctx.storage.get<string>("organizationId");if(!org || !await new D1OrganizationStore(this.env.DB).workspace(org,workspaceId))return;
     const settings=await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSettings(org,workspaceId);
-    if(!settings.enabled)return;
+    if(!settings.enabled || isCursorCloudProvider(settings.provider))return;
     try{await this.hostedService().ensure(workspaceId,settings);}catch{}finally{this.invalidateComputers();await this.scheduleAlarm(Date.now()+60_000);}
+  }
+
+  private cursorCloudThreads(): CursorCloudThreads {
+    return this.cursorCloud ??= new CursorCloudThreads(this.threads, this.ctx.storage, work => this.ctx.waitUntil(work));
+  }
+
+  private async startCursorCloudThread(org: string, actor: ThreadMember, input: {
+    workspaceId: string;
+    origin: string;
+    title?: string;
+    visibility?: string;
+    branch?: string;
+    permissionMode?: unknown;
+    text?: string;
+  }): Promise<{ computerId: string; threadId: string }> {
+    const apiKey = await cursorCloudApiKey(new HostedSettingsStore(this.env.DB, () => this.env.AUTH_SECRET.get()), org);
+    const snapshot = await this.cursorCloudThreads().create({
+      organizationId: org,
+      actor,
+      workspaceId: input.workspaceId,
+      origin: input.origin,
+      ...(input.branch ? { startingRef: input.branch } : {}),
+      ...(input.title ? { title: input.title } : {}),
+      visibility: input.visibility === "open" ? "open" : "private",
+      ...(input.permissionMode !== undefined ? { permissionMode: input.permissionMode } : {}),
+      apiKey,
+    });
+    if (input.text) {
+      const sent = await this.cursorCloudThreads().handle(snapshot.id, actor, "POST", "message", { text: input.text }, apiKey);
+      if (!sent.ok) {
+        const body = await sent.json().catch(() => undefined) as { error?: unknown } | undefined;
+        throw new Error(typeof body?.error === "string" && body.error.trim() ? body.error : "This agent's message could not be sent.");
+      }
+    }
+    return { computerId: CURSOR_CLOUD_COMPUTER_ID, threadId: snapshot.id };
+  }
+
+  private async cursorCloudRequest(request: Request, actor: ThreadMember, id: string, action: string | undefined): Promise<Response> {
+    const org = request.headers.get("x-organization-id")!;
+    const snapshot = await this.cursorCloudThreads().get(id);
+    if (!snapshot || !canReadThread(snapshot.access, actor.id) || !await this.canReadAgentThread(id, actor.id)) return jsonError("This thread is no longer available.", 404);
+    if (action !== "join" && request.method !== "GET" && !canWriteThread(snapshot.access, actor.id)) return jsonError("Join this thread before replying.", 403);
+    const allowed = ((request.method === "GET" || request.method === "PATCH" || request.method === "DELETE") && !action) || (request.method === "POST" && !!action);
+    if (!allowed) return jsonError("This action is not available.", 404);
+    const payload = await limitedBody(request, 96_000);
+    if (!payload) return jsonError("Send a shorter message.", 413);
+    let input: Record<string, unknown> = {};
+    if (payload.byteLength) { try { input = JSON.parse(new TextDecoder().decode(payload)); } catch { return jsonError("Send a valid thread request.", 400); } }
+    const apiKey = await cursorCloudApiKey(new HostedSettingsStore(this.env.DB, () => this.env.AUTH_SECRET.get()), org);
+    return this.cursorCloudThreads().handle(id, actor, request.method, action, input, apiKey);
   }
 
   private hostedService(): HostedLifecycle {
     if(this.hosted) return this.hosted;
     const settings=new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get());
     this.hosted=new HostedLifecycle(new DurableBoardStorage(this.ctx.storage),id=>{
+      if(!isGuestCloudProvider(id)) throw new Error("Hosted computers are not configured.");
       if(!this.env.PROVIDER_RUNTIME && (!this.env.HOSTED_CONTROL_URL || !this.env.HOSTED_CONTROL_TOKEN)) throw new Error("Hosted computers are not configured.");
       return new HttpRuntimeProvider(id,this.env.HOSTED_CONTROL_URL ?? "https://provider.internal",
         () => this.env.PROVIDER_RUNTIME ? this.env.AUTH_SECRET.get().then(managementCredential) : this.env.HOSTED_CONTROL_TOKEN!.get(),
         this.env.PROVIDER_RUNTIME ? (input, init) => this.env.PROVIDER_RUNTIME!.get(this.env.PROVIDER_RUNTIME!.idFromName("provider-management")).fetch(new Request(input, init)) : undefined, async () => {
         const org = (await this.ctx.storage.get<string>("organizationId"))!;
-        const connection = await settings.connection(org, id as "fly-sprites" | "modal");
-        if (!connection) throw new Error("Connect your cloud provider in Computers settings.");
+        const connection = await settings.connection(org, id as HostedSettings["provider"]);
+        if (!connection || !isGuestCloudProvider(connection.provider)) throw new Error("Connect your cloud provider in Computers settings.");
         return connection;
       });
     }, async state=>{
@@ -1948,8 +2022,10 @@ export class HubCoordinator {
       if (meta.threadId && (meta.threadId !== threadId || meta.computerId !== computerId)) return;
       const current = await this.threads.get(computerId, threadId);
       const key = `threads:viewer:${meta.subscriptionId}:${computerId}:${threadId}`;
-      const computer = await this.computers.computer(organizationId, computerId);
-      if (!current || !await this.canReadAgentThread(threadId,meta.userId) || !computer || !await this.computerService().canUse(computer, meta.userId, organizationId) || !canReadThread(current.access, meta.userId) || !await this.computerService().canReadWorkspace(computer, meta.userId, current.detail.cwd, organizationId)) {
+      const computer = computerId === CURSOR_CLOUD_COMPUTER_ID ? undefined : await this.computers.computer(organizationId, computerId);
+      const readable = !!current && await this.canReadAgentThread(threadId,meta.userId) && canReadThread(current.access, meta.userId)
+        && (computerId === CURSOR_CLOUD_COMPUTER_ID || (!!computer && await this.computerService().canUse(computer, meta.userId, organizationId) && await this.computerService().canReadWorkspace(computer, meta.userId, current.detail.cwd, organizationId)));
+      if (!readable) {
         if (await this.ctx.storage.get<boolean>(key)) {
           socket.send(JSON.stringify({ kind: "remove", cursor: frame.cursor, computerId, threadId }));
           await this.ctx.storage.delete(key);
@@ -1958,7 +2034,7 @@ export class HubCoordinator {
       }
       await this.ctx.storage.put(key, true);
       // Replays use the current access decision, never the historical visibility.
-      if (frame.kind === "snapshot" && (!await this.canReadAgentThread(frame.thread.id,meta.userId) || !canReadThread(frame.thread.access, meta.userId) || !await this.computerService().canReadWorkspace(computer, meta.userId, frame.thread.detail.cwd, organizationId))) return;
+      if (frame.kind === "snapshot" && (!await this.canReadAgentThread(frame.thread.id,meta.userId) || !canReadThread(frame.thread.access, meta.userId) || (computer && !await this.computerService().canReadWorkspace(computer, meta.userId, frame.thread.detail.cwd, organizationId)))) return;
     }
     socket.send(JSON.stringify(frame));
   }
@@ -2012,6 +2088,22 @@ export class HubCoordinator {
         },
       );
       const computer = await this.computers.computer(org, choice.computerId);
+      if (choice.computerId === CURSOR_CLOUD_COMPUTER_ID) {
+        const workspace = await new OrganizationService(new D1OrganizationStore(this.env.DB)).workspace(org, actor.id, input.workspaceId);
+        const preferences = await this.env.DB.prepare("SELECT permission_mode FROM member_preferences WHERE user_id=?").bind(actor.id).first<{permission_mode:string}>();
+        const started = await this.startCursorCloudThread(org, actor, {
+          workspaceId: input.workspaceId,
+          origin: workspace.origin,
+          ...(input.title ? { title: input.title } : {}),
+          ...(input.visibility ? { visibility: input.visibility } : {}),
+          ...(input.branch ? { branch: input.branch } : {}),
+          permissionMode: preferences?.permission_mode ?? "default",
+        });
+        await this.ctx.storage.put(key, { computerId: started.computerId, id: started.threadId });
+        this.invalidateComputers();
+        await this.scheduleAlarm(Date.now()+60_000);
+        return;
+      }
       if (input.branch && computer?.ownership !== "hosted") {
         const current = await this.ctx.storage.get<ManualThreadStart>(key);
         await this.ctx.storage.put(key, { ...current, started: true, phase: "preparing_branch", workspaceId: input.workspaceId, at: current?.at ?? Date.now() });
@@ -2103,6 +2195,7 @@ export class HubCoordinator {
       if(input.computerId) {
         const cloud=cloudComputerProvider(input.computerId);
         if(cloud) {
+          if(isCursorCloudProvider(cloud) && start.provider && start.provider !== "cursor") return jsonError(START_PROVIDER_DENIED,403);
           if(!await canStartOnCloud(new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()),org,actor.id,cloud,start.provider)) return jsonError(START_PROVIDER_DENIED,403);
         } else {
           const target=await this.computers.computer(org,input.computerId);
@@ -2133,6 +2226,10 @@ export class HubCoordinator {
       return Response.json({ phase: "creating" }, { status: 202 });
     }
     if (!computerId) return jsonError("This action is not available.", 404);
+    if (computerId === CURSOR_CLOUD_COMPUTER_ID) {
+      if (!id) return jsonError("This action is not available.", 404);
+      return this.cursorCloudRequest(request, actor, id, action);
+    }
     let target;
     try { target = await this.computerService().requireUse(request.headers.get("x-organization-id")!, computerId, actor.id); } catch { return jsonError("This computer is not available to you.", 404); }
     const snapshot = id ? await this.threads.get(computerId, id) : undefined;

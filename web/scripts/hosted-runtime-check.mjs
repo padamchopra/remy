@@ -779,6 +779,7 @@ try {
           if (!enabledProviders.has(name === "Modal" ? "modal" : "fly-sprites")) await toggle.click();
           await page.waitForFunction(() => [...document.querySelectorAll('section[aria-label="Cloud connections"] [role="switch"]')].some(el => el.getAttribute('aria-checked') === 'true'));
         }
+        assert.equal(await page.getByRole("form", { name: "Cursor Cloud connection", exact: true }).getByRole("textbox").count(), 0, "Disabled Cursor Cloud stays collapsed");
         assert.equal(enabledProviders.size, 2, "Both cloud providers can be enabled together");
         await page.reload();
         await page.getByRole("form", { name: "Modal connection", exact: true }).getByRole("switch").waitFor();
