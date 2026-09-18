@@ -16,6 +16,14 @@ export class HubRequestError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
 }
 
+function hubFailureMessage(result: unknown): string {
+  if (!result || typeof result !== "object") return "This request failed; try again.";
+  const body = result as { error?: unknown; message?: unknown };
+  if (typeof body.error === "string" && body.error.trim()) return body.error;
+  if (typeof body.message === "string" && body.message.trim()) return body.message;
+  return "This request failed; try again.";
+}
+
 const pendingReads = new Map<string, Promise<unknown>>();
 
 export function hubRequest<T>(path: string, method = "GET", body?: unknown): Promise<T> {
@@ -40,12 +48,7 @@ async function readHubResponse<T>(
   const response = await hubTransport.request(path, method, body);
   const result = response.status === 204 ? {} : await response.json();
   if (!response.ok)
-    throw new HubRequestError(
-      typeof result.error === "string"
-        ? result.error
-        : "This request failed; try again.",
-      response.status,
-    );
+    throw new HubRequestError(hubFailureMessage(result), response.status);
   return result as T;
 }
 

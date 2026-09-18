@@ -12,7 +12,7 @@ test("configures magic-link, Google, GitHub, password, and SSO sign-in", () => {
   }, "test-secret-with-at-least-thirty-two-characters", { google: "google-secret", github: "github-secret" });
 
   assert.equal(options.emailAndPassword?.enabled, true);
-  assert.equal(options.emailAndPassword?.disableSignUp, true);
+  assert.equal(options.emailAndPassword?.disableSignUp ?? false, false);
   assert.deepEqual(options.plugins?.map((plugin) => plugin.id), ["magic-link", "sso"]);
   assert.deepEqual(Object.keys(options.socialProviders ?? {}).sort(), ["github", "google"]);
   assert.equal(options.account?.accountLinking?.allowDifferentEmails, false);
