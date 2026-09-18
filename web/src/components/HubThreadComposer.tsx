@@ -170,7 +170,7 @@ export function HubThreadComposer({
       c.canUse &&
       c.availability !== "offline" &&
       !c.updateRequired &&
-      (c.ownerUserId === memberId || c.capabilities.providers.length > 0) &&
+      (c.ownerUserId === memberId || (c.capabilities.providers?.length ?? 0) > 0) &&
       c.capabilities.workspaces.some(
         (w) => w.id === workspaceId || w.origin === workspace?.origin,
       ),
