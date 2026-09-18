@@ -71,7 +71,7 @@ try {
   });
   await signupPage.goto(new URL('/app/', url).href, { waitUntil: 'networkidle' });
   await signupPage.getByRole('button', { name: 'Create your account', exact: true }).click();
-  await signupPage.getByRole('heading', { name: 'Create your Remy account', exact: true }).waitFor();
+  await signupPage.getByRole('heading', { name: 'Create your account', exact: true }).waitFor();
   await signupPage.getByLabel('Email', { exact: true }).fill('new@example.test');
   await signupPage.getByLabel('Password', { exact: true }).fill('qa-new-password');
   const signedUp = signupPage.waitForRequest((request) => new URL(request.url()).pathname === '/api/auth/sign-up/email');

@@ -99,7 +99,7 @@ function AccountSignIn({ runtime }: { runtime: HubRuntime }) {
               id="signin-title"
               className="text-[32px] leading-10 font-semibold tracking-[-0.045em]"
             >
-              {creating ? "Create your Remy account" : "Sign in to Remy"}
+              {creating ? "Create your account" : "Sign in to Remy"}
             </h1>
             <p className="text-[15px] leading-[23px] text-muted-foreground">
               Your coding agents, within reach.
