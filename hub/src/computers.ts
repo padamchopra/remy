@@ -9,6 +9,7 @@ import {
 import type { OrganizationStore } from "./organization-store.js";
 import type { ComputerStore, StoredComputer } from "./computer-store.js";
 import { OrganizationService, repositoryOrigin, OrganizationError } from "./organizations.js";
+import { advertisedProviderIds, isComputerStartProvider, resolveStartProviders } from "./computer-start-access.js";
 
 export class ComputerService {
   constructor(private readonly store: ComputerStore, private readonly now: () => number = Date.now, private readonly minimumDaemonVersion = "0.1.0", private readonly organizations?: OrganizationStore) {}
@@ -71,6 +72,28 @@ export class ComputerService {
     return computer;
   }
 
+  /// Owners and native organization computers keep every advertised provider.
+  /// A personal share filters start access for everyone else.
+  async canStartWithProvider(computer: StoredComputer, userId: string, organizationId: string, provider?: string): Promise<boolean> {
+    if (computer.ownerUserId === userId || computer.organizationId === organizationId) return true;
+    const allowed = await this.startProvidersFor(computer, organizationId);
+    if (!provider) return allowed.length > 0;
+    return isComputerStartProvider(provider) && allowed.includes(provider);
+  }
+
+  private async startProvidersFor(computer: StoredComputer, organizationId: string) {
+    const advertised = advertisedProviderIds(computer);
+    if (computer.organizationId === organizationId) return advertised;
+    const stored = await this.store.shareStartProviders?.(organizationId, computer.computerId);
+    return resolveStartProviders(stored === undefined ? null : stored, advertised);
+  }
+
+  private async visibleProviders(computer: StoredComputer, organizationId: string, userId?: string) {
+    if (!userId || computer.ownerUserId === userId || computer.organizationId === organizationId) return computer.capabilities.providers;
+    const allowed = new Set<string>(await this.startProvidersFor(computer, organizationId));
+    return computer.capabilities.providers.filter((entry) => allowed.has(entry.id));
+  }
+
   async update(org: string, id: string, userId: string, patch: { name?: string; icon?: string; access?: ComputerAccess }) {
     const computer = await this.store.computer(org, id);
     if (!computer || !await this.canManage(computer, userId, org)) throw new OrganizationError(404, "Computer not found.");
@@ -100,7 +123,7 @@ export class ComputerService {
       organizationId,
       shared: computer.organizationId !== organizationId,
       access: computer.organizationId === organizationId ? computer.access : { mode: "organization", userIds: [], teamIds: [] },
-      capabilities: { ...computer.capabilities, workspaces: userId ? (await Promise.all(computer.capabilities.workspaces.map(async (w) => await this.canUseWorkspace({ ...computer, publicKey: "" }, userId, w.id, organizationId) ? w : undefined))).filter((w) => w !== undefined) : computer.capabilities.workspaces },
+      capabilities: { ...computer.capabilities, providers: userId ? await this.visibleProviders({ ...computer, publicKey: "" }, organizationId, userId) : computer.capabilities.providers, workspaces: userId ? (await Promise.all(computer.capabilities.workspaces.map(async (w) => await this.canUseWorkspace({ ...computer, publicKey: "" }, userId, w.id, organizationId) ? w : undefined))).filter((w) => w !== undefined) : computer.capabilities.workspaces },
       canManage: userId ? await this.canManage({ ...computer, publicKey: "" }, userId, organizationId) : false,
       canUse: userId ? await this.canUse({ ...computer, publicKey: "" }, userId, organizationId) : false,
       availability: computer.lastSeenAt !== null && now - computer.lastSeenAt <= COMPUTER_HEARTBEAT_TIMEOUT_MS ? "available" : "offline",

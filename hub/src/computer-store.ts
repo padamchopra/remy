@@ -1,4 +1,5 @@
 import { computerCapabilitiesSchema, computerRegistrationSchema, type ComputerAccess, type ComputerCapabilities, type ComputerRegistration } from "@remy/contract";
+import { parseStartProviders, type ComputerStartProvider } from "./computer-start-access.js";
 
 export type StoredComputer = ComputerRegistration & { lastSeenAt: number | null };
 
@@ -11,6 +12,8 @@ export interface ComputerStore {
   remove(organizationId: string, computerId: string): Promise<boolean>;
   claimNonce(computerId: string, nonce: string, expiresAt: number, now: number): Promise<boolean>;
   sharedOrganizationIds?(sourceOrganizationId: string, computerId: string): Promise<string[]>;
+  /// `null` is an unrestricted share; `undefined` means this organization has no grant.
+  shareStartProviders?(organizationId: string, computerId: string): Promise<ComputerStartProvider[] | null | undefined>;
 }
 
 type Row = Record<string, unknown>;
@@ -64,6 +67,12 @@ export class D1ComputerStore implements ComputerStore {
 
   async sharedOrganizationIds(sourceOrganizationId: string, computerId: string) {
     return (await this.db.prepare("SELECT organization_id FROM organization_computer_shares WHERE source_organization_id=? AND computer_id=? ORDER BY organization_id").bind(sourceOrganizationId, computerId).all<{organization_id:string}>()).results.map(row => row.organization_id);
+  }
+
+  async shareStartProviders(organizationId: string, computerId: string) {
+    const row = await this.db.prepare("SELECT start_providers FROM organization_computer_shares WHERE organization_id=? AND computer_id=?").bind(organizationId, computerId).first<{start_providers:string|null}>();
+    if (!row) return undefined;
+    return parseStartProviders(row.start_providers);
   }
 
   async register(computer: StoredComputer) {

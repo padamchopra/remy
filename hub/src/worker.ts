@@ -24,6 +24,7 @@ import { hubRoutineSchema } from "@remy/contract";
 import { seedHubAgents } from "./remy-agent.js";
 import { ScopedAgents } from "./scoped-agents.js";
 import { resolveComputer } from "./routing.js";
+import { advertisedProviderIds, parseStartProviderInput, parseStartProviders, providersFromCapabilities, publicStartProviders, serializeStartProviders, START_PROVIDER_DENIED } from "./computer-start-access.js";
 import { routingRuleSchema } from "@remy/contract";
 import { GitCapabilities, GithubInstallation, githubRepository, proxyGit } from "./hosted-git.js";
 import { HostedSettingsStore } from "./hosted-settings.js";
@@ -525,10 +526,10 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       if (tail === "compute-shares" && request.method === "GET") {
         const member = await organizations.member(organizationId, identity.userId);
         const personal = await personalSpace(env.DB, identity.userId);
-        const ownComputers = member.role === "member" ? [] : (await computers.list(personal.id, identity.userId)).filter(computer => computer.ownerUserId === identity.userId && computer.ownership === "personal");
-        const computerShares = (await env.DB.prepare(`SELECT s.computer_id,s.shared_by,c.name,c.icon,c.platform,c.last_seen_at
+        const ownComputers = (await computers.list(personal.id, identity.userId)).filter(computer => computer.ownerUserId === identity.userId && computer.ownership === "personal");
+        const computerShares = (await env.DB.prepare(`SELECT s.computer_id,s.shared_by,s.start_providers,c.name,c.icon,c.platform,c.last_seen_at,c.capabilities,c.owner_user_id
           FROM organization_computer_shares s JOIN organization_computers c ON c.id=s.computer_id
-          WHERE s.organization_id=? ORDER BY lower(c.name),c.id`).bind(organizationId).all<{computer_id:string;shared_by:string;name:string;icon:string;platform:string;last_seen_at:number|null}>()).results;
+          WHERE s.organization_id=? ORDER BY lower(c.name),c.id`).bind(organizationId).all<{computer_id:string;shared_by:string;start_providers:string|null;name:string;icon:string;platform:string;last_seen_at:number|null;capabilities:string;owner_user_id:string|null}>()).results;
         const cloudShares = (await env.DB.prepare("SELECT source_organization_id,provider,shared_by FROM organization_cloud_shares WHERE organization_id=? ORDER BY provider,created_at").bind(organizationId).all<{source_organization_id:string;provider:string;shared_by:string}>()).results;
         const settings = new HostedSettingsStore(env.DB, () => env.AUTH_SECRET.get());
         const ownCloud = member.role === "member" ? [] : Object.entries(await settings.secrets(personal.id)).flatMap(([name, value]) => {
@@ -544,37 +545,58 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         }
         const names = new Map<string,string>();
         for (const userId of new Set([...computerShares.map(share => share.shared_by), ...cloudShares.map(share => share.shared_by)])) names.set(userId, (await store.profile(userId))?.name ?? "Member");
+        const admin = member.role !== "member";
         return Response.json({
-          canManage: member.role !== "member",
+          canManage: admin,
           computers: [
-            ...computerShares.map(share => ({ id: share.computer_id, name: share.name, icon: share.icon, platform: share.platform, shared: true, available: share.last_seen_at !== null && Date.now() - share.last_seen_at <= COMPUTER_HEARTBEAT_TIMEOUT_MS, sharedBy: names.get(share.shared_by) ?? "Member", canUnshare: member.role !== "member" })),
-            ...ownComputers.filter(computer => !computerShares.some(share => share.computer_id === computer.computerId)).map(computer => ({ id: computer.computerId, name: computer.name, icon: computer.icon, platform: computer.platform, shared: false, available: computer.availability !== "offline", sharedBy: (null as string | null), canUnshare: false })),
+            ...computerShares.map(share => {
+              const canShare = share.owner_user_id === identity.userId;
+              return { id: share.computer_id, name: share.name, icon: share.icon, platform: share.platform, shared: true, available: share.last_seen_at !== null && Date.now() - share.last_seen_at <= COMPUTER_HEARTBEAT_TIMEOUT_MS, sharedBy: names.get(share.shared_by) ?? "Member", canShare, canRevoke: admin, providers: publicStartProviders(providersFromCapabilities(share.capabilities), parseStartProviders(share.start_providers)) };
+            }),
+            ...ownComputers.filter(computer => !computerShares.some(share => share.computer_id === computer.computerId)).map(computer => ({ id: computer.computerId, name: computer.name, icon: computer.icon, platform: computer.platform, shared: false, available: computer.availability !== "offline", sharedBy: (null as string | null), canShare: true, canRevoke: false, providers: publicStartProviders(advertisedProviderIds(computer), null) })),
           ],
           cloudConnections: [
-            ...cloudShares.map(share => ({ provider: share.provider, shared: true, available: sharedCloudAvailability.get(`${share.source_organization_id}:${share.provider}`) ?? false, sharedBy: names.get(share.shared_by) ?? "Member", canUnshare: member.role !== "member" })),
+            ...cloudShares.map(share => ({ provider: share.provider, shared: true, available: sharedCloudAvailability.get(`${share.source_organization_id}:${share.provider}`) ?? false, sharedBy: names.get(share.shared_by) ?? "Member", canUnshare: admin })),
             ...ownCloud.filter(provider => !cloudShares.some(share => share.source_organization_id === personal.id && share.provider === provider)).map(provider => ({ provider, shared: false, available: true, sharedBy: (null as string | null), canUnshare: false })),
           ],
         });
       }
       const computerShare = /^compute-shares\/computers\/([^/]+)$/.exec(tail);
       const cloudShare = /^compute-shares\/cloud\/([^/]+)$/.exec(tail);
-      if ((computerShare || cloudShare) && (request.method === "PUT" || request.method === "DELETE")) {
+      if ((computerShare && ["PUT", "PATCH", "DELETE"].includes(request.method)) || (cloudShare && (request.method === "PUT" || request.method === "DELETE"))) {
         const member = await organizations.member(organizationId, identity.userId);
-        if (member.role === "member") return jsonError("Ask an organization admin to share computers.", 403);
+        const admin = member.role !== "member";
+        if (cloudShare && !admin) return jsonError("Ask an organization admin to share computers.", 403);
         if (!allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Open organization settings in Remy.", 403);
         const personal = await personalSpace(env.DB, identity.userId);
         let sourceOrganizationId = personal.id;
         let computerId: string | undefined;
         if (computerShare) {
           computerId = decodeURIComponent(computerShare[1]);
+          const existing = await env.DB.prepare("SELECT source_organization_id,shared_by FROM organization_computer_shares WHERE organization_id=? AND computer_id=?").bind(organizationId, computerId).first<{source_organization_id:string;shared_by:string}>();
+          const computer = await computerStore.computer(personal.id, computerId) ?? (existing ? await computerStore.computer(organizationId, computerId) : undefined);
+          const owns = !!computer && computer.organizationId === personal.id && computer.ownerUserId === identity.userId && computer.ownership === "personal";
           if (request.method === "PUT") {
-            const computer = await computerStore.computer(personal.id, computerId);
-            if (!computer || computer.organizationId !== personal.id || computer.ownerUserId !== identity.userId || computer.ownership !== "personal") return jsonError("Choose one of your personal computers.", 404);
-            await env.DB.prepare("INSERT INTO organization_computer_shares(organization_id,source_organization_id,computer_id,shared_by,created_at) VALUES(?,?,?,?,?) ON CONFLICT(organization_id,computer_id) DO NOTHING").bind(organizationId, personal.id, computerId, identity.userId, Date.now()).run();
+            if (!owns || !computer) return jsonError("Choose one of your personal computers.", 404);
+            const advertised = advertisedProviderIds(computer);
+            let startProviders;
+            try { startProviders = parseStartProviderInput((await body<{startProviders?:unknown}>(request))?.startProviders, advertised); }
+            catch (error) { return jsonError(error instanceof Error ? error.message : "Choose the providers others may start.", 400); }
+            await env.DB.prepare("INSERT INTO organization_computer_shares(organization_id,source_organization_id,computer_id,shared_by,created_at,start_providers) VALUES(?,?,?,?,?,?) ON CONFLICT(organization_id,computer_id) DO UPDATE SET start_providers=excluded.start_providers").bind(organizationId, personal.id, computerId, identity.userId, Date.now(), startProviders === undefined ? null : serializeStartProviders(startProviders)).run();
+          } else if (request.method === "PATCH") {
+            if (!owns || !computer) return jsonError("Choose one of your personal computers.", 404);
+            if (!existing) return jsonError("Share this computer first.", 409);
+            const advertised = advertisedProviderIds(computer);
+            let startProviders;
+            try { startProviders = parseStartProviderInput((await body<{startProviders?:unknown}>(request))?.startProviders, advertised); }
+            catch (error) { return jsonError(error instanceof Error ? error.message : "Choose the providers others may start.", 400); }
+            if (startProviders === undefined) return jsonError("Choose the providers others may start.", 400);
+            await env.DB.prepare("UPDATE organization_computer_shares SET start_providers=? WHERE organization_id=? AND computer_id=?").bind(serializeStartProviders(startProviders), organizationId, computerId).run();
           } else {
-            const existing = await env.DB.prepare("SELECT source_organization_id FROM organization_computer_shares WHERE organization_id=? AND computer_id=?").bind(organizationId, computerId).first<{source_organization_id:string}>();
-            sourceOrganizationId = existing?.source_organization_id ?? personal.id;
-            if (existing) await board().fetch(new Request("https://internal/shared-threads/manifest", { method: "POST", headers: { "content-type": "application/json", "x-organization-id": organizationId, "x-source-organization-id": sourceOrganizationId, "x-computer-id": computerId }, body: JSON.stringify({ ids: [] }) }));
+            if (!existing) return Response.json({ ok: true });
+            if (!owns && !admin) return jsonError("Ask an organization admin to change this computer’s sharing.", 403);
+            sourceOrganizationId = existing.source_organization_id;
+            await board().fetch(new Request("https://internal/shared-threads/manifest", { method: "POST", headers: { "content-type": "application/json", "x-organization-id": organizationId, "x-source-organization-id": sourceOrganizationId, "x-computer-id": computerId }, body: JSON.stringify({ ids: [] }) }));
             await env.DB.prepare("DELETE FROM organization_computer_shares WHERE organization_id=? AND computer_id=?").bind(organizationId, computerId).run();
           }
         } else {
@@ -1704,6 +1726,11 @@ export class HubCoordinator {
       const settings=await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSettings(org,workspaceId);
       choice={reason:"A cloud computer can run your selected model.",hostedWorkspaceId:workspaceId,hostedProvider:settings.provider};
     }
+    if(target && target.ownership !== "hosted" && !await this.computerService().canStartWithProvider(target, userId, org, modelChoice?.provider)) {
+      if(override)throw Error(START_PROVIDER_DENIED);
+      const settings=await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSettings(org,workspaceId);
+      choice={reason:START_PROVIDER_DENIED,hostedWorkspaceId:workspaceId,hostedProvider:settings.provider};
+    }
     if (choice.hostedWorkspaceId || target?.ownership === "hosted") {
       const settings = await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSettings(org,workspaceId,choice.hostedProvider);
       await this.ctx.storage.put(`hosted-task-owner:${taskId}`, userId);
@@ -2005,6 +2032,10 @@ export class HubCoordinator {
       if(input.visibility !== undefined && input.visibility !== "private" && input.visibility !== "open") return jsonError("Choose who can read this thread.",400);
       const gatewayError=hostedGatewayError(start.provider,start.model,await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSecrets(org));
       if(gatewayError)return jsonError(gatewayError,400);
+      if(input.computerId) {
+        const target=await this.computers.computer(org,input.computerId);
+        if(target && !await this.computerService().canStartWithProvider(target,actor.id,org,start.provider)) return jsonError(START_PROVIDER_DENIED,403);
+      }
       const key = `manual-task:${actor.id}:${input.requestId}`;
       const previous = await this.ctx.storage.get<ManualThreadStart>(key);
       if (previous?.id && previous.computerId) return Response.json({computerId: previous.computerId, id: previous.id, phase: "ready"}, {status: 201});
@@ -2070,6 +2101,8 @@ export class HubCoordinator {
       try { input = JSON.parse(new TextDecoder().decode(payload)); } catch { return jsonError("Choose a workspace.", 400); }
       if(input.hubInstructions!==undefined || input.hubInbox!==undefined || input.hubEnvironment!==undefined || input.hubTaskId!==undefined)return jsonError("This thread configuration is unavailable.",403);
       if (typeof input.workspaceId !== "string" || !await this.computerService().canUseWorkspace(target, actor.id, input.workspaceId, request.headers.get("x-organization-id")!)) return jsonError("This workspace is not available to you.", 404);
+      const start=hostedStartChoice(typeof input.provider === "string" ? input.provider : undefined, typeof input.model === "string" ? input.model : undefined);
+      if(!await this.computerService().canStartWithProvider(target, actor.id, request.headers.get("x-organization-id")!, start.provider)) return jsonError(START_PROVIDER_DENIED,403);
     }
     if(id && action==="message" && snapshot) {
       const org=request.headers.get("x-organization-id")!;

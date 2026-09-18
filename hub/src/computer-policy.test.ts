@@ -218,11 +218,108 @@ test("organization computer settings share only an admin's personal connections 
     assert.equal(serialized.includes("private-secret"), false);
     assert.equal(serialized.includes("publicKey"), false);
     userId = "grace";
-    assert.equal((await call(`compute-shares/computers/${computerId}`, "PUT")).status, 403);
+    assert.equal((await call(`compute-shares/computers/${computerId}`, "PUT")).status, 404);
+    assert.equal((await call(`compute-shares/computers/${computerId}`, "DELETE")).status, 403);
     assert.equal((await computerService.requireUse("org", computerId, "grace")).computerId, computerId);
     userId = "ada";
     assert.equal((await call(`compute-shares/computers/${computerId}`, "DELETE")).status, 200);
     await assert.rejects(computerService.requireUse("org", computerId, "grace"), /not available/);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("members share their own computers and start-provider grants block only new threads", async () => {
+  const { sqlite, db, computers, organizations, service: computerService } = database();
+  const { createRouteHandler, HubCoordinator } = await import("./worker.js");
+  const { OrganizationService } = await import("./organizations.js");
+  const { personalSpace } = await import("./personal-space.js");
+  const { START_PROVIDER_DENIED } = await import("./computer-start-access.js");
+  let userId = "grace";
+  try {
+    const personal = await personalSpace(db, userId);
+    const computerId = crypto.randomUUID();
+    await computerService.register(personal.id, userId, {
+      ...input,
+      computerId,
+      capabilities: {
+        ...input.capabilities,
+        providers: [
+          { id: "claude", models: [""] },
+          { id: "cursor", models: [""] },
+        ],
+        workspaces: [{ id: "release", name: "Release", path: "/src/release", origin: "github.com/example/release" }],
+      },
+    });
+    await computers.seen(personal.id, computerId, Date.now(), undefined, undefined);
+    sqlite.prepare("INSERT INTO organization_workspaces(id,organization_id,name,origin,created_at,updated_at) VALUES(?,?,?,?,?,?)").run("org-release", "org", "Release", "github.com/example/release", 1, 1);
+    const route = createRouteHandler({
+      accountService: () => ({ authenticate: async () => ({ userId, sessionId: "session", clientKind: "web" }) }) as never,
+      computerStore: () => computers,
+      organizationStore: () => organizations,
+      organizationService: () => new OrganizationService(organizations),
+    });
+    const env = { DB: db, AUTH_SECRET: { get: async () => "test-encryption-root-with-at-least-thirty-two-characters" }, BETTER_AUTH_URL: "https://hub.example", COORDINATOR: { idFromName: (id:string) => id, get: () => ({ fetch: async () => Response.json({ ok: true }) }) } } as never;
+    const call = (path: string, method = "GET", payload?: unknown) => route(new Request(`https://hub.example/api/organizations/org/${path}`, { method, headers: { authorization: "Bearer session", origin: "https://hub.example", "content-type": "application/json" }, ...(payload === undefined ? {} : { body: JSON.stringify(payload) }) }), env);
+
+    assert.equal((await call(`compute-shares/computers/${input.computerId}`, "PUT")).status, 404);
+    assert.equal((await call(`compute-shares/computers/${computerId}`, "PUT")).status, 200);
+    const shared = await (await call("compute-shares")).json() as { computers: { id: string; shared: boolean; canShare: boolean; canRevoke: boolean; providers: { id: string; allowed: boolean; label: string }[] }[] };
+    const row = shared.computers.find(computer => computer.id === computerId)!;
+    assert.equal(row.shared, true);
+    assert.equal(row.canShare, true);
+    assert.equal(row.canRevoke, false);
+    assert.deepEqual(row.providers, [
+      { id: "claude", label: "Claude", allowed: true },
+      { id: "cursor", label: "Cursor", allowed: true },
+    ]);
+    assert.equal((await call(`compute-shares/computers/${computerId}`, "PATCH", { startProviders: ["claude"] })).status, 200);
+    assert.equal((await call(`compute-shares/computers/${computerId}`, "PATCH", { startProviders: ["codex"] })).status, 400);
+
+    userId = "ada";
+    const adminView = await (await call("compute-shares")).json() as { computers: { id: string; canShare: boolean; canRevoke: boolean; providers: { id: string; allowed: boolean; label: string }[] }[] };
+    const adminRow = adminView.computers.find(computer => computer.id === computerId)!;
+    assert.equal(adminRow.canShare, false);
+    assert.equal(adminRow.canRevoke, true);
+    assert.deepEqual(adminRow.providers.find(provider => provider.id === "cursor"), { id: "cursor", label: "Cursor", allowed: false });
+    assert.equal((await call(`compute-shares/computers/${computerId}`, "PATCH", { startProviders: ["claude", "cursor"] })).status, 404);
+
+    const memberList = await computerService.list("org", "ada");
+    assert.deepEqual(memberList[0]?.capabilities.providers.map(provider => provider.id), ["claude"]);
+    const ownerList = await computerService.list("org", "grace");
+    assert.deepEqual(ownerList[0]?.capabilities.providers.map(provider => provider.id), ["claude", "cursor"]);
+    const stored = (await computers.computer("org", computerId))!;
+    assert.equal(await computerService.canStartWithProvider(stored, "grace", "org", "cursor"), true);
+    assert.equal(await computerService.canStartWithProvider(stored, "ada", "org", "cursor"), false);
+    assert.equal(await computerService.canStartWithProvider(stored, "ada", "org", "claude"), true);
+
+    const values = new Map<string, unknown>([["organizationId", "org"]]);
+    const coordinator = new HubCoordinator({ storage: { get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); }, delete: async (key: string) => values.delete(key), list: async () => new Map(), getAlarm: async () => null, setAlarm: async () => {}, transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn({ get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); } }) }, getWebSockets: () => [], waitUntil: (work: Promise<unknown>) => { void work; } } as unknown as DurableObjectState, { DB: db, AUTH_SECRET: { get: async () => "test-encryption-root-with-at-least-thirty-two-characters" }, BETTER_AUTH_URL: "https://hub.example" } as never);
+    const forwarded: unknown[][] = [];
+    const threadId = crypto.randomUUID();
+    (coordinator as unknown as { dispatchComputer: (...args: unknown[]) => Promise<Response> }).dispatchComputer = async (...args) => {
+      forwarded.push(args);
+      return Response.json({ id: threadId, revision: 1, access: { organizationId: "org", owner: { id: "grace", label: "Grace" }, visibility: "open", participants: [{ id: "ada", label: "Ada" }] }, detail: { id: threadId, title: "Release", cwd: "/src/release", entries: [] } });
+    };
+    const request = (user: string, path: string, method: string, payload: unknown) => new Request(`https://internal${path}`, { method, headers: { "content-type": "application/json", "x-thread-member": encodeURIComponent(JSON.stringify({ id: user, label: user })), "x-organization-id": "org" }, body: JSON.stringify(payload) });
+    const handle = (coordinator as unknown as { threadRequest: (r: Request) => Promise<Response | undefined> }).threadRequest.bind(coordinator);
+    const denied = await handle(request("ada", "/threads", "POST", { workspaceId: "org-release", requestId: crypto.randomUUID(), computerId, provider: "cursor", visibility: "open" }));
+    assert.equal(denied?.status, 403);
+    assert.equal((await denied!.json() as { error: string }).error, START_PROVIDER_DENIED);
+    assert.equal((await handle(request("grace", "/threads", "POST", { workspaceId: "org-release", requestId: crypto.randomUUID(), computerId, provider: "cursor", visibility: "open" })))?.status, 201);
+    const threads = (coordinator as unknown as { threads: import("./thread-store.js").ThreadStore }).threads;
+    await threads.snapshot(computerId, { id: threadId, revision: 1, access: { organizationId: "org", owner: { id: "grace", label: "Grace" }, visibility: "open", participants: [{ id: "ada", label: "Ada" }] }, detail: { id: threadId, title: "Release", cwd: "/src/release", entries: [] } });
+    const replied = await handle(request("ada", `/computers/${computerId}/threads/${threadId}/message`, "POST", { text: "Continue this thread.", messageId: `u-${crypto.randomUUID()}` }));
+    assert.equal(replied?.status, 200);
+    assert.equal((await replied!.json() as { error?: string }).error, undefined);
+    assert.ok(forwarded.some(entry => String(entry[3]).includes("/message")));
+
+    userId = "ada";
+    assert.equal((await call(`compute-shares/computers/${computerId}`, "DELETE")).status, 200);
+    userId = "grace";
+    assert.equal((await call(`compute-shares/computers/${computerId}`, "PUT")).status, 200);
+    assert.equal((await call(`compute-shares/computers/${computerId}`, "DELETE")).status, 200);
+    assert.equal((await (await call("compute-shares")).json() as { computers: { id: string; shared: boolean }[] }).computers.some(computer => computer.id === computerId && computer.shared), false);
   } finally {
     sqlite.close();
   }
