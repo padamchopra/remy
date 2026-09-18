@@ -2,10 +2,12 @@ name: Owner approval
 
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review, edited]
+    # opened/synchronize/reopened already cover a new head. edited and
+    # ready_for_review were a second Evaluate owner approval on the same SHA.
+    types: [opened, synchronize, reopened]
   workflow_run:
     workflows: [Approval policy tests]
-    types: [requested, completed]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -14,8 +16,8 @@ permissions:
   statuses: write
 
 concurrency:
-  group: owner-approval
-  cancel-in-progress: false
+  group: owner-approval-${{ github.event.pull_request.head.sha || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   publish:

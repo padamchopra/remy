@@ -1,18 +1,32 @@
-name: Hub
+name: Web
 
 on:
   pull_request:
     paths:
-      - ".github/workflows/hub.yml"
+      - ".github/workflows/web.yml"
       - "contract/**"
       - "hub/**"
       - "web/**"
+      - "package.json"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/web.yml"
+      - "contract/**"
+      - "hub/**"
+      - "web/**"
+      - "package.json"
 
 permissions:
   contents: read
 
+concurrency:
+  group: web-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
+    name: Web
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,6 +37,7 @@ jobs:
           cache-dependency-path: |
             contract/package-lock.json
             hub/package-lock.json
+            hub/runtime/package-lock.json
             web/package-lock.json
       - run: npm ci --prefix contract --no-audit --no-fund
       - run: npm ci --prefix hub --no-audit --no-fund
@@ -48,9 +63,26 @@ jobs:
           QA_COMPOSER_ONLY=1 node web/scripts/hosted-runtime-check.mjs
           QA_SCOPE_ONLY=1 node web/scripts/hosted-runtime-check.mjs
           node --test web/scripts/hosted-preview.test.mjs web/scripts/qa-hosted-account.test.mjs web/scripts/workspace-image-cache.test.mjs web/scripts/hub-models.test.mjs web/scripts/thread-menu.test.mjs web/scripts/route.test.mjs
+      - name: Check the built website
+        env:
+          WEBSITE_URL: http://127.0.0.1:5181
+        run: |
+          python3 -m http.server 5181 --bind 127.0.0.1 --directory web/dist-website &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          for attempt in {1..30}; do curl --silent --fail http://127.0.0.1:5181/ > /dev/null && break; sleep 1; done
+          node web/scripts/website-check.mjs
+          node web/scripts/website-performance.mjs
       - run: npm test --prefix contract
       - run: npm run typecheck --prefix contract
       - run: npm test --prefix hub
       - run: npm run typecheck --prefix hub
       - run: npm run test --prefix hub/runtime
       - run: npm run typecheck --prefix hub/runtime
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: website-preview
+          path: |
+            web/dist-website
+            /tmp/remy-pr-artifacts/website

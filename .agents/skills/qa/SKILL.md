@@ -91,7 +91,7 @@ For a behavior bug, reproduce the reported starting state in an executable test 
 
 For shared local and hosted UI, exercise runtime selection with both a fresh browser and saved state from an earlier session. Cover the affected personal and organization routes through navigation and direct reload, on desktop and a touch phone viewport. Confirm that hosted pages do not issue local APIs, and that available, unavailable, and retry states retain their intended actions. Search sibling consumers of the same runtime or cache before limiting the fix to one component.
 
-`web/scripts/hosted-runtime-check.mjs` is the built-app regression for this boundary, run by `.github/workflows/hub.yml`. Its controlled API responses prove client behavior; use the isolated hosted setup for real authentication and backend integration, and report external provider steps separately.
+`web/scripts/hosted-runtime-check.mjs` is the built-app regression for this boundary, run by `.github/workflows/web.yml`. Its controlled API responses prove client behavior; use the isolated hosted setup for real authentication and backend integration, and report external provider steps separately.
 
 A shared menu check that only counts items will miss a fully disabled hosted menu. Assert `isDisabled()` on pin, rename, archive, and delete, including a stale cloud thread whose computer is missing from `/computers`. A hosted start check that only asserts the painted default will miss a 400 when that default is not enabled on the account; assert the POST body against enabled model access.
 
