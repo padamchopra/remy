@@ -11,6 +11,7 @@ function fixture() {
     restores = 0,
     checkpoints = 0;
   let connected = true;
+  const phases: string[] = [];
   const storage = {
     delete: async (key: string) => {
       values.delete(key);
@@ -18,6 +19,9 @@ function fixture() {
     get: async (key: string) => structuredClone(values.get(key)),
     put: async (key: string, value: unknown) => {
       values.set(key, structuredClone(value));
+      if (value && typeof value === "object" && "phase" in value && typeof (value as {phase?: unknown}).phase === "string") {
+        phases.push((value as {phase: string}).phase);
+      }
     },
     list: async ({ prefix }: { prefix: string }) =>
       new Map(
@@ -80,6 +84,7 @@ function fixture() {
       now += ms;
     },
     counts: () => ({ allocations, restores, checkpoints }),
+    phases: () => phases,
   };
 }
 const settings = hostedSettingsSchema.parse({
@@ -143,6 +148,25 @@ test("disabled workspaces never allocate and provider changes cannot silently lo
   await assert.rejects(
     life.ensure("w", { ...settings, provider: "fly-sprites" }),
   );
+});
+
+test("wake records allocating, starting runtime, and connecting before ready", async () => {
+  const f = fixture(),
+    life = f.create();
+  await life.ensure("w", settings);
+  assert.deepEqual(
+    [...new Set(f.phases())],
+    ["allocating", "starting_runtime", "connecting", "ready"],
+  );
+  f.tick(13 * 60_000);
+  await life.idle();
+  assert.equal((await life.get("w"))?.phase, "asleep");
+  f.phases().length = 0;
+  await f.create().ensure("w", settings);
+  assert.ok(f.phases().includes("restoring"));
+  assert.ok(f.phases().includes("starting_runtime"));
+  assert.ok(f.phases().includes("connecting"));
+  assert.equal((await f.create().get("w"))?.phase, "ready");
 });
 
 test("a disconnected ready computer restarts and deletion waits for a wake", async () => {

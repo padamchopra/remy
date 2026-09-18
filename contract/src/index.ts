@@ -465,7 +465,7 @@ export type HostedCodexAccount = {
 export type HostedComputerState = {
   taskId?: string;
   workspaceId: string; computerId: string; provider: HostedSettings["provider"];
-  phase: "allocating" | "restoring" | "ready" | "checkpointing" | "asleep" | "failed";
+  phase: "allocating" | "restoring" | "starting_runtime" | "connecting" | "ready" | "checkpointing" | "asleep" | "failed";
   lastUsedAt: number; error?: string;
   usage: { activeMs: number; warmIdleMs: number; snapshotByteMs: number };
   timing: { allocationMs?: number; restoreMs?: number; readyMs?: number; warmRequestMs?: number; firstResponseMs?: number };

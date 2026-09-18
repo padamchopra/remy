@@ -28,6 +28,7 @@ import { routingRuleSchema } from "@remy/contract";
 import { GitCapabilities, GithubInstallation, githubRepository, proxyGit } from "./hosted-git.js";
 import { HostedSettingsStore } from "./hosted-settings.js";
 import { HostedLifecycle } from "./hosted-lifecycle.js";
+import { threadStartProgress, type ManualThreadStart } from "./thread-start-progress.js";
 import { HttpRuntimeProvider } from "./computer-runtime.js";
 import { hostedSettingsSchema } from "@remy/contract";
 import { BoardAccess } from "./board-access.js";
@@ -764,7 +765,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           return board().fetch(new Request(`https://internal/hosted/${encodeURIComponent(workspaceId)}`,{method:request.method,headers:{"x-organization-id":organizationId}}));
         }
       }
-      if (tail === "threads" || tail === "threads/live" || /^computers\/[^/]+\/workspaces\/[^/]+\/branches$/.test(tail) || /^computers\/[^/]+\/threads(?:\/|$)/.test(tail)) {
+      if (tail === "threads" || tail === "threads/live" || /^threads\/starts\/[0-9a-f-]{36}$/.test(tail) || /^computers\/[^/]+\/workspaces\/[^/]+\/branches$/.test(tail) || /^computers\/[^/]+\/threads(?:\/|$)/.test(tail)) {
         await organizations.member(organizationId, identity.userId);
         const profile = await store.profile(identity.userId);
         const actor = threadMemberSchema.parse({ id: identity.userId, label: profile?.name || "Member" });
@@ -1065,6 +1066,7 @@ export class HubCoordinator {
   private readonly computers: D1ComputerStore;
   private readonly notifications: HubNotifications;
   private readonly pending = new Map<string, { computerId: string; resolve: (response: Response) => void; timer: ReturnType<typeof setTimeout> }>();
+  private readonly manualStarts = new Map<string, Promise<void>>();
 
   constructor(private readonly ctx: DurableObjectState, readonly env: Env) {
     this.computers = new D1ComputerStore(env.DB);
@@ -1872,11 +1874,86 @@ export class HubCoordinator {
     }
   }
 
+  private async manualThreadProgress(userId: string, requestId: string, record?: ManualThreadStart) {
+    const key = `manual-task:${userId}:${requestId}`;
+    const stored = record ?? await this.ctx.storage.get<ManualThreadStart>(key);
+    const hosted = stored?.workspaceId
+      ? await this.hostedService().get(stored.workspaceId, `${userId}:${requestId}`)
+      : undefined;
+    const phase = threadStartProgress({ hostedPhase: hosted?.phase, record: stored });
+    if (phase === "failed") {
+      return { phase, error: stored?.error ?? hosted?.error ?? "Your computer could not start; try again." };
+    }
+    if (stored?.id && stored.computerId) return { phase: "ready" as const, id: stored.id, computerId: stored.computerId };
+    return { phase };
+  }
+
+  private async finishManualThread(
+    org: string,
+    actor: ThreadMember,
+    input: {
+      workspaceId: string;
+      requestId: string;
+      title?: string | undefined;
+      computerId?: string | null | undefined;
+      branch?: string | undefined;
+      visibility?: string | undefined;
+      provider?: string | undefined;
+      model?: string | undefined;
+    },
+    key: string,
+  ): Promise<void> {
+    try {
+      const choice = await this.taskComputer(
+        actor.id,
+        input.workspaceId,
+        "manual",
+        `${actor.id}:${input.requestId}`,
+        input.title,
+        input.computerId,
+        {
+          ...(input.provider ? { provider: input.provider } : {}),
+          ...(input.model ? { model: input.model } : {}),
+        },
+      );
+      const computer = await this.computers.computer(org, choice.computerId);
+      if (input.branch && computer?.ownership !== "hosted") {
+        const current = await this.ctx.storage.get<ManualThreadStart>(key);
+        await this.ctx.storage.put(key, { ...current, started: true, phase: "preparing_branch", workspaceId: input.workspaceId, at: current?.at ?? Date.now() });
+      }
+      const preferences = await this.env.DB.prepare("SELECT permission_mode FROM member_preferences WHERE user_id=?").bind(actor.id).first<{permission_mode:string}>();
+      const made = await this.dispatchComputer(choice.computerId, actor, "POST", "/hub/threads", {workspaceId:choice.workspaceId, hubTaskId:key, permissionMode:preferences?.permission_mode ?? "default", branch:input.branch, provider:input.provider, model:input.model, visibility:input.visibility ?? "private", title:typeof input.title === "string" ? input.title.slice(0,200) : undefined});
+      if (!made.ok) {
+        const body = await made.json().catch(() => undefined) as { error?: unknown } | undefined;
+        const error = typeof body?.error === "string" && body.error.trim() ? body.error : "Your computer could not start; try again.";
+        const current = await this.ctx.storage.get<ManualThreadStart>(key);
+        await this.ctx.storage.put(key, { ...current, started: true, phase: "failed", error, workspaceId: input.workspaceId, at: current?.at ?? Date.now() });
+        return;
+      }
+      const thread = threadSnapshotSchema.parse(await made.json());
+      await this.threads.snapshot(choice.computerId, thread);
+      await this.ctx.storage.put(key, { computerId: choice.computerId, id: thread.id });
+      this.invalidateComputers();
+      await this.scheduleAlarm(Date.now()+60_000);
+    } catch (error) {
+      const current = await this.ctx.storage.get<ManualThreadStart>(key);
+      await this.ctx.storage.put(key, {
+        ...current,
+        started: true,
+        phase: "failed",
+        error: error instanceof Error ? error.message : "Your computer could not start; try again.",
+        workspaceId: input.workspaceId,
+        at: current?.at ?? Date.now(),
+      });
+    }
+  }
+
   private async threadRequest(request: Request): Promise<Response | undefined> {
     const url = new URL(request.url);
     const match = /^\/computers\/([^/]+)\/threads(?:\/([0-9a-f-]{36})(?:\/(join|message|approval|question|interrupt|stop|visibility|options|attachments|archive)(?:\/([0-9a-f-]{36}))?)?)?$/.exec(url.pathname);
     const branchMatch = /^\/computers\/([^/]+)\/workspaces\/([^/]+)\/branches$/.exec(url.pathname);
-    if (!match && !branchMatch && url.pathname !== "/threads" && url.pathname !== "/threads/live") return undefined;
+    const startMatch = /^\/threads\/starts\/([0-9a-f-]{36})$/.exec(url.pathname);
+    if (!match && !branchMatch && !startMatch && url.pathname !== "/threads" && url.pathname !== "/threads/live") return undefined;
     let actor: ThreadMember;
     try { actor = threadMemberSchema.parse(JSON.parse(decodeURIComponent(request.headers.get("x-thread-member") ?? "null"))); } catch { return jsonError("Sign in again.", 401); }
     if (branchMatch) {
@@ -1909,6 +1986,12 @@ export class HubCoordinator {
       server.send(JSON.stringify({ kind: "ready", cursor: replay.cursor }));
       return new Response(null, { status: 101, webSocket: client });
     }
+    if (startMatch) {
+      if (request.method !== "GET") return jsonError("This action is not available.", 404);
+      const progress = await this.manualThreadProgress(actor.id, startMatch[1]);
+      if (progress.phase === "failed") return jsonError(progress.error ?? "Your computer could not start; try again.", 409);
+      return Response.json(progress, { status: 200 });
+    }
     if (url.pathname === "/threads" && request.method === "POST") {
       const org = request.headers.get("x-organization-id")!;
       const input = await body<{workspaceId?: string; title?: string; requestId?: string; computerId?:string|null; provider?:string; model?:string; branch?:string; visibility?:string}>(request);
@@ -1923,21 +2006,27 @@ export class HubCoordinator {
       const gatewayError=hostedGatewayError(start.provider,start.model,await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSecrets(org));
       if(gatewayError)return jsonError(gatewayError,400);
       const key = `manual-task:${actor.id}:${input.requestId}`;
-      const previous = await this.ctx.storage.get<{computerId:string; id:string}>(key);
-      if (previous) return Response.json(previous,{status:201});
-      try {
-        const choice = await this.taskComputer(actor.id, workspace.id, "manual", `${actor.id}:${input.requestId}`, input.title,input.computerId,start);
-        const preferences = await this.env.DB.prepare("SELECT permission_mode FROM member_preferences WHERE user_id=?").bind(actor.id).first<{permission_mode:string}>();
-        const made = await this.dispatchComputer(choice.computerId, actor, "POST", "/hub/threads", {workspaceId:choice.workspaceId, hubTaskId:key, permissionMode:preferences?.permission_mode ?? "default", branch:input.branch, provider:start.provider, model:start.model, visibility:input.visibility ?? "private", title:typeof input.title === "string" ? input.title.slice(0,200) : undefined});
-        if (!made.ok) return made;
-        const thread = threadSnapshotSchema.parse(await made.json());
-        await this.threads.snapshot(choice.computerId, thread);
-        const result = {computerId:choice.computerId, id:thread.id};
-        await this.ctx.storage.put(key,result);
-        this.invalidateComputers();
-        await this.scheduleAlarm(Date.now()+60_000);
-        return Response.json(result, {status:201});
-      } catch(error) { return jsonError(error instanceof Error ? error.message : "Your computer could not start; try again.", 409); }
+      const previous = await this.ctx.storage.get<ManualThreadStart>(key);
+      if (previous?.id && previous.computerId) return Response.json({computerId: previous.computerId, id: previous.id, phase: "ready"}, {status: 201});
+      const stale = !previous?.at || Date.now() - previous.at > 5 * 60_000;
+      if ((previous?.started || this.manualStarts.has(key)) && !previous?.error && !stale) {
+        const progress = await this.manualThreadProgress(actor.id, input.requestId, previous);
+        return Response.json(progress, { status: progress.id ? 201 : 202 });
+      }
+      await this.ctx.storage.put(key, { started: true, phase: "creating", workspaceId: workspace.id, at: Date.now() } satisfies ManualThreadStart);
+      const work = this.finishManualThread(org, actor, {
+        workspaceId: workspace.id,
+        requestId: input.requestId,
+        title: input.title,
+        computerId: input.computerId,
+        branch: input.branch,
+        visibility: input.visibility,
+        provider: start.provider,
+        model: start.model,
+      }, key);
+      this.manualStarts.set(key, work);
+      this.ctx.waitUntil(work.finally(() => { if (this.manualStarts.get(key) === work) this.manualStarts.delete(key); }));
+      return Response.json({ phase: "creating" }, { status: 202 });
     }
     if (!computerId) return jsonError("This action is not available.", 404);
     let target;

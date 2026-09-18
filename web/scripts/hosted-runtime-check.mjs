@@ -37,8 +37,8 @@ try {
       const profile={id:"reader",name:"Reader",image:null}; let permissionMode="default";
       let lastMessage;
       let threadInput;
-      let startCalls=0, messageCalls=0, releaseStart;
-      const heldStart=new Promise(resolve=>{releaseStart=resolve;});
+      let startCalls=0, messageCalls=0, startReleased=false;
+      const releaseStart=()=>{startReleased=true;};
       const startIds=[], messageIds=[];
       let startedThread;
       let hasWorkspace=false;
@@ -117,10 +117,15 @@ try {
           threadInput=route.request().postDataJSON();
           if(process.env.QA_START_ONLY === "1") {
             startCalls++;startIds.push(threadInput.requestId);
-            if(startCalls===1){await heldStart;return route.fulfill({status:409,json:{error:"Fly.io could not start. Retry to continue."}});}
+            if(startCalls===1){return route.fulfill({status:202,json:{phase:"creating"}});}
             return route.fulfill({status:201,json:{id:"12345678-1234-1234-1234-123456789012",computerId:"sprite"}});
           }
           return route.fulfill({status:409,json:{error:"Preview request captured."}});
+        }
+        if(process.env.QA_START_ONLY === "1" && /\/threads\/starts\/[0-9a-f-]{36}$/.test(path) && route.request().method()==="GET") {
+          if(startCalls===1 && !startReleased) return route.fulfill({json:{phase:"waking"}});
+          if(startCalls===1) return route.fulfill({status:409,json:{error:"Fly.io could not start. Retry to continue."}});
+          return route.fulfill({json:{phase:"ready",id:"12345678-1234-1234-1234-123456789012",computerId:"sprite"}});
         }
         if(process.env.QA_START_ONLY === "1" && path.endsWith("/attachments")) return route.fulfill({status:201,json:{id:"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}});
         if(process.env.QA_START_ONLY === "1" && path.endsWith("/options")) {
@@ -469,7 +474,9 @@ try {
           assert.equal(threadInput.provider,"codex");
           assert.equal(threadInput.model,"remy:openrouter:openrouter/auto");
           assert.equal(threadInput.visibility,"private");
-          await page.getByLabel("Starting thread",{exact:true}).waitFor();
+          await page.getByLabel("Creating thread…",{exact:true}).waitFor();
+          await page.getByLabel("Waking computer…",{exact:true}).waitFor();
+          if(artifacts)await page.screenshot({path:`${artifacts}/start-progress-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
           await page.getByRole("tab", {name:"Hello startup QA", exact:true}).waitFor();
           assert.equal(await page.getByRole("heading", {name:"Threads", exact:true}).count(), 0);
           await page.getByRole("button", {name:"Thread details", exact:true}).click();

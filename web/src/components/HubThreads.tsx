@@ -16,7 +16,8 @@ import type { ModelAccessEntry } from "./HubModelAccess";
 import { AvatarFrom } from "./UserAvatar";
 import { useHubProfile } from "@/lib/hub-profile";
 import { useThreadStarts, retryHubThread, forgetThreadStart } from "@/lib/hub-thread-start";
-import { LoaderCircle, MessagesSquare, MoreHorizontal } from "lucide-react";
+import { ThreadStartMarker } from "./ThreadStartMarker";
+import { MessagesSquare, MoreHorizontal } from "lucide-react";
 import { TabStrip, WorkbenchTabTrigger, tabListClass } from "@/components/WorkbenchTabs";
 import { Tabs, TabsList } from "@/components/ui/tabs";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuLabel, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
@@ -341,7 +342,7 @@ export default function HubThreads({
               ))}
               {pending && <Message align="start"><MessageContent>
                 {pending.phase === "failed" ? <><p role="alert" className="text-sm text-destructive">{pending.error}</p><Button variant="outline" onClick={() => void retryHubThread(pending)}>Retry</Button></>
-                  : <LoaderCircle role="status" aria-label="Starting thread" className="size-4 animate-spin text-muted-foreground" />}
+                  : <ThreadStartMarker progress={pending.progress} />}
               </MessageContent></Message>}
             </div>
           </div>
