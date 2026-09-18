@@ -8,9 +8,15 @@ const HOSTED_LABELS: Record<string, string> = {
   openrouter: "OpenRouter",
 };
 
+export function hostedRuntimeProvider(id: string): string {
+  if (id === "anthropic") return "claude";
+  if (id === "openai" || id === "router" || id === "openrouter") return "codex";
+  return id;
+}
+
 function runtimeFor(id: string): Provider | undefined {
   return PROVIDERS.find((entry) => entry.id === id)
-    ?? PROVIDERS.find((entry) => entry.id === (id === "anthropic" ? "claude" : "codex"));
+    ?? PROVIDERS.find((entry) => entry.id === hostedRuntimeProvider(id));
 }
 
 function hostedModelsFor(entry: ModelAccessEntry): ProviderModel[] {

@@ -1,5 +1,5 @@
 import { startHubThread } from "@/lib/hub-thread-start";
-import { hostedComposerChoice, hostedExecutionChoice, hostedModels } from "@/lib/hub-models";
+import { hostedComposerChoice, hostedExecutionChoice, hostedModels, hostedRuntimeProvider } from "@/lib/hub-models";
 import { resolveModelDefault } from "@/lib/model-defaults";
 import { useHubModelDefaults } from "./HubModelDefault";
 import { BranchPicker } from "./BranchPicker";
@@ -136,9 +136,12 @@ export function HubThreadComposer({
   const inheritedModel = resolveModelDefault(resolvedDefaults?.workspace, resolvedDefaults?.remy, {provider:"",model:""}, resolvedDefaults?.computer);
   const usingCloud=!!cloudComputerProvider(selected);
   const chatgpt = codexAccount.value?.phase === "connected";
+  const cloudConnections = useHubResource<{settings?:{provider?:string};enabledProviders?: string[];cloudStart?: Record<string, {owner:boolean;providers:{id:string;allowed:boolean}[]}>}>(organizationId, "/hosted");
+  const cloudStart = usingCloud ? cloudConnections.value?.cloudStart?.[cloudComputerProvider(selected) ?? ""] : undefined;
+  const allowedCloudRuntimes = cloudStart && !cloudStart.owner ? new Set(cloudStart.providers.filter(provider => provider.allowed).map(provider => provider.id)) : undefined;
   const resolvedChoice = hostedComposerChoice(modelAccess.value?.providers ?? [], chatgpt, inheritedModel);
   const modelChoice = pickedModel?.workspaceId === workspaceId ? pickedModel.choice : resolvedChoice;
-  const cloudModels = hostedModels(modelAccess.value?.providers ?? [], chatgpt, modelChoice);
+  const cloudModels = hostedModels(modelAccess.value?.providers ?? [], chatgpt, modelChoice).filter(provider => !allowedCloudRuntimes || allowedCloudRuntimes.has(hostedRuntimeProvider(provider.id)));
   const localModels = (computers.find(c=>c.computerId===selected)?.capabilities.providers ?? []).flatMap(p=>{
     const runtime=PROVIDERS.find(v=>v.id===p.id);
     return runtime ? [{...runtime,models:p.models.map(value=>({value,label:value || "Default"}))}] : [];
@@ -151,7 +154,6 @@ export function HubThreadComposer({
   const chosenProvider=modelCatalogue.find(p=>p.id===selectedChoice.provider);
   const choiceValid=chosenProvider?.models.some(m=>m.value===selectedChoice.model);
   const executionChoice=choiceValid ? hostedExecutionChoice(selectedChoice) : {};
-  const cloudConnections = useHubResource<{settings?:{provider?:string};enabledProviders?: string[]}>(organizationId, "/hosted");
   const cloudOptions = useMemo(() => CLOUD_COMPUTERS.filter(c => cloudConnections.value?.enabledProviders?.includes(c.provider)), [cloudConnections.value?.enabledProviders]);
   const workspaceChoices = workspaceOptions ?? workspaces.map((item) => ({
     ...item,

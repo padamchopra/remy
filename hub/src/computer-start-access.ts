@@ -87,4 +87,31 @@ export function parseStartProviderInput(
   return COMPUTER_START_PROVIDERS.filter((id) => requested.includes(id));
 }
 
+/// Cloud model-access ids map onto the same Claude/Codex start list Macs use.
+export function advertisedCloudStartProviders(
+  access: { id: string; enabled?: boolean; configured?: boolean }[],
+): ComputerStartProvider[] {
+  const seen = new Set<ComputerStartProvider>();
+  for (const entry of access) {
+    if (!entry.enabled || !entry.configured) continue;
+    if (entry.id === "anthropic") seen.add("claude");
+    else if (entry.id === "openai" || entry.id === "router" || entry.id === "openrouter") seen.add("codex");
+    else if (isComputerStartProvider(entry.id)) seen.add(entry.id);
+  }
+  return COMPUTER_START_PROVIDERS.filter((id) => seen.has(id));
+}
+
+/// Owners and org-owned connections keep every advertised provider.
+export function canStartWithShareGrant(
+  owner: boolean,
+  stored: ComputerStartProvider[] | null,
+  advertised: ComputerStartProvider[],
+  provider?: string,
+): boolean {
+  if (owner) return true;
+  const allowed = resolveStartProviders(stored, advertised);
+  if (!provider) return allowed.length > 0;
+  return isComputerStartProvider(provider) && allowed.includes(provider);
+}
+
 export const START_PROVIDER_DENIED = "This computer does not allow new threads with that provider.";

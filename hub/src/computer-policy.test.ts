@@ -325,6 +325,109 @@ test("members share their own computers and start-provider grants block only new
   }
 });
 
+test("members share their own cloud connections and start-provider grants block only new threads", async () => {
+  const { sqlite, db, computers, organizations, service: computerService } = database();
+  const { createRouteHandler, HubCoordinator } = await import("./worker.js");
+  const { OrganizationService } = await import("./organizations.js");
+  const { personalSpace } = await import("./personal-space.js");
+  const { HostedSettingsStore } = await import("./hosted-settings.js");
+  const { saveModelAccess } = await import("./model-access.js");
+  const { START_PROVIDER_DENIED } = await import("./computer-start-access.js");
+  let userId = "grace";
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => Response.json({ data: [{ id: "openrouter/auto" }] })) as typeof fetch;
+  try {
+    const personal = await personalSpace(db, userId);
+    const settings = new HostedSettingsStore(db, async () => "test-encryption-root-with-at-least-thirty-two-characters");
+    await settings.setSecret(personal.id, "cloud:modal", JSON.stringify({ provider: "modal", enabled: true, tokenId: "private-id", tokenSecret: "private-secret" }));
+    await saveModelAccess(settings, personal.id, "anthropic", { enabled: true, apiKey: "grace-anthropic" });
+    await saveModelAccess(settings, personal.id, "openrouter", { enabled: true, apiKey: "grace-openrouter" });
+    sqlite.prepare("INSERT INTO organization_workspaces(id,organization_id,name,origin,created_at,updated_at) VALUES(?,?,?,?,?,?)").run("org-release", "org", "Release", "github.com/example/release", 1, 1);
+    const hostedId = crypto.randomUUID();
+    await computerService.register("org", "ada", {
+      ...input,
+      computerId: hostedId,
+      ownership: "hosted",
+      name: "Cloud task",
+      icon: "cloud",
+      platform: "linux",
+      capabilities: {
+        ...input.capabilities,
+        workspaces: [{ id: "org-release", name: "Release", path: "/workspace", origin: "github.com/example/release" }],
+      },
+    });
+    await computers.seen("org", hostedId, Date.now(), undefined, undefined);
+    const route = createRouteHandler({
+      accountService: () => ({ authenticate: async () => ({ userId, sessionId: "session", clientKind: "web" }) }) as never,
+      computerStore: () => computers,
+      organizationStore: () => organizations,
+      organizationService: () => new OrganizationService(organizations),
+    });
+    const env = { DB: db, AUTH_SECRET: { get: async () => "test-encryption-root-with-at-least-thirty-two-characters" }, BETTER_AUTH_URL: "https://hub.example", COORDINATOR: { idFromName: (id:string) => id, get: () => ({ fetch: async () => Response.json({ ok: true }) }) } } as never;
+    const call = (path: string, method = "GET", payload?: unknown) => route(new Request(`https://hub.example/api/organizations/org/${path}`, { method, headers: { authorization: "Bearer session", origin: "https://hub.example", "content-type": "application/json" }, ...(payload === undefined ? {} : { body: JSON.stringify(payload) }) }), env);
+
+    userId = "ada";
+    assert.equal((await call("compute-shares/cloud/modal", "PUT")).status, 409);
+    userId = "grace";
+    assert.equal((await call("compute-shares/cloud/modal", "PUT")).status, 200);
+    const shared = await (await call("compute-shares")).json() as { cloudConnections: { provider: string; shared: boolean; canShare: boolean; canRevoke: boolean; providers: { id: string; allowed: boolean; label: string }[] }[] };
+    const row = shared.cloudConnections.find(connection => connection.provider === "modal")!;
+    assert.equal(row.shared, true);
+    assert.equal(row.canShare, true);
+    assert.equal(row.canRevoke, false);
+    assert.deepEqual(row.providers, [
+      { id: "claude", label: "Claude", allowed: true },
+      { id: "codex", label: "Codex", allowed: true },
+    ]);
+    assert.equal((await call("compute-shares/cloud/modal", "PATCH", { startProviders: ["claude"] })).status, 200);
+    assert.equal((await call("compute-shares/cloud/modal", "PATCH", { startProviders: ["cursor"] })).status, 400);
+
+    userId = "ada";
+    const adminView = await (await call("compute-shares")).json() as { cloudConnections: { provider: string; canShare: boolean; canRevoke: boolean; providers: { id: string; allowed: boolean }[] }[] };
+    const adminRow = adminView.cloudConnections.find(connection => connection.provider === "modal")!;
+    assert.equal(adminRow.canShare, false);
+    assert.equal(adminRow.canRevoke, true);
+    assert.deepEqual(adminRow.providers.find(provider => provider.id === "codex"), { id: "codex", allowed: false, label: "Codex" });
+    assert.equal((await call("compute-shares/cloud/modal", "PATCH", { startProviders: ["claude", "codex"] })).status, 404);
+
+    const hosted = await (await call("hosted")).json() as { enabledProviders: string[]; cloudStart: Record<string, { owner: boolean; providers: { id: string; allowed: boolean }[] }> };
+    assert.deepEqual(hosted.enabledProviders, ["modal"]);
+    assert.equal(hosted.cloudStart.modal.owner, false);
+    assert.equal(hosted.cloudStart.modal.providers.find(provider => provider.id === "codex")?.allowed, false);
+
+    const values = new Map<string, unknown>([["organizationId", "org"]]);
+    const coordinator = new HubCoordinator({ storage: { get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); }, delete: async (key: string) => values.delete(key), list: async () => new Map(), getAlarm: async () => null, setAlarm: async () => {}, transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn({ get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); } }) }, getWebSockets: () => [], waitUntil: (work: Promise<unknown>) => { void work; } } as unknown as DurableObjectState, { DB: db, AUTH_SECRET: { get: async () => "test-encryption-root-with-at-least-thirty-two-characters" }, BETTER_AUTH_URL: "https://hub.example" } as never);
+    const forwarded: unknown[][] = [];
+    const threadId = crypto.randomUUID();
+    (coordinator as unknown as { dispatchComputer: (...args: unknown[]) => Promise<Response> }).dispatchComputer = async (...args) => {
+      forwarded.push(args);
+      return Response.json({ id: threadId, revision: 1, access: { organizationId: "org", owner: { id: "grace", label: "Grace" }, visibility: "open", participants: [{ id: "ada", label: "Ada" }] }, detail: { id: threadId, title: "Release", cwd: "/workspace", entries: [] } });
+    };
+    const request = (user: string, path: string, method: string, payload: unknown) => new Request(`https://internal${path}`, { method, headers: { "content-type": "application/json", "x-thread-member": encodeURIComponent(JSON.stringify({ id: user, label: user })), "x-organization-id": "org" }, body: JSON.stringify(payload) });
+    const handle = (coordinator as unknown as { threadRequest: (r: Request) => Promise<Response | undefined> }).threadRequest.bind(coordinator);
+    const denied = await handle(request("ada", "/threads", "POST", { workspaceId: "org-release", requestId: crypto.randomUUID(), computerId: "cloud:modal", provider: "openrouter", model: "openrouter/auto", visibility: "open" }));
+    assert.equal(denied?.status, 403);
+    assert.equal((await denied!.json() as { error: string }).error, START_PROVIDER_DENIED);
+    const ownerStart = await handle(request("grace", "/threads", "POST", { workspaceId: "org-release", requestId: crypto.randomUUID(), computerId: "cloud:modal", provider: "openrouter", model: "openrouter/auto", visibility: "open" }));
+    assert.notEqual(ownerStart?.status, 403);
+    const threads = (coordinator as unknown as { threads: import("./thread-store.js").ThreadStore }).threads;
+    await threads.snapshot(hostedId, { id: threadId, revision: 1, access: { organizationId: "org", owner: { id: "grace", label: "Grace" }, visibility: "open", participants: [{ id: "ada", label: "Ada" }] }, detail: { id: threadId, title: "Release", cwd: "/workspace", entries: [] } });
+    const replied = await handle(request("ada", `/computers/${hostedId}/threads/${threadId}/message`, "POST", { text: "Continue this thread.", messageId: `u-${crypto.randomUUID()}` }));
+    assert.equal(replied?.status, 200);
+    assert.ok(forwarded.some(entry => String(entry[3]).includes("/message")));
+
+    userId = "ada";
+    assert.equal((await call("compute-shares/cloud/modal", "DELETE")).status, 200);
+    userId = "grace";
+    assert.equal((await (await call("compute-shares")).json() as { cloudConnections: { provider: string; shared: boolean }[] }).cloudConnections.some(connection => connection.provider === "modal" && connection.shared), false);
+    assert.equal((await call("compute-shares/cloud/modal", "PUT")).status, 200);
+    assert.equal((await call("compute-shares/cloud/modal", "DELETE")).status, 200);
+  } finally {
+    globalThis.fetch = originalFetch;
+    sqlite.close();
+  }
+});
+
 test("notifications address eligible participants, persist once, and honor device revocation on retry", async () => {
   const { sqlite, db, service } = database();
   try {
