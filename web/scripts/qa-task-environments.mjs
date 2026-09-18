@@ -119,12 +119,21 @@ try {
     ).status,
     200,
   );
-  const start = () =>
-    call("/threads", "POST", {
+  const waitForThread = async (requestId) => {
+    let response = await call("/threads", "POST", {
       workspaceId: workspace.id,
       title: "Check the environment",
-      requestId: crypto.randomUUID(),
+      requestId,
     });
+    for (let n = 0; n < 600 && !response.body?.id; n++) {
+      if (response.status >= 400) return response;
+      await new Promise((r) => setTimeout(r, 100));
+      response = await call(`/threads/starts/${requestId}`);
+    }
+    if (response.body?.id) return { status: 201, body: response.body };
+    return response;
+  };
+  const start = () => waitForThread(crypto.randomUUID());
   const [a, d] = await Promise.all([start(), start()]);
   assert.equal(a.status, 201, JSON.stringify(a.body));
   assert.equal(d.status, 201, JSON.stringify(d.body));

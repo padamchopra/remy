@@ -91,7 +91,7 @@ export class HostedLifecycle {
     return this.serial("allocation", async () => {
       const current = await this.get(workspaceId, taskId);
       if (current && current.workspaceId !== workspaceId) throw new Error("This task belongs to another workspace.");
-      const running = (await this.list()).filter(s => !!s.taskId && s.computerId !== current?.computerId && ["ready", "allocating", "restoring", "checkpointing"].includes(s.phase));
+      const running = (await this.list()).filter(s => !!s.taskId && s.computerId !== current?.computerId && ["ready", "allocating", "restoring", "starting_runtime", "connecting", "checkpointing"].includes(s.phase));
       if (taskId && running.length >= settings.maxComputers && (!current || current.phase !== "ready"))
         throw new Error("Your cloud concurrency limit is reached; wait for a computer to sleep or raise the limit.");
       return this.wake(workspaceId, settings, taskId, taskTitle);
@@ -133,7 +133,8 @@ export class HostedLifecycle {
       state.timing.warmRequestMs = this.now() - started;
       return this.save(state);
     }
-    state.phase = state.runtime?.snapshot ? "restoring" : "allocating";
+    const waking = state.runtime?.snapshot ? "restoring" : "allocating";
+    state.phase = waking;
     delete state.error;
     await this.save(state);
     let step = "preparing its configuration";
@@ -142,11 +143,14 @@ export class HostedLifecycle {
         provider = this.provider(state.provider),
         allocating = this.now();
       step = "starting its cloud runtime";
+      state.phase = "starting_runtime";
+      await this.save(state);
       state.runtime = state.runtime
         ? await provider.start(state.runtime, input)
         : await provider.provision(input);
-      state.timing[state.phase === "restoring" ? "restoreMs" : "allocationMs"] =
+      state.timing[waking === "restoring" ? "restoreMs" : "allocationMs"] =
         this.now() - allocating;
+      state.phase = "connecting";
       await this.save(state);
       const waiting = this.now();
       step = "connecting to Remy";
