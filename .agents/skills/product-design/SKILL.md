@@ -79,6 +79,26 @@ Add workspace → Account: Personal / Remy
 Select Remy in the switcher → the same list, filtered to Remy
 ```
 
+## An escape hatch stays reachable where it is needed
+
+A fallback for a blocked path is not first-run scenery. Offer it in the state where the person discovers they need it, which is usually not the state where they first saw it.
+
+A personal access token is the worked example. It looks like the alternative to connecting GitHub, so it is tempting to show it only when nothing is connected. But the case it solves — a repository in an organization that will not install Remy — is invisible until the connection succeeds and the list comes back missing those repositories. Gated behind a missing connection, the way out disappears exactly when it is wanted.
+
+Before restricting an alternative path to one state, ask when the person learns they need it. If that moment is later, the path belongs there too, and its copy says what it is for in that state.
+
+BAD
+```
+Show the token only when GitHub is not connected; a connected account does not need one.
+```
+
+GOOD
+```
+Keep the token reachable after connecting, and say there what it is for: repositories in an organization that has not installed Remy.
+```
+
+Say what an alternative costs. When it replaces a credential, a setting, or a connection rather than adding to it, the surface that offers it says so in a sentence.
+
 ## Model the capability first
 
 Name the capability, its durable owner, the actor that performs it, the event that triggers it, and what happens when either owner or actor disappears before choosing a screen or schema.

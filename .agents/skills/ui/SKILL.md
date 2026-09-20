@@ -56,6 +56,24 @@ GOOD
 | Transient status | `toast()` from `sonner` |
 | Loading text | the `shimmer` class from `shadcn/tailwind.css` |
 
+## Mockups and the shipped tokens
+
+A design file is a proposal about the running app, so it uses the app's own values. `web/src/index.css` is the source of truth for colour; read it and resolve its `oklch()` to the values you are about to paint with. A palette that only exists in the design file will not survive being built, and the difference is not cosmetic: a pale accent that carries dark text and a saturated one that carries white text are different controls.
+
+Check contrast against the real token before committing to a treatment, rather than trusting how a mockup reads. A muted foreground, a dimmed row, or an accent used as small text are the usual places a design passes in the file and fails on screen.
+
+BAD
+```
+Match the other artboards in the design file, then reuse those hexes when implementing.
+```
+
+GOOD
+```
+Resolve the tokens in index.css, design against those values, and say so when the design file has drifted from them.
+```
+
+When a Paper file already holds the design for a surface, a change to that surface updates the file in the same change. A design that no longer matches what shipped is worse than no design, because the next person trusts it.
+
 ## Transient status
 
 Never show a temporary line of status text. Success, failure, and in-progress copy for an action are a Sonner toast, or they live on the control that is busy (disabled, with a spinner). A paragraph that appears under a form and then vanishes is bad UX.

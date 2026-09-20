@@ -12,6 +12,10 @@ type Repository = {
   full_name: string;
   name: string;
   html_url: string;
+  description?: string | null;
+  language?: string | null;
+  private?: boolean;
+  pushed_at?: string | null;
 };
 type Installation = { id: number; app_id: number; account: { login: string } };
 export type GitHubActivity = {
@@ -84,7 +88,20 @@ export class GitHubConnection {
     if (!Number.isSafeInteger(page) || page < 1 || page > 100)
       throw new ConnectionError("Choose a valid repository page.");
     const repositories = await this.api<Repository[]>(org, user, `/user/repos?per_page=100&sort=updated&page=${page}`);
-    return { repositories: repositories.map(({ id, name, full_name }) => ({ id, name, full_name })), nextPage: repositories.length === 100 ? page + 1 : null };
+    return {
+      // The picker reads these to tell two similarly named repositories apart,
+      // so a row carries what GitHub already knows rather than a slug alone.
+      repositories: repositories.map(({ id, name, full_name, description, language, private: restricted, pushed_at }) => ({
+        id,
+        name,
+        full_name,
+        description: description ?? null,
+        language: language ?? null,
+        private: restricted === true,
+        pushedAt: pushed_at ?? null,
+      })),
+      nextPage: repositories.length === 100 ? page + 1 : null,
+    };
   }
   async importRepository(org: string, user: string, fullName: string) {
     await this.access(org, user, ["owner", "admin"]);

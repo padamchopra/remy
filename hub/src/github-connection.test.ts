@@ -33,7 +33,7 @@ function fixture() {
     if (path === "/repos/release/remy/git/trees/HEAD") return Response.json({tree:[{path:"assets/logo.png",type:"blob",size:10},{path:"README.md",type:"blob",size:1},{path:"large.png",type:"blob",size:2000000}]});
     if (path === "/repos/release/remy/contents/assets/logo.png") return Response.json({type:"file",size:10,encoding:"base64",content:"aGVsbG8=\n"});
     if (path === "/repos/release/remy/contents/large.png") return Response.json({type:"file",size:2000000,encoding:"base64",content:""});
-    if (path === "/user/repos") return Response.json([{id:101,name:"Remy",full_name:"release/remy"}]);
+    if (path === "/user/repos") return Response.json([{id:101,name:"Remy",full_name:"release/remy",description:"A remote for coding agents.",language:"TypeScript",private:true,pushed_at:"2026-09-18T10:00:00Z"}]);
     if (path === "/repos/release/remy") return Response.json({id:101,name:"Remy",full_name:"release/remy",default_branch:"main"});
     if (path === "/repos/release/remy/branches") return Response.json([{name:"main"},{name:"feature/next"}]);
     if (path === "/user/installations")
@@ -194,6 +194,7 @@ test("repository picker uses member credentials and imports without deleting exi
   const initial = await service.select("studio", "ada", 20, [101]);
   const listed = await service.accessibleRepositories("studio", "ada", 1);
   assert.equal(listed.repositories[0].full_name, "release/remy");
+  assert.deepEqual(listed.repositories[0], {id:101,name:"Remy",full_name:"release/remy",description:"A remote for coding agents.",language:"TypeScript",private:true,pushedAt:"2026-09-18T10:00:00Z"});
   assert.equal(calls.at(-1)?.actor, "Bearer member-ada");
   assert.equal(listed.nextPage, null);
   await assert.rejects(service.accessibleRepositories("studio", "grace", 1));
