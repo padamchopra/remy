@@ -105,12 +105,15 @@ export async function githubRoute(
     }
     return Response.json({ error: "Choose a GitHub action." }, { status: 400 });
   } catch (e) {
+    // A ConnectionError already carries the status it means. Flattening every
+    // one to 400 hid the difference between a bad request and an account that
+    // is simply not connected, which a caller has to tell apart.
     return Response.json(
       {
         error:
           e instanceof ConnectionError ? e.message : "GitHub is unavailable.",
       },
-      { status: 400 },
+      { status: e instanceof ConnectionError ? e.status : 400 },
     );
   }
 }

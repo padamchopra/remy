@@ -50,6 +50,28 @@ Members see OpenRouter and start private or shared threads on that computer.
 The organization can still turn OpenRouter off for itself.
 ```
 
+## A status has to survive the boundary
+
+An error's status is the part a caller branches on. Collapsing every failure to one status at the edge leaves the client unable to tell "you are not connected" from "you sent a bad page number", and the client then either guesses from the message or treats a normal state as a failure.
+
+Carry the status the error was raised with. `ConnectionError` already holds one; a route that answers `400` for all of them throws that away.
+
+BAD
+```ts
+} catch (e) {
+  return Response.json({ error: message(e) }, { status: 400 });
+}
+```
+
+GOOD
+```ts
+} catch (e) {
+  return Response.json({ error: message(e) }, { status: e instanceof ConnectionError ? e.status : 400 });
+}
+```
+
+Then make the client survive being wrong about it anyway. A read that fails in an expected state should fall back to the screen that state deserves, not to an error paragraph that replaces it.
+
 ## Choose freshness deliberately
 
 Use push for state somebody is actively watching. Polling is a compatibility or recovery path with an explicit condition that turns it off when push is available.

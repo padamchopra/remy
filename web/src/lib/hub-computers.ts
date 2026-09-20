@@ -38,9 +38,19 @@ export function watchHubResource<T>(
     }
   };
   void refresh();
+  // The read above already covers the first subscription. Only a reconnect has
+  // to read again, because messages can be missed while the channel is down;
+  // refreshing on every open asked every hosted resource for twice.
+  let subscribed = false;
   const unsubscribe = watchResourceChannel(livePath, (kind, code) => {
     if (stopped) return;
-    if (kind === "open" || kind === "message") { void refresh(); return; }
+    if (kind === "open") {
+      const reconnected = subscribed;
+      subscribed = true;
+      if (reconnected) void refresh();
+      return;
+    }
+    if (kind === "message") { void refresh(); return; }
     if (value !== undefined) changed(value, true);
     if (code === 1008) {
       stopped = true;
