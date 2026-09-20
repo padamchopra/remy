@@ -24,6 +24,36 @@ Record every request's method, path, start, finish, and count. Separate network 
 
 Use `npm run perf` for the panes it covers. Extend the measurement or run a focused browser trace when the reported interaction is absent from that harness.
 
+## Do not put one read behind another
+
+Two reads of the same account are parallel work. Chaining them because the second one's code happens to reference the first one's result adds a full round trip to every open, and the cost is worst where the second read is the slow one — a provider's API rather than our own.
+
+Before gating a read, ask what the first one actually tells you that the second cannot. A listing that fails with "not connected" already answers whether the account is connected, so waiting for a connections resource to say the same thing first buys nothing and costs a round trip.
+
+BAD
+```tsx
+const github = connection.value?.connections.find(...);
+useEffect(() => {
+  if (!github) return;              // the GitHub call waits for our own hub
+  void load(1);
+}, [github?.id]);
+```
+
+GOOD
+```tsx
+useEffect(() => {
+  void load(1);                     // starts with everything else
+}, [root]);                         // a 409 means "not connected"
+```
+
+A subscription's first open is not a reason to read again. The read issued when the watcher was created already covers it; only a reconnect has missed messages. Refreshing on every open asks for every resource twice.
+
+## Performance is part of finishing a surface
+
+A surface is not done when it works. Open it with the network panel honest — request count, their order, and whether any of them wait on each other — before calling it done. A waterfall is easiest to remove on the day it is written and hardest to notice once it ships, because every individual request looks fast.
+
+Re-measure after the fix and report both numbers, including the request count. Keep in the evidence which data source answered: a fixture that serves a provider from localhost proves the ordering, not the magnitude.
+
 ## Classify before fixing
 
 | Finding | Direction |

@@ -11,7 +11,8 @@ import { Menu, MenuContent, MenuItem, MenuItemCheck, MenuTrigger } from "@/compo
 import { Spinner } from "@/components/ui/spinner";
 import { apiError } from "@/lib/api-error";
 import { useHubResource, type HubWorkspace } from "@/lib/hub-organization";
-import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
+import { HubRequestError, hubRequest, hubThreadBase } from "@/lib/hub-threads";
+import { cachedRepositories, forgetRepositories, rememberRepositories } from "@/lib/github-repositories";
 import { relativeDate } from "@/lib/relative-date";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -124,39 +125,71 @@ function RepositoryPicker({ organizationId, onAdded, onManual }: { organizationI
   const workspaces = useHubResource<{ workspaces: HubWorkspace[] }>(organizationId, "/workspaces");
   const github = connection.value?.connections.find(c => c.provider === "github" && c.subject && c.status === "connected");
   const root = `${hubThreadBase(organizationId)}/github`;
+  const connectionKey = github ? `${github.id}:${github.updated_at}` : "";
   const [token, setToken] = useState("");
   const [showToken, setShowToken] = useState(false);
   // Changing a connected account reopens the same panel, so there is one place
   // that connects GitHub rather than two that drift apart.
   const [changing, setChanging] = useState(false);
-  const [repos, setRepos] = useState<Repository[]>([]);
-  const [nextPage, setNextPage] = useState<number | null>(1);
+  const [cached] = useState(() => cachedRepositories(root, ""));
+  const [repos, setRepos] = useState<Repository[]>(cached?.repositories ?? []);
+  const [nextPage, setNextPage] = useState<number | null>(cached?.nextPage ?? 1);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState(!!cached);
+  // Set when the listing comes back 409: GitHub is not connected for this
+  // account. The picker learns that from its own read rather than waiting for
+  // the connections resource to say so.
+  const [unconnected, setUnconnected] = useState(false);
   // The dialog opens on the search field: this surface exists to be typed into,
   // and Base UI would otherwise leave focus on the popup itself.
   const search = useRef<HTMLInputElement>(null);
-  useEffect(() => { search.current?.focus(); }, [github?.id]);
+  useEffect(() => { if (loaded) search.current?.focus(); }, [loaded]);
   const run = async (work: () => Promise<void>) => {
     setBusy(true);
     try { await work(); } catch (e) { toast.error("Couldn't update GitHub", { description: apiError(e) }); } finally { setBusy(false); }
   };
   const load = async (page: number) => {
     const result = await hubRequest<{ repositories: Repository[]; nextPage: number | null }>(`${root}/accessible-repositories?page=${page}`);
-    setRepos(previous => page === 1 ? result.repositories : [...new Map([...previous, ...result.repositories].map(r => [r.id, r])).values()]);
-    setNextPage(result.nextPage); setLoaded(true);
+    const merged = page === 1 ? result.repositories : [...new Map([...repos, ...result.repositories].map(r => [r.id, r])).values()];
+    setRepos(merged); setNextPage(result.nextPage); setLoaded(true); setUnconnected(false);
+    rememberRepositories(root, { repositories: merged, nextPage: result.nextPage, connection: connectionKey });
   };
-  useEffect(() => {
-    let current = true;
-    setRepos([]); setLoaded(false); setNextPage(1);
-    if (!github) return;
+  // The listing does not wait for the connections resource. Both are reads of
+  // the same account, so asking for them in series put a GitHub round trip
+  // behind a hub round trip for no answer the listing does not already carry:
+  // a missing connection comes back as 409.
+  const read = (signal: { current: boolean }) => {
     setBusy(true);
     hubRequest<{ repositories: Repository[]; nextPage: number | null }>(`${root}/accessible-repositories?page=1`).then(result => {
-      if (current) { setRepos(result.repositories); setNextPage(result.nextPage); setLoaded(true); setShowToken(false); setChanging(false); }
-    }).catch(e => { if (current) setError(apiError(e)); }).finally(() => { if (current) setBusy(false); });
-    return () => { current = false; };
-  }, [root, github?.id, github?.updated_at]);
+      if (!signal.current) return;
+      setRepos(result.repositories); setNextPage(result.nextPage); setLoaded(true); setUnconnected(false);
+      setShowToken(false); setChanging(false); setError("");
+      rememberRepositories(root, { repositories: result.repositories, nextPage: result.nextPage, connection: connectionKey });
+    }).catch(e => {
+      if (!signal.current) return;
+      setLoaded(false); setRepos([]); forgetRepositories(root);
+      // 409 is the hub saying this account has no GitHub connection. Any other
+      // failure still leaves the connect panel as the more useful answer than
+      // an error paragraph, so the message is kept for the case where the
+      // connections resource disagrees.
+      if (e instanceof HubRequestError && e.status === 409) { setUnconnected(true); return; }
+      setError(apiError(e));
+    }).finally(() => { if (signal.current) setBusy(false); });
+  };
+  useEffect(() => {
+    const signal = { current: true };
+    read(signal);
+    return () => { signal.current = false; };
+  }, [root]);
+  // A connection that arrives after an unconnected read is the OAuth popup
+  // finishing. The token path reloads itself, so nothing reloads twice.
+  useEffect(() => {
+    if (!connectionKey || loaded) return;
+    const signal = { current: true };
+    read(signal);
+    return () => { signal.current = false; };
+  }, [connectionKey]);
   // A repository already registered here is shown rather than hidden, so the
   // answer to "did I add this one?" is on screen instead of missing.
   const alreadyAdded = useMemo(
@@ -173,18 +206,26 @@ function RepositoryPicker({ organizationId, onAdded, onManual }: { organizationI
     }
     return [...groups];
   }, [repos]);
-  if (connection.error || error) return <p role="alert" className="border-t p-5 text-sm text-destructive">{error || connection.error}</p>;
-  if (!connection.value) return <div className="flex h-24 items-center justify-center border-t"><Spinner aria-label="Loading GitHub connection" className="text-muted-foreground motion-reduce:animate-none" /></div>;
-  if (!github || changing) return <ConnectGitHub
+  const missing = unconnected || (connection.value && !github);
+  if (error && !missing) return <p role="alert" className="border-t p-5 text-sm text-destructive">{error}</p>;
+  // Rows win over every other state. The list only needs its own read, so a
+  // connections resource still in flight — or failing — does not hold back
+  // repositories that already arrived.
+  const connecting = missing && !loaded;
+  if (!loaded && !connecting) {
+    if (connection.error) return <p role="alert" className="border-t p-5 text-sm text-destructive">{connection.error}</p>;
+    return <div className="flex h-24 items-center justify-center border-t"><Spinner aria-label="Loading repositories" className="text-muted-foreground motion-reduce:animate-none" /></div>;
+  }
+  if (connecting || changing) return <ConnectGitHub
     organizationId={organizationId}
     connected={!!github}
-    configured={!!connection.value.providers.find(p => p.id === "github")?.configured}
+    configured={connection.value ? !!connection.value.providers.find(p => p.id === "github")?.configured : true}
     busy={busy}
     showToken={showToken}
     token={token}
     setToken={setToken}
     onShowToken={() => setShowToken(v => !v)}
-    onConnected={() => void run(async () => { await hubRequest(`${root}/token`, "POST", { token: token.trim() }); setToken(""); await load(1); setShowToken(false); setChanging(false); })}
+    onConnected={() => void run(async () => { await hubRequest(`${root}/token`, "POST", { token: token.trim() }); setToken(""); forgetRepositories(root); await load(1); setShowToken(false); setChanging(false); })}
     onManual={onManual}
     onBack={github ? () => { setChanging(false); setShowToken(false); } : undefined}
     run={run}
@@ -212,7 +253,7 @@ function RepositoryPicker({ organizationId, onAdded, onManual }: { organizationI
     </CommandList>
     <footer className="flex min-w-0 items-center gap-2.5 border-t bg-sidebar px-5 py-3 text-xs">
       <Github className="size-3.5 shrink-0 text-muted-foreground" />
-      <span className="hidden min-w-0 truncate text-muted-foreground sm:block">{github.label}</span>
+      <span className="hidden min-w-0 truncate text-muted-foreground sm:block">{github?.label ?? ""}</span>
       <button type="button" data-link className="shrink-0 text-foreground underline-offset-2 hover:underline" onClick={() => { setShowToken(true); setChanging(true); }}>Use a token</button>
       <div className="grow" />
       <button type="button" data-link className="shrink-0 text-foreground underline-offset-2 hover:underline" onClick={onManual}>Add by URL</button>
