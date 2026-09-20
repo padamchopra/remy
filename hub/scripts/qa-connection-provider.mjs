@@ -39,6 +39,13 @@ export async function startConnectionProvider() {
     }
     if(url.pathname==="/user/installations") {res.end(JSON.stringify({installations:[{id:20,app_id:12,account:{login:"release"}}]}));return;}
     if(url.pathname==="/user/installations/20/repositories") {res.end(JSON.stringify({repositories:[{id:101,full_name:"release/remy",name:"Remy",html_url:"https://github.com/release/remy"}]}));return;}
+    if(url.pathname==="/user/repos") {const day=ms=>new Date(Date.now()-ms).toISOString();res.end(JSON.stringify([
+      {id:101,name:"Remy",full_name:"release/remy",html_url:"https://github.com/release/remy",description:"A remote for coding agents on your own machines.",language:"TypeScript",private:true,pushed_at:day(120000)},
+      {id:102,name:"Phere",full_name:"release/phere",html_url:"https://github.com/release/phere",description:"Presence for the people you actually know.",language:"Swift",private:true,pushed_at:day(259200000)},
+      {id:103,name:"emulator-cloud",full_name:"release/emulator-cloud",html_url:"https://github.com/release/emulator-cloud",description:"Android emulators, on demand, on someone else's hardware.",language:"Go",private:false,pushed_at:day(604800000)},
+      {id:104,name:"stay-awake",full_name:"release/stay-awake",html_url:"https://github.com/release/stay-awake",description:null,language:null,private:false,pushed_at:day(2592000000)},
+      {id:201,name:"planet-mobile",full_name:"orbit/planet-mobile",html_url:"https://github.com/orbit/planet-mobile",description:"The Android and iOS clients.",language:"Kotlin",private:true,pushed_at:day(14400000)},
+      {id:202,name:"chainkit",full_name:"orbit/chainkit",html_url:"https://github.com/orbit/chainkit",description:"One Rust core, bound into every client.",language:"Rust",private:true,pushed_at:day(86400000)}]));return;}
     if(url.pathname.startsWith("/repos/release/remy/")) {
       let raw="";for await(const part of req)raw+=part;const input=raw?JSON.parse(raw):{};
       if(req.method==="POST")actions.push({path:url.pathname,body:input,actor:req.headers.authorization});

@@ -12,6 +12,7 @@ import { PullRequestView } from "@/components/PullRequestView";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { workspaceGroups, type WorkspaceGroup } from "@/lib/projects";
 import { groupPullRequests, orderPullRequests } from "@/lib/pull-request-order";
+import { relativeDate } from "@/lib/relative-date";
 import { transport } from "@/lib/transport";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
@@ -172,19 +173,6 @@ function activeThread(pullRequest: AuthoredPullRequest, chats: Chat[]): Chat | u
       && inside(chat.cwd, pullRequest.worktreePath!),
     )
     .sort((a, b) => b.updatedAt - a.updatedAt)[0];
-}
-
-function relativeDate(value: string): string {
-  const elapsed = Date.now() - Date.parse(value);
-  if (!Number.isFinite(elapsed)) return "Now";
-  const minutes = Math.max(0, Math.round(elapsed / 60_000));
-  if (minutes < 1) return "Now";
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.round(hours / 24);
-  if (days < 30) return `${days}d`;
-  return `${Math.round(days / 30)}mo`;
 }
 
 function needsAttention(pullRequest: AuthoredPullRequest): boolean {
