@@ -177,6 +177,7 @@ function RepositoryPicker({ organizationId, onAdded, onManual }: { organizationI
   if (!connection.value) return <div className="flex h-24 items-center justify-center border-t"><Spinner aria-label="Loading GitHub connection" className="text-muted-foreground motion-reduce:animate-none" /></div>;
   if (!github || changing) return <ConnectGitHub
     organizationId={organizationId}
+    connected={!!github}
     configured={!!connection.value.providers.find(p => p.id === "github")?.configured}
     busy={busy}
     showToken={showToken}
@@ -212,7 +213,7 @@ function RepositoryPicker({ organizationId, onAdded, onManual }: { organizationI
     <footer className="flex min-w-0 items-center gap-2.5 border-t bg-sidebar px-5 py-3 text-xs">
       <Github className="size-3.5 shrink-0 text-muted-foreground" />
       <span className="hidden min-w-0 truncate text-muted-foreground sm:block">{github.label}</span>
-      <button type="button" data-link className="shrink-0 text-foreground underline-offset-2 hover:underline" onClick={() => setChanging(true)}>Change</button>
+      <button type="button" data-link className="shrink-0 text-foreground underline-offset-2 hover:underline" onClick={() => { setShowToken(true); setChanging(true); }}>Use a token</button>
       <div className="grow" />
       <button type="button" data-link className="shrink-0 text-foreground underline-offset-2 hover:underline" onClick={onManual}>Add by URL</button>
       <span aria-hidden="true" className="hidden h-3.5 w-px shrink-0 bg-border sm:block" />
@@ -257,23 +258,31 @@ function RepositoryRow({ repo, added, onPick }: { repo: Repository; added: boole
   </CommandItem>;
 }
 
-function ConnectGitHub({ organizationId, configured, busy, showToken, token, setToken, onShowToken, onConnected, onManual, onBack, run }: {
-  organizationId: string; configured: boolean; busy: boolean; showToken: boolean; token: string;
+function ConnectGitHub({ organizationId, connected, configured, busy, showToken, token, setToken, onShowToken, onConnected, onManual, onBack, run }: {
+  organizationId: string; connected: boolean; configured: boolean; busy: boolean; showToken: boolean; token: string;
   setToken: (value: string) => void; onShowToken: () => void; onConnected: () => void; onManual: () => void;
   onBack?: () => void; run: (work: () => Promise<void>) => Promise<void>;
 }) {
+  // A token is not only the fallback for a missing connection. It is how you
+  // reach an organization that will not install Remy, so it stays available
+  // after GitHub is connected — and there it is the whole point of the panel.
+  const form = showToken || connected;
   return <div className="flex flex-col items-center gap-0 border-t px-10 pt-11 pb-10 text-center">
     <Github className="size-8 text-muted-foreground" aria-hidden="true" />
-    <h2 className="mt-5 text-lg font-semibold tracking-tight">Your repositories live on GitHub</h2>
-    <p className="mt-2 max-w-[24rem] text-sm text-muted-foreground">Connect it and Remy lists everything your account can reach.</p>
-    {showToken
+    <h2 className="mt-5 text-lg font-semibold tracking-tight">{connected ? "Reach repositories with a token" : "Your repositories live on GitHub"}</h2>
+    <p className="mt-2 max-w-[24rem] text-sm text-muted-foreground">
+      {connected
+        ? "A token lists repositories in organizations that have not installed Remy, and replaces the GitHub connection for your account."
+        : "Connect it and Remy lists everything your account can reach."}
+    </p>
+    {form
       ? <form
           className="mt-6 flex w-full max-w-[22rem] flex-col gap-3"
           onSubmit={event => { event.preventDefault(); onConnected(); }}
         >
-          <Field><FieldLabel className="justify-center" htmlFor="github-token">Personal access token</FieldLabel><Input id="github-token" type="password" autoComplete="off" value={token} onChange={e => setToken(e.target.value)} /></Field>
+          <Field><FieldLabel className="justify-center" htmlFor="github-token">Personal access token</FieldLabel><Input id="github-token" type="password" autoComplete="off" autoFocus value={token} onChange={e => setToken(e.target.value)} /></Field>
           <p className="text-sm text-muted-foreground">Choose the repositories your token can access. <a className="underline" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer">Create a token</a></p>
-          <Button disabled={busy || !token.trim()} type="submit">{busy && <Spinner aria-label="Connecting GitHub" className="motion-reduce:animate-none" />}Connect GitHub</Button>
+          <Button disabled={busy || !token.trim()} type="submit">{busy && <Spinner aria-label="Connecting GitHub" className="motion-reduce:animate-none" />}{connected ? "Use this token" : "Connect GitHub"}</Button>
         </form>
       : <Button
           className="mt-6"
@@ -289,10 +298,10 @@ function ConnectGitHub({ organizationId, configured, busy, showToken, token, set
             });
           }}
         >Connect GitHub</Button>}
-    {!configured && !showToken && <p className="mt-3 text-sm text-muted-foreground">GitHub sign-in isn’t available yet. Use a personal access token instead.</p>}
+    {!configured && !form && <p className="mt-3 text-sm text-muted-foreground">GitHub sign-in isn’t available yet. Use a personal access token instead.</p>}
     <div className="mt-6 flex flex-col items-center gap-2.5 text-xs sm:flex-row">
-      {!showToken && <button type="button" data-link className="text-foreground underline-offset-2 hover:underline" onClick={onShowToken}>Use a personal access token</button>}
-      {!showToken && <span aria-hidden="true" className="hidden size-[3px] rounded-full bg-muted-foreground/60 sm:block" />}
+      {!form && <button type="button" data-link className="text-foreground underline-offset-2 hover:underline" onClick={onShowToken}>Use a personal access token</button>}
+      {!form && <span aria-hidden="true" className="hidden size-[3px] rounded-full bg-muted-foreground/60 sm:block" />}
       <button type="button" data-link className="flex items-center gap-1.5 text-foreground underline-offset-2 hover:underline" onClick={onManual}><Link2 className="size-3.5" />Add by URL</button>
       {onBack && <><span aria-hidden="true" className="hidden size-[3px] rounded-full bg-muted-foreground/60 sm:block" /><button type="button" className="text-foreground underline-offset-2 hover:underline" onClick={onBack}>Back to repositories</button></>}
     </div>
