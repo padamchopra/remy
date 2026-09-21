@@ -1,8 +1,9 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Folder, Inbox, MessagesSquare, SquareKanban, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
-import { AppSidebar } from "@/components/AppSidebar";
+import { AppSidebar } from "@/components/sidebar/AppSidebar";
+import { useMacSidebar } from "@/components/sidebar/useMacSidebar";
 import { AgentRoutines } from "@/components/AgentRoutines";
 import { AgentMark } from "@/components/AgentAvatar";
 import { ThreadDiff } from "@/components/ThreadDiff";
@@ -54,17 +55,20 @@ function Demo() {
   const chats = useStore((state) => state.chats);
   const servers = useStore((state) => state.servers);
   const workspaces = useStore((state) => state.workspaces);
+  const sidebar = useMacSidebar({
+    view: "app", settingsTab: "general", section: "chats", selected, servers,
+    archived: [], workspaces, sections, onSection: explain, onSelectChat: select,
+    onOpenBeside: select, onOpenTicket: explain, onOpenWorkspace: explain,
+    onNewThread: explain, openSettings: explain, closeSettings: explain,
+  });
   const chat = chats.find((entry) => entry.id === selected) ?? chats[0];
   const mobile = useIsMobile();
   const surface = new URLSearchParams(location.search).has("surface");
   const compact = new URLSearchParams(location.search).has("compact") || mobile;
   return <TooltipProvider><AppActionsProvider context={{ hasProjects: true, addTicket: explain, registerWorkspace: explain, startThread: explain }}>
     <div className="demo-banner"><span>Remy · Sample workspace</span><Button variant="ghost" size="sm" onClick={() => { resetDemo(); select(initial); }}><RotateCcw />Reset</Button></div>
-    {surface ? (scene === "worktrees" ? <WorkspacePreview /> : scene === "review" ? <DiffPreview review /> : scene === "agents" ? <AgentPreview /> : <ChatView chat={chat} focused={false} />) : <SidebarProvider className="demo-app" style={{ "--sidebar-width": "17rem" } as CSSProperties}>
-      {!compact && <AppSidebar view="app" settingsTab="general" section="chats" selected={chat.id} servers={servers}
-        threadStructure={chats.map((row) => [row.id, row.parentChatId ?? "", row.serverId, row.cwd, row.pinned ? "1" : "", row.state].join("\u0000"))}
-        archived={[]} workspaces={workspaces} sections={sections} onSection={explain} onSelectChat={select} onOpenBeside={select}
-        onOpenTicket={explain} onOpenWorkspace={explain} onNewThread={explain} openSettings={explain} closeSettings={explain} />}
+    {surface ? (scene === "worktrees" ? <WorkspacePreview /> : scene === "review" ? <DiffPreview review /> : scene === "agents" ? <AgentPreview /> : <ChatView chat={chat} focused={false} />) : <SidebarProvider className="demo-app">
+      {!compact && <AppSidebar {...sidebar} />}
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         {compact && <div className="px-3 py-2"><Select value={chat.id} onValueChange={select}><SelectTrigger className="w-full" aria-label="Sample thread"><SelectValue /></SelectTrigger><SelectContent>{chats.map((entry) => <SelectItem key={entry.id} value={entry.id}>{entry.title}</SelectItem>)}</SelectContent></Select></div>}
         {compact ? <ChatView chat={chat} focused={false} /> : <ThreadWorkbench autoFocus={false} routeThread={chat} onOpenThread={select} onOpenTicket={explain} onOpenWorkspace={explain} onFocusThread={(_parent, id) => select(id)} />}

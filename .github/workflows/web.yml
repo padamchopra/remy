@@ -73,6 +73,7 @@ jobs:
           for attempt in {1..30}; do curl --silent --fail http://127.0.0.1:5181/ > /dev/null && break; sleep 1; done
           node web/scripts/website-check.mjs
           node web/scripts/website-performance.mjs
+          node web/scripts/sidebar-resize-check.mjs
       - run: npm test --prefix contract
       - run: npm run typecheck --prefix contract
       - run: npm test --prefix hub
