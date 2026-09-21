@@ -544,6 +544,7 @@ export function App() {
           inert={!sidebarShown}
           className={cn(
             "min-h-0 shrink-0 overflow-hidden transition-[width] duration-200 ease-out motion-reduce:transition-none",
+            "in-data-[resizing]:transition-none",
             sidebarShown ? "w-(--sidebar-width)" : "w-0",
           )}
         >

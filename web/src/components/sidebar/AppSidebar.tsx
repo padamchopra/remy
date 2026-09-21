@@ -12,6 +12,7 @@ import {
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarResizeHandle,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import {
@@ -177,6 +178,7 @@ export function AppSidebar({
           {accountMenu && <SidebarMenuItem><AccountMenu menu={accountMenu} /></SidebarMenuItem>}
         </SidebarMenu>
       </SidebarFooter>
+      <SidebarResizeHandle />
     </Sidebar>
   );
 }
