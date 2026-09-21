@@ -1,6 +1,6 @@
-import { HubThreadSidebar } from "./HubThreadSidebar";
+import { AppSidebar } from "./sidebar/AppSidebar";
+import { useHubThreadGroups } from "./sidebar/useHubSidebar";
 import { PaneHeader } from "./PaneHeader";
-import { AvatarFrom } from "./UserAvatar";
 import { useHubProfile } from "@/lib/hub-profile";
 import { HubModelFavorites } from "./HubModelFavorites";
 import { EmptyState } from "@/components/EmptyState";
@@ -10,19 +10,12 @@ import {
   Folder,
   Laptop,
   MessagesSquare,
-  Plus,
   SquareKanban,
   Users,
   User,
   LogOut,
-  ChevronsUpDown,
-  ChevronDown,
-  ChevronLeft,
   Settings2,
-  Settings as OrganizationSettingsIcon,
-  Check,
   Building2,
-  SquarePen,
   Network,
   Plug,
   Bell,
@@ -52,37 +45,16 @@ import {
 } from "@/components/ui/dialog";
 import {
   SidebarProvider,
-  Sidebar,
-  SidebarHeader,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarGroupContent,
-  SidebarMenu,
-  SidebarMenuItem,
-  SidebarMenuButton,
-  SidebarFooter,
   SidebarInset,
-  SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
 import {
   EmptyContent,
 } from "@/components/ui/empty";
 import { HubPersonalContext } from "@/lib/hub-scope";
-import { Skeleton } from "@/components/ui/skeleton";
 import { AppLoading } from "@/components/AppLoading";
 import { PaneLoading } from "@/components/PaneLoading";
 import { Spinner } from "@/components/ui/spinner";
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuLabel,
-} from "@/components/ui/dropdown-menu";
 import { Deferred } from "@/components/Deferred";
 import { HubComputerApproval } from "./HubComputerApproval";
 import { HubInvitation } from "./HubInvitation";
@@ -109,15 +81,6 @@ const Inbox = lazy(() =>
 const Routing = lazy(() =>
   import("./HubRouting").then((m) => ({ default: m.HubRouting })),
 );
-
-function NotificationButton({ onClick }: { onClick: () => void }) {
-  const { setOpenMobile } = useSidebar();
-  return (
-    <SidebarMenuButton tooltip="Notifications" aria-label="Notifications" onClick={() => { setOpenMobile(false); onClick(); }}>
-      <Bell /><span>Notifications</span>
-    </SidebarMenuButton>
-  );
-}
 
 function SidebarNavigation({ route }: { route: Route }) {
   const { setOpenMobile } = useSidebar();
@@ -258,6 +221,14 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
       offOrganization();
     };
   }, [organization?.id, profile?.id, isAll ? contextIds : ""]);
+  const threadGroups = useHubThreadGroups({
+    organizationId: organizationId === "all" ? personal?.id ?? "personal" : organizationId,
+    threads,
+    onSelect: (thread) => navigate({ name: "threads", organizationId, threadId: thread.id }),
+    onOpenWorkspace: (thread, workspaceId) => navigate(isAll
+      ? { name: "workspaces", workspaceId, organizationId: "all", ownerOrganizationId: thread.access.organizationId }
+      : { name: "workspaces", workspaceId, organizationId }),
+  });
   if (!loaded && !(profile && organization)) return <AppLoading />;
   if (signedOut) return <HubSignIn runtime={runtime} />;
   const requestedSection =
@@ -345,196 +316,60 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
       <HubModelFavorites key={`${profile?.id}:${organizationId}`} organizationId={isAll ? undefined : organizationId}>
       <SidebarProvider>
         <SidebarNavigation route={route} />
-        <Sidebar collapsible="icon">
-          {inSettings ? (
-            <SidebarHeader className="flex-row items-center px-3 py-3 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:px-2">
-              <SidebarMenu className="min-w-0 flex-1"><SidebarMenuItem>
-                <SidebarMenuButton tooltip="Back" aria-label="Back" data-link onClick={() => { const previous = previousSurface.current; navigate(previous && previous.organizationId === organizationId ? previous : { name: "threads", organizationId }); }}>
-                  <ChevronLeft /><span>Back</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem></SidebarMenu>
-              <SidebarTrigger className="shrink-0 group-data-[collapsible=icon]:order-first" />
-            </SidebarHeader>
-          ) : <SidebarHeader className="flex-row items-center gap-1 px-3 py-3 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:px-2">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <SidebarMenuButton
-                  tooltip="Choose account view"
-                  aria-label="Choose account view"
-                  className="min-w-0 flex-1"
-                >
-                  {isAll ? <Layers /> : isPersonal ? <User /> : <Building2 />}
-                  <span className="min-w-0 flex-1 truncate">
-                    {organization?.name ?? "Choose account"}
-                  </span>
-                  <ChevronDown className="text-muted-foreground" />
-                </SidebarMenuButton>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-60">
-                <DropdownMenuGroup>
-                  <DropdownMenuItem onSelect={() => navigate({name:"threads",organizationId:"all"})}><Layers /><span className="min-w-0 flex-1">All</span>{isAll && <Check />}</DropdownMenuItem>
-                  {personal && (
-                    <DropdownMenuItem
-                      onSelect={() =>
-                        navigate({
-                          name: "threads",
-                          organizationId: personal.id,
-                        })
-                      }
-                    >
-                      <User />
-                      <span className="min-w-0 flex-1 truncate">Personal</span>
-                      {isPersonal && <Check />}
-                    </DropdownMenuItem>
-                  )}
-                </DropdownMenuGroup>
-                <DropdownMenuSeparator />
-                <DropdownMenuGroup>
-                  <DropdownMenuLabel>Organizations</DropdownMenuLabel>
-                  {organizations.map((o) => (
-                    <div key={o.id} className="flex items-center gap-1">
-                      <DropdownMenuItem className="min-w-0 flex-1" onSelect={() => navigate({ name: "threads", organizationId: o.id })}>
-                        <Building2 />
-                        <span className="min-w-0 flex-1 truncate">{o.name}</span>
-                        {o.id === organizationId && <Check />}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem className="shrink-0 justify-center" aria-label={`${o.name} settings`} title={`${o.name} settings`} onSelect={() => navigate({name:"settings",tab:"organization",organizationTab:"general",organizationId:o.id})}>
-                        <OrganizationSettingsIcon />
-                        <span className="sr-only">{o.name} settings</span>
-                      </DropdownMenuItem>
-                    </div>
-                  ))}
-                  <DropdownMenuItem onSelect={() => setCreate(true)}>
-                    <Plus />
-                    Create organization
-                  </DropdownMenuItem>
-                </DropdownMenuGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label="New thread"
-              title="New thread"
-              data-link
-              onClick={() => {
-                navigate({ name: "threads", organizationId });
-              }}
-            >
-              <SquarePen />
-            </Button>
-            <SidebarTrigger className="shrink-0 group-data-[collapsible=icon]:order-first" />
-          </SidebarHeader>}
-          <SidebarContent>
-            {organization && (
-              <>
-                {[inSettings
-                  ? links.slice(4).filter(link => !isPersonal || !["Members", "Teams"].includes(link.label))
-                  : links.slice(0, 4)
-                ].map((group, index) => (
-                  <SidebarGroup key={index} className="shrink-0 px-3 group-data-[collapsible=icon]:px-2">
-                    <SidebarGroupContent>
-                      <SidebarMenu>
-                        {group.map((link) => (
-                          <SidebarMenuItem key={link.label}>
-                            <SidebarMenuButton
-                              className="text-muted-foreground data-[active=true]:text-foreground"
-                              tooltip={link.label}
-                              aria-label={link.label}
-                              isActive={link.selected}
-                              data-link
-                              onClick={() => navigate(link.route)}
-                            >
-                              <link.icon />
-                              <span>{link.label}</span>
-                            </SidebarMenuButton>
-                          </SidebarMenuItem>
-                        ))}
-                        {inSettings && <SidebarMenuItem>
-                          <NotificationButton onClick={() => setNotificationsAccount(organization.id)} />
-                        </SidebarMenuItem>}
-                      </SidebarMenu>
-                    </SidebarGroupContent>
-                  </SidebarGroup>
-                ))}
-                {!inSettings && <SidebarGroup className="shrink-0 px-3 group-data-[collapsible=icon]:px-2">
-                  <SidebarGroupLabel>Recent threads</SidebarGroupLabel>
-                  <SidebarGroupContent>
-                    {!threadsLoaded && (
-                      <div
-                        className="flex flex-col gap-3 px-2 py-2"
-                        role="status"
-                        aria-label="Loading threads"
-                      >
-                        {[1, 2, 3].map((n) => (
-                          <Skeleton key={n} className="h-3 w-3/4" />
-                        ))}
-                      </div>
-                    )}
-                    {threadsLoaded && !threads.length && (
-                      <p className="px-2 py-2 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
-                        No threads yet
-                      </p>
-                    )}
-                    <SidebarMenu>
-                      {isAll ? contexts.map(owner => <HubThreadSidebar key={owner.id} organizationId={owner.id} threads={threads.filter(t => t.access.organizationId === owner.id)} selected={route.name === "threads" ? {id:route.threadId} : undefined} onSelect={thread => navigate({name:"threads",organizationId:"all",threadId:thread.id})} onOpenWorkspace={workspaceId => navigate({name:"workspaces",workspaceId,organizationId:"all",ownerOrganizationId:owner.id})} />) : <HubThreadSidebar organizationId={organizationId ?? "personal"} threads={threads}
-                        selected={route.name === "threads" ? {id: route.threadId} : undefined}
-                        onSelect={thread => navigate({name: "threads", organizationId, threadId: thread.id})}
-                        onOpenWorkspace={workspaceId => navigate({name:"workspaces",workspaceId,organizationId})} />}
-                    </SidebarMenu>
-                  </SidebarGroupContent>
-                </SidebarGroup>}
-              </>
-            )}
-          </SidebarContent>
-          <SidebarFooter className="p-3 group-data-[collapsible=icon]:px-2">
-            <SidebarMenu>
-              {organization && (
-                <SidebarMenuItem>
-                  <SidebarMenuButton tooltip="Settings" aria-label="Settings" data-link isActive={inSettings} onClick={() => navigate({ name: "settings", tab: "devices", organizationId })}>
-                    <Settings2 /><span>Settings</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              )}
-              <SidebarMenuItem>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <SidebarMenuButton size="lg" tooltip="Account menu" aria-label="Account menu">
-                      <AvatarFrom avatar={shownProfile?.image ?? ""} className="size-6" />
-                      <span className="min-w-0 flex-1 truncate">
-                        {shownProfile?.name}
-                      </span>
-                      <ChevronsUpDown className="text-muted-foreground" />
-                    </SidebarMenuButton>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    side="top"
-                    align="start"
-                    className="w-(--radix-dropdown-menu-trigger-width)"
-                  >
-                    <DropdownMenuGroup>
-                      <DropdownMenuItem
-                        onSelect={() =>
-                          void hubRequest("/api/sessions/current", "DELETE")
-                            .then(() => {
-                              setPersonal(undefined);
-                              setOrganizations([]);
-                              setThreads([]);
-                              setSignedOut(true);
-                            })
-                            .catch((e) => setError(apiError(e)))
-                        }
-                      >
-                        <LogOut />
-                        Sign out
-                      </DropdownMenuItem>
-                    </DropdownMenuGroup>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarFooter>
-        </Sidebar>
+        <AppSidebar
+          collapsible="icon"
+          showTrigger
+          selected={route.name === "threads" ? route.threadId ?? null : null}
+          account={organization ? {
+            label: organization.name,
+            icon: isAll ? Layers : isPersonal ? User : Building2,
+            views: [
+              { id: "all", label: "All", icon: Layers, selected: isAll, onSelect: () => navigate({name:"threads",organizationId:"all"}) },
+              ...(personal ? [{ id: personal.id, label: "Personal", icon: User, selected: isPersonal, onSelect: () => navigate({name:"threads",organizationId:personal.id}) }] : []),
+              ...organizations.map(o => ({
+                id: o.id,
+                label: o.name,
+                icon: Building2,
+                organization: true,
+                selected: o.id === organizationId,
+                onSelect: () => navigate({name:"threads",organizationId:o.id}),
+                onSettings: () => navigate({name:"settings",tab:"organization",organizationTab:"general",organizationId:o.id}),
+              })),
+            ],
+            onCreate: () => setCreate(true),
+          } : undefined}
+          back={inSettings ? { label: "Back", onSelect: () => { const previous = previousSurface.current; navigate(previous && previous.organizationId === organizationId ? previous : { name: "threads", organizationId }); } } : undefined}
+          onNewThread={inSettings ? undefined : () => navigate({ name: "threads", organizationId })}
+          nav={inSettings
+            ? [
+                ...links.slice(4).filter(link => !isPersonal || !["Members", "Teams"].includes(link.label)).map(link => ({
+                  id: link.label, label: link.label, icon: link.icon, selected: link.selected, onSelect: () => navigate(link.route),
+                })),
+                ...(organization ? [{ id: "notifications", label: "Notifications", icon: Bell, selected: false, onSelect: () => setNotificationsAccount(organization.id) }] : []),
+              ]
+            : links.slice(0, 4).map(link => ({
+                id: link.label, label: link.label, icon: link.icon, selected: link.selected, onSelect: () => navigate(link.route),
+              }))}
+          groups={inSettings ? [] : threadGroups}
+          emptyThreads={!inSettings && threadsLoaded && !threads.length ? "No threads yet." : undefined}
+          footer={organization ? [{
+            label: "Settings",
+            icon: Settings2,
+            selected: inSettings,
+            onSelect: () => navigate({ name: "settings", tab: "devices", organizationId }),
+          }] : []}
+          accountMenu={{
+            name: shownProfile?.name ?? "",
+            image: shownProfile?.image,
+            items: [{
+              label: "Sign out",
+              icon: LogOut,
+              onSelect: () => void hubRequest("/api/sessions/current", "DELETE")
+                .then(() => { setPersonal(undefined); setOrganizations([]); setThreads([]); setSignedOut(true); })
+                .catch((e) => setError(apiError(e))),
+            }],
+          }}
+        />
         <SidebarInset className="h-svh min-w-0 overflow-hidden">
           {showPaneHeader && <PaneHeader sidebar crumbs={paneCrumbs} />}
           {error && (

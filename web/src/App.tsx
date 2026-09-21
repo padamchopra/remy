@@ -37,7 +37,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AppActionsProvider } from "@/actions/context";
-import { AppSidebar } from "@/components/AppSidebar";
+import { AppSidebar } from "@/components/sidebar/AppSidebar";
+import { useMacSidebar } from "@/components/sidebar/useMacSidebar";
 import { ChatComposer } from "@/components/ChatComposer";
 import { ChatView } from "@/components/ChatView";
 import { ThreadWorkbench } from "@/components/ThreadWorkbench";
@@ -256,15 +257,6 @@ export function App() {
   const closeSettings = () => go({ name: "threads" });
 
   const servers = useStore((s) => s.servers);
-  const threadStructure = useStore(useShallow((s) =>
-    s.chats.map((chat) => [
-      chat.id,
-      chat.parentChatId ?? "",
-      chat.serverId,
-      chat.cwd,
-      chat.pinned ? "1" : "",
-      chat.state,
-    ].join("\u0000"))));
   const chatIds = useStore(useShallow((s) => s.chats.map((chat) => chat.id)));
   // The workbench is keyed by the collection, so moving between a parent and
   // its subthreads keeps every tab mounted.
@@ -428,6 +420,26 @@ export function App() {
 
   const openBeside = (childId: string) => openChat(childId, true);
 
+  const sidebar = useMacSidebar({
+    view,
+    settingsTab,
+    section,
+    selected,
+    servers,
+    archived,
+    workspaces: allWorkspaces,
+    sections: SECTIONS,
+    onSection: (id) => go(routeForSection(id as Section)),
+    onSelectChat: openChat,
+    onOpenBeside: openBeside,
+    onOpenTicket: (key) => go({ name: "ticket", key }),
+    onOpenWorkspace: (workspaceId) => go({ name: "workspaces", workspaceId }),
+    onNewThread: draftChat,
+    openSettings,
+    closeSettings,
+    updateAvailable: release.available,
+  });
+
   // The thread in front changed by way of a tab, so the address says so
   // without the back button walking through every click.
   const focusThread = (parentId: string, threadId: string) => {
@@ -532,29 +544,10 @@ export function App() {
           inert={!sidebarShown}
           className={cn(
             "min-h-0 shrink-0 overflow-hidden transition-[width] duration-200 ease-out motion-reduce:transition-none",
-            sidebarShown ? "w-[280px]" : "w-0",
+            sidebarShown ? "w-(--sidebar-width)" : "w-0",
           )}
         >
-          <AppSidebar
-            view={view}
-            settingsTab={settingsTab}
-            section={section}
-            selected={selected}
-            servers={servers}
-            threadStructure={threadStructure}
-            archived={archived}
-            workspaces={allWorkspaces}
-            sections={SECTIONS}
-            onSection={(id) => go(routeForSection(id as Section))}
-            onSelectChat={openChat}
-            onOpenBeside={openBeside}
-            onOpenTicket={(key) => go({ name: "ticket", key })}
-            onOpenWorkspace={(workspaceId) => go({ name: "workspaces", workspaceId })}
-            onNewThread={draftChat}
-            openSettings={openSettings}
-            closeSettings={closeSettings}
-            updateAvailable={release.available}
-          />
+          <AppSidebar {...sidebar} />
         </div>
 
         {/* The pane is a panel set into the chrome. Whatever is open — a thread,

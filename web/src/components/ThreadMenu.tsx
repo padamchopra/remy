@@ -97,6 +97,9 @@ function ThreadMenuView({
   const actionRef = useRef<HTMLButtonElement>(null);
   const menuOpen = contextOpen || dropdownOpen;
   const unavailable = busy || !facts.online;
+  /// An archived row is already archived and a running one has to be
+  /// stopped first, which is a confirmation, not a one-click action.
+  const quickArchive = !archive && !threadIsRunning(chat);
 
   const loadPullRequest = actions.loadPullRequest;
   useEffect(() => {
@@ -191,11 +194,33 @@ function ThreadMenuView({
           }
         }}>
           {typeof children === "function" ? children(menuOpen || Boolean(dialog)) : children}
+          {/* Hovering a row reveals one action, and which one depends on what
+              the row is doing. A thread you are done with gets archived, so
+              that is the action under the cursor; a working or needs-you
+              thread cannot be, and keeps the overflow. Everything else is a
+              right-click or Shift+F10 away either side. */}
+          {quickArchive && (
+            <SidebarMenuAction
+              ref={actionRef}
+              showOnHover
+              aria-label={`Archive ${chat.title}`}
+              title="Archive thread"
+              disabled={unavailable}
+              className="bg-sidebar group-hover/menu-item:bg-sidebar-accent"
+              onClick={(event) => { event.stopPropagation(); archiveThread(); }}
+            >
+              <Archive />
+            </SidebarMenuAction>
+          )}
           <DropdownMenu open={dropdownOpen} onOpenChange={setDropdownOpen}>
             <DropdownMenuTrigger asChild>
-              <SidebarMenuAction ref={actionRef} showOnHover aria-label={`Thread actions for ${chat.title}`} aria-keyshortcuts="Shift+F10" title="Thread actions (Shift+F10)" className="bg-sidebar group-hover/menu-item:bg-sidebar-accent data-[state=open]:opacity-100">
-                <MoreHorizontal />
-              </SidebarMenuAction>
+              {quickArchive
+                // The keyboard still reaches the whole menu, so it needs
+                // somewhere to open from once the visible button is Archive.
+                ? <span aria-hidden tabIndex={-1} className="pointer-events-none absolute top-1.5 right-1 size-0" />
+                : <SidebarMenuAction ref={actionRef} showOnHover aria-label={`Thread actions for ${chat.title}`} aria-keyshortcuts="Shift+F10" title="Thread actions (Shift+F10)" className="bg-sidebar group-hover/menu-item:bg-sidebar-accent data-[state=open]:opacity-100">
+                    <MoreHorizontal />
+                  </SidebarMenuAction>}
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" side="right" onCloseAutoFocus={(event) => { if (dialog) event.preventDefault(); }}>
               {items(false)}

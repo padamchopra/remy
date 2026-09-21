@@ -51,10 +51,34 @@ function MenuItem({ className, ...props }: React.ComponentProps<typeof MenuPrimi
   )
 }
 
+function MenuSeparator({ className, ...props }: React.ComponentProps<typeof MenuPrimitive.Separator>) {
+  return (
+    <MenuPrimitive.Separator
+      data-slot="menu-separator"
+      className={cn("-mx-1 my-1 h-px bg-border", className)}
+      {...props}
+    />
+  )
+}
+
+function MenuGroupLabel({ className, ...props }: React.ComponentProps<typeof MenuPrimitive.GroupLabel>) {
+  return (
+    <MenuPrimitive.GroupLabel
+      data-slot="menu-group-label"
+      className={cn("px-2 py-1.5 text-sm font-medium", className)}
+      {...props}
+    />
+  )
+}
+
+function MenuGroup({ ...props }: React.ComponentProps<typeof MenuPrimitive.Group>) {
+  return <MenuPrimitive.Group data-slot="menu-group" {...props} />
+}
+
 /// The trailing check that marks the chosen row, per the menu convention in
 /// `.agents/skills/ui`.
 function MenuItemCheck({ checked }: { checked: boolean }) {
   return <CheckIcon className={cn("ml-auto size-4 shrink-0", checked ? "opacity-100" : "opacity-0")} />
 }
 
-export { Menu, MenuContent, MenuItem, MenuItemCheck, MenuTrigger }
+export { Menu, MenuContent, MenuGroup, MenuGroupLabel, MenuItem, MenuItemCheck, MenuSeparator, MenuTrigger }

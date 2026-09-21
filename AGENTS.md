@@ -67,6 +67,7 @@ Skip `VITE_MC_FIXTURE=1`; that is fake data, not your real state.
 - **`product-design`** — ownership, settings placement, defaults, actors, and deletion behavior. Read it before shaping a capability or integration.
 - **`distributed-state`** — complete read, write, live-update, and reconnect paths across devices and process boundaries.
 - **`performance-diagnosis`** — measure request, payload, render, and freshness waits before choosing a fix.
+- **`mockups`** — the Paper file: the `System` page owns colour, the `Sidebar` page owns the app chrome, and a feature page clones it rather than redrawing it.
 - **`qa`** — after an interaction or server behavior change, drive the current code in the running app before calling it done.
 - **`pr-author`** — every PR carries proportional reviewer evidence and reads in one screen; screenshots or recordings are required only for behavior a reviewer can exercise or judge in the running app.
 - **`skill-capture`** — when the user highlights a durable convention, write it into `.agents/skills/` in the same change.

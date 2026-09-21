@@ -279,8 +279,15 @@ try {
             assert.equal(await page.getByRole("menuitem",{name:"Delete thread…",exact:true}).isDisabled(),false);
             if(artifacts && !returning) await page.screenshot({path:`${artifacts}/hosted-cloud-thread-menu.png`});
             await page.keyboard.press("Escape");
+            // Hovering a settled thread offers the one action it needs. The
+            // overflow is gone from the row, so the rest of the menu comes
+            // from the right-click above or from the keyboard below.
             await personalThread.hover();
-            await page.getByRole("button",{name:"Thread actions for Personal thread"}).click();
+            await page.getByRole("button",{name:"Archive Personal thread"}).waitFor();
+            assert.equal(await page.getByRole("button",{name:"Thread actions for Personal thread"}).count(),0,"A settled thread hovers to Archive, not an overflow");
+            if(artifacts && !returning) await page.screenshot({path:`${artifacts}/hosted-thread-hover-archive.png`});
+            await personalThread.focus();
+            await page.keyboard.press("Shift+F10");
             await page.getByRole("menuitem",{name:"Copy thread link",exact:true}).waitFor();
             assert.equal(await page.getByRole("menuitem",{name:"Rename…",exact:true}).count(),1);
             if(artifacts && !returning) await page.screenshot({path:`${artifacts}/hosted-thread-overflow-menu.png`});
@@ -289,6 +296,20 @@ try {
           const threadPane=page.getByRole("region",{name:"Threads",exact:true});
           const composer=page.getByRole("form",{name:"New thread",exact:true});
           await composer.waitFor();
+          // The sidebar header picks which account the window is showing.
+          if(!mobile) {
+            await page.getByRole("button",{name:"Choose account view",exact:true}).click();
+            await page.getByRole("menuitem",{name:"Personal",exact:true}).waitFor();
+            assert.equal(await page.getByRole("menuitem",{name:"All",exact:true}).count(),1);
+            assert.equal(await page.getByRole("menuitem",{name:"Studio settings",exact:true}).count(),1,"Each organization carries its own settings");
+            assert.equal(await page.getByRole("menuitem",{name:"Create organization",exact:true}).count(),1);
+            if(artifacts && !returning) await page.screenshot({path:`${artifacts}/hosted-account-picker.png`});
+            await page.getByRole("menuitem",{name:"Personal",exact:true}).click();
+            await page.waitForURL(current=>current.searchParams.get("organization")==="personal");
+            await page.goto(clean("/threads?organization=all"));
+            await page.waitForURL(current=>current.search==="");
+            await composer.waitFor();
+          }
           assert.equal(await page.locator('[data-slot="pane-header"]').count(),1,"Threads uses the shared pane header");
           assert.equal(await threadPane.getByText("Personal thread",{exact:true}).count(),0,"The main pane does not repeat Personal threads");
           assert.equal(await threadPane.getByText("Studio thread",{exact:true}).count(),0,"The main pane does not repeat organization threads");
@@ -529,17 +550,26 @@ try {
           await page.reload();
           await page.getByRole("button",{name:"Copy branch feature/switched",exact:true}).waitFor();
           if(mobile) await page.getByRole("button",{name:"Toggle Sidebar",exact:true}).click();
+          // The row's last icon says who else is in the thread: faces when
+          // there is anybody besides you, otherwise how it is shared. The
+          // provider has its own glyph in the lane now, so it is no longer
+          // mixed in with the people.
           const faces=page.locator('.sidebar-thread [data-slot="avatar-group"]');
-          assert.equal(await faces.locator('[data-slot="avatar"]').count(),2);
-          assert.equal(await page.locator('.sidebar-thread-context').getByRole('img',{name:'Codex',exact:true}).count(),0);
-          for(const [count,overflow] of [[1,0],[2,2],[4,4],[0,0]]) {
+          assert.equal(await faces.count(),0,"a private thread with nobody else shows the lock, not a face");
+          assert.equal(await page.locator('.sidebar-thread-context').getByLabel("Private",{exact:true}).count(),1);
+          assert.equal(await page.locator('.sidebar-thread-context').getByRole('img',{name:'Codex',exact:true}).count(),1);
+          for(const count of [1,2,4,0]) {
+            // The owner plus the participants, deduplicated; more than three
+            // collapses to two faces and a count, and nobody else is the lock.
+            const people=count+1, overflow=people>3?people-2:0;
             startedThread.access.participants=[startedThread.access.owner,...Array.from({length:count},(_,i)=>({id:`p${i}`,label:`Person ${i}`}))];
             startedThread.revision++;
             for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot",cursor:10+startedThread.revision,thread:startedThread}));}catch{}
-            await page.waitForFunction(({count,overflow})=>{
+            await page.waitForFunction(({people,overflow})=>{
               const group=document.querySelector('.sidebar-thread [data-slot="avatar-group"]');
-              return group?.querySelectorAll('[data-slot="avatar"]').length===(overflow?2:count+2) && (group.querySelector('[data-slot="avatar-group-count"]')?.textContent??'')===(overflow?'+'+overflow:'');
-            },{count,overflow});
+              if(people<2) return !group && Boolean(document.querySelector('.sidebar-thread-context [aria-label="Private"]'));
+              return group?.querySelectorAll('[data-slot="avatar"]').length===(overflow?2:people) && (group.querySelector('[data-slot="avatar-group-count"]')?.textContent??'')===(overflow?'+'+overflow:'');
+            },{people,overflow});
             if(count===1) await faces.locator('[data-slot="avatar-image"]').waitFor();
           }
           if(mobile) await page.locator('[data-slot="sheet-overlay"]').click({position:{x:380,y:400}});
