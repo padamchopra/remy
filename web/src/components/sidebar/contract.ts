@@ -2,8 +2,14 @@ import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import type { ArchivedThread, Chat, ChatState } from "@/state/types";
 import type { HostedThreadMenuSource } from "@/components/ThreadMenu";
-import type { ThreadPerson } from "@/components/ThreadAvatars";
 import type { DeviceIconId } from "@/lib/devices";
+
+/// Someone who can read and write a thread.
+export interface ThreadPerson {
+  id: string;
+  label: string;
+  image?: string | null;
+}
 
 /// What `AppSidebar` needs to draw itself, with nothing in it that says where
 /// the data came from. The Mac shell reads the local daemon and the hosted
@@ -90,9 +96,9 @@ export interface SidebarThread {
 export interface SidebarThreadGroup {
   key: string;
   label: string;
+  /// A glyph before the label, where the name alone does not say enough.
+  icon?: LucideIcon;
   threads: SidebarThread[];
-  /// How many the group holds in total, shown beside its label.
-  total: number;
   hidden?: number;
   onRevealMore?: () => void;
 }

@@ -1,6 +1,5 @@
 import { memo, useState } from "react";
 import { Lock, Users } from "lucide-react";
-import { ThreadAvatars } from "@/components/ThreadAvatars";
 import { SidebarMenuButton } from "@/components/ui/sidebar";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { ThreadStatus } from "@/components/ThreadStatus";
@@ -28,7 +27,7 @@ function SidebarThreadRowInner({ thread, active }: { thread: SidebarThread; acti
       aria-label={thread.title}
       isActive={active}
       onClick={thread.onSelect}
-      className="sidebar-thread h-auto flex-col items-stretch gap-1 px-2.5 py-2.5 group-focus-within/menu-item:!bg-sidebar-row-hover group-hover/menu-item:!bg-sidebar-row-hover"
+      className="sidebar-thread h-auto flex-col items-stretch gap-1 px-2.5 py-2.5 group-focus-within/menu-item:!bg-sidebar-row-hover group-hover/menu-item:!bg-sidebar-row-hover group-has-data-[sidebar=menu-action]/menu-item:pr-2.5"
     >
       <span className="flex min-w-0 items-start gap-2">
         <span className="sidebar-thread-title min-w-0 flex-1 whitespace-normal break-words line-clamp-2">
@@ -46,14 +45,10 @@ function SidebarThreadRowInner({ thread, active }: { thread: SidebarThread; acti
         {thread.workspace?.mark}
         {thread.computer && <DeviceIcon className="size-3 shrink-0" />}
         {thread.provider && <ProviderMark provider={thread.provider} className="size-3 shrink-0" />}
-        {/* The last slot says who else is in this. Anyone besides you is the
-            fact worth the space, and a private thread can still have named
-            participants, so the faces win over the glyph whenever there are
-            any. With nobody else it falls back to how the thread is shared,
-            and the hover card says both either way. */}
-        {thread.people.length > 1
-          ? <ThreadAvatars people={thread.people} />
-          : thread.shared === undefined ? null
+        {/* The last slot says how the thread is shared, as one glyph like the
+            three before it. Who is in it is a list of names, which is what
+            the hover card is for. */}
+        {thread.shared === undefined ? null
           : thread.shared ? <Users aria-label="Shared" className="size-3 shrink-0" />
           : <Lock aria-label="Private" className="size-3 shrink-0" />}
         <span className="flex-1" />
@@ -107,6 +102,7 @@ export const SidebarChildThreadRow = memo(function SidebarChildThreadRow({
           last ? "before:h-1/2" : "before:bottom-0",
           "after:absolute after:left-[15px] after:top-1/2 after:h-px after:w-2 after:bg-border",
           "group-focus-within/menu-item:!bg-sidebar-row-hover group-hover/menu-item:!bg-sidebar-row-hover",
+          "group-has-data-[sidebar=menu-action]/menu-item:pr-2.5",
         )}
         onClick={thread.onSelect}
       >

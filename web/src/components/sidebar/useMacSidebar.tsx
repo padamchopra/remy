@@ -1,6 +1,6 @@
 import { useMemo, useState, type ComponentType } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { ArrowUpCircle, Settings2 } from "lucide-react";
+import { Archive, ArrowUpCircle, Pin, Settings2 } from "lucide-react";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { agoLabel, elapsedSince, useTicker } from "@/lib/elapsed";
 import { deviceIcon } from "@/lib/devices";
@@ -152,7 +152,7 @@ export function useMacSidebar({
       return {
         key: group.key,
         label: group.key === "pinned" ? "Pinned" : "Recent threads",
-        total: group.threads.length,
+        icon: group.key === "pinned" ? Pin : undefined,
         hidden: Math.min(hidden, SETTLED_THREAD_BATCH),
         onRevealMore: hidden > 0 ? () => revealMore(group.key) : undefined,
         threads: visible.flatMap((entry) => {
@@ -178,7 +178,7 @@ export function useMacSidebar({
       built.push({
         key: "archived",
         label: "Archived",
-        total: archived.length,
+        icon: Archive,
         hidden: Math.min(archived.length - visible.length, SETTLED_THREAD_BATCH),
         onRevealMore: archived.length > visible.length ? () => revealMore("archived") : undefined,
         threads: visible.map((thread) => {

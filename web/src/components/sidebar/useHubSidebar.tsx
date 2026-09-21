@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Pin } from "lucide-react";
 import type { ComputerSummary, HubThread, OrganizationWorkspace } from "@remy/contract";
 import { normalizeRepositoryOrigin } from "@/lib/hub-workspace-computers";
 import { isProjectIconFile } from "@/lib/projects";
@@ -152,8 +153,8 @@ export function useHubThreadGroups({
   const pinned = rows.filter((row) => row.pinned);
   const recent = rows.filter((row) => !row.pinned);
   return [
-    ...(pinned.length > 0 ? [{ key: "pinned", label: "Pinned", total: pinned.length, threads: pinned }] : []),
-    ...(recent.length > 0 ? [{ key: "threads", label: "Recent threads", total: recent.length, threads: recent }] : []),
+    ...(pinned.length > 0 ? [{ key: "pinned", label: "Pinned", icon: Pin, threads: pinned }] : []),
+    ...(recent.length > 0 ? [{ key: "threads", label: "Recent threads", threads: recent }] : []),
   ];
 }
 
