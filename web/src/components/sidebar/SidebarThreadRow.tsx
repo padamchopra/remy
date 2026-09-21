@@ -27,7 +27,7 @@ function SidebarThreadRowInner({ thread, active }: { thread: SidebarThread; acti
       aria-label={thread.title}
       isActive={active}
       onClick={thread.onSelect}
-      className="sidebar-thread h-auto flex-col items-stretch gap-1 px-2.5 py-2.5 group-focus-within/menu-item:!bg-sidebar-row-hover group-hover/menu-item:!bg-sidebar-row-hover"
+      className="sidebar-thread h-auto flex-col items-stretch gap-1 px-2.5 py-2.5 group-focus-within/menu-item:!bg-sidebar-row-hover group-hover/menu-item:!bg-sidebar-row-hover group-has-data-[sidebar=menu-action]/menu-item:pr-2.5"
     >
       <span className="flex min-w-0 items-start gap-2">
         <span className="sidebar-thread-title min-w-0 flex-1 whitespace-normal break-words line-clamp-2">
@@ -102,6 +102,7 @@ export const SidebarChildThreadRow = memo(function SidebarChildThreadRow({
           last ? "before:h-1/2" : "before:bottom-0",
           "after:absolute after:left-[15px] after:top-1/2 after:h-px after:w-2 after:bg-border",
           "group-focus-within/menu-item:!bg-sidebar-row-hover group-hover/menu-item:!bg-sidebar-row-hover",
+          "group-has-data-[sidebar=menu-action]/menu-item:pr-2.5",
         )}
         onClick={thread.onSelect}
       >
