@@ -550,28 +550,24 @@ try {
           await page.reload();
           await page.getByRole("button",{name:"Copy branch feature/switched",exact:true}).waitFor();
           if(mobile) await page.getByRole("button",{name:"Toggle Sidebar",exact:true}).click();
-          // The row's last icon says who else is in the thread: faces when
-          // there is anybody besides you, otherwise how it is shared. The
-          // provider has its own glyph in the lane now, so it is no longer
-          // mixed in with the people.
-          const faces=page.locator('.sidebar-thread [data-slot="avatar-group"]');
-          assert.equal(await faces.count(),0,"a private thread with nobody else shows the lock, not a face");
-          assert.equal(await page.locator('.sidebar-thread-context').getByLabel("Private",{exact:true}).count(),1);
-          assert.equal(await page.locator('.sidebar-thread-context').getByRole('img',{name:'Codex',exact:true}).count(),1);
-          for(const count of [1,2,4,0]) {
-            // The owner plus the participants, deduplicated; more than three
-            // collapses to two faces and a count, and nobody else is the lock.
-            const people=count+1, overflow=people>3?people-2:0;
-            startedThread.access.participants=[startedThread.access.owner,...Array.from({length:count},(_,i)=>({id:`p${i}`,label:`Person ${i}`}))];
-            startedThread.revision++;
-            for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot",cursor:10+startedThread.revision,thread:startedThread}));}catch{}
-            await page.waitForFunction(({people,overflow})=>{
-              const group=document.querySelector('.sidebar-thread [data-slot="avatar-group"]');
-              if(people<2) return !group && Boolean(document.querySelector('.sidebar-thread-context [aria-label="Private"]'));
-              return group?.querySelectorAll('[data-slot="avatar"]').length===(overflow?2:people) && (group.querySelector('[data-slot="avatar-group-count"]')?.textContent??'')===(overflow?'+'+overflow:'');
-            },{people,overflow});
-            if(count===1) await faces.locator('[data-slot="avatar-image"]').waitFor();
-          }
+          // The row's icon lane is four glyphs and no faces: workspace,
+          // computer, provider, and how the thread is shared. Who is in it is
+          // a list of names, which the hover card carries.
+          const lane=page.locator('.sidebar-thread-context');
+          assert.equal(await page.locator('.sidebar-thread [data-slot="avatar-group"]').count(),0,"the row shows glyphs, not faces");
+          assert.equal(await lane.getByRole('img',{name:'Codex',exact:true}).count(),1);
+          assert.equal(await lane.getByLabel("Private",{exact:true}).count(),1);
+          assert.equal(await lane.getByLabel("Shared",{exact:true}).count(),0);
+          // Sharing the thread swaps the lock for the shared glyph.
+          startedThread.access.visibility="open";
+          startedThread.revision++;
+          for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot",cursor:10+startedThread.revision,thread:startedThread}));}catch{}
+          await lane.getByLabel("Shared",{exact:true}).waitFor();
+          assert.equal(await lane.getByLabel("Private",{exact:true}).count(),0);
+          startedThread.access.visibility="private";
+          startedThread.revision++;
+          for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot",cursor:10+startedThread.revision,thread:startedThread}));}catch{}
+          await lane.getByLabel("Private",{exact:true}).waitFor();
           if(mobile) await page.locator('[data-slot="sheet-overlay"]').click({position:{x:380,y:400}});
           const reply=page.getByRole("textbox",{name:"Message",exact:true});
           assert.equal(await page.getByRole("button",{name:"Send",exact:true}).isDisabled(),true);

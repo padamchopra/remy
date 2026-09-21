@@ -127,8 +127,8 @@ export function AppSidebar({
         {groups.map((group) => (
           <SidebarGroup key={group.key} className="shrink-0 px-3 py-1">
             <SidebarGroupLabel className="sidebar-section-label">
+              {group.icon && <group.icon className="size-3 shrink-0" />}
               <span>{group.label}</span>
-              <span className="ml-auto font-mono tabular-nums">{group.total}</span>
             </SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu className="gap-0">
@@ -166,7 +166,9 @@ export function AppSidebar({
       </SidebarContent>
 
       <SidebarFooter className="p-3 group-data-[collapsible=icon]:px-2">
-        <SidebarMenu>
+        {/* Settings is navigation, so it reads like the nav above it rather
+            than competing with the account row, which is a person's name. */}
+        <SidebarMenu className="sidebar-navigation">
           {footer.map((item) => (
             <SidebarMenuItem key={item.label}>
               <SidebarMenuButton data-link tooltip={item.label} aria-label={item.label} isActive={item.selected} onClick={item.onSelect}>
@@ -175,8 +177,8 @@ export function AppSidebar({
               </SidebarMenuButton>
             </SidebarMenuItem>
           ))}
-          {accountMenu && <SidebarMenuItem><AccountMenu menu={accountMenu} /></SidebarMenuItem>}
         </SidebarMenu>
+        {accountMenu && <SidebarMenu><SidebarMenuItem><AccountMenu menu={accountMenu} /></SidebarMenuItem></SidebarMenu>}
       </SidebarFooter>
       <SidebarResizeHandle />
     </Sidebar>

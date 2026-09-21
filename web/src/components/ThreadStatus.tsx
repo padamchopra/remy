@@ -5,7 +5,7 @@ const states = {
   idle: { label: "Done", variant: "ghost" },
   working: { label: "Working", variant: "info" },
   needs_input: { label: "Needs you", variant: "warning" },
-  error: { label: "Error", variant: "destructive" },
+  error: { label: "Error", variant: "error" },
 } as const;
 
 export function ThreadStatus({ state }: { state: ChatState }) {

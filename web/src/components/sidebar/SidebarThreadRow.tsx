@@ -1,6 +1,5 @@
 import { memo, useState } from "react";
 import { Lock, Users } from "lucide-react";
-import { ThreadAvatars } from "@/components/ThreadAvatars";
 import { SidebarMenuButton } from "@/components/ui/sidebar";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { ThreadStatus } from "@/components/ThreadStatus";
@@ -46,14 +45,10 @@ function SidebarThreadRowInner({ thread, active }: { thread: SidebarThread; acti
         {thread.workspace?.mark}
         {thread.computer && <DeviceIcon className="size-3 shrink-0" />}
         {thread.provider && <ProviderMark provider={thread.provider} className="size-3 shrink-0" />}
-        {/* The last slot says who else is in this. Anyone besides you is the
-            fact worth the space, and a private thread can still have named
-            participants, so the faces win over the glyph whenever there are
-            any. With nobody else it falls back to how the thread is shared,
-            and the hover card says both either way. */}
-        {thread.people.length > 1
-          ? <ThreadAvatars people={thread.people} />
-          : thread.shared === undefined ? null
+        {/* The last slot says how the thread is shared, as one glyph like the
+            three before it. Who is in it is a list of names, which is what
+            the hover card is for. */}
+        {thread.shared === undefined ? null
           : thread.shared ? <Users aria-label="Shared" className="size-3 shrink-0" />
           : <Lock aria-label="Private" className="size-3 shrink-0" />}
         <span className="flex-1" />
