@@ -15,7 +15,6 @@ import {
   CircleX,
   ExternalLink,
   Files,
-  GitBranch,
   GitCommitHorizontal,
   GitPullRequest,
   LoaderCircle,
@@ -43,7 +42,7 @@ import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { Item, ItemContent, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
+import { Item, ItemContent, ItemTitle } from "@/components/ui/item";
 import { Message, MessageContent, MessageGroup, MessageHeader } from "@/components/ui/message";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -62,6 +61,7 @@ import {
 import { apiError } from "@/lib/api-error";
 import type { ModelChoice } from "@/lib/providers";
 import { transport } from "@/lib/transport";
+import { useStore } from "@/state/store";
 import { cn } from "@/lib/utils";
 import type {
   ChatCodeReference,
@@ -85,7 +85,7 @@ interface GuideFileReview {
   onViewedChange: (path: string, viewed: boolean) => void;
 }
 
-type PullRequestTab = "summary" | "code" | "guide";
+type PullRequestTab = "summary" | "code" | "activity" | "guide";
 
 async function findSavedGuide(repository: string, number: number, fallbackServerId: string) {
   const servers = await transport.servers();
@@ -452,6 +452,11 @@ export function PullRequestView({
   }
 
   const changedFiles = pullRequest.changedFiles || pullRequest.files.length;
+  void guideUnavailable;
+  void guideLoading;
+  void guideError;
+  void startGuide;
+  void PullRequestGuideView;
 
   return (
     <PullRequestReviewProvider key={`${serverId}:${pullRequest.repository}:${pullRequest.number}`} serverId={serverId} repository={pullRequest.repository} number={pullRequest.number}
@@ -487,16 +492,6 @@ export function PullRequestView({
                 Mark ready
               </Button>
             )}
-            {pullRequest.state === "OPEN" && (
-              <PullRequestMergeDialog
-                serverId={serverId}
-                pullRequest={pullRequest}
-                onMerged={() => {
-                  setPullRequest((current) => current ? { ...current, state: "MERGED" } : current);
-                  onPullRequestChanged?.();
-                }}
-              />
-            )}
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button asChild variant="ghost" size="icon-sm">
@@ -519,10 +514,10 @@ export function PullRequestView({
               Summary
             </TabsTrigger>
             <TabsTrigger value="code" className="h-full flex-none rounded-none px-2 text-xs after:bottom-0">
-              Code <Badge variant="secondary" className="h-4 min-w-4 px-1 text-[10px] leading-none tabular-nums">{changedFiles}</Badge>
+              Files <Badge variant="secondary" className="h-4 min-w-4 px-1 text-[10px] leading-none tabular-nums">{changedFiles}</Badge>
             </TabsTrigger>
-            <TabsTrigger value="guide" className="h-full flex-none rounded-none px-2 text-xs after:bottom-0">
-              Guide
+            <TabsTrigger value="activity" className="h-full flex-none rounded-none px-2 text-xs after:bottom-0">
+              Activity
             </TabsTrigger>
           </TabsList>
           <PullRequestStackInfo
@@ -536,7 +531,16 @@ export function PullRequestView({
       </header>
 
       <TabsContent value="summary" className="min-h-0 overflow-hidden">
-        <PullRequestSummary pullRequest={pullRequest} timeline={timeline} timelineError={timelineError} />
+        <PullRequestSummary
+          serverId={serverId}
+          pullRequest={pullRequest}
+          stack={stack}
+          chatId={chatId}
+          onMerged={() => {
+            setPullRequest((current) => current ? { ...current, state: "MERGED" } : current);
+            onPullRequestChanged?.();
+          }}
+        />
       </TabsContent>
       <TabsContent value="code" className="min-h-0 overflow-hidden">
         <PullRequestFiles
@@ -551,22 +555,12 @@ export function PullRequestView({
           onFileOpenChange={setFileOpen}
         />
       </TabsContent>
-      <TabsContent value="guide" className="min-h-0 overflow-hidden">
-        <PullRequestGuideView
-          fileReview={{ serverId, pullRequest, openFiles, markingViewed, onOpenChange: setFileOpen, onViewedChange: markFileViewed }}
-          guide={guide}
-          commits={guideCommits}
-          choice={guideChoice}
-          selectedCommitShas={guideCommitShas}
-          loading={guideLoading}
-          generating={generatingGuide}
-          error={guideError}
-          unavailable={guideUnavailable}
-          onChoiceChange={setGuideChoice}
-          onCommitSelectionChange={setGuideCommitShas}
-          onRetry={() => { setGuideLoaded(false); setGuideError(""); }}
-          onStart={() => void startGuide()}
-        />
+      <TabsContent value="activity" className="min-h-0 overflow-hidden">
+        <ScrollArea className="h-full">
+          <div className="mx-auto max-w-3xl px-6 py-7">
+            <PullRequestActivity timeline={timeline} error={timelineError} />
+          </div>
+        </ScrollArea>
       </TabsContent>
       <PullRequestReviewComposer />
     </Tabs>
@@ -938,90 +932,97 @@ function PullRequestStateBadge({ pullRequest }: { pullRequest: PullRequestData }
 }
 
 function PullRequestSummary({
+  serverId,
   pullRequest,
-  timeline,
-  timelineError,
+  stack,
+  chatId,
+  onMerged,
 }: {
+  serverId: string;
   pullRequest: PullRequestData;
-  timeline?: PullRequestTimelineItem[];
-  timelineError: string;
+  stack?: PullRequestStack | null;
+  chatId?: string;
+  onMerged: () => void;
 }) {
-  const failed = pullRequest.checks.filter((check) => check.state === "fail").length;
-  const pending = pullRequest.checks.filter((check) => check.state === "pending").length;
-  const passed = pullRequest.checks.filter((check) => check.state === "pass").length;
-  const review = pullRequest.reviewDecision === "APPROVED"
-    ? "Approved"
-    : pullRequest.reviewDecision === "CHANGES_REQUESTED"
-      ? "Changes requested"
-      : "Review pending";
-  const checks = failed > 0
-    ? `${failed} failed`
-    : pending > 0
-      ? `${pending} pending`
-      : pullRequest.checks.length > 0
-        ? `${passed} passed`
-        : "No checks";
+  const failed = pullRequest.checks.filter((check) => check.state === "fail");
+  const passed = pullRequest.checks.filter((check) => check.state === "pass" || check.state === "skipping").length;
+  const askThread = () => {
+    if (!chatId) return;
+    const names = failed.map((check) => check.name).join(", ");
+    void useStore.getState().sendMessage(chatId, `Fix the failing checks on ${pullRequest.repository}#${pullRequest.number}: ${names}.`);
+    toast.success("Asked the thread to fix the failing checks.");
+  };
 
   return (
     <ScrollArea className="h-full">
-      <div className="mx-auto max-w-4xl px-6 py-7 sm:px-8 lg:px-10 lg:py-9">
-        <h1 className="text-2xl font-semibold leading-tight tracking-tight">{pullRequest.title}</h1>
-        <p className="mt-2 text-sm text-muted-foreground">{pullRequest.repository} · #{pullRequest.number}</p>
-
-        <dl className="mt-8 grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-4 gap-y-3 text-sm">
-          <dt className="flex items-center gap-2 text-muted-foreground"><GitBranch className="size-4" />Branch</dt>
-          <dd className="flex min-w-0 flex-wrap items-center gap-2">
-            <span className="min-w-0 truncate font-mono text-xs">{pullRequest.headRefName}</span>
-            <ArrowRight className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="font-mono text-xs">{pullRequest.baseRefName}</span>
-            <span className="ml-1 font-mono text-xs tabular-nums">
-              <span className="text-success-foreground">+{pullRequest.additions}</span>{" "}
-              <span className="text-destructive">−{pullRequest.deletions}</span>
-            </span>
-          </dd>
-          <dt className="flex items-center gap-2 text-muted-foreground"><MessageSquare className="size-4" />Review</dt>
-          <dd>{review}</dd>
-          <dt className="flex items-center gap-2 text-muted-foreground"><CircleCheck className="size-4" />Checks</dt>
-          <dd>{checks}</dd>
-          <dt className="flex items-center gap-2 text-muted-foreground"><GitPullRequest className="size-4" />Status</dt>
-          <dd><PullRequestStateBadge pullRequest={pullRequest} /></dd>
-        </dl>
-
-        <section className="mt-9 border-t border-border pt-7">
-          <h2 className="text-base font-semibold">Description</h2>
-          <div className="mt-4">
-            {pullRequest.body.trim() ? (
-              <Markdown text={pullRequest.body} className="text-sm" />
-            ) : (
-              <p className="text-sm text-muted-foreground">No description.</p>
-            )}
+      <div className="mx-auto flex max-w-6xl gap-8 px-6 py-6">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <PullRequestStateBadge pullRequest={pullRequest} />
+            <span>{pullRequest.repository} #{pullRequest.number}</span>
           </div>
-        </section>
-
-        <section className="mt-8 border-t border-border pt-5">
-          <h2 className="text-sm font-medium">Recent activity</h2>
-          <PullRequestActivity timeline={timeline} error={timelineError} />
-        </section>
-
-        {pullRequest.checks.length > 0 && (
-          <section className="mt-8 border-t border-border pt-5">
-            <h2 className="text-sm font-medium">Checks</h2>
-            <ItemGroup className="mt-2 gap-0">
-              {pullRequest.checks.map((check, index) => (
-                <Item key={`${check.name}:${index}`} size="sm" className="min-h-0 rounded-none px-0 py-1.5">
-                  <ItemMedia className="text-muted-foreground">{checkIcon(check.state)}</ItemMedia>
-                  <ItemContent><ItemTitle className="text-xs font-normal">{check.name}</ItemTitle></ItemContent>
-                  <span className={cn(
-                    "text-[11px]",
-                    check.state === "fail" ? "text-destructive" : check.state === "pending" ? "text-warning-foreground" : "text-muted-foreground",
-                  )}>
-                    {check.state === "pass" ? "Passed" : check.state === "fail" ? "Failed" : check.state === "pending" ? "Pending" : "Skipped"}
-                  </span>
-                </Item>
-              ))}
-            </ItemGroup>
+          <h1 className="mt-3 text-2xl font-semibold leading-tight tracking-tight">{pullRequest.title}</h1>
+          <p className="mt-2 flex flex-wrap items-center gap-2 font-mono text-xs text-muted-foreground">
+            <span>{pullRequest.headRefName}</span>
+            <ArrowRight className="size-3.5" />
+            <span>{pullRequest.baseRefName}</span>
+            <span className="text-success-foreground">+{pullRequest.additions}</span>
+            <span className="text-destructive">−{pullRequest.deletions}</span>
+            <span>across {pullRequest.changedFiles || pullRequest.files.length} files</span>
+          </p>
+          <section className="mt-8">
+            <h2 className="text-sm font-medium">Description</h2>
+            <div className="mt-3">
+              {pullRequest.body.trim() ? <Markdown text={pullRequest.body} className="text-sm" /> : <p className="text-sm text-muted-foreground">No description.</p>}
+            </div>
           </section>
-        )}
+          {stack?.entries && stack.entries.length > 1 && (
+            <section className="mt-8">
+              <h2 className="text-sm font-medium">Stack</h2>
+              <p className="mt-1 text-xs text-muted-foreground">{stack.position} of {stack.size} · merge in order</p>
+              <div className="mt-2 flex flex-col">
+                {stack.entries.map((entry) => (
+                  <div key={entry.number} className="flex items-center gap-2 py-1.5 text-sm">
+                    <GitPullRequest className="size-4 text-muted-foreground" />
+                    <span className="text-muted-foreground">#{entry.number}</span>
+                    <span className="min-w-0 flex-1 truncate">{entry.title}</span>
+                    {entry.number === pullRequest.number ? <span className="text-xs text-muted-foreground">You are here</span> : null}
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
+        <aside className="flex w-72 shrink-0 flex-col gap-4">
+          {failed.length > 0 && chatId && (
+            <section className="rounded-lg border border-border p-3">
+              <h2 className="text-sm font-medium">Checks are failing</h2>
+              <Button className="mt-3 w-full" onClick={askThread}>Ask the thread to fix them</Button>
+            </section>
+          )}
+          {pullRequest.state === "OPEN" && (
+            <PullRequestMergeDialog serverId={serverId} pullRequest={pullRequest} onMerged={onMerged} />
+          )}
+          <section>
+            <h2 className="text-xs font-medium tracking-wide text-muted-foreground">CHECKS</h2>
+            <p className="mt-1 text-xs text-muted-foreground">{passed}/{pullRequest.checks.length || 0}</p>
+            <div className="mt-2 flex flex-col gap-1.5">
+              {pullRequest.checks.map((check, index) => (
+                <div key={`${check.name}:${index}`} className="flex items-center gap-2 text-xs">
+                  {checkIcon(check.state)}
+                  <span className="min-w-0 flex-1 truncate">{check.name}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+          {chatId && (
+            <section>
+              <h2 className="text-xs font-medium tracking-wide text-muted-foreground">WATCHED BY</h2>
+              <p className="mt-2 text-sm">This thread</p>
+              <p className="text-xs text-muted-foreground">Answers review comments here</p>
+            </section>
+          )}
+        </aside>
       </div>
     </ScrollArea>
   );

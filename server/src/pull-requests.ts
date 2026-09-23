@@ -466,6 +466,16 @@ export function pullRequestMergeBlocker(current: PullRequestMergeState, expected
   return "";
 }
 
+export async function commentOnPullRequest(input: {
+  repository: string;
+  number: number;
+  body: string;
+}): Promise<void> {
+  const body = input.body.trim();
+  if (!body) throw new Error("Write a comment first.");
+  await exec("gh", ["pr", "comment", String(input.number), "--repo", input.repository, "--body", body], { timeout: 30_000 });
+}
+
 export async function squashMergePullRequest(input: {
   repository: string;
   number: number;
