@@ -40,7 +40,7 @@ export function PullRequestMergeDialog({
   onMerged: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [title, setTitle] = useState(pullRequest.title);
+  const [title, setTitle] = useState(`${pullRequest.title} (#${pullRequest.number})`);
   const [message, setMessage] = useState(pullRequest.body);
   const [merging, setMerging] = useState(false);
   const blocker = mergeBlocker(pullRequest);
@@ -48,7 +48,7 @@ export function PullRequestMergeDialog({
   const changeOpen = (next: boolean) => {
     if (merging) return;
     if (next) {
-      setTitle(pullRequest.title);
+      setTitle(`${pullRequest.title} (#${pullRequest.number})`);
       setMessage(pullRequest.body);
     }
     setOpen(next);
@@ -81,15 +81,15 @@ export function PullRequestMergeDialog({
 
   return (
     <AlertDialog open={open} onOpenChange={changeOpen}>
-      <Button type="button" size="sm" variant="secondary" onClick={() => changeOpen(true)}>
+      <Button type="button" className="w-full" variant="secondary" disabled={Boolean(blocker)} onClick={() => changeOpen(true)}>
         <GitMerge />
         Squash and merge
       </Button>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Squash and merge #{pullRequest.number}?</AlertDialogTitle>
-          <AlertDialogDescription>
-            {blocker || `This merges into ${pullRequest.baseRefName} as one commit.`}
+          <AlertDialogTitle>Squash and merge #{pullRequest.number}</AlertDialogTitle>
+          <AlertDialogDescription className="sr-only">
+            {`This merges into ${pullRequest.baseRefName} as one commit.`}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <FieldGroup className="gap-4">

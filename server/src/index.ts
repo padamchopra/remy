@@ -14,13 +14,6 @@ import { deliverAnnouncements } from "./announcements.js";
 import { prepareServiceRestart, pendingChatStarts, automaticUpdateStatus, automaticUpdateAction, configureAutomaticUpdates, syncAutomaticUpdates, reportAutomaticUpdate, appUpdateStatus, reportAppUpdate, requestAppUpdate } from "./app-update.js";
 import { localAnalytics } from "./analytics.js";
 import { threadAnalytics, threadPerformance } from "./thread-metrics.js";
-import {
-  askPullRequestGuideQuestion,
-  discoverPullRequestGuide,
-  generatePullRequestGuide,
-  pullRequestGuideContext,
-  readSavedPullRequestGuide,
-} from "./pull-request-guides.js";
 import { archiveChat, deleteArchivedChat, getArchivedChat, listArchivedChats, listArchivedChatSummaries } from "./archives.js";
 import { deviceId, onLocalAppend, onRemoteMerge, type LogEvent } from "./board-log.js";
 import {
@@ -184,7 +177,7 @@ import {
   worktreeInfo,
 } from "./git.js";
 import { buildInbox } from "./inbox.js";
-import { listAuthoredPullRequests, markPullRequestFileViewed, markPullRequestRead, markPullRequestReady, pullRequestDiff, pullRequestDiffForCwd, pullRequestFileReviewState, pullRequestTimeline, squashMergePullRequest } from "./pull-requests.js";
+import { commentOnPullRequest, listAuthoredPullRequests, markPullRequestFileViewed, markPullRequestRead, markPullRequestReady, pullRequestDiff, pullRequestDiffForCwd, pullRequestFileReviewState, pullRequestTimeline, squashMergePullRequest } from "./pull-requests.js";
 import { pullRequestFileContent, validPullRequestFileRequest } from "./pull-request-file.js";
 import { askPullRequestQuestion, discoverPullRequestQuestions, readPullRequestQuestions } from "./pull-request-questions.js";
 import { validateChatCodeReferences } from "./chat-references.js";
@@ -1080,6 +1073,24 @@ const server = createServer(async (req, res) => {
         return json(res, 502, { error: (error as Error).message || "could not mark that pull request ready" });
       }
     }
+    if (req.method === "POST" && url.pathname === "/pull-requests/review") {
+      const body = await readJson(req);
+      const repository = String(body.repository ?? "").trim();
+      const number = Number(body.number);
+      const text = String(body.body ?? "").trim();
+      const path = typeof body.path === "string" ? body.path.trim() : "";
+      const line = Number(body.line);
+      if (!/^[^/\s]+\/[^/\s]+$/.test(repository) || !Number.isInteger(number) || number <= 0 || !text) {
+        return json(res, 400, { error: "A repository, pull request number, and comment are required." });
+      }
+      const posted = path ? `${text}\n\n${path}${Number.isInteger(line) && line > 0 ? `:${line}` : ""}` : text;
+      try {
+        await commentOnPullRequest({ repository, number, body: posted });
+        return json(res, 200, { posted: true });
+      } catch (error) {
+        return json(res, 502, { error: (error as Error).message || "Couldn't post that comment." });
+      }
+    }
     if (req.method === "POST" && url.pathname === "/pull-requests/merge") {
       const body = await readJson(req);
       const repository = String(body.repository ?? "").trim();
@@ -1178,60 +1189,6 @@ const server = createServer(async (req, res) => {
         return json(res, 502, { error: (error as Error).message || "could not load those changes" });
       }
     }
-    if (req.method === "GET" && ["/pull-requests/guide/saved", "/pull-requests/guide/discover"].includes(url.pathname)) {
-      const repository = String(url.searchParams.get("repository") ?? "").trim();
-      const number = Number(url.searchParams.get("number"));
-      if (!/^[^/\s]+\/[^/\s]+$/.test(repository) || !Number.isInteger(number) || number <= 0) {
-        return json(res, 400, { error: "repository and pull request number are required" });
-      }
-      return json(res, 200, url.pathname.endsWith("/saved")
-        ? { guide: readSavedPullRequestGuide(repository, number) }
-        : await discoverPullRequestGuide(repository, number));
-    }
-    if (req.method === "GET" && url.pathname === "/pull-requests/guide") {
-      const repository = String(url.searchParams.get("repository") ?? "").trim();
-      const number = Number(url.searchParams.get("number"));
-      const chatId = String(url.searchParams.get("chatId") ?? "").trim() || undefined;
-      if (!/^[^/\s]+\/[^/\s]+$/.test(repository) || !Number.isInteger(number) || number <= 0) {
-        return json(res, 400, { error: "repository and pull request number are required" });
-      }
-      try {
-        return json(res, 200, await pullRequestGuideContext(repository, number, chatId));
-      } catch (error) {
-        return json(res, 502, { error: (error as Error).message || "could not load the guided review" });
-      }
-    }
-    if (req.method === "POST" && url.pathname === "/pull-requests/guide") {
-      const body = await readJson(req);
-      const repository = String(body.repository ?? "").trim();
-      const number = Number(body.number);
-      if (!/^[^/\s]+\/[^/\s]+$/.test(repository) || !Number.isInteger(number) || number <= 0) {
-        return json(res, 400, { error: "repository and pull request number are required" });
-      }
-      try {
-        const guide = await generatePullRequestGuide({ ...body, repository, number });
-        broadcast({ type: "pull-request-guide", repository, number });
-        return json(res, 200, { guide });
-      } catch (error) {
-        return json(res, 409, { error: (error as Error).message || "could not start the guided review" });
-      }
-    }
-    if (req.method === "POST" && url.pathname === "/pull-requests/guide/question") {
-      const body = await readJson(req);
-      const repository = String(body.repository ?? "").trim();
-      const number = Number(body.number);
-      if (!/^[^/\s]+\/[^/\s]+$/.test(repository) || !Number.isInteger(number) || number <= 0) {
-        return json(res, 400, { error: "repository and pull request number are required" });
-      }
-      try {
-        const guide = await askPullRequestGuideQuestion({ ...body, repository, number });
-        broadcast({ type: "pull-request-guide", repository, number });
-        return json(res, 200, { guide });
-      } catch (error) {
-        return json(res, 409, { error: (error as Error).message || "could not answer that question" });
-      }
-    }
-
     if (["/pull-requests/questions", "/pull-requests/questions/discover"].includes(url.pathname)) {
       const body = req.method === "POST" ? await readJson(req) : {};
       const repository = String(body.repository ?? url.searchParams.get("repository") ?? "").trim();

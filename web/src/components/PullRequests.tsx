@@ -1,24 +1,24 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { CircleDot, Folder, GitPullRequest, Layers, PanelLeftClose, PanelLeftOpen, RefreshCw, Search } from "lucide-react";
+import { Check, ChevronDown, CircleDot, GitPullRequest, RefreshCw, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
-import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PullRequestView } from "@/components/PullRequestView";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { workspaceGroups, type WorkspaceGroup } from "@/lib/projects";
-import { groupPullRequests, orderPullRequests } from "@/lib/pull-request-order";
+import { orderPullRequests } from "@/lib/pull-request-order";
 import { relativeDate } from "@/lib/relative-date";
 import { transport } from "@/lib/transport";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
 import type { Chat, PullRequestStack, Server, Workspace } from "@/state/types";
 
-type PullRequestFilter = "all" | "ready" | "draft";
+type PullRequestFilter = "needs" | "yours" | "review" | "all";
+
+const COLLAPSED_KEY = "remy.pull-requests.sections";
 
 interface PullRequestCheck {
   name: string;
@@ -35,6 +35,7 @@ interface AuthoredPullRequest {
   baseRefName: string;
   isDraft: boolean;
   reviewDecision: string;
+  authorLogin?: string;
   updatedAt: string;
   additions: number;
   deletions: number;
@@ -175,12 +176,6 @@ function activeThread(pullRequest: AuthoredPullRequest, chats: Chat[]): Chat | u
     .sort((a, b) => b.updatedAt - a.updatedAt)[0];
 }
 
-function needsAttention(pullRequest: AuthoredPullRequest): boolean {
-  return pullRequest.hasUnreadActivity
-    || pullRequest.reviewDecision === "CHANGES_REQUESTED"
-    || pullRequest.checks.some((check) => check.state === "fail");
-}
-
 export function PullRequests({
   servers,
   workspaces,
@@ -201,13 +196,19 @@ export function PullRequests({
   const serversRef = useRef(servers);
   serversRef.current = servers;
   const [pullRequests, setPullRequests] = useState<AuthoredPullRequest[]>(() => cachedPullRequests(serverIds));
-  const [filter, setFilter] = useState<PullRequestFilter>("all");
+  const [filter, setFilter] = useState<PullRequestFilter>("needs");
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(!hasCachedPullRequests(serverIds));
   const [refreshing, setRefreshing] = useState(false);
   const [selectedURL, setSelectedURL] = useState("");
-  const [listHidden, setListHidden] = useState(false);
-  const listId = useId();
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]");
+      return new Set(Array.isArray(stored) ? stored.filter((value) => typeof value === "string") : []);
+    } catch {
+      return new Set();
+    }
+  });
   const requestId = useRef(0);
   const progressRequestId = useRef<number | undefined>(undefined);
 
@@ -270,28 +271,39 @@ export function PullRequests({
     if ((payload as { type?: unknown }).type === "pull-requests") void load({ refresh: true });
   }, ["pull-requests", "sidebar"]), [load]);
 
+  const chats = useStore(useShallow((state) => state.chats));
+  const onlineCount = servers.filter((server) => !server.workspaceOnly && server.online).length;
+  const computerCount = servers.filter((server) => !server.workspaceOnly).length;
+  const yours = (pullRequest: AuthoredPullRequest) => Boolean(pullRequest.worktreePath);
+  const failing = (pullRequest: AuthoredPullRequest) =>
+    pullRequest.checks.some((check) => check.state === "fail") || pullRequest.reviewDecision === "CHANGES_REQUESTED";
+  const waiting = (pullRequest: AuthoredPullRequest) =>
+    pullRequest.reviewDecision === "REVIEW_REQUIRED" && !yours(pullRequest) && !failing(pullRequest);
+  const activity = (pullRequest: AuthoredPullRequest) =>
+    pullRequest.hasUnreadActivity && yours(pullRequest) && !failing(pullRequest);
+  const ready = (pullRequest: AuthoredPullRequest) =>
+    yours(pullRequest) && pullRequest.reviewDecision === "APPROVED" && !failing(pullRequest) && !pullRequest.isDraft;
+
   const counts = useMemo(() => ({
+    needs: pullRequests.filter((pullRequest) => failing(pullRequest) || waiting(pullRequest) || activity(pullRequest) || ready(pullRequest)).length,
+    yours: pullRequests.filter(yours).length,
+    review: pullRequests.filter((pullRequest) => pullRequest.reviewDecision === "REVIEW_REQUIRED" && !yours(pullRequest)).length,
     all: pullRequests.length,
-    ready: pullRequests.filter((pullRequest) => !pullRequest.isDraft).length,
-    draft: pullRequests.filter((pullRequest) => pullRequest.isDraft).length,
   }), [pullRequests]);
   const visible = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return pullRequests.filter((pullRequest) => {
-      const matchesFilter = filter === "all" || (filter === "draft" ? pullRequest.isDraft : !pullRequest.isDraft);
+      const matchesFilter = filter === "all"
+        || (filter === "yours" && yours(pullRequest))
+        || (filter === "review" && pullRequest.reviewDecision === "REVIEW_REQUIRED" && !yours(pullRequest))
+        || (filter === "needs" && (failing(pullRequest) || waiting(pullRequest) || activity(pullRequest) || ready(pullRequest)));
       if (!matchesFilter) return false;
       if (!normalizedQuery) return true;
-      return [pullRequest.title, pullRequest.repository, pullRequest.headRefName, `#${pullRequest.number}`, pullRequest.stack ? `stack #${pullRequest.stack.number}` : ""]
+      return [pullRequest.title, pullRequest.repository, pullRequest.headRefName, `#${pullRequest.number}`, pullRequest.workspaceName]
         .some((value) => value.toLowerCase().includes(normalizedQuery));
     });
   }, [filter, pullRequests, query]);
-  const selected = visible.find((pullRequest) => pullRequest.url === selectedURL);
-  const chats = useStore(useShallow((state) => selected?.worktreePath
-    ? state.chats.filter((chat) =>
-        chat.serverId === selected.serverId && inside(chat.cwd, selected.worktreePath!))
-    : []));
-  const listCollapsed = listHidden && Boolean(selected);
-  const listToggleLabel = listCollapsed ? "Show pull request list" : "Hide pull request list";
+  const selected = pullRequests.find((pullRequest) => pullRequest.url === selectedURL);
   const groupedWorkspaces = useMemo(() => workspaceGroups(workspaces, servers), [servers, workspaces]);
   const workspaceGroupByCopy = useMemo(() => new Map<string, WorkspaceGroup>(
     groupedWorkspaces.flatMap((group) => group.copies.map((workspace) => [
@@ -299,35 +311,6 @@ export function PullRequests({
       group,
     ] as const)),
   ), [groupedWorkspaces]);
-  const sections = useMemo(() => {
-    const grouped = new Map<string, {
-      key: string;
-      label: string;
-      workspace?: Workspace;
-      server?: Server;
-      pullRequests: AuthoredPullRequest[];
-    }>();
-    for (const pullRequest of visible) {
-      const workspaceKey = `${pullRequest.serverId}:${pullRequest.workspaceId}`;
-      const group = workspaceGroupByCopy.get(workspaceKey);
-      const key = group?.id ?? workspaceKey;
-      let section = grouped.get(key);
-      if (!section) {
-        const workspace = group?.workspace ?? workspaces.find((entry) =>
-          entry.serverId === pullRequest.serverId && entry.id === pullRequest.workspaceId);
-        section = {
-          key,
-          label: workspace?.name ?? pullRequest.workspaceName,
-          workspace,
-          server: servers.find((entry) => entry.id === (workspace?.serverId ?? pullRequest.serverId)),
-          pullRequests: [],
-        };
-        grouped.set(key, section);
-      }
-      section.pullRequests.push(pullRequest);
-    }
-    return [...grouped.values()].map((section) => ({ ...section, groups: groupPullRequests(section.pullRequests) }));
-  }, [servers, visible, workspaceGroupByCopy, workspaces]);
   const selectedWorkspace = selected && workspaces.find((entry) =>
     entry.serverId === selected.serverId && entry.id === selected.workspaceId);
   const selectedWorkspaceGroup = selected && workspaceGroupByCopy.get(`${selected.serverId}:${selected.workspaceId}`);
@@ -337,189 +320,202 @@ export function PullRequests({
     ?? selected.serverId
   );
   const selectedThread = selected && activeThread(selected, chats);
+  const needGroups = [
+    { key: "failing", label: "Failing or blocked", tone: "bg-destructive", rows: visible.filter(failing) },
+    { key: "waiting", label: "Waiting for your review", tone: "bg-warning", rows: visible.filter((pullRequest) => waiting(pullRequest) && !failing(pullRequest)) },
+    { key: "activity", label: "New activity on yours", tone: "bg-primary", rows: visible.filter((pullRequest) => activity(pullRequest) && !waiting(pullRequest)) },
+    { key: "ready", label: "Ready to merge", tone: "bg-success-foreground", rows: visible.filter((pullRequest) => ready(pullRequest) && !activity(pullRequest) && !waiting(pullRequest)) },
+  ].filter((group) => group.rows.length > 0);
+
+  function toggleSection(key: string) {
+    setCollapsed((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next]));
+      return next;
+    });
+  }
+
+  if (selected) {
+    return (
+      <main className="flex min-w-0 flex-1 flex-col">
+        <PullRequestView
+          key={selected.url}
+          serverId={selectedDetailServerId ?? selected.serverId}
+          repository={selected.repository}
+          number={selected.number}
+          stack={selected.stack}
+          onPullRequestChanged={() => void load({ refresh: true })}
+          leadingActions={(
+            <Button variant="ghost" size="sm" onClick={() => setSelectedURL("")}>
+              Pull requests
+            </Button>
+          )}
+          actions={(
+            <>
+              {selectedWorkspace && (
+                <Button variant="ghost" size="sm" data-link className="max-w-48" onClick={() => onOpenWorkspace(selectedWorkspace.id)}>
+                  <WorkspaceMark home={false} workspace={selectedWorkspace} server={selectedServer} size="sm" />
+                  <span className="truncate">{selectedWorkspaceGroup?.workspace.name ?? selected.workspaceName}</span>
+                </Button>
+              )}
+              {selectedThread && (
+                <Button variant="secondary" size="sm" data-link onClick={() => onOpenThread(selectedThread.id)}>
+                  <CircleDot />
+                  Open thread
+                </Button>
+              )}
+            </>
+          )}
+        />
+      </main>
+    );
+  }
+
+  const rows = (pullRequest: AuthoredPullRequest) => (
+    <PullRequestListItem
+      key={pullRequest.url}
+      pullRequest={pullRequest}
+      workspace={workspaces.find((entry) => entry.serverId === pullRequest.serverId && entry.id === pullRequest.workspaceId)}
+      server={servers.find((entry) => entry.id === pullRequest.serverId)}
+      thread={linkedThread(pullRequest, chats)}
+      onOpen={() => setSelectedURL(pullRequest.url)}
+      onOpenThread={onOpenThread}
+    />
+  );
 
   return (
-    <main className="flex min-w-0 flex-1">
-      <section
-        id={listId}
-        aria-label="Pull request list"
-        className={cn("min-h-0 w-[38%] min-w-72 max-w-[27rem] shrink-0 flex-col border-r border-border", listCollapsed ? "hidden" : "flex")}
-      >
-        <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
-          <ToggleGroup
-            type="single"
-            size="sm"
-            value={filter}
-            onValueChange={(value) => value && setFilter(value as PullRequestFilter)}
-            aria-label="Filter pull requests"
-            className="gap-0.5"
-          >
-            <ToggleGroupItem value="all" className="px-2.5">All <span className="text-muted-foreground">{counts.all}</span></ToggleGroupItem>
-            <ToggleGroupItem value="ready" className="px-2.5">Ready <span className="text-muted-foreground">{counts.ready}</span></ToggleGroupItem>
-            <ToggleGroupItem value="draft" className="px-2.5">Drafts <span className="text-muted-foreground">{counts.draft}</span></ToggleGroupItem>
-          </ToggleGroup>
-          <Button variant="ghost" size="icon-sm" className="ml-auto" disabled={refreshing} onClick={() => void load({ refresh: true, showProgress: true })} aria-label="Refresh pull requests">
-            <RefreshCw className={refreshing ? "animate-spin" : undefined} />
-          </Button>
-        </div>
-
-        <div className="shrink-0 p-3">
-          <InputGroup>
-            <InputGroupAddon><Search /></InputGroupAddon>
-            <InputGroupInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search pull requests" aria-label="Search pull requests" />
-          </InputGroup>
-        </div>
-
-        {loading ? (
-          <PullRequestListLoading />
-        ) : visible.length === 0 ? (
-          <Empty className="min-h-0 flex-1 px-5">
-            <EmptyHeader>
-              <EmptyMedia variant="icon"><GitPullRequest /></EmptyMedia>
-              <EmptyTitle>{pullRequests.length === 0 ? "No pull requests" : "No matching pull requests"}</EmptyTitle>
-              <EmptyDescription>
-                {pullRequests.length === 0 ? "Open one from a GitHub workspace you added to Remy." : "Try another search or filter."}
-              </EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        ) : (
-          <ScrollArea className="min-h-0 flex-1">
-            <div className="pb-3">
-              {sections.map((section) => (
-                <section key={section.key} aria-label={section.label}>
-                  <h2 className="flex items-center gap-2 px-4 pb-1 pt-3 text-[11px] font-medium text-muted-foreground">
-                    {section.workspace ? (
-                      <WorkspaceMark home={false} workspace={section.workspace} server={section.server} size="sm" />
-                    ) : (
-                      <Folder className="size-4 shrink-0" />
-                    )}
-                    <span className="truncate">{section.label}</span>
-                  </h2>
-                  <ItemGroup role="group" className="gap-0 px-2">
-                    {section.groups.map((group) => {
-                      const stack = group.members[0].stack;
-                      const rows = group.members.map((pullRequest) => (
-                        <PullRequestListItem key={pullRequest.url} pullRequest={pullRequest} selected={selected?.url === pullRequest.url} onSelect={() => setSelectedURL(pullRequest.url)} />
-                      ));
-                      return stack ? (
-                        <section key={group.key} aria-label={`Stack #${stack.number}`} className="relative my-1 before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-muted-foreground/30">
-                          <h3 className="flex min-w-0 items-center gap-2 px-2 py-1.5 text-[11px] text-muted-foreground">
-                            <Layers className="size-4 shrink-0" />
-                            <span className="truncate font-medium">Stack #{stack.number}</span>
-                            <span className="ml-auto shrink-0 tabular-nums">
-                              {group.members.length === stack.size ? `${stack.size} PRs` : `${group.members.length} of ${stack.size} shown`}
-                            </span>
-                          </h3>
-                          <ItemGroup className="gap-0">{rows}</ItemGroup>
-                        </section>
-                      ) : <ItemGroup key={group.key} className="gap-0">{rows}</ItemGroup>;
-                    })}
-                  </ItemGroup>
-                </section>
-              ))}
-            </div>
-          </ScrollArea>
-        )}
-      </section>
-
-      <section className="min-w-0 flex-1">
-        {selected ? (
-          <PullRequestView
-            key={selected.url}
-            serverId={selectedDetailServerId ?? selected.serverId}
-            repository={selected.repository}
-            number={selected.number}
-            stack={selected.stack}
-            onPullRequestChanged={() => void load({ refresh: true })}
-            leadingActions={(
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={listToggleLabel}
-                    aria-controls={listId}
-                    aria-expanded={!listCollapsed}
-                    onClick={() => setListHidden(!listCollapsed)}
-                  >
-                    {listCollapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">{listToggleLabel}</TooltipContent>
-              </Tooltip>
-            )}
-            actions={(
-              <>
-                {selectedWorkspace && (
-                  <Button variant="ghost" size="sm" data-link className="max-w-48" onClick={() => onOpenWorkspace(selectedWorkspace.id)}>
-                    <WorkspaceMark home={false} workspace={selectedWorkspace} server={selectedServer} size="sm" />
-                    <span className="truncate">{selectedWorkspaceGroup?.workspace.name ?? selected.workspaceName}</span>
-                  </Button>
-                )}
-                {selectedThread && (
-                  <Button variant="secondary" size="sm" data-link onClick={() => onOpenThread(selectedThread.id)}>
-                    <CircleDot className="text-success-foreground" />
-                    Open thread
-                  </Button>
-                )}
-              </>
-            )}
-          />
-        ) : (
-          <Empty className="h-full">
-            <EmptyHeader>
-              <EmptyMedia variant="icon"><GitPullRequest /></EmptyMedia>
-              <EmptyTitle>Select a pull request</EmptyTitle>
-              <EmptyDescription>Choose one to review its summary and code.</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        )}
-      </section>
+    <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <header className="flex h-12 shrink-0 items-center gap-3 px-4">
+        <h1 className="text-sm font-medium">Pull requests</h1>
+        <span className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+          <span className="size-1.5 rounded-full bg-success-foreground" />
+          Live from GitHub · {onlineCount} of {computerCount} {computerCount === 1 ? "computer" : "computers"}
+        </span>
+        <Button variant="ghost" size="icon-sm" disabled={refreshing} onClick={() => void load({ refresh: true, showProgress: true })} aria-label="Refresh pull requests">
+          <RefreshCw className={refreshing ? "animate-spin" : undefined} />
+        </Button>
+      </header>
+      <div className="flex items-center gap-3 px-4 pb-3">
+        <ToggleGroup
+          type="single"
+          size="sm"
+          value={filter}
+          onValueChange={(value) => value && setFilter(value as PullRequestFilter)}
+          aria-label="Filter pull requests"
+        >
+          {([
+            ["needs", "Needs you"],
+            ["yours", "Yours"],
+            ["review", "Review requested"],
+            ["all", "All"],
+          ] as const).map(([value, label]) => (
+            <ToggleGroupItem key={value} value={value} className="px-2.5">
+              {label} <span className="text-muted-foreground">{counts[value]}</span>
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+        <InputGroup className="ml-auto w-64">
+          <InputGroupAddon><Search /></InputGroupAddon>
+          <InputGroupInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search pull requests" aria-label="Search pull requests" />
+        </InputGroup>
+      </div>
+      {loading ? (
+        <PullRequestListLoading />
+      ) : visible.length === 0 ? (
+        <Empty className="min-h-0 flex-1">
+          <EmptyHeader>
+            <EmptyMedia variant="icon"><GitPullRequest /></EmptyMedia>
+            <EmptyTitle>{pullRequests.length === 0 ? "No pull requests" : "No matching pull requests"}</EmptyTitle>
+            <EmptyDescription>
+              {pullRequests.length === 0
+                ? "An agent opens one from a thread."
+                : "Try another search or filter."}
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      ) : (
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="flex flex-col pb-6">
+            {(filter === "needs" ? needGroups : [{ key: filter, label: "", tone: "", rows: visible }]).map((group) => (
+              <section key={group.key}>
+                {group.label ? (
+                  <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-left text-xs" onClick={() => toggleSection(group.key)}>
+                    <ChevronDown className={cn("size-3.5 text-muted-foreground transition-transform", collapsed.has(group.key) && "-rotate-90")} />
+                    <span className={cn("size-1.5 rounded-full", group.tone)} />
+                    <span>{group.label}</span>
+                    <span className="text-muted-foreground">{group.rows.length}</span>
+                  </button>
+                ) : null}
+                {collapsed.has(group.key) ? null : group.rows.map(rows)}
+              </section>
+            ))}
+          </div>
+        </ScrollArea>
+      )}
     </main>
   );
 }
 
-function PullRequestListItem({ pullRequest, selected, onSelect }: { pullRequest: AuthoredPullRequest; selected: boolean; onSelect: () => void }) {
+function linkedThread(pullRequest: AuthoredPullRequest, chats: Chat[]): Chat | undefined {
+  if (!pullRequest.worktreePath) return undefined;
+  return chats
+    .filter((chat) => chat.serverId === pullRequest.serverId && inside(chat.cwd, pullRequest.worktreePath!))
+    .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+}
+
+function PullRequestListItem({
+  pullRequest,
+  workspace,
+  server,
+  thread,
+  onOpen,
+  onOpenThread,
+}: {
+  pullRequest: AuthoredPullRequest;
+  workspace?: Workspace;
+  server?: Server;
+  thread?: Chat;
+  onOpen: () => void;
+  onOpenThread: (id: string) => void;
+}) {
+  const passed = pullRequest.checks.filter((check) => check.state === "pass" || check.state === "skipping").length;
+  const failed = pullRequest.checks.some((check) => check.state === "fail");
+  const total = pullRequest.checks.length;
   return (
-    <Item
-      asChild
-      size="sm"
-      className={cn(
-        "grid! grid-cols-[1rem_minmax(0,1fr)_5.5rem] items-start gap-x-3 gap-y-0 rounded-md px-2 py-2.5 text-left hover:bg-accent/70",
-        selected && "bg-accent",
-      )}
-    >
-      <button type="button" data-link aria-pressed={selected} onClick={onSelect}>
-        <ItemMedia className="relative col-start-1 row-start-1 self-start text-muted-foreground">
-          <GitPullRequest className="size-4" />
-          {needsAttention(pullRequest) && (
-            <span aria-hidden="true" className="absolute -bottom-0.5 -right-0.5 size-2 rounded-full border-2 border-background bg-destructive" />
-          )}
-        </ItemMedia>
-        <ItemContent className="col-start-2 row-start-1 min-w-0 gap-1">
-          <ItemTitle className="w-full min-w-0 font-normal">
-            <span className="truncate">{pullRequest.title}</span>
-            {needsAttention(pullRequest) && <span className="sr-only">Needs attention</span>}
-          </ItemTitle>
-          <ItemDescription className="flex min-w-0 gap-1 text-left text-[11px] text-nowrap">
-            <span className="shrink-0 tabular-nums">#{pullRequest.number}</span>
-            {pullRequest.stack && (
-              <span className="shrink-0 tabular-nums" aria-label={`${pullRequest.stack.position} of ${pullRequest.stack.size} in stack`}>
-                · {pullRequest.stack.position}/{pullRequest.stack.size}
-              </span>
-            )}
-            <span className="min-w-0 truncate">· {pullRequest.repository} · {pullRequest.headRefName}</span>
-          </ItemDescription>
-        </ItemContent>
-        <span className="col-start-3 row-start-1 grid grid-rows-2 justify-items-end gap-1 text-[11px] tabular-nums">
-          <span className="leading-snug text-muted-foreground">{relativeDate(pullRequest.updatedAt)}</span>
-          <span className="font-mono leading-normal text-nowrap">
-            <span className="text-success-foreground">+{pullRequest.additions}</span>{" "}
-            <span className="text-destructive">−{pullRequest.deletions}</span>
+    <div className="grid grid-cols-[minmax(0,1fr)_11rem_4.5rem_6.5rem_3rem] items-center gap-3 px-4 py-2 hover:bg-accent/60">
+      <button type="button" data-link className="flex min-w-0 items-start gap-2 text-left" onClick={onOpen}>
+        <GitPullRequest className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0">
+          <span className="block truncate text-sm">{pullRequest.title}</span>
+          <span className="flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
+            <span className="shrink-0">#{pullRequest.number}</span>
+            {workspace ? <WorkspaceMark home={false} workspace={workspace} server={server} size="sm" /> : null}
+            <span className="truncate">{pullRequest.workspaceName}</span>
+            <span className="truncate font-mono">{pullRequest.headRefName}</span>
+            {pullRequest.stack ? (
+              <span className="shrink-0">{pullRequest.stack.position} of {pullRequest.stack.size} in stack</span>
+            ) : null}
           </span>
         </span>
       </button>
-    </Item>
+      {thread ? (
+        <button type="button" data-link className="flex min-w-0 items-center gap-1.5 text-xs" onClick={() => onOpenThread(thread.id)}>
+          <CircleDot className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="truncate">{thread.title}</span>
+        </button>
+      ) : <span />}
+      <span className="flex items-center justify-end gap-1 font-mono text-xs text-muted-foreground">
+        {failed ? <X className="size-3.5 text-destructive" /> : <Check className="size-3.5 text-success-foreground" />}
+        {total > 0 ? `${passed}/${total}` : "—"}
+      </span>
+      <span className="text-right font-mono text-xs">
+        <span className="text-success-foreground">+{pullRequest.additions}</span>{" "}
+        <span className="text-destructive">−{pullRequest.deletions}</span>
+      </span>
+      <span className="text-right text-xs text-muted-foreground">{relativeDate(pullRequest.updatedAt)}</span>
+    </div>
   );
 }
 
