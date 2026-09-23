@@ -11,6 +11,7 @@ import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { workspaceGroups, type WorkspaceGroup } from "@/lib/projects";
 import { orderPullRequests } from "@/lib/pull-request-order";
 import { relativeDate } from "@/lib/relative-date";
+import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { transport } from "@/lib/transport";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
@@ -39,6 +40,11 @@ interface AuthoredPullRequest {
   updatedAt: string;
   additions: number;
   deletions: number;
+  body?: string;
+  changedFiles?: number;
+  mergeable?: string;
+  mergeStateStatus?: string;
+  state?: string;
   checks: PullRequestCheck[];
   unreadComments: unknown[];
   hasUnreadActivity: boolean;
@@ -181,11 +187,13 @@ export function PullRequests({
   workspaces,
   onOpenThread,
   onOpenWorkspace,
+  hostedOrganizationId,
 }: {
   servers: Server[];
   workspaces: Workspace[];
   onOpenThread: (id: string) => void;
   onOpenWorkspace: (id: string) => void;
+  hostedOrganizationId?: string;
 }) {
   const serverIds = servers.filter((server) => !server.workspaceOnly).map((server) => server.id).sort();
   const serverKey = servers
@@ -198,7 +206,8 @@ export function PullRequests({
   const [pullRequests, setPullRequests] = useState<AuthoredPullRequest[]>(() => cachedPullRequests(serverIds));
   const [filter, setFilter] = useState<PullRequestFilter>("needs");
   const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(!hasCachedPullRequests(serverIds));
+  const [loading, setLoading] = useState(hostedOrganizationId ? true : !hasCachedPullRequests(serverIds));
+  const [githubError, setGithubError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [selectedURL, setSelectedURL] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(() => {
@@ -217,6 +226,25 @@ export function PullRequests({
     if (showProgress) {
       progressRequestId.current = currentRequest;
       setRefreshing(true);
+    }
+    if (hostedOrganizationId) {
+      try {
+        const response = await hubRequest<{ pullRequests: AuthoredPullRequest[] }>(`${hubThreadBase(hostedOrganizationId)}/github/pull-requests`);
+        if (currentRequest !== requestId.current) return;
+        setPullRequests(response.pullRequests.map((pullRequest) => ({ ...pullRequest, serverId: "github" })));
+        setGithubError("");
+      } catch (caught) {
+        if (currentRequest === requestId.current) {
+          setPullRequests([]);
+          setGithubError(caught instanceof Error ? caught.message : "Connect GitHub to see pull requests.");
+        }
+      }
+      setLoading(false);
+      if (progressRequestId.current === currentRequest) {
+        progressRequestId.current = undefined;
+        setRefreshing(false);
+      }
+      return;
     }
     const eligible = serversRef.current.filter((server) => !server.workspaceOnly);
     const available = eligible.filter((server) => server.online);
@@ -258,7 +286,7 @@ export function PullRequests({
       progressRequestId.current = undefined;
       setRefreshing(false);
     }
-  }, []);
+  }, [hostedOrganizationId]);
 
   useEffect(() => {
     void load();
@@ -335,6 +363,37 @@ export function PullRequests({
       localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next]));
       return next;
     });
+  }
+
+  if (selected && hostedOrganizationId) {
+    return (
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="flex h-12 items-center gap-3 px-4">
+          <Button variant="ghost" size="sm" onClick={() => setSelectedURL("")}>Pull requests</Button>
+          <a className="ml-auto text-sm" href={selected.url} target="_blank" rel="noreferrer" data-link>Open on GitHub</a>
+        </header>
+        <div className="mx-auto flex w-full max-w-6xl gap-8 px-6 py-6">
+          <div className="min-w-0 flex-1">
+            <p className="text-xs text-muted-foreground">{selected.repository} #{selected.number}</p>
+            <h1 className="mt-3 text-2xl font-semibold">{selected.title}</h1>
+            <p className="mt-2 font-mono text-xs text-muted-foreground">{selected.headRefName} → {selected.baseRefName}</p>
+            <section className="mt-8">
+              <h2 className="text-sm font-medium">Description</h2>
+              <p className="mt-3 whitespace-pre-wrap text-sm">{selected.body?.trim() || "No description."}</p>
+            </section>
+          </div>
+          <aside className="w-72 shrink-0">
+            <h2 className="text-xs font-medium tracking-wide text-muted-foreground">CHECKS</h2>
+            <div className="mt-2 flex flex-col gap-1.5">
+              {selected.checks.map((check) => (
+                <p key={check.name} className="text-xs">{check.name}</p>
+              ))}
+              {selected.checks.length === 0 && <p className="text-xs text-muted-foreground">No checks yet.</p>}
+            </div>
+          </aside>
+        </div>
+      </main>
+    );
   }
 
   if (selected) {
@@ -429,7 +488,9 @@ export function PullRequests({
             <EmptyMedia variant="icon"><GitPullRequest /></EmptyMedia>
             <EmptyTitle>{pullRequests.length === 0 ? "No pull requests" : "No matching pull requests"}</EmptyTitle>
             <EmptyDescription>
-              {pullRequests.length === 0
+              {githubError
+                ? githubError
+                : pullRequests.length === 0
                 ? "An agent opens one from a thread."
                 : "Try another search or filter."}
             </EmptyDescription>

@@ -10,6 +10,7 @@ import {
   Folder,
   Laptop,
   MessagesSquare,
+  GitPullRequest,
   SquareKanban,
   Users,
   User,
@@ -61,6 +62,7 @@ import { HubInvitation } from "./HubInvitation";
 import { HubSignIn } from "./HubSignIn";
 import { HubNotifications } from "./HubNotifications";
 const WorkspacesList = lazy(() => import("./HubWorkspaces"));
+const PullRequests = lazy(() => import("./PullRequests").then((module) => ({ default: module.PullRequests })));
 const OrganizationAdmin = lazy(() => import("./HubOrganizationAdmin"));
 const AllView = lazy(() => import("./HubAllView"));
 const GeneralSettings = lazy(() => import("./HubGeneralSettings"));
@@ -272,6 +274,12 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           selected: section === "workspaces",
         },
         {
+          label: "Pull requests",
+          icon: GitPullRequest,
+          route: { name: "prs", organizationId },
+          selected: route.name === "prs",
+        },
+        {
           label: "General",
           icon: Settings2,
           route: { name: "settings", tab: "general", organizationId },
@@ -342,12 +350,12 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           onNewThread={inSettings ? undefined : () => navigate({ name: "threads", organizationId })}
           nav={inSettings
             ? [
-                ...links.slice(4).filter(link => !isPersonal || !["Members", "Teams"].includes(link.label)).map(link => ({
+                ...links.slice(5).filter(link => !isPersonal || !["Members", "Teams"].includes(link.label)).map(link => ({
                   id: link.label, label: link.label, icon: link.icon, selected: link.selected, onSelect: () => navigate(link.route),
                 })),
                 ...(organization ? [{ id: "notifications", label: "Notifications", icon: Bell, selected: false, onSelect: () => setNotificationsAccount(organization.id) }] : []),
               ]
-            : links.slice(0, 4).map(link => ({
+            : links.slice(0, 5).map(link => ({
                 id: link.label, label: link.label, icon: link.icon, selected: link.selected, onSelect: () => navigate(link.route),
               }))}
           groups={inSettings ? [] : threadGroups}
@@ -391,6 +399,8 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
             </EmptyState>
           ) : organizationSettings && route.name === "settings" ? (
             <Deferred open><OrganizationAdmin organizations={organizations} selectedId={isAll ? route.ownerOrganizationId : organizationId} tab={route.organizationTab ?? "general"} onSelect={owner => navigate({...route,tab:"organization",organizationId:isAll ? "all" : owner,...(isAll ? {ownerOrganizationId:owner} : {})})} onTab={organizationTab => navigate({...route,tab:"organization",organizationTab,ownerOrganizationId:isAll ? route.ownerOrganizationId ?? organizations[0]?.id : undefined})} /></Deferred>
+          ) : route.name === "prs" ? (
+            <div className="flex min-h-0 flex-1"><Deferred open><PullRequests servers={[]} workspaces={[]} hostedOrganizationId={isAll ? contexts.find((item) => item.personal)?.id ?? contexts[0]?.id : organization.id} onOpenThread={() => undefined} onOpenWorkspace={() => undefined} /></Deferred></div>
           ) : route.name === "workspaces" && !route.workspaceId ? (
             <div className="min-h-0 flex-1 overflow-auto"><Deferred open><WorkspacesList organizations={contexts} filter={organizationId ?? "all"} onOpenWorkspace={(owner,id) => navigate({name:"workspaces",workspaceId:id,organizationId:isAll ? "all" : owner,...(isAll ? {ownerOrganizationId:owner} : {})})} onAdded={owner => {if (!isAll && owner !== organizationId) navigate({name:"workspaces",organizationId:owner});}} /></Deferred></div>
           ) : isAll ? (
