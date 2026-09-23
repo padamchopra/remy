@@ -577,4 +577,74 @@ export class GitHubConnection {
       .run();
     await this.changed(org);
   }
+
+  /// Open pull requests for the connected GitHub account. The saved credential
+  /// is either the GitHub sign-in or a personal access token.
+  async openPullRequests(org: string, user: string) {
+    const data = await this.api<{
+      data?: {
+        viewer?: { login?: string };
+        search?: { nodes?: unknown[] };
+      };
+      errors?: { message?: string }[];
+    }>(org, user, "/graphql", "POST", {
+      query: `query { viewer { login } search(query:"is:open is:pr involves:@me", type:ISSUE, first:40) { nodes { ... on PullRequest { number title url body isDraft reviewDecision updatedAt additions deletions changedFiles headRefName baseRefName mergeable mergeStateStatus author { login } repository { nameWithOwner } commits(last:1) { nodes { commit { statusCheckRollup { contexts(first:20) { nodes { ... on CheckRun { name conclusion status } ... on StatusContext { context state } } } } } } } } } } }`,
+    });
+    if (data.errors?.length) throw new ConnectionError(data.errors[0]?.message || "GitHub could not list pull requests.");
+    const viewer = data.data?.viewer?.login ?? "";
+    const nodes = data.data?.search?.nodes ?? [];
+    const pullRequests = nodes.flatMap((value) => {
+      if (!value || typeof value !== "object") return [];
+      const pr = value as Record<string, unknown>;
+      const repository = (pr.repository as { nameWithOwner?: string } | undefined)?.nameWithOwner;
+      const number = pr.number;
+      if (!repository || typeof number !== "number") return [];
+      const author = (pr.author as { login?: string } | undefined)?.login ?? "";
+      const checks = pullRequestChecks(pr);
+      return [{
+        url: String(pr.url ?? `https://github.com/${repository}/pull/${number}`),
+        number,
+        title: String(pr.title ?? "Untitled pull request"),
+        body: String(pr.body ?? ""),
+        repository,
+        headRefName: String(pr.headRefName ?? ""),
+        baseRefName: String(pr.baseRefName ?? ""),
+        isDraft: pr.isDraft === true,
+        reviewDecision: String(pr.reviewDecision ?? ""),
+        authorLogin: author,
+        updatedAt: String(pr.updatedAt ?? new Date(0).toISOString()),
+        additions: Number(pr.additions ?? 0),
+        deletions: Number(pr.deletions ?? 0),
+        changedFiles: Number(pr.changedFiles ?? 0),
+        checks,
+        unreadComments: [],
+        hasUnreadActivity: false,
+        workspaceId: repository,
+        workspaceName: repository.split("/")[1] ?? repository,
+        workspacePath: "",
+        worktreePath: author.toLowerCase() === viewer.toLowerCase() ? "hosted" : null,
+        mergeable: String(pr.mergeable ?? ""),
+        mergeStateStatus: String(pr.mergeStateStatus ?? ""),
+        state: "OPEN",
+      }];
+    });
+    return { viewer, pullRequests };
+  }
+}
+
+function pullRequestChecks(pr: Record<string, unknown>) {
+  const commits = pr.commits as { nodes?: { commit?: { statusCheckRollup?: { contexts?: { nodes?: Record<string, unknown>[] } } } }[] } | undefined;
+  const nodes = commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts?.nodes ?? [];
+  return nodes.flatMap((node) => {
+    const name = String(node.name ?? node.context ?? "");
+    if (!name) return [];
+    const conclusion = String(node.conclusion ?? node.state ?? "").toUpperCase();
+    const status = String(node.status ?? "").toUpperCase();
+    let state: "pass" | "fail" | "pending" | "skipping" = "pending";
+    if (["SUCCESS", "NEUTRAL"].includes(conclusion)) state = "pass";
+    else if (["SKIPPED", "EXPECTED"].includes(conclusion)) state = "skipping";
+    else if (["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"].includes(conclusion)) state = "fail";
+    else if (status === "COMPLETED") state = "pass";
+    return [{ name, state }];
+  });
 }
