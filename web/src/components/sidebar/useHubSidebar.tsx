@@ -2,9 +2,7 @@ import { useEffect, useState } from "react";
 import { Pin } from "lucide-react";
 import type { ComputerSummary, HubThread, OrganizationWorkspace } from "@remy/contract";
 import { normalizeRepositoryOrigin } from "@/lib/hub-workspace-computers";
-import { isProjectIconFile } from "@/lib/projects";
-import { WorkspaceMarkFrame } from "@/components/WorkspaceMarkFrame";
-import { HubWorkspaceIcon } from "@/components/HubWorkspaceIcon";
+import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { hubThreadAsChat } from "@/components/ThreadMenu";
 import { useHubProfile } from "@/lib/hub-profile";
 import { watchHubResource } from "@/lib/hub-computers";
@@ -122,14 +120,12 @@ export function useHubThreadGroups({
           ? {
               name: workspace.name,
               mark: (
-                <WorkspaceMarkFrame size="sm" tint={workspace.tint}>
-                  <HubWorkspaceIcon
-                    organizationId={thread.access.organizationId || organizationId}
-                    workspaceId={workspace.id}
-                    icon={workspace.icon ?? undefined}
-                    className={isProjectIconFile(workspace.icon) ? "size-full" : "size-3"}
-                  />
-                </WorkspaceMarkFrame>
+                <WorkspaceMark
+                  home={false}
+                  workspace={workspace}
+                  size="sm"
+                  organizationId={thread.access.organizationId || organizationId}
+                />
               ),
               onOpen: () => onOpenWorkspace(thread, workspace.id),
             }

@@ -1,5 +1,5 @@
 import { HubModelDefault } from "./HubModelDefault";
-import { HubWorkspaceIcon, loadHubWorkspaceImage } from "./HubWorkspaceIcon";
+import { WorkspaceIcon } from "./WorkspaceIcon";
 import { useCallback, useState } from "react";
 import type { ComputerSummary, OrganizationTeam } from "@remy/contract";
 import { PaneHeader } from "./PaneHeader";
@@ -10,8 +10,9 @@ import { HubWorkspaceComputers } from "./HubWorkspaceComputers";
 import { HubWorkspaceAccess } from "./HubWorkspaceAccess";
 import { Button } from "./ui/button";
 import { useHubResource, type HubWorkspace, type HubMember } from "@/lib/hub-organization";
+import { loadHubWorkspaceImage } from "@/lib/hub-workspace-image";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
-import { PROJECT_ICON_IDS, projectIcon, isProjectIconFile } from "@/lib/projects";
+import { PROJECT_ICON_IDS, projectIcon } from "@/lib/projects";
 import { apiError } from "@/lib/api-error";
 import { usePersonalHub } from "@/lib/hub-scope";
 
@@ -45,7 +46,7 @@ export default function HubWorkspaceDetails({ organizationId, workspaceId, role,
         <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-3.5 py-3">
           <fieldset disabled={!admin || busy}>
             <IconPicker label={`Change icon for ${value.name}`} icon={value.icon ?? "folder"} tint={value.tint} icons={PROJECT_ICON_IDS} renderIcon={projectIcon}
-              preview={isProjectIconFile(value.icon) ? <HubWorkspaceIcon organizationId={organizationId} workspaceId={workspaceId} icon={value.icon} className="size-full object-cover" /> : undefined}
+              preview={<WorkspaceIcon organizationId={organizationId} workspaceId={workspaceId} icon={value.icon} className="size-4" fileClassName="size-full object-cover" />}
               files={{ workspaceId, search: searchImages, loadPreview, onPick: icon => void update({ icon }) }} onChange={patch => void update(patch)} />
           </fieldset>
           <div className="min-w-0 flex-1">{admin ? <EditableName value={value.name} label="workspace name" onCommit={name => void update({ name })} /> : value.name}</div>

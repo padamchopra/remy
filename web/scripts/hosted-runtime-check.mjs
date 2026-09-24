@@ -212,7 +212,8 @@ try {
           [`${base}/members`]: {members:[{id:"reader-member",userId:"reader",name:profile.name,image:profile.image,role:"owner"},...Array.from({length:4},(_,i)=>({id:`m${i}`,userId:`p${i}`,name:`Person ${i}`,image:`data:image/png;base64,${readFileSync(new URL('../public/favicon.png',import.meta.url)).toString('base64')}`,role:"member"}))]},
           [`${base}/teams`]: {teams:[]},
           [`${base}/workspaces/repo`]: {id:"repo",name:"Example",origin:"github.com/example/repo",restricted:false,icon:"icon.png"},
-          [`${base}/workspaces`]: { workspaces: hasWorkspace && !(process.env.QA_SCOPE_ONLY === "1" && org.personal)?[{id:"repo",name:"Example",origin:"https://github.com/example/repo"}]:[], canManage: true },
+          [`${base}/workspaces/remy`]: {id:"remy",name:"remy",origin:"github.com/padamchopra/remy",restricted:false,icon:"folder"},
+          [`${base}/workspaces`]: { workspaces: hasWorkspace && !(process.env.QA_SCOPE_ONLY === "1" && org.personal)?[{id:"repo",name:"Example",origin:"https://github.com/example/repo",icon:"icon.png"},{id:"remy",name:"remy",origin:"https://github.com/padamchopra/remy",icon:"folder"}]:[], canManage: true },
           [`${base}/notifications`]: { notifications: [], devices: [] },
           [`${base}/environments`]: { environments: [], assignments: [], workspaces: [] },
           [`${base}/board/tickets`]: {items:process.env.QA_SCOPE_ONLY === "1"?[{id:`${org.id}-ticket`,entity:"ticket",fields:{title:org.personal?"Personal ticket":"Studio ticket",status:"todo",number:1,keyPrefix:org.personal?"PER":"STD"},lastActor:{id:"reader",label:"Reader"},activity:[]}]:[]},
@@ -426,6 +427,38 @@ try {
           assert.ok(Math.abs(workspaceLayout.right)<1,"Add workspace aligns with the workspace rows");
           assert.ok(Math.abs(workspaceLayout.top-workspaceLayout.bottom)<1,"Add workspace has equal space above and below");
           assert.ok(workspaceLayout.overflow<=0,"Workspace actions do not overflow the pane");
+          const remyWorkspace=page.locator('[data-slot="item"]',{hasText:"github.com/padamchopra/remy"});
+          await remyWorkspace.getByRole("button",{name:"Open remy workspace details",exact:true}).waitFor();
+          const listMark=remyWorkspace.locator('[data-slot="workspace-mark"]');
+          await listMark.locator("svg").waitFor();
+          const listIcon=await listMark.evaluate(mark=>{
+            const svg=mark.querySelector("svg");
+            const style=getComputedStyle(mark);
+            const box=mark.getBoundingClientRect(), glyph=svg?.getBoundingClientRect();
+            return {svg:svg?.innerHTML??"",well:style.backgroundColor,fg:style.color,radius:style.borderRadius,width:box.width,height:box.height,glyph:glyph?.width??0};
+          });
+          assert.equal(listIcon.width,40,"Workspace list icon well is 40px wide");
+          assert.equal(listIcon.height,40,"Workspace list icon well is 40px tall");
+          if(artifacts && !mobile) await remyWorkspace.screenshot({path:`${artifacts}/workspace-list-icon.png`});
+          await remyWorkspace.getByRole("button",{name:"Open remy workspace details",exact:true}).click();
+          await page.waitForURL(/\/app\/workspaces\/remy\?owner=team$/);
+          const remyButton=page.getByRole("button",{name:"Change icon for remy",exact:true});
+          await remyButton.locator("svg").waitFor();
+          const detailIcon=await remyButton.evaluate(button=>{
+            const svg=button.querySelector("svg");
+            const style=getComputedStyle(button);
+            const box=button.getBoundingClientRect(), glyph=svg?.getBoundingClientRect();
+            return {svg:svg?.innerHTML??"",well:style.backgroundColor,fg:style.color,radius:style.borderRadius,width:box.width,height:box.height,glyph:glyph?.width??0};
+          });
+          assert.equal(detailIcon.svg,listIcon.svg,"List and detail use the same folder glyph");
+          assert.equal(detailIcon.well,listIcon.well,"List and detail share the well fill");
+          assert.equal(detailIcon.fg,listIcon.fg,"List and detail share the glyph color");
+          assert.equal(detailIcon.width,listIcon.width,"List and detail wells are the same width");
+          assert.equal(detailIcon.height,listIcon.height,"List and detail wells are the same height");
+          assert.ok(Math.abs(detailIcon.glyph-listIcon.glyph)<1,"List and detail glyphs are the same size");
+          if(artifacts && !mobile) await remyButton.screenshot({path:`${artifacts}/workspace-detail-icon.png`});
+          await page.getByRole("navigation",{name:"breadcrumb",exact:true}).getByRole("button",{name:"Workspaces",exact:true}).click();
+          await page.getByText("Studio · https://github.com/example/repo",{exact:true}).waitFor();
           const studioWorkspace=page.locator('[data-slot="item"]',{hasText:"Studio · https://github.com/example/repo"});
           await studioWorkspace.getByRole("button",{name:"Open Example workspace details",exact:true}).click();
           await page.waitForURL(/\/app\/workspaces\/repo\?owner=team$/);

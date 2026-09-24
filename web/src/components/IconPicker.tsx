@@ -16,6 +16,7 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ProjectIconSearch } from "@/components/ProjectIconDialog";
+import { isProjectIconFile } from "@/lib/projects";
 import { TINT_IDS, isTint, tintOf, type TintId } from "@/lib/tints";
 import { cn } from "@/lib/utils";
 
@@ -45,7 +46,7 @@ export function IconPicker<Id extends string>({
   const Icon = renderIcon((icon as Id) ?? icons[0]);
   const colors = tintOf(tint);
   const selectedTint: TintId = isTint(tint) ? tint : "zinc";
-  const selectedIcon = preview ? "" : String(icon);
+  const selectedIcon = files && isProjectIconFile(icon) ? "" : String(icon);
 
   const openChange = (next: boolean) => {
     setOpen(next);
