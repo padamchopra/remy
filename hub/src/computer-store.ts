@@ -1,5 +1,5 @@
 import { computerCapabilitiesSchema, computerRegistrationSchema, type ComputerAccess, type ComputerCapabilities, type ComputerRegistration } from "@remy/contract";
-import { parseStartProviders, type ComputerStartProvider } from "./computer-start-access.js";
+import { parseStartProviders, type StartProvider } from "./computer-start-access.js";
 
 export type StoredComputer = ComputerRegistration & { lastSeenAt: number | null };
 
@@ -13,7 +13,7 @@ export interface ComputerStore {
   claimNonce(computerId: string, nonce: string, expiresAt: number, now: number): Promise<boolean>;
   sharedOrganizationIds?(sourceOrganizationId: string, computerId: string): Promise<string[]>;
   /// `null` is an unrestricted share; `undefined` means this organization has no grant.
-  shareStartProviders?(organizationId: string, computerId: string): Promise<ComputerStartProvider[] | null | undefined>;
+  shareStartProviders?(organizationId: string, computerId: string): Promise<StartProvider[] | null | undefined>;
 }
 
 type Row = Record<string, unknown>;

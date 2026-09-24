@@ -78,7 +78,6 @@ export function HubOrganizationComputers({ organizationId }: { organizationId: s
   const empty = value && value.computers.length === 0 && value.cloudConnections.length === 0;
   return <section className="flex min-w-0 flex-col gap-6 p-6" aria-label="Organization computers">
     <Field>
-      <FieldLabel>Computers</FieldLabel>
       <FieldDescription>Others start with the providers you turn on, and can still reply on work already running.</FieldDescription>
     </Field>
     {(error || resource.error) && <p role="alert" className="text-sm text-destructive">{error || resource.error}</p>}

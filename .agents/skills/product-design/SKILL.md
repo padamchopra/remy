@@ -107,6 +107,20 @@ A setting lives with the thing whose behavior it controls. The actor that carrie
 
 - A machine integration belongs to that machine's settings. Hosted thread start uses the providers enabled on the chosen computer, including a cloud computer's OpenRouter, Router, OpenAI, and Anthropic access. A cloud computer shared into an organization carries that source account's enabled model access. A Remy-wide OpenRouter default does not start on an organization that has no OpenRouter key and no shared computer that does.
 - A Personal computer or cloud connection shared into an organization is a start grant. The member who owns that computer or connection can share it, unshare it, and choose which of its advertised providers other members may use to start a new thread. Administrators can revoke the grant; they cannot configure someone else's machine. Sharing turns every currently advertised provider on. The owner can always start with any provider on that computer. Other members can still reply, approve, and otherwise contribute on threads that already exist. Org-scoped API keys and multiple named Fly credentials are a later slice.
+- A shared cloud computer advertises the source account's enabled model access — OpenRouter, Router, OpenAI, Anthropic — not the Codex or Claude runtime those gateways execute through. Codex appears only when Codex itself is configured.
+
+BAD
+```text
+Fly.io is shared from Personal, where OpenRouter is on.
+Organization → Computers shows a Codex toggle under Fly.io Sprites.
+```
+
+GOOD
+```text
+Fly.io is shared from Personal, where OpenRouter is on.
+Organization → Computers shows OpenRouter under Fly.io Sprites.
+Codex stays off the row unless that account actually configured Codex.
+```
 - Repository behavior belongs to the workspace or repository identity it follows.
 - Personal behavior and instructions belong to an agent.
 - One conversation's presentation or execution state belongs to that thread.

@@ -14,6 +14,12 @@ export function hostedRuntimeProvider(id: string): string {
   return id;
 }
 
+/// Share grants list gateways (OpenRouter). Older grants listed the Codex runtime.
+export function cloudShareAllowsProvider(allowed: ReadonlySet<string> | undefined, providerId: string): boolean {
+  if (!allowed) return true;
+  return allowed.has(providerId) || allowed.has(hostedRuntimeProvider(providerId));
+}
+
 function runtimeFor(id: string): Provider | undefined {
   return PROVIDERS.find((entry) => entry.id === id)
     ?? PROVIDERS.find((entry) => entry.id === hostedRuntimeProvider(id));

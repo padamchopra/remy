@@ -14,7 +14,7 @@ const bundled = await build({
   format: "esm",
   alias: { "@": resolve(root, "src") },
 });
-const { hostedComposerChoice, hostedExecutionChoice, hostedModels } = await import(
+const { cloudShareAllowsProvider, hostedComposerChoice, hostedExecutionChoice, hostedModels } = await import(
   `data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString("base64")}`
 );
 
@@ -76,6 +76,14 @@ test("hosted composer start uses an enabled provider instead of an unconfigured 
     ).model,
     "openrouter/auto",
   );
+});
+
+test("cloud share grants match a gateway id or a legacy Codex runtime", () => {
+  assert.equal(cloudShareAllowsProvider(undefined, "openrouter"), true);
+  assert.equal(cloudShareAllowsProvider(new Set(["openrouter"]), "openrouter"), true);
+  assert.equal(cloudShareAllowsProvider(new Set(["codex"]), "openrouter"), true);
+  assert.equal(cloudShareAllowsProvider(new Set(["anthropic"]), "openrouter"), false);
+  assert.equal(cloudShareAllowsProvider(new Set(["openrouter"]), "codex"), false);
 });
 
 test("hosted execution maps OpenRouter onto Codex without a double remy prefix", () => {
