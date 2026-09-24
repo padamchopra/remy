@@ -220,12 +220,11 @@ export default function HubBoard({
       className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-auto p-6"
       aria-label="Tasks"
     >
-      <header className="flex items-center justify-between gap-2">
-        <h1>Tasks</h1>
+      <div className="flex items-center justify-end gap-2">
         <Button disabled={stale} onClick={() => openEdit("new")}>
           Create ticket
         </Button>
-      </header>
+      </div>
       {error && <p role="alert">{error}</p>}
       {stale && (
         <p role="status">

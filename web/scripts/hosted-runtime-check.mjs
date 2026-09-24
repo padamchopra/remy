@@ -172,6 +172,7 @@ try {
           [`${base}/environments`]: { environments: [], assignments: [], workspaces: [] },
           [`${base}/board/tickets`]: {items:process.env.QA_SCOPE_ONLY === "1"?[{id:`${org.id}-ticket`,entity:"ticket",fields:{title:org.personal?"Personal ticket":"Studio ticket",status:"todo",number:1,keyPrefix:org.personal?"PER":"STD"},lastActor:{id:"reader",label:"Reader"},activity:[]}]:[]},
           [`${base}/agents`]: {agents:process.env.QA_SCOPE_ONLY === "1"?[{id:`${org.id}-agent`,entity:"agent",fields:{name:org.personal?"Personal agent":"Studio agent",role:"Builder",scope:"org"},lastActor:{id:"reader",label:"Reader"},activity:[]}]:[]},
+          [`${base}/github/pull-requests`]: {pullRequests:[]},
           [`${base}/connections`]: {canManage:true,providers:[],connections:[]},
           [`${base}/routing`]: {rules:[],canEdit:true,enabledProviders:[]},
           [`${base}/compute-shares`]: {canManage:true,computers:[{id:"personal-mac",name:"Personal Mac",icon:"laptop",platform:"darwin",shared:sharedComputer,available:true,sharedBy:sharedComputer?"Reader":null,canShare:true,canRevoke:true,providers:sharedComputer?[{id:"claude",label:"Claude",allowed:true},{id:"codex",label:"Codex",allowed:true}]:[]}],cloudConnections:[{provider:"modal",shared:sharedCloud,available:true,sharedBy:sharedCloud?"Reader":null,canShare:true,canRevoke:true,providers:sharedCloud?[{id:"claude",label:"Claude",allowed:true},{id:"codex",label:"Codex",allowed:true}]:[]}]},
@@ -311,6 +312,7 @@ try {
             await composer.waitFor();
           }
           assert.equal(await page.locator('[data-slot="pane-header"]').count(),1,"Threads uses the shared pane header");
+          assert.equal(await page.getByRole("heading",{name:"Threads",exact:true}).count(),0,"Threads does not repeat the pane title");
           assert.equal(await threadPane.getByText("Personal thread",{exact:true}).count(),0,"The main pane does not repeat Personal threads");
           assert.equal(await threadPane.getByText("Studio thread",{exact:true}).count(),0,"The main pane does not repeat organization threads");
           assert.equal(await page.getByRole("dialog").count(),0,"New thread does not ask for an account first");
@@ -340,6 +342,7 @@ try {
           await page.getByText("Personal ticket",{exact:false}).waitFor();
           await page.getByText("Studio ticket",{exact:false}).waitFor();
           assert.equal(await page.locator('[data-slot="pane-header"]').count(),1,"Tasks uses the shared pane header");
+          assert.equal(await page.getByRole("heading",{name:"Tasks",exact:true}).count(),0,"Tasks does not repeat the pane title");
           assert.equal(await page.getByRole("button",{name:"Create ticket",exact:true}).count(),1);
           assert.equal(await page.getByRole("region",{name:"Tasks",exact:true}).count(),1);
           if(artifacts)await page.screenshot({path:`${artifacts}/unified-tasks-${mobile?'phone':'desktop'}.png`});
@@ -347,11 +350,21 @@ try {
           await page.getByText("Personal agent",{exact:true}).waitFor();
           await page.getByText("Studio agent",{exact:true}).waitFor();
           assert.equal(await page.locator('[data-slot="pane-header"]').count(),1,"Inbox uses the shared pane header");
+          assert.equal(await page.getByRole("heading",{name:"Inbox",exact:true}).count(),0,"Inbox does not repeat the pane title");
           assert.equal(await page.getByRole("button",{name:"Create agent",exact:true}).count(),1);
           assert.equal(await page.getByRole("region",{name:"Inbox",exact:true}).count(),1);
+          await page.goto(clean("/pull-requests"));
+          await page.getByRole("heading",{name:"Pull requests",exact:true}).waitFor();
+          assert.equal(await page.getByRole("heading",{name:"Pull requests",exact:true}).count(),1,"Pull requests names the pane once");
+          assert.equal(await page.locator('[data-slot="pane-header"]').count(),0,"Pull requests owns its title instead of a second pane header");
+          assert.equal(await page.getByLabel("Filter pull requests",{exact:true}).count(),1);
+          await page.getByText("No pull requests",{exact:true}).waitFor();
+          await page.getByText("Live from GitHub",{exact:true}).waitFor();
+          if(artifacts)await page.screenshot({path:`${artifacts}/unified-pull-requests-${mobile?'phone':'desktop'}.png`});
           await page.goto(clean("/workspaces"));
           await page.getByText("Studio · https://github.com/example/repo",{exact:true}).waitFor();
           assert.equal(await page.locator('[data-slot="pane-header"]').count(),1,"Workspace list uses the shared pane header");
+          assert.equal(await page.getByRole("heading",{name:"Workspaces",exact:true}).count(),0,"Workspaces does not repeat the pane title");
           assert.equal(await page.getByText("Personal · https://github.com/example/repo",{exact:true}).count(),0);
           assert.equal(await page.getByRole("button",{name:"Add workspace",exact:true}).count(),1);
           assert.equal(await page.getByRole("heading",{name:"Personal",exact:true}).count(),0);

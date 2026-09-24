@@ -314,6 +314,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
     : [];
   const paneLabel = links.find((link) => link.selected)?.label ?? "Remy";
   const showPaneHeader =
+    route.name !== "prs" &&
     !(route.name === "threads" && route.threadId) &&
     !(route.name === "workspaces" && route.workspaceId);
   const paneCrumbs = route.name === "settings"

@@ -101,6 +101,32 @@ Keep inline copy only for durable page state — loading, stale, reconnect — a
 
 A composed screen assembles primitives; it never replaces one that exists. A control that appears on two screens moves into its own module rather than being copied — `ComposerMenu.tsx`, `PathPicker.tsx`, and `ThreadMenu.tsx` are shared this way.
 
+## One pane title
+
+The main pane names the section once. `PaneHeader` is that name when the shell draws it. A section that owns its chrome — Pull requests — draws the title itself, and the shell does not add another `PaneHeader`. Do not put an `h1` of the same section name under `PaneHeader`.
+
+BAD
+```tsx
+<PaneHeader crumbs={[{ label: "Pull requests" }]} />
+<main>
+  <h1>Pull requests</h1>
+</main>
+```
+
+GOOD
+```tsx
+// Pull requests: the section header is the title, on Mac and hosted.
+<main>
+  <header>
+    <h1>Pull requests</h1>
+  </header>
+</main>
+
+// Inbox, Tasks, Workspaces, Threads: PaneHeader is the title.
+<PaneHeader crumbs={[{ label: "Inbox" }]} />
+<section aria-label="Inbox">{/* list, not another Inbox heading */}</section>
+```
+
 ## Sidebar row menus
 
 Thread rows in the app sidebar use `ThreadMenu`: right-click is a `ContextMenu`, and the hover ⋯ is the same items as a `DropdownMenu`. Hosted `HubThreadSidebar` and Mac `AppSidebar` both render that one component so the menu cannot drift. Navigation items in those menus use `data-link`.

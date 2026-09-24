@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Check, ChevronDown, CircleDot, GitPullRequest, RefreshCw, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -369,6 +370,7 @@ export function PullRequests({
     return (
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex h-12 items-center gap-3 px-4">
+          <SidebarTrigger className="md:hidden" />
           <Button variant="ghost" size="sm" onClick={() => setSelectedURL("")}>Pull requests</Button>
           <a className="ml-auto text-sm" href={selected.url} target="_blank" rel="noreferrer" data-link>Open on GitHub</a>
         </header>
@@ -447,10 +449,13 @@ export function PullRequests({
   return (
     <main className="flex min-h-0 min-w-0 flex-1 flex-col">
       <header className="flex h-12 shrink-0 items-center gap-3 px-4">
+        <SidebarTrigger className="md:hidden" />
         <h1 className="text-sm font-medium">Pull requests</h1>
         <span className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
           <span className="size-1.5 rounded-full bg-success-foreground" />
-          Live from GitHub · {onlineCount} of {computerCount} {computerCount === 1 ? "computer" : "computers"}
+          {hostedOrganizationId
+            ? "Live from GitHub"
+            : `Live from GitHub · ${onlineCount} of ${computerCount} ${computerCount === 1 ? "computer" : "computers"}`}
         </span>
         <Button variant="ghost" size="icon-sm" disabled={refreshing} onClick={() => void load({ refresh: true, showProgress: true })} aria-label="Refresh pull requests">
           <RefreshCw className={refreshing ? "animate-spin" : undefined} />
