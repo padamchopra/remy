@@ -160,9 +160,9 @@ GOOD
   </header>
 </main>
 
-// Inbox, Tasks, Workspaces, Threads: PaneHeader is the title.
-<PaneHeader crumbs={[{ label: "Inbox" }]} />
-<section aria-label="Inbox">{/* list, not another Inbox heading */}</section>
+// Agents, Tasks, Workspaces, Threads: PaneHeader is the title.
+<PaneHeader crumbs={[{ label: "Settings" }, { label: "Agents" }]} />
+<section aria-label="Agents">{/* list, not another Agents heading */}</section>
 ```
 
 ## Sidebar row menus

@@ -79,7 +79,7 @@ export function useMacSidebar({
     id,
     label,
     icon: icon as SidebarNavItem["icon"],
-    count: id === "inbox" ? unread : id === "chats" ? needsYou : undefined,
+    count: id === "chats" ? needsYou : undefined,
     selected: section === id,
     onSelect: () => onSection(id),
   }));
@@ -88,7 +88,7 @@ export function useMacSidebar({
     id,
     label,
     icon,
-    count: id === "general" && updateAvailable ? 1 : undefined,
+    count: id === "agents" ? unread : id === "general" && updateAvailable ? 1 : undefined,
     selected: settingsTab === id,
     onSelect: () => openSettings(id),
   }));

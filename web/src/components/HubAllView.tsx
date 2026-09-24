@@ -423,7 +423,7 @@ function AllInbox({
   return (
     <section
       className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-6"
-      aria-label="Inbox"
+      aria-label="Agents"
     >
       <div className="flex items-center justify-end">
         <AccountAction
@@ -434,7 +434,8 @@ function AllInbox({
           action="Choose account"
           onSelect={(organizationId) =>
             navigate({
-              name: "inbox",
+              name: "settings",
+              tab: "agents",
               organizationId: "all",
               ownerOrganizationId: organizationId,
             })
@@ -454,7 +455,8 @@ function AllInbox({
                 data-link
                 onClick={() =>
                   navigate({
-                    name: "inbox",
+                    name: "settings",
+                    tab: "agents",
                     agent: agent.id,
                     organizationId: "all",
                     ownerOrganizationId: organization.id,
@@ -768,14 +770,15 @@ export default function HubAllView({
                   navigate={scoped}
                 />
               )}
-              {section === "inbox" && (
+              {section === "agents" && (
                 <Inbox
                   organizationId={selectedOwner.id}
                   userId={userId}
-                  agentId={route.name === "inbox" ? route.agent : undefined}
+                  agentId={route.name === "settings" && route.tab === "agents" ? route.agent : undefined}
                   choose={(agent) =>
                     scoped({
-                      name: "inbox",
+                      name: "settings",
+                      tab: "agents",
                       organizationId: selectedOwner.id,
                       agent,
                     })
@@ -824,7 +827,7 @@ export default function HubAllView({
     );
   if (route.name === "board")
     return <AllTasks organizations={organizations} navigate={navigate} />;
-  if (route.name === "inbox")
+  if (route.name === "settings" && route.tab === "agents")
     return <AllInbox organizations={organizations} navigate={navigate} />;
   if (route.name === "settings" && (route.tab === "general" || route.tab === "devices")) {
     const personal =

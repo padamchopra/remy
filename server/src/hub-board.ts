@@ -155,7 +155,7 @@ export function appendHubBoard(org: string, input: unknown) {
   if (!hubBoardState(org).enabled)
     throw new Error("Enable Tasks synchronization first.");
   const value = boardAppendInputSchema.parse(input);
-  if (!["project","ticket"].includes(value.entity)) throw new Error("Manage your organization’s agents in Inbox.");
+  if (!["project","ticket"].includes(value.entity)) throw new Error("Manage your organization’s agents in Settings.");
   const event: BoardLogEvent = {
     ...value,
     id: randomUUID(),

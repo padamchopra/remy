@@ -32,11 +32,10 @@ import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
 import type { Agent } from "@/state/types";
 
-/// The inbox: your agents, and the conversation with the one you picked.
+/// Your agents, and the conversation with the one you picked.
 ///
-/// The roster is a list in this pane rather than in the sidebar. The sidebar
-/// holds your threads in every section — they are the work, and one is always
-/// one click away — so a second list there would have had to push them aside.
+/// The roster lives in Settings so it does not take a top-level section from
+/// the sidebar. Threads stay on screen in every work section.
 export function Inbox({
   agents,
   selected,
@@ -147,7 +146,7 @@ function AgentRow({
   onSelect: () => void;
 }) {
   const dm = useStore((state) => agentConversation(agent.id, state.dms, servers, preferenceOrder));
-  reportRender("inbox-row", agent.id);
+      reportRender("agent-row", agent.id);
   const preview = dm?.preview ? plainText(dm.preview) : agent.role;
 
   return (
@@ -337,8 +336,8 @@ function Conversation({
         onOpenRoutine={() => setEditing(true)}
         crumbs={[
           {
-            // The list beside this already says which agents there are, so the
-            // trail is only the one you are talking to.
+            // Settings already named the section, so the trail is only the
+            // agent you are talking to.
             label: headerLabel,
           },
         ]}
@@ -380,7 +379,7 @@ function NobodyPicked({
 
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      <PaneHeader crumbs={[{ label: "Inbox" }]} />
+      <PaneHeader crumbs={[{ label: "Settings" }, { label: "Agents" }]} />
       <Empty className="flex-1">
         <EmptyHeader>
           <EmptyMedia variant="icon"><Bot /></EmptyMedia>

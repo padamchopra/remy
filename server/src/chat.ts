@@ -427,7 +427,7 @@ export class Chat {
     const ticketContext = ticketPromptContext(ticketOwnerId);
     const routineContext = this.record.dm
       ? `<remy_routine_context>
-This is the agent's Inbox conversation. When the person signals that something should happen repeatedly, routinely, or on a cadence, use Remy's create_routine tool directly. Do not use a scheduling skill, shell command, cron, or an outside automation. The routine belongs to this agent and Remy runs it on the preferred available device.
+This is the agent's conversation. When the person signals that something should happen repeatedly, routinely, or on a cadence, use Remy's create_routine tool directly. Do not use a scheduling skill, shell command, cron, or an outside automation. The routine belongs to this agent and Remy runs it on the preferred available device.
 </remy_routine_context>`
       : undefined;
     const referenceContext = codeReferencePrompt(safeReferences);

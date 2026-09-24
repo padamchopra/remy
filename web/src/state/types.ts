@@ -73,8 +73,8 @@ export interface Chat {
   /// When the current run of work began. Absent once the chat settles, so a
   /// row only shows a clock while there is something to time.
   workingSince?: number;
-  /// True when this is an agent's inbox conversation rather than work in a
-  /// repository. These live in Inbox and never in the thread list.
+  /// True when this is an agent's conversation rather than work in a
+  /// repository. These live in Settings → Agents and never in the thread list.
   dm?: boolean;
   /// The agent has said something since you last opened this.
   unread?: boolean;

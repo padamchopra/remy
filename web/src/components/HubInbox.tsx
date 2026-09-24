@@ -136,7 +136,7 @@ export function HubInbox({
   return (
     <section
       className="flex min-h-0 flex-1 flex-col gap-6 overflow-auto p-6"
-      aria-label="Inbox"
+      aria-label="Agents"
     >
       <div className="flex flex-wrap gap-6">
         <div className="flex w-56 shrink-0 flex-col gap-4">

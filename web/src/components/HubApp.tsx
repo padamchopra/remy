@@ -14,6 +14,7 @@ import {
   SquareKanban,
   Users,
   User,
+  Bot,
   LogOut,
   Settings2,
   Building2,
@@ -256,12 +257,6 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           selected: section === "threads",
         },
         {
-          label: "Inbox",
-          icon: User,
-          route: { name: "inbox", organizationId },
-          selected: section === "inbox",
-        },
-        {
           label: "Tasks",
           icon: SquareKanban,
           route: { name: "board", organizationId },
@@ -279,11 +274,26 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           route: { name: "prs", organizationId },
           selected: route.name === "prs",
         },
+      ]
+    : [];
+  const settingsLinks: {
+    label: string;
+    icon: typeof Users;
+    route: Route;
+    selected: boolean;
+  }[] = organization
+    ? [
         {
           label: "General",
           icon: Settings2,
           route: { name: "settings", tab: "general", organizationId },
           selected: section === "general",
+        },
+        {
+          label: "Agents",
+          icon: Bot,
+          route: { name: "settings", tab: "agents", organizationId },
+          selected: section === "agents",
         },
         {
           label: "Computers",
@@ -312,7 +322,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
         },
       ]
     : [];
-  const paneLabel = links.find((link) => link.selected)?.label ?? "Remy";
+  const paneLabel = [...links, ...settingsLinks].find((link) => link.selected)?.label ?? "Remy";
   const workspacesListOpen = route.name === "workspaces" && !route.workspaceId;
   const showPaneHeader =
     route.name !== "prs" &&
@@ -352,12 +362,12 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           onNewThread={inSettings ? undefined : () => navigate({ name: "threads", organizationId })}
           nav={inSettings
             ? [
-                ...links.slice(5).filter(link => !isPersonal || !["Members", "Teams"].includes(link.label)).map(link => ({
+                ...settingsLinks.filter(link => !isPersonal || !["Members", "Teams"].includes(link.label)).map(link => ({
                   id: link.label, label: link.label, icon: link.icon, selected: link.selected, onSelect: () => navigate(link.route),
                 })),
                 ...(organization ? [{ id: "notifications", label: "Notifications", icon: Bell, selected: false, onSelect: () => setNotificationsAccount(organization.id) }] : []),
               ]
-            : links.slice(0, 5).map(link => ({
+            : links.map(link => ({
                 id: link.label, label: link.label, icon: link.icon, selected: link.selected, onSelect: () => navigate(link.route),
               }))}
           groups={inSettings ? [] : threadGroups}
@@ -471,17 +481,18 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                 </Deferred>
               </div>
               <div
-                hidden={section !== "inbox"}
+                hidden={section !== "agents"}
                 className="min-h-0 flex-1 overflow-auto"
               >
-                <Deferred open={section === "inbox"}>
+                <Deferred open={section === "agents"}>
                   <Inbox
                     organizationId={organization.id}
                     userId={profile?.id ?? ""}
-                    agentId={route.name === "inbox" ? route.agent : undefined}
+                    agentId={route.name === "settings" && route.tab === "agents" ? route.agent : undefined}
                     choose={(id) =>
                       navigate({
-                        name: "inbox",
+                        name: "settings",
+                        tab: "agents",
                         agent: id,
                         organizationId: organization.id,
                       })

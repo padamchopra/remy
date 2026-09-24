@@ -13,12 +13,12 @@ import { EmptyState } from "../components/Empty";
 import { StateBadge } from "../components/Badge";
 import type { Agent, Chat, Routine } from "../state/types";
 
-/// The inbox: one conversation per agent, on whichever Mac holds it.
+/// The agents: one conversation per agent, on whichever Mac holds it.
 ///
-/// Everything about an agent lives here rather than in a settings pane, because
-/// an agent is somebody you talk to. Tapping a row opens the conversation; its
-/// own screen — name, instructions, what it thinks with, its routines — opens
-/// on top from the row's settings control.
+/// Everything about an agent lives in Settings → Agents, because Inbox is no
+/// longer a product section. Tapping a row opens the conversation; its own
+/// screen — name, instructions, what it thinks with, its routines — opens on
+/// top from the row's settings control.
 export function InboxScreen({
   onOpen,
   onSettings,

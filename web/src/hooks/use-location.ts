@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { formatLocation, parseLocation, type AppLocation } from "@/lib/route";
+import { formatLocation, normalizeLocation, parseLocation, type AppLocation } from "@/lib/route";
 
 /// The window's location, as app state.
 ///
@@ -9,10 +9,10 @@ import { formatLocation, parseLocation, type AppLocation } from "@/lib/route";
 /// or dropping a thread that no longer exists — which nobody should have to
 /// press back through.
 export function useAppLocation(): [AppLocation, (next: AppLocation, replace?: boolean) => void] {
-  const [location, setLocation] = useState<AppLocation>(() => parseLocation(window.location.hash));
+  const [location, setLocation] = useState<AppLocation>(() => normalizeLocation());
 
   useEffect(() => {
-    const onChange = () => setLocation(parseLocation(window.location.hash));
+    const onChange = () => setLocation(normalizeLocation());
     window.addEventListener("hashchange", onChange);
     return () => window.removeEventListener("hashchange", onChange);
   }, []);

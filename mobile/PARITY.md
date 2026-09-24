@@ -9,7 +9,7 @@ does not run repositories, agents, browsers, or terminals itself.
 | Area | iPhone behavior | Evidence |
 |---|---|---|
 | Shared contracts | Reads current providers, models, effort, settings, agents, routines, activity, artifacts, pull requests, workspaces, and Tasks from each computer. Older computers retain an explicit fallback. | Contract typecheck and phone contract suite |
-| Agents | Creates, edits, deletes, and talks to agents from Inbox, including model, instructions, permissions, identity, and avatar. | REMY-15 |
+| Agents | Creates, edits, deletes, and talks to agents from Settings, including model, instructions, permissions, identity, and avatar. | REMY-15 |
 | Routines | Creates routines conversationally and edits, runs, pauses, and deletes them from the owning agent. Device-agnostic runs follow preferred computer order. | REMY-16 |
 | Thread feed | Renders prose, Markdown, code, images, activity, artifacts, todos, context, approvals, and questions. The composer sends images and code references without losing reading position. | REMY-17 |
 | Thread control | Creates and switches parent/subthreads, changes model/effort/permission, pins, renames, stops, archives, restores, deletes, adopts as a ticket, and opens its pull request. Detail is kept warm for bounded multitasking. | REMY-18 |
@@ -21,7 +21,7 @@ does not run repositories, agents, browsers, or terminals itself.
 | Workspaces and worktrees | Adds, styles, renames, configures, and removes local workspace copies. Shows repository copies per computer, branches, dirty state, worktrees and their threads, with guarded cleanup. | REMY-24 |
 | Environments | Manages environment names, selection, configured keys, values, and file imports without any response type that can contain a value. Exact output redaction and its encoded-value limit remain visible. | REMY-25 |
 | Computers and settings | Discovers and pairs computers on the tailnet, retains QR/link fallback, and manages per-computer providers, defaults, worktrees, Remy model, tooling, integrations, identity, monitoring, notifications, availability, preference order, and analytics. | REMY-26 |
-| Navigation and recovery | Keeps Inbox, Threads, Workspaces, Tasks, and Pull requests primary; deep-links every durable destination; routes pushes to the originating computer; restores a useful location; and retains cached content with retry. | REMY-27 |
+| Navigation and recovery | Keeps Threads, Workspaces, Tasks, Pull requests, Devices, and Agents primary; deep-links every durable destination; routes pushes to the originating computer; restores a useful location; and retains cached content with retry. | REMY-27 |
 
 ## Intentional desktop-only behavior
 

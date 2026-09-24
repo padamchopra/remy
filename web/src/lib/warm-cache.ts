@@ -43,7 +43,7 @@ export const WARM_CACHE_BOUNDS = {
 /// The lists a person sees before they touch anything, plus the transcripts
 /// they were last reading.
 ///
-/// The roster is here because Inbox is the agents and `/inbox/<handle>` cannot
+/// The roster is here because Agents is in Settings and `/settings/agents?agent=` cannot
 /// find its conversation without it. Tickets and routines are not: they belong
 /// to a pane of their own, and a board is the one list here with no natural
 /// size. Archived threads are absent for the same reason — they carry whole

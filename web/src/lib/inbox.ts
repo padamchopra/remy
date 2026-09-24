@@ -22,7 +22,7 @@ export function availableAgentServers(servers: Server[], preferenceOrder: string
     });
 }
 
-/// The one conversation the Inbox presents for an agent, wherever it runs.
+/// The one conversation Settings presents for an agent, wherever it runs.
 export function agentConversation(
   agentId: string,
   dms: Chat[],
