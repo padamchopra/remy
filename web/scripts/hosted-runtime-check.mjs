@@ -31,8 +31,9 @@ try {
       page.setDefaultTimeout(8000);
       const errors = [], unexpected = [], requests = [];
       let available = true;
-      const modelEntries=["anthropic","openai","router","openrouter"].map(id=>({id,enabled:false,configured:false,models:[]}));
+      const modelEntries=["anthropic","openai","router","openrouter"].map(id=>({id,enabled:false,configured:false,models:[],keys:[]}));
       const savedKeys=new Map();
+      const providerKeys={};
       const favorites = new Set();
       const profile={id:"reader",name:"Reader",image:null}; let permissionMode="default";
       let lastMessage;
@@ -87,6 +88,27 @@ try {
         if(path === `${base}/github/profile`) return route.fulfill({json:{image:"https://avatars.githubusercontent.com/u/1"}});
         if(path === `${base}/compute-shares/computers/personal-mac` && ["PUT","PATCH","DELETE"].includes(route.request().method())) {sharedComputer=route.request().method()!=="DELETE";return route.fulfill({json:{ok:true}});}
         if(path === `${base}/compute-shares/cloud/modal` && ["PUT","PATCH","DELETE"].includes(route.request().method())) {sharedCloud=route.request().method()!=="DELETE";return route.fulfill({json:{ok:true}});}
+        if (path.startsWith(`${base}/cloud-connection/keys`)) {
+          const connection = route.request().postDataJSON() ?? {};
+          const provider = connection.provider;
+          const method = route.request().method();
+          if (method === "DELETE") {
+            providerKeys[provider] = (providerKeys[provider] ?? []).filter(key => !path.endsWith(`/${key.id}`) && !path.endsWith("/legacy"));
+            if (!(providerKeys[provider] ?? []).length) { connections.delete(provider); enabledProviders.delete(provider); }
+            return route.fulfill({ json: { keys: providerKeys[provider] ?? [] } });
+          }
+          const id = path.split("/").at(-1) === "keys" ? `key-${(providerKeys[provider] ?? []).length + 1}` : decodeURIComponent(path.split("/").at(-1));
+          const current = providerKeys[provider] ?? [];
+          const existing = current.find(key => key.id === id);
+          const next = existing
+            ? current.map(key => key.id === id ? { ...key, name: connection.name ?? key.name, active: connection.active ?? key.active } : { ...key, active: connection.active ? false : key.active })
+            : [...current.map(key => ({ ...key, active: false })), { id, name: connection.name ?? "Default", active: true }];
+          providerKeys[provider] = next;
+          connections.add(provider);
+          enabledProviders.add(provider);
+          if (connection.token || connection.tokenSecret) savedKeys.set(provider, connection.token ?? connection.tokenSecret);
+          return route.fulfill({ json: { keys: next } });
+        }
         if (path === `${base}/cloud-connection` && ["PUT", "PATCH"].includes(route.request().method())) {
           const connection = route.request().postDataJSON();
           if (route.request().method() === "PATCH") {
@@ -142,10 +164,28 @@ try {
           return route.fulfill({json:{ok:true}});
         }
         if(path.startsWith(`${base}/model-access/`)) {
-          const id=path.split("/").at(-1), patch=route.request().postDataJSON(), entry=modelEntries.find(p=>p.id===id);
+          const parts=path.split("/");
+          const accessAt=parts.lastIndexOf("model-access");
+          const id=parts[accessAt+1], keyId=parts[accessAt+2]==="keys" ? parts[accessAt+3] : undefined;
+          const patch=route.request().postDataJSON() ?? {}, entry=modelEntries.find(p=>p.id===id);
+          if (keyId !== undefined || parts[accessAt+2]==="keys") {
+            if (route.request().method()==="DELETE") {
+              entry.keys=(entry.keys ?? []).filter(key => key.id !== decodeURIComponent(keyId ?? ""));
+              if (!entry.keys.length) { entry.configured=false; entry.enabled=false; }
+            } else {
+              const nextId=keyId ? decodeURIComponent(keyId) : `key-${(entry.keys ?? []).length + 1}`;
+              const existing=(entry.keys ?? []).find(key => key.id === nextId);
+              entry.keys=existing
+                ? (entry.keys ?? []).map(key => key.id === nextId ? { ...key, name: patch.name ?? key.name, active: patch.active ?? key.active } : { ...key, active: patch.active ? false : key.active })
+                : [...(entry.keys ?? []).map(key => ({ ...key, active: false })), { id: nextId, name: patch.name ?? "Default", active: true }];
+              entry.enabled=true;
+              if(patch.apiKey){savedKeys.set(id,patch.apiKey);entry.configured=true;entry.models=["test/model-a","test/model-b"];}
+            }
+            return route.fulfill({json:{providers:modelEntries}});
+          }
           assert.equal(route.request().method(),"PATCH");
           entry.enabled=patch.enabled;
-          if(patch.apiKey){savedKeys.set(id,patch.apiKey);entry.configured=true;entry.models=["test/model-a","test/model-b"];}
+          if(patch.apiKey){savedKeys.set(id,patch.apiKey);entry.configured=true;entry.models=["test/model-a","test/model-b"];entry.keys=[{id:"legacy",name:"Default",active:true}];}
           return route.fulfill({json:{providers:modelEntries}});
         }
         if (path === `${base}/invites` && route.request().method() === "POST") {
@@ -163,7 +203,7 @@ try {
           [`${base}/threads`]: { threads: process.env.QA_SCOPE_ONLY === "1" ? [{id:`${org.id}-thread`,computerId:`${org.id}-computer`,revision:1,stale:!org.personal,observedAt:Date.now(),access:{organizationId:org.id,owner:{id:"reader",label:"Reader"},participants:[],visibility:"private"},detail:{id:`${org.id}-thread`,title:org.personal?"Personal thread":"Studio thread",state:"idle",provider:"codex",entries:[]}}, ...(org.personal ? [{id:"cloud-thread",computerId:"sprite-gone",revision:1,stale:true,observedAt:Date.now(),access:{organizationId:org.id,owner:{id:"reader",label:"Reader"},participants:[],visibility:"private"},detail:{id:"cloud-thread",title:"Cloud thread",state:"idle",provider:"codex",model:"remy:openrouter:openrouter/auto",entries:[]}}] : [])] : startedThread && startedThread.access.organizationId === org.id ? [startedThread]:[], cursor: 0, member: { id: "reader", role: "owner" } },
           [`${base}/computers`]: { computers: process.env.QA_SCOPE_ONLY === "1" ? [{ computerId: `${org.id}-computer`, name: org.personal ? "Personal Mac" : "Studio Mac", icon: "laptop", ownership: "personal", availability: org.personal ? "available" : "offline", access: { mode: "owner" }, canUse: Boolean(org.personal), canManage: false, capabilities: { workspaces: [] } }] : connected ? [{ computerId: "studio", name: computerName, icon: "laptop", ownership: "personal", availability: online ? "online" : "offline", access: { mode: "owner" }, canUse: online, canManage: false, capabilities: { workspaces: [] } }] : [] },
           [`${base}/computers/options`]: { role: "owner", members: [], teams: [] },
-          [`${base}/hosted`]: { settings: { enabled: cloudEnabled, provider: "fly-sprites", region: "", cpu: 1, memoryMiB: 2048, maxComputers: 5, idleMinutes: 12 }, secretNames: [], connections: [...connections], enabledProviders: [...enabledProviders], available },
+          [`${base}/hosted`]: { settings: { enabled: cloudEnabled, provider: "fly-sprites", region: "", cpu: 1, memoryMiB: 2048, maxComputers: 5, idleMinutes: 12 }, secretNames: [], connections: [...connections], enabledProviders: [...enabledProviders], providerKeys, available },
           [`${base}/members`]: {members:[{id:"reader-member",userId:"reader",name:profile.name,image:profile.image,role:"owner"},...Array.from({length:4},(_,i)=>({id:`m${i}`,userId:`p${i}`,name:`Person ${i}`,image:`data:image/png;base64,${readFileSync(new URL('../public/favicon.png',import.meta.url)).toString('base64')}`,role:"member"}))]},
           [`${base}/teams`]: {teams:[]},
           [`${base}/workspaces/repo`]: {id:"repo",name:"Example",origin:"github.com/example/repo",restricted:false},
@@ -424,9 +464,10 @@ try {
           await page.reload();
           await organizationGeneral.getByText("Default model",{exact:true}).waitFor();
           await page.goto(clean("/settings/devices"));
-          await page.getByRole("button",{name:"Manage computers",exact:true}).waitFor();
+          await page.getByRole("region",{name:"Computers",exact:true}).waitFor();
+          await page.getByRole("region",{name:"Cloud settings",exact:true}).waitFor();
           assert.equal(await page.locator('[data-slot="pane-header"]').count(),1,"Computers uses the shared pane header");
-          assert.equal(await page.getByRole("button",{name:"Manage computers",exact:true}).count(),1);
+          assert.equal(await page.getByRole("button",{name:"Manage computers",exact:true}).count(),0);
           assert.equal(await page.getByRole("heading",{name:"Personal",exact:true}).count(),0);
           assert.equal(await page.getByRole("heading",{name:"Studio",exact:true}).count(),0);
           await page.goto(clean("/settings/organization?section=members&owner=team"));
@@ -712,10 +753,12 @@ try {
       } finally { holdColdReads = false; holdSetupReads = false; releaseWorkspaces(); releaseComputers(); releaseColdReads(); }
       await page.getByRole("region", {name:"Threads", exact:true}).getByRole("status", {name:"Loading threads"}).waitFor({state:"hidden"});
       for (const org of [personal, team]) {
-        modelEntries.forEach(p=>{p.enabled=false;p.configured=false;p.models=[];});
+        modelEntries.forEach(p=>{p.enabled=false;p.configured=false;p.models=[];p.keys=[];});
         savedKeys.clear();
+        for (const key of Object.keys(providerKeys)) delete providerKeys[key];
         favorites.clear();
         connected = false;
+        connections.clear();
         enabledProviders.clear();
         requests.length = 0;
         const target = new URL(url);
@@ -734,7 +777,8 @@ try {
           await page.locator('[data-slot="sidebar"][data-collapsible="icon"]').waitFor();
           assert.ok(await sidebar.getByRole("button", { name: "Settings", exact: true }).isVisible());
           await sidebar.getByRole("button", { name: "Settings", exact: true }).click();
-          await page.locator('[data-slot="pane-header"]').getByText("Computers", { exact: true }).waitFor();
+          await page.locator('[data-slot="pane-header"]').getByText("General", { exact: true }).waitFor();
+          assert.equal(await sidebar.getByRole("button", { name: "Settings", exact: true }).count(), 0, "Settings stays off the settings sidebar");
           await sidebar.getByRole("button", { name: "Back", exact: true }).click();
           await sidebar.getByRole("button", { name: "Toggle Sidebar", exact: true }).click();
           await page.locator('[data-slot="sidebar"][data-state="expanded"]').waitFor();
@@ -742,8 +786,11 @@ try {
         assert.equal(await page.getByRole("button", { name: "Computers", exact: true }).count(), 0, "Settings sections stay out of the main sidebar");
         assert.equal(await page.getByRole("button", { name: "Notifications", exact: true }).count(), 0);
         await page.getByRole("button", { name: "Settings", exact: true }).click();
-        await page.locator('[data-slot="pane-header"]').getByText("Computers", { exact: true }).waitFor();
+        await page.locator('[data-slot="pane-header"]').getByText("General", { exact: true }).waitFor();
         if (mobile) await page.getByRole("button", { name: "Toggle Sidebar" }).click();
+        assert.equal(await page.getByRole("button", { name: "Settings", exact: true }).count(), 0, "Settings stays off the settings sidebar");
+        if (artifacts && !mobile && org.personal) await page.screenshot({ path: `${artifacts}/settings-general.png` });
+        await page.getByRole("button", { name: "Computers", exact: true }).waitFor();
         await page.getByRole("button", { name: "Back", exact: true }).click();
         await page.locator('[data-slot="pane-header"]').getByText("Threads", { exact: true }).waitFor();
         assert.equal(await page.locator("main").getByRole("button", { name: "Notifications", exact: true }).count(), 0);
@@ -815,10 +862,12 @@ try {
           if (!connections.has(name === "Modal" ? "modal" : "fly-sprites")) {
             assert.equal(await form.getByRole("textbox").count(), 0, "Disabled provider cards stay collapsed");
             await form.getByRole("switch", { name, exact: true }).click();
+            await form.getByRole("textbox", { name: `${name} key name`, exact: true }).fill(name === "Modal" ? "Staging" : "Production");
             if (name === "Modal") await form.getByLabel("Token ID", { exact: true }).fill("test-modal-id");
             await form.getByLabel(tokenLabel, { exact: true }).fill("test-provider-secret");
-            await form.getByRole("button", { name: "Save connection", exact: true }).click();
-            await form.getByRole("button", { name: "Update credentials", exact: true }).waitFor();
+            await form.getByRole("button", { name: "Save key", exact: true }).click();
+            await form.getByRole("button", { name: "Update key", exact: true }).waitFor();
+            await form.getByText(name === "Modal" ? "Staging" : "Production", { exact: true }).waitFor();
           }
           const toggle = form.getByRole("switch", { name, exact: true });
           if (!enabledProviders.has(name === "Modal" ? "modal" : "fly-sprites")) await toggle.click();
@@ -830,11 +879,22 @@ try {
         await page.getByRole("form", { name: "Modal connection", exact: true }).getByRole("switch").waitFor();
         assert.equal(await page.locator('section[aria-label="Cloud connections"] [role="switch"][aria-checked="true"]').count(), 2);
         const flyForm = page.getByRole("form", { name: "Fly.io Sprites connection", exact: true });
+        await flyForm.getByText("Production", { exact: true }).waitFor();
         await flyForm.getByRole("switch").click();
-        await flyForm.getByRole("button", { name: "Update credentials" }).waitFor({ state: "hidden" });
+        await flyForm.getByText("Off", { exact: true }).waitFor();
+        await flyForm.getByRole("button", { name: "Update key", exact: true }).waitFor({ state: "hidden" });
         assert.equal(enabledProviders.has("modal"), true, "Disabling Fly leaves Modal enabled");
         await flyForm.getByRole("switch").click();
-        await flyForm.getByRole("button", { name: "Update credentials" }).waitFor();
+        await flyForm.getByText("Enabled", { exact: true }).waitFor();
+        await flyForm.getByText("Production", { exact: true }).waitFor();
+        await flyForm.getByRole("button", { name: "Update key", exact: true }).waitFor();
+        await flyForm.getByRole("button", { name: "Add key", exact: true }).click();
+        await flyForm.getByRole("textbox", { name: "Fly.io Sprites key name", exact: true }).fill("Preview");
+        await flyForm.getByLabel("Sprites token", { exact: true }).fill("second-fly-token");
+        await flyForm.getByRole("button", { name: "Save key", exact: true }).click();
+        await flyForm.getByText("Preview", { exact: true }).waitFor();
+        assert.equal((providerKeys["fly-sprites"] ?? []).length, 2, "Fly.io keeps more than one named key");
+        if (artifacts && !mobile && org.personal) await page.screenshot({ path: `${artifacts}/computers-named-keys.png` });
         failToggle=true;
         await flyForm.getByRole("switch").click();
         assert.equal(await flyForm.getByRole("switch").getAttribute("aria-checked"),"false","Switch responds before the server");
@@ -852,23 +912,30 @@ try {
           const section=modelAccess.getByRole("region",{name:`${label} model access`,exact:true});
           const toggle=section.getByRole("switch",{name:label,exact:true});
           await toggle.click();
+          await section.getByRole("textbox",{name:`${label} key name`,exact:true}).fill("Primary");
           const field=section.getByRole("textbox",{name:`${label} API key`,exact:true});
           await field.fill(`disposable-${id}-key`);
-          await page.waitForFunction(label=>!document.querySelector(`section[aria-label="${label} model access"] [aria-label="Saving key"]`),label);
-          await field.getAttribute("placeholder").then(async value=>{if(value!=="••••••••")await page.waitForFunction(label=>document.querySelector(`section[aria-label="${label} model access"] input`)?.getAttribute("placeholder")==="••••••••",label);});
+          await section.getByRole("button",{name:"Save key",exact:true}).click();
+          await section.getByText("Primary",{exact:true}).waitFor();
           assert.equal(savedKeys.get(id),`disposable-${id}-key`);
-          assert.equal(await section.getByRole("button").count(),0);
+          assert.equal(await field.count(),0);
           await toggle.click();
-          await page.waitForFunction(label=>!document.querySelector(`section[aria-label="${label} model access"] [aria-label="Saving key"]`),label);
+          await page.waitForFunction(label=>document.querySelector(`section[aria-label="${label} model access"] button[role="switch"]`)?.getAttribute("aria-checked")==="false",label);
           assert.equal(savedKeys.get(id),`disposable-${id}-key`);
           await toggle.click();
-          await page.waitForFunction(label=>!document.querySelector(`section[aria-label="${label} model access"] [aria-label="Saving key"]`),label);
-          assert.equal(await field.inputValue(),"");
-          assert.equal(await field.getAttribute("placeholder"),"••••••••");
+          await section.getByText("Primary",{exact:true}).waitFor();
           await toggle.click();
           await page.waitForFunction(label=>document.querySelector(`section[aria-label="${label} model access"] button[role="switch"]`)?.getAttribute("aria-checked")==="false",label);
         }
-        assert.ok(await page.locator('section[aria-label="Cloud settings"]').evaluate(e => e.scrollWidth <= e.clientWidth));
+        const openrouter=modelAccess.getByRole("region",{name:"OpenRouter model access",exact:true});
+        await openrouter.getByRole("switch",{name:"OpenRouter",exact:true}).click();
+        await openrouter.getByRole("button",{name:"Add key",exact:true}).click();
+        await openrouter.getByRole("textbox",{name:"OpenRouter key name",exact:true}).fill("Team");
+        await openrouter.getByRole("textbox",{name:"OpenRouter API key",exact:true}).fill("disposable-openrouter-team");
+        await openrouter.getByRole("button",{name:"Save key",exact:true}).click();
+        await openrouter.getByText("Team",{exact:true}).waitFor();
+        assert.equal(savedKeys.get("openrouter"),"disposable-openrouter-team");
+        assert.ok(await page.locator('section[aria-label="Cloud settings"]').evaluate(e => e.scrollWidth <= e.clientWidth), "Named keys fit the Cloud settings pane");
         if (artifacts && org.personal) await page.screenshot({path: `${artifacts}/cloud-configured-${mobile ? "phone" : "desktop"}.png`});
         if (mobile) await page.getByRole("button", { name: "Toggle Sidebar" }).click();
         connected = true;

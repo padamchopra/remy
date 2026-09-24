@@ -6,7 +6,25 @@ export const modelAccessIds = ["anthropic", "openai", "router", "openrouter"] as
 export type ModelAccessId = typeof modelAccessIds[number];
 const connection = z.object({apiKey:z.string().trim().max(8192), enabled:z.boolean(), models:z.array(z.string())});
 export const modelAccessPatch = z.object({enabled:z.boolean().optional(), apiKey:z.string().trim().min(1).max(8192).optional()}).strict();
+export const namedModelKeyWrite = z.object({
+  name: z.string().trim().min(1).max(80).optional(),
+  apiKey: z.string().trim().min(1).max(8192).optional(),
+  active: z.boolean().optional(),
+}).strict();
+const namedModelKey = z.object({
+  id: z.string().min(1).max(80),
+  name: z.string().trim().min(1).max(80),
+  apiKey: z.string().trim().min(1).max(8192),
+  models: z.array(z.string()),
+}).strict();
+const namedModelSet = z.object({
+  keys: z.array(namedModelKey).max(20),
+  activeKeyId: z.string().min(1).max(80).optional(),
+}).strict();
 const keys = {anthropic:"ANTHROPIC_API_KEY",openai:"OPENAI_API_KEY",router:"RAMP_ROUTER_API_KEY",openrouter:"OPENROUTER_API_KEY"};
+/// Named keys live beside `access:` so execution still reads the active key.
+export const namedAccessSecret = (id: string) => `named-access:${id}`;
+export type PublicNamedModelKey = { id: string; name: string; active: boolean };
 function parsedAccess(saved:string | undefined) {
   if(!saved)return;
   try {
@@ -33,8 +51,32 @@ export function modelAccess(secrets:Record<string,string>) {
     return {id,apiKey,enabled,models};
   });
 }
-export function publicModelAccess(secrets:Record<string,string>) {
-  return modelAccess(secrets).map(({apiKey,...value})=>({...value,configured:!!apiKey}));
+function parseNamedModelSet(saved: string | undefined) {
+  if (!saved) return;
+  try {
+    const parsed = namedModelSet.safeParse(JSON.parse(saved));
+    return parsed.success ? parsed.data : undefined;
+  } catch { return; }
+}
+
+export function publicModelKeys(id: ModelAccessId, secrets: Record<string, string>): PublicNamedModelKey[] {
+  const stored = parseNamedModelSet(secrets[namedAccessSecret(id)]);
+  if (stored?.keys.length) {
+    const active = stored.activeKeyId && stored.keys.some((key) => key.id === stored.activeKeyId)
+      ? stored.activeKeyId
+      : stored.keys[0].id;
+    return stored.keys.map((key) => ({ id: key.id, name: key.name, active: key.id === active }));
+  }
+  return modelAccess(secrets).find((entry) => entry.id === id)?.apiKey
+    ? [{ id: "legacy", name: "Default", active: true }]
+    : [];
+}
+
+/// `secrets` is the execution view (own plus shared source keys). `keySecrets`
+/// is this account's store, so an org does not list or rewrite someone else's
+/// named keys.
+export function publicModelAccess(secrets:Record<string,string>, keySecrets = secrets) {
+  return modelAccess(secrets).map(({apiKey,...value})=>({...value,configured:!!apiKey,keys:publicModelKeys(value.id, keySecrets)}));
 }
 /// Maps a composer or stored gateway choice onto Codex plus a `remy:` model.
 /// OpenRouter auto and other defaults are not a second catalogue allowlist.
@@ -81,5 +123,83 @@ export async function saveModelAccess(store:HostedSettingsStore, org:string, id:
   const enabled=patch.enabled ?? previous.enabled;
   if(enabled && !apiKey)throw Error("Enter your API key.");
   await store.setSecret(org,`access:${id}`,JSON.stringify({apiKey,enabled,models}));
+  const named = parseNamedModelSet((await store.secrets(org))[namedAccessSecret(id)]);
+  if (named?.keys.length && patch.apiKey) {
+    const active = named.keys.find((key) => key.id === named.activeKeyId) ?? named.keys[0];
+    active.apiKey = apiKey;
+    active.models = models;
+    await store.setSecret(org, namedAccessSecret(id), JSON.stringify(named));
+  }
+  return publicModelAccess(await store.secrets(org));
+}
+
+function unusedModelName(keys: { name: string }[], wanted: string) {
+  const used = new Set(keys.map((key) => key.name.toLowerCase()));
+  if (!used.has(wanted.toLowerCase())) return wanted;
+  for (let n = 2; n < 100; n += 1) {
+    const next = `${wanted} ${n}`;
+    if (!used.has(next.toLowerCase())) return next;
+  }
+  throw Error("Choose a different name.");
+}
+
+export async function saveNamedModelKey(store:HostedSettingsStore, org:string, id:ModelAccessId, input:unknown, keyId?:string) {
+  const patch = namedModelKeyWrite.parse(input);
+  const secrets = await store.secrets(org);
+  const previous = modelAccess(secrets).find((value) => value.id === id)!;
+  const stored = parseNamedModelSet(secrets[namedAccessSecret(id)]) ?? { keys: [] as z.infer<typeof namedModelKey>[] };
+  if (!stored.keys.length && previous.apiKey) {
+    stored.keys.push({ id: crypto.randomUUID(), name: "Default", apiKey: previous.apiKey, models: previous.models });
+    stored.activeKeyId = stored.keys[0].id;
+  }
+  const targetId = keyId && keyId !== "legacy" ? keyId : undefined;
+  let key = targetId ? stored.keys.find((entry) => entry.id === targetId) : undefined;
+  if (targetId && !key) throw Error("This key is unavailable.");
+  const name = (patch.name ?? key?.name ?? unusedModelName(stored.keys, "Default")).trim();
+  if (!name) throw Error("Name this key.");
+  if (stored.keys.some((entry) => entry.id !== key?.id && entry.name.toLowerCase() === name.toLowerCase()))
+    throw Error("Choose a different name.");
+  if (!key) {
+    if (!patch.apiKey) throw Error("Enter your API key.");
+    if (stored.keys.length >= 20) throw Error("Remove a key before adding another.");
+    key = { id: crypto.randomUUID(), name, apiKey: patch.apiKey, models: [] };
+    stored.keys.push(key);
+  }
+  key.name = name;
+  if (patch.apiKey) {
+    key.apiKey = patch.apiKey;
+    key.models = (id === "router" || id === "openrouter") ? await routerModels(patch.apiKey, fetch, id) : previous.models;
+    if ((id === "router" || id === "openrouter") && !key.models.length) throw Error("No models are available to this key.");
+  }
+  if (patch.active || !stored.activeKeyId || !stored.keys.some((entry) => entry.id === stored.activeKeyId))
+    stored.activeKeyId = key.id;
+  const active = stored.keys.find((entry) => entry.id === stored.activeKeyId) ?? key;
+  await store.setSecret(org, namedAccessSecret(id), JSON.stringify(stored));
+  await store.setSecret(org, `access:${id}`, JSON.stringify({ apiKey: active.apiKey, enabled: previous.enabled || !!patch.apiKey, models: active.models }));
+  return publicModelAccess(await store.secrets(org));
+}
+
+export async function removeNamedModelKey(store:HostedSettingsStore, org:string, id:ModelAccessId, keyId:string) {
+  const secrets = await store.secrets(org);
+  const previous = modelAccess(secrets).find((value) => value.id === id)!;
+  const stored = parseNamedModelSet(secrets[namedAccessSecret(id)]);
+  if (keyId === "legacy" && !stored?.keys.length) {
+    await store.setSecret(org, `access:${id}`, JSON.stringify({ apiKey: "", enabled: false, models: [] }));
+    return publicModelAccess(await store.secrets(org));
+  }
+  if (!stored) throw Error("This key is unavailable.");
+  const next = stored.keys.filter((key) => key.id !== keyId);
+  if (next.length === stored.keys.length) throw Error("This key is unavailable.");
+  if (!next.length) {
+    await store.setSecret(org, namedAccessSecret(id), null);
+    await store.setSecret(org, `access:${id}`, JSON.stringify({ apiKey: "", enabled: false, models: [] }));
+    return publicModelAccess(await store.secrets(org));
+  }
+  const activeKeyId = stored.activeKeyId === keyId || !next.some((key) => key.id === stored.activeKeyId)
+    ? next[0].id
+    : stored.activeKeyId;
+  const active = next.find((key) => key.id === activeKeyId)!;
+  await store.setSecret(org, namedAccessSecret(id), JSON.stringify({ keys: next, activeKeyId }));
+  await store.setSecret(org, `access:${id}`, JSON.stringify({ apiKey: active.apiKey, enabled: previous.enabled, models: active.models }));
   return publicModelAccess(await store.secrets(org));
 }

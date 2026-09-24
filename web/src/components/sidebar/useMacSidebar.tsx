@@ -211,12 +211,14 @@ export function useMacSidebar({
     ...(view !== "settings" && updateAvailable
       ? [{ label: "Update available", icon: ArrowUpCircle, onSelect: () => openSettings("general") }]
       : []),
-    {
-      label: "Settings",
-      icon: Settings2,
-      selected: view === "settings",
-      onSelect: () => openSettings(view === "settings" ? settingsTab : "general"),
-    },
+    ...(view === "settings"
+      ? []
+      : [{
+          label: "Settings",
+          icon: Settings2,
+          selected: false,
+          onSelect: () => openSettings("general"),
+        }]),
   ];
 
   return {
