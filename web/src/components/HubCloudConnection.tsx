@@ -20,7 +20,7 @@ type Connections = { connections?: string[]; enabledProviders?: string[]; provid
 export function HubCloudConnection({ organizationId, admin, onChange }: { organizationId: string; admin: boolean; onChange?: (providers: string[]) => void }) {
   const resource = useHubResource<Connections>(organizationId, "/hosted");
   const [saved, setSaved] = useState<Connections>();
-  useEffect(() => setSaved(undefined), [resource.value]);
+  useEffect(() => setSaved(undefined), [organizationId]);
   const state = saved ?? resource.value;
   const refresh = async () => {
     const next = await hubRequest<Connections>(`${hubThreadBase(organizationId)}/hosted`);
