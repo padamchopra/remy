@@ -935,7 +935,7 @@ try {
         await openrouter.getByRole("button",{name:"Save key",exact:true}).click();
         await openrouter.getByText("Team",{exact:true}).waitFor();
         assert.equal(savedKeys.get("openrouter"),"disposable-openrouter-team");
-        assert.ok(await page.locator('section[aria-label="Cloud settings"]').evaluate(e => e.scrollWidth <= e.clientWidth));
+        assert.ok(await page.locator('section[aria-label="Cloud settings"]').evaluate(e => e.scrollWidth <= e.clientWidth), "Named keys fit the Cloud settings pane");
         if (artifacts && org.personal) await page.screenshot({path: `${artifacts}/cloud-configured-${mobile ? "phone" : "desktop"}.png`});
         if (mobile) await page.getByRole("button", { name: "Toggle Sidebar" }).click();
         connected = true;

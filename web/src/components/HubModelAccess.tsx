@@ -13,7 +13,7 @@ export function HubModelAccess({organizationId}:{organizationId:string}) {
   const resource=useHubResource<{providers:ModelAccessEntry[]}>(organizationId,"/model-access");
   const [entries,setEntries]=useState<ModelAccessEntry[]>([]);
   useEffect(()=>{if(resource.value)setEntries(resource.value.providers);},[resource.value]);
-  return <section aria-label="Model access" className="space-y-4 border-t pt-6">
+  return <section aria-label="Model access" className="min-w-0 space-y-4 border-t pt-6">
     <div className="space-y-1">
       <h2 className="text-sm font-medium">Model access</h2>
       {resource.error && <p role="alert" className="text-sm text-muted-foreground">{resource.error === "Not found" ? "Update your hosted service to configure model access." : resource.error}</p>}
@@ -40,8 +40,8 @@ function ModelAccessSection({label,value,available,save}:{label:string;value:Mod
     catch { toast.error("Couldn't save model access",{description:"Your changes could not be saved. Try again."}); setExpanded(value.enabled); }
     finally { setBusy(false); }
   };
-  return <section aria-label={`${label} model access`} className="rounded-xl border p-4">
-    <div className="flex items-center gap-3"><KeyRound className="size-4 text-muted-foreground"/><h3 className="flex-1 text-sm leading-snug font-medium">{label}</h3><Switch aria-label={label} checked={expanded} disabled={!available || busy && !expanded} onCheckedChange={enabled=>{
+  return <section aria-label={`${label} model access`} className="min-w-0 rounded-xl border p-4">
+    <div className="flex min-w-0 items-center gap-3"><KeyRound className="size-4 shrink-0 text-muted-foreground"/><h3 className="min-w-0 flex-1 text-sm leading-snug font-medium">{label}</h3><Switch aria-label={label} checked={expanded} disabled={!available || busy && !expanded} onCheckedChange={enabled=>{
       setExpanded(enabled);
       if(!enabled) void persist({enabled:false});
       else if(value.configured) void persist({enabled:true});

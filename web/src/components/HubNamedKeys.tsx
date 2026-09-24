@@ -38,15 +38,15 @@ export function HubNamedKeys({
   return (
     <div className="flex min-w-0 flex-col gap-3">
       {keys.length > 0 && (
-        <ItemGroup className="gap-2">
+        <ItemGroup className="min-w-0 gap-2">
           {keys.map((key) => (
-            <Item key={key.id} variant="outline" className="flex-col items-stretch">
-              <div className="flex min-w-0 items-center gap-3">
-                <ItemContent className="min-w-0">
+            <Item key={key.id} variant="outline" className="min-w-0 flex-col items-stretch">
+              <div className="flex min-w-0 flex-wrap items-center gap-3">
+                <ItemContent className="min-w-0 grow basis-[8rem]">
                   <ItemTitle className="w-full whitespace-normal break-words">{key.name}</ItemTitle>
                   <ItemDescription>{key.active ? "Used for new work." : "Saved."}</ItemDescription>
                 </ItemContent>
-                <ItemActions className="min-w-0 shrink-0 flex-wrap">
+                <ItemActions className="min-w-0 shrink flex-wrap">
                   {onActivate && !key.active && (
                     <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => void onActivate(key.id)}>
                       Use this key
