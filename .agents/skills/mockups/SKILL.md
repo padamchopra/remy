@@ -31,7 +31,7 @@ Fonts are Inter and Geist Mono, mono for branches, SHAs, counts and code.
 
 Read the component before drawing its frame. The hosted shell's sidebar is
 `web/src/components/HubApp.tsx` — an account picker with a chevron, a new-thread
-pencil and the collapse trigger; then Threads, Inbox, Tasks, Workspaces; then
+pencil and the collapse trigger; then Threads, Tasks, Workspaces; then
 **Recent threads** with `ThreadSidebarRow`; then Settings and the account row in
 the footer. Its width is `--sidebar-width`, 15rem. The pane's header is
 `PaneHeader.tsx`: breadcrumbs, last crumb semibold.

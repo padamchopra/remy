@@ -60,7 +60,7 @@ A missing or idle cloud computer is not a disabled menu.
 
 Remy presents one place for one user who can belong to multiple organizations. The account switcher filters that shared view: All includes Personal and every accessible organization; selecting Personal or an organization narrows the same surface.
 
-Do not divide a screen into organization sections or repeat its heading, add button, composer, or empty state per organization. Use one list or context area for the selected view across threads, workspaces, tasks, inbox, and settings. Show ownership on an item only where it helps the user make a decision.
+Do not divide a screen into organization sections or repeat its heading, add button, composer, or empty state per organization. Use one list or context area for the selected view across threads, workspaces, tasks, and settings. Show ownership on an item only where it helps the user make a decision.
 
 Viewing scope and ownership are separate. Creation lets the user choose Personal or an organization, preselecting the current filter when applicable. Existing items retain their owner and permissions; opening, editing, inviting, or deleting targets that owner without treating All as an owner or widening access. Organization administration opens explicitly from that organization's settings control.
 
@@ -162,7 +162,7 @@ Automation that starts work without a direct action is off by default. Enabling 
 
 BAD
 ```text
-Inbox → GitHub agent → Agent settings
+Settings → Agents → GitHub agent
 Monitor pull requests  [on/off]
 ```
 

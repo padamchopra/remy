@@ -66,7 +66,7 @@ export function AgentRoutines({ agent }: { agent: Agent }) {
     <Field>
       <FieldLabel>Routines</FieldLabel>
       <FieldDescription className="text-xs">
-        Ask {agent.name} in Inbox to create work that repeats.
+        Ask {agent.name} to create work that repeats.
       </FieldDescription>
       {routines.length === 0 ? (
         <Item variant="outline" size="sm">

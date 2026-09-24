@@ -1,6 +1,6 @@
 import type { Chat, Server } from "../state/types";
 
-/// Which device runs an agent's work, and which of its conversations the Inbox
+/// Which device runs an agent's work, and which of its conversations Settings
 /// shows. Mirrors `web/src/lib/inbox.ts`: an agent's conversation is one
 /// conversation however many Macs hold a copy of the agent.
 
@@ -37,7 +37,7 @@ export function preferredServer(servers: Server[], preferenceOrder: string[] = [
     ?? servers[0];
 }
 
-/// The one conversation the Inbox presents for an agent, wherever it runs.
+/// The one conversation Settings presents for an agent, wherever it runs.
 export function agentConversation(
   agentId: string,
   dms: Chat[],

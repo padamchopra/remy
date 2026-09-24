@@ -87,7 +87,7 @@ mistake in this repo, so check the table before naming anything.
 |---|---|---|
 | `project` | **workspace** | A project is the repository, keyed on its origin remote so two machines land on the same one. A workspace is one machine's folder holding it. Nobody adds a project — they add a folder, so that is the only word the UI uses. |
 | `chat` | **thread** | A conversation with an agent. The API, the database and the code all still say chat. |
-| a `chat` with `dm` | **the conversation with an agent** | One per agent, in Inbox. Code still says chat; nothing a person reads says DM. |
+| a `chat` with `dm` | **the conversation with an agent** | One per agent, in Settings. Code still says chat; nothing a person reads says DM. |
 | `server`, `peer`, `device`, `runner` | **computer** | A Mac running Remy or a hosted computer that can run threads. A phone is a client, not a computer. |
 | `keyPrefix` | **ticket slug** | The letters in front of a ticket key. |
 | `recurrence` | **routine** | The legacy projection name remains internal; a routine belongs to an agent and sends it work on a cadence. |
@@ -162,18 +162,19 @@ A server module opens its database at import time, so a test that touches state 
   hook holding its state, a label helper — out of it, or the import that draws
   the button drags the surface back into the first load. `npm run bundle` says
   what is in the first load and `npm run perf` times each first open.
-- **A desktop thread is a workbench of tabs.** Everything open for a main thread — its transcript, each subthread, each tool — is a tab in that thread's collection (`web/src/lib/thread-workbench.ts`), shown as a strip or as panes side by side, and never mixed with another main thread's. A tool opened from the transcript lands beside it; a tab stays mounted behind the one in front, so a terminal keeps its shell. The layout is remembered per thread on this device, and the URL names only the thread in front. The transcript stays a narrow, identity-light reading column; inbox conversations keep their agent identity because the person is the point there.
-- **Inbox is the agents.** Every agent has one conversation with you, made the
+- **A desktop thread is a workbench of tabs.** Everything open for a main thread — its transcript, each subthread, each tool — is a tab in that thread's collection (`web/src/lib/thread-workbench.ts`), shown as a strip or as panes side by side, and never mixed with another main thread's. A tool opened from the transcript lands beside it; a tab stays mounted behind the one in front, so a terminal keeps its shell. The layout is remembered per thread on this device, and the URL names only the thread in front. The transcript stays a narrow, identity-light reading column; agent conversations keep their agent identity because the person is the point there.
+- **Agents live in Settings.** Every agent has one conversation with you, made the
   first time you open it (`dmChatFor`), listed by `listDms` and never by
   `listChats` — a thread is work in a repository, and this is not. It opens in
   your home folder: work that needs a repository open in front of it is a thread
-  the agent starts. The roster is a list inside the Inbox pane, for the reason
-  above. Everything about an agent lives there too rather than in Settings,
-  because an agent is somebody you talk to. A conversation belongs to its agent:
-  deleting the agent deletes it, and `listDms` hides one whose agent is gone
-  before the row is cleared. Picking a model for an agent picks it for its
-  conversation (`syncAgentDm`) — a thread keeps the provider it was started on,
-  but an inbox conversation *is* the agent.
+  the agent starts. The roster is a list inside Settings → Agents rather than a
+  top-level section, so threads stay one click away in the sidebar. Everything
+  about an agent lives there: settings, routines, and the conversation. A
+  conversation belongs to its agent: deleting the agent deletes it, and
+  `listDms` hides one whose agent is gone before the row is cleared. Picking a
+  model for an agent picks it for its conversation (`syncAgentDm`) — a thread
+  keeps the provider it was started on, but an agent conversation *is* the
+  agent. Do not add Inbox as a product surface.
 - **An agent has two permission modes**, `auto` and `bypassPermissions`, and
   `PERMISSION_MODES` in `agents.ts` is the whole list. A thread you are sitting
   in front of can stop and ask; an agent works while you are not watching, so a
@@ -185,7 +186,7 @@ A server module opens its database at import time, so a test that touches state 
   from `remy-agent.ts` and are re-synced on every boot, so an upgrade can teach
   it something new; `updateAgent` refuses those fields from a client and
   `deleteAgent` refuses it altogether. What it thinks with is a choice, made in
-  its settings in the inbox, and it follows the machine default until it is
+  its settings in Settings → Agents, and it follows the machine default until it is
   made.
 - **Remy says one thing to a new install.** `announcements.ts` is an append-only
   list; a machine that has never run it is greeted and every other entry is
@@ -202,7 +203,7 @@ A server module opens its database at import time, so a test that touches state 
   and `role="link"`) is what `index.css` gives `cursor: pointer`; a button that
   acts on what is already in front of you keeps the arrow. Mark navigation with
   the attribute rather than a `cursor-pointer` class.
-- **The `remy` MCP is the agent's control surface.** Claude gets the in-process server in `server/src/ticket-tools.ts`; Codex and Cursor get the STDIO server in `server/src/ticket-mcp.ts`. Every tool exists on both paths. A normal thread may orchestrate only the operations allowlisted by `isRemyToolRoute`; add each new capability to the smallest explicit route and method set, derive its thread, device and actor from the capability where relevant, and test both an allowed route and a neighbouring forbidden one. STDIO providers receive the HMAC capability from `remyToolToken` through inherited environment variable names, never `config.token` or another daemon-wide credential. `create_routine` exists only in an agent's Inbox conversation; ordinary Remy threads and separately installed external MCP clients never receive it. "Work on REMY-1" is resolved and linked before the model sees the prompt; a key that does not exist in Remy's board is not invented.
+- **The `remy` MCP is the agent's control surface.** Claude gets the in-process server in `server/src/ticket-tools.ts`; Codex and Cursor get the STDIO server in `server/src/ticket-mcp.ts`. Every tool exists on both paths. A normal thread may orchestrate only the operations allowlisted by `isRemyToolRoute`; add each new capability to the smallest explicit route and method set, derive its thread, device and actor from the capability where relevant, and test both an allowed route and a neighbouring forbidden one. STDIO providers receive the HMAC capability from `remyToolToken` through inherited environment variable names, never `config.token` or another daemon-wide credential. `create_routine` exists only in an agent's conversation; ordinary Remy threads and separately installed external MCP clients never receive it. "Work on REMY-1" is resolved and linked before the model sees the prompt; a key that does not exist in Remy's board is not invented.
 - **Every provider keeps a live conversation.** A Claude thread holds one SDK query process across turns; a Codex thread holds one `codex app-server` JSON-RPC connection; a Cursor thread holds one `agent acp` connection through the official Agent Client Protocol SDK. Hosted Cursor Cloud threads use the Cursor SDK cloud VM instead of ACP. They can stop mid-turn for approvals and questions, stream tool progress, interrupt the active turn, and resume their own provider transcript after a restart. Cursor models come from `agent --list-models`, and its current default comes from `agent about`; do not replace ACP with the older headless JSON stream. Never quietly grant what a person would have been asked about.
 - **Reusable environments are assigned to repositories.** Settings owns shared definitions and workspace assignments. Cloud and model-access keys on Computers follow the same rule: values are encrypted at rest and management APIs return names and configured state, never values; agent capabilities cannot manage them. An account can keep multiple named Fly.io, OpenRouter, and other integration keys; execution uses the active key. Authenticated computer channels deliver assigned environment values, and providers inherit them automatically for each task. Restart a provider session when its environment changes. Keep values out of arguments, prompts, logs and snapshots. Exact output redaction cannot recognise encoded or transformed values and cannot prevent a provider or command from reading its inherited environment; keep that limitation visible anywhere the guarantee is described.
 - **Computer pairing lives in the daemon**, in the `peers` table, so one pairing serves its desktop app and browser. Those clients reach a paired computer through `/peers/:id/api/...`; the native phone may use that authenticated route once to learn the computer's identity and keep its own direct credential in secure storage. `GET /server/identity` is how a computer introduces itself; `tailscale serve` is the only way in, so the daemon's bind stays on `127.0.0.1`, and `PATCH /server/identity {exposed}` is the switch for it.

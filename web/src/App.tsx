@@ -6,7 +6,6 @@ import {
   ArrowUpRight,
   Folder,
   GitPullRequest,
-  Inbox,
   MessagesSquare,
   PanelLeft,
   Plus,
@@ -74,11 +73,11 @@ const Board = lazy(() => import("@/components/Board").then((module) => ({ defaul
 const NewTicketDialog = lazy(() => import("@/components/Board").then((module) => ({ default: module.NewTicketDialog })));
 const TicketView = lazy(() => import("@/components/TicketView").then((module) => ({ default: module.TicketView })));
 const MissingTicket = lazy(() => import("@/components/TicketView").then((module) => ({ default: module.MissingTicket })));
-const InboxPane = lazy(() => import("@/components/Inbox").then((module) => ({ default: module.Inbox })));
+const AgentsPane = lazy(() => import("@/components/Inbox").then((module) => ({ default: module.Inbox })));
 const WorkspaceSettings = lazy(() => import("@/components/WorkspaceSettings").then((module) => ({ default: module.WorkspaceSettings })));
 const PullRequests = lazy(() => import("@/components/PullRequests").then((module) => ({ default: module.PullRequests })));
 
-type Section = "inbox" | "chats" | "workspaces" | "tasks" | "prs";
+type Section = "chats" | "workspaces" | "tasks" | "prs";
 
 const APP_SIDEBAR_KEY = "remy.app-sidebar.shown";
 
@@ -100,8 +99,7 @@ function routeForSection(section: Section): Route {
   return { name: section };
 }
 
-const SECTIONS: { id: Section; label: string; icon: typeof Inbox }[] = [
-  { id: "inbox", label: "Inbox", icon: Inbox },
+const SECTIONS: { id: Section; label: string; icon: typeof MessagesSquare }[] = [
   { id: "chats", label: "Threads", icon: MessagesSquare },
   { id: "workspaces", label: "Workspaces", icon: Folder },
   { id: "tasks", label: "Tasks", icon: SquareKanban },
@@ -170,10 +168,9 @@ function DeviceAvatarGroup({ devices, onOpen }: { devices: Server[]; onOpen: () 
   );
 }
 
-// Inbox draws its own: what is missing there is an agent, not a thread.
 const EMPTY: Record<
-  Exclude<Section, "inbox">,
-  { title: string; detail: string; action: "none" | "chat" | "workspace"; icon: typeof Inbox }
+  Section,
+  { title: string; detail: string; action: "none" | "chat" | "workspace"; icon: typeof MessagesSquare }
 > = {
   chats: {
     title: "No threads yet",
@@ -325,15 +322,15 @@ export function App() {
     () => [...agents].sort((a, b) => Number(b.builtIn ?? false) - Number(a.builtIn ?? false)),
     [agents],
   );
-  const inboxHandle = route.name === "inbox" ? route.agent : undefined;
+  const settingsAgentHandle = route.name === "settings" && route.tab === "agents" ? route.agent : undefined;
   // A named handle is the one you get, or nothing. Falling back to the first
   // agent would race the roster: opening an agent the moment it is made would
   // bounce back to whoever happens to lead the list.
-  const inboxAgent = inboxHandle
-    ? roster.find((entry) => entry.handle === inboxHandle)
-    : roster[0];
-  const inboxDmId = useStore((state) => inboxAgent
-    ? agentConversation(inboxAgent.id, state.dms, state.servers, state.settings?.devicePreferenceOrder)?.id
+  const settingsAgent = settingsAgentHandle
+    ? roster.find((entry) => entry.handle === settingsAgentHandle)
+    : undefined;
+  const settingsAgentDmId = useStore((state) => settingsAgent
+    ? agentConversation(settingsAgent.id, state.dms, state.servers, state.settings?.devicePreferenceOrder)?.id
     : undefined);
 
   const newAgent = async () => {
@@ -342,7 +339,7 @@ export function App() {
       // Made straight away rather than behind a form: its settings are the
       // form, and the machine makes the handle unique.
       const made = await saveAgent(undefined, { name: "New agent" });
-      go({ name: "inbox", agent: made.handle });
+      go({ name: "settings", tab: "agents", agent: made.handle });
     } catch (caught) {
       toast.error("Couldn't create that agent", { description: apiError(caught) });
     } finally {
@@ -448,12 +445,12 @@ export function App() {
   };
 
   /// Where a conversation opens, whichever list it is in. A notification only
-  /// carries an id, and an inbox conversation opened as a thread would land on
+  /// carries an id, and an agent conversation opened as a thread would land on
   /// a route that cannot find it.
   const openConversation = (id: string) => {
     const dm = useStore.getState().dms.find((chat) => chat.id === id);
     const agent = dm && roster.find((entry) => entry.id === dm.agentId);
-    if (agent) go({ name: "inbox", agent: agent.handle });
+    if (agent) go({ name: "settings", tab: "agents", agent: agent.handle });
     else openChat(id);
   };
 
@@ -462,8 +459,8 @@ export function App() {
   useNotifications({
     enabled: notificationsEnabled(),
     // What is already on screen, so a banner is not raised for it: a thread, or
-    // the conversation the inbox has open.
-    openThreadId: selected ?? (route.name === "inbox" ? inboxDmId ?? null : null),
+    // the agent conversation Settings has open.
+    openThreadId: selected ?? settingsAgentDmId ?? null,
     onOpen: openConversation,
   });
 
@@ -474,14 +471,6 @@ export function App() {
     // Once, on mount: afterwards the hash is whatever navigation made it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Landing on the inbox with nothing named writes the one it opened, so a
-  // reload comes back to it. A handle that names nothing is left alone: the
-  // pane says so, rather than the URL quietly becoming a different agent.
-  useEffect(() => {
-    if (route.name !== "inbox" || route.agent || !roster[0]) return;
-    go({ name: "inbox", agent: roster[0].handle }, true);
-  }, [route.name, route.name === "inbox" ? route.agent : undefined, roster[0]?.handle]);
 
   // A thread can be deleted from another window, or the URL can name one that
   // never existed. Fall back to the composer rather than showing an empty pane.
@@ -567,7 +556,21 @@ export function App() {
           <Deferred open={hubOpen}>{hubTarget.current && <HubThreads {...hubTarget.current} navigate={(next) => go(next)} />}</Deferred>
         </div>
         <Suspense fallback={<SurfaceLoading />}>
-        {hubOpen ? null : view === "settings" ? (
+        {hubOpen ? null : view === "settings" && settingsTab === "agents" ? (
+          <AgentsPane
+            agents={roster}
+            {...(settingsAgent ? { selected: settingsAgent } : {})}
+            {...(!settingsAgent && settingsAgentHandle ? { missing: settingsAgentHandle } : {})}
+            loading={boardLoading && roster.length === 0}
+            onSelectAgent={(handle) => go({ name: "settings", tab: "agents", agent: handle })}
+            onNewAgent={() => void newAgent()}
+            creatingAgent={creatingAgent}
+            onOpenTicket={(key) => go({ name: "ticket", key })}
+            onOpenThread={openChat}
+            onOpenWorkspace={(workspaceId) => go({ name: "workspaces", workspaceId })}
+            onDeleted={() => go({ name: "settings", tab: "agents" }, true)}
+          />
+        ) : view === "settings" ? (
           <SettingsPane
             organizationId={route.name === "settings" ? route.organizationId : undefined}
             tab={settingsTab}
@@ -593,7 +596,7 @@ export function App() {
               onOpenTicket={(key) => go({ name: "ticket", key })}
               onOpenThread={openChat}
               onOpenWorkspace={(workspaceId) => go({ name: "workspaces", workspaceId })}
-              onOpenAgent={(handle) => go({ name: "inbox", agent: handle })}
+              onOpenAgent={(handle) => go({ name: "settings", tab: "agents", agent: handle })}
             />
           ) : (
             <MissingTicket ticketKey={route.key} onBack={() => go({ name: "board" })} />
@@ -604,20 +607,6 @@ export function App() {
             workspaces={allWorkspaces}
             onOpenThread={openChat}
             onOpenWorkspace={(workspaceId) => go({ name: "workspaces", workspaceId })}
-          />
-        ) : route.name === "inbox" ? (
-          <InboxPane
-            agents={roster}
-            {...(inboxAgent ? { selected: inboxAgent } : {})}
-            {...(!inboxAgent && inboxHandle ? { missing: inboxHandle } : {})}
-            loading={boardLoading && roster.length === 0}
-            onSelectAgent={(handle) => go({ name: "inbox", agent: handle })}
-            onNewAgent={() => void newAgent()}
-            creatingAgent={creatingAgent}
-            onOpenTicket={(key) => go({ name: "ticket", key })}
-            onOpenThread={openChat}
-            onOpenWorkspace={(workspaceId) => go({ name: "workspaces", workspaceId })}
-            onDeleted={() => go({ name: "inbox" }, true)}
           />
         ) : openWorkspace ? (
           <WorkspaceSettings key={`${openWorkspace.serverId}:${openWorkspace.id}`} workspace={openWorkspace} onBack={() => go({ name: "workspaces" })} />
@@ -676,7 +665,7 @@ export function App() {
             {section === "workspaces" ? (
               groupedWorkspaces.length === 0 ? (
                 <EmptyState
-                  section={section as Exclude<Section, "inbox">}
+                  section={section}
                   loading={loading}
                   error={error}
                   hasServers={servers.length > 0}
@@ -719,7 +708,7 @@ export function App() {
               )
             ) : (
               <EmptyState
-                section={section as Exclude<Section, "inbox">}
+                section={section}
                 loading={loading}
                 error={error}
                 hasServers={servers.length > 0}
@@ -776,7 +765,7 @@ function EmptyState({
   onAddConnection,
   onAddWorkspace,
 }: {
-  section: Exclude<Section, "inbox">;
+  section: Section;
   loading: boolean;
   error?: string;
   hasServers: boolean;

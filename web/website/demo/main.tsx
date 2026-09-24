@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Folder, Inbox, MessagesSquare, SquareKanban, RotateCcw } from "lucide-react";
+import { Folder, MessagesSquare, SquareKanban, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { AppSidebar } from "@/components/sidebar/AppSidebar";
 import { useMacSidebar } from "@/components/sidebar/useMacSidebar";
@@ -23,7 +23,7 @@ import { resetDemo, scenes, workspace, sampleDiff, reviewDiff, sampleAgent } fro
 import "../ui.css";
 import "./style.css";
 
-const sections = [{ id: "inbox", label: "Inbox", icon: Inbox }, { id: "chats", label: "Threads", icon: MessagesSquare }, { id: "workspaces", label: "Workspaces", icon: Folder }, { id: "tasks", label: "Tasks", icon: SquareKanban }];
+const sections = [{ id: "chats", label: "Threads", icon: MessagesSquare }, { id: "workspaces", label: "Workspaces", icon: Folder }, { id: "tasks", label: "Tasks", icon: SquareKanban }];
 const explain = () => toast("Explore more in the installed app.");
 function WorkspacePreview() {
   const state = useWorkspaceWorktrees(workspace);

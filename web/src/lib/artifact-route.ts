@@ -12,5 +12,5 @@ export function organizationArtifactRoute(
     return { name: "threads", threadId: id, organizationId };
   if (artifact.kind === "workspace")
     return { name: "workspaces", workspaceId: id, organizationId };
-  if (artifact.kind === "routine") return { name: "inbox", organizationId };
+  if (artifact.kind === "routine") return { name: "settings", tab: "agents", organizationId };
 }

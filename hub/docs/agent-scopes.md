@@ -1,6 +1,6 @@
 # Agent scopes
 
-WRK-18 and WRK-119–124 add organization, team, workspace and personal ownership to agent log rows. Inbox groups agents by scope while retaining the thread sidebar. Personal agents are private to their owner, including from organization administrators. Team membership and workspace restrictions are checked on every read, message, memory access and ticket assignment.
+WRK-18 and WRK-119–124 add organization, team, workspace and personal ownership to agent log rows. Settings groups agents by scope while retaining the thread sidebar. Personal agents are private to their owner, including from organization administrators. Team membership and workspace restrictions are checked on every read, message, memory access and ticket assignment.
 
 Personal-to-team and team-to-organization sharing retains the agent ID, conversation, memories and audit history. The action explains that existing context is shared. Narrowing or transferring personal ownership through field edits is refused. Members may manage their own/team agents; organization-wide changes require an administrator.
 

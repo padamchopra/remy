@@ -22,7 +22,7 @@ import { ModelPicker, REMY_DEFAULT } from "../components/ModelPicker";
 
 /// Everything about an agent, on the phone.
 ///
-/// The roster lives in the Inbox rather than in Settings — an agent is somebody
+/// The roster lives in Settings → Agents — an agent is somebody you configure
 /// you talk to — and this is that agent's own screen, pushed on top so a long
 /// form gets the whole width without the thread list going anywhere. Everything
 /// saves as you go: choices on change, text when you leave the field.
@@ -174,7 +174,7 @@ export function AgentScreen({
         <Text style={type.caption}>
           {routinesUnknown
             ? `Routines need a newer Remy on ${machine ?? "this computer"}.`
-            : `Ask ${agent.name} in Inbox to create work that repeats.`}
+            : `Ask ${agent.name} to create work that repeats.`}
         </Text>
         {!routinesUnknown && routines.length === 0 ? (
           <Text style={type.caption}>No routines yet.</Text>

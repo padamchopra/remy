@@ -115,7 +115,7 @@ export function PairedShell({
     setSettingsServerId(undefined);
     setSidebarOpen(false);
     if (dm?.agentId) {
-      setSection("inbox");
+      setSection("agents");
       setThreadId(undefined);
       setInboxAgentId(dm.agentId);
       return;
@@ -244,7 +244,7 @@ export function PairedShell({
     }
     if (destination.kind === "agent") {
       const agent = agents.find((entry) => entry.id === destination.id);
-      goSection("inbox");
+      goSection("agents");
       setInboxAgentId(agent?.id);
       return;
     }
@@ -316,7 +316,7 @@ export function PairedShell({
     if (loading || !restoredDestination.current) return;
     let destination: NavigationDestination;
     if (thread) destination = { kind: "thread", id: thread.id, serverId: thread.serverId };
-    else if (section === "inbox" && inboxAgent) destination = { kind: "agent", id: inboxAgent.id };
+    else if (section === "agents" && inboxAgent) destination = { kind: "agent", id: inboxAgent.id };
     else if (section === "workspaces" && workspaceId) destination = { kind: "workspace", id: workspaceId, serverId: workspaces.find((entry) => entry.id === workspaceId)?.serverId };
     else if (section === "board" && ticket) destination = { kind: "ticket", key: ticket.key };
     else if (section === "prs" && pullRequest) destination = { kind: "pull-request", repository: pullRequest.repository, number: pullRequest.number, serverId: pullRequest.serverId };
@@ -347,8 +347,8 @@ export function PairedShell({
     : workspaceId ? "Workspace"
     : section === "threads" && thread ? thread.title
     : section === "threads" ? "New thread"
-    : section === "inbox" && inboxAgent ? inboxAgent.name
-    : section === "inbox" ? "Inbox"
+    : section === "agents" && inboxAgent ? inboxAgent.name
+    : section === "agents" ? "Agents"
     : section === "board" ? "Tasks"
     : section === "prs" ? "Pull requests"
     : section === "workspaces" ? "Workspaces"
@@ -392,7 +392,7 @@ export function PairedShell({
               <Plus size={18} color={color.foreground} />
             </Pressable>
           </View>
-        ) : section === "inbox" && inboxAgent ? (
+        ) : section === "agents" && inboxAgent ? (
           <Pressable
             onPress={() => onOpenAgent(inboxAgent.id)}
             accessibilityLabel={`${inboxAgent.name} settings`}
@@ -413,7 +413,7 @@ export function PairedShell({
       ) : null}
 
       <View style={styles.body}>
-        {section === "inbox" && inboxDm ? (
+        {section === "agents" && inboxDm ? (
           <ThreadScreen
             key={inboxDm.id}
             id={inboxDm.id}
@@ -421,7 +421,7 @@ export function PairedShell({
             onOpenThread={openThread}
             onOpenPullRequest={(next) => openPullRequest(next, inboxDm.id)}
           />
-        ) : section === "inbox" ? (
+        ) : section === "agents" ? (
           <InboxScreen onOpen={setInboxAgentId} onSettings={onOpenAgent} />
         ) : section === "board" && composingTicket ? (
           <NewTicketScreen

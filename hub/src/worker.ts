@@ -1581,10 +1581,10 @@ export class HubCoordinator {
     if (request.method === "POST" && url.pathname === "/board/sync") {
       const input = await request.json() as { events: unknown[]; version: Record<string, number> };
       const rows=input.events.map(v=>boardLogEventSchema.parse(v));
-      if(rows.some(e=>!["project","ticket"].includes(e.entity)))return jsonError("Agents and their memories stay in your organization’s Inbox.",403);
+      if(rows.some(e=>!["project","ticket"].includes(e.entity)))return jsonError("Agents and their memories stay with your organization.",403);
       if(!org || !user)return jsonError("Tasks access is unavailable.",403);
       const access=new BoardAccess(new D1OrganizationStore(this.env.DB),this.board,org,user);
-      for(const e of rows)if(e.entity==="ticket") {const existing=await this.board.detail("tickets",e.entityId);if(existing && !await access.canRead(existing))return jsonError("Ticket not found.",404);const assigned=e.payload.assigneeAgentId??e.payload.toAgentId;if(assigned && !["you","workspace"].includes(String(assigned)))return jsonError("Assign organization agents from Inbox.",403);}
+      for(const e of rows)if(e.entity==="ticket") {const existing=await this.board.detail("tickets",e.entityId);if(existing && !await access.canRead(existing))return jsonError("Ticket not found.",404);const assigned=e.payload.assigneeAgentId??e.payload.toAgentId;if(assigned && !["you","workspace"].includes(String(assigned)))return jsonError("Assign organization agents from Settings.",403);}
       await this.board.mergeRemote(rows);
       const outgoing=await this.board.eventsSince(input.version,500,true);
       return Response.json({events:outgoing.filter(e=>["project","ticket"].includes(e.entity)),version:await this.board.versionVector()});

@@ -1,4 +1,4 @@
-export type PrimarySection = "inbox" | "threads" | "workspaces" | "board" | "prs" | "devices";
+export type PrimarySection = "agents" | "threads" | "workspaces" | "board" | "prs" | "devices";
 
 export type NavigationDestination =
   | { kind: "section"; section: PrimarySection }
@@ -9,7 +9,7 @@ export type NavigationDestination =
   | { kind: "pull-request"; repository: string; number: number; serverId?: string }
   | { kind: "settings"; serverId?: string };
 
-const sections = new Set<PrimarySection>(["inbox", "threads", "workspaces", "board", "prs", "devices"]);
+const sections = new Set<PrimarySection>(["agents", "threads", "workspaces", "board", "prs", "devices"]);
 
 function decoded(value: string | undefined): string {
   if (!value) return "";
@@ -34,7 +34,10 @@ export function navigationDestination(raw: string): NavigationDestination | unde
     }
     if (kind === "settings") return { kind: "settings", ...(parts[0] || serverId ? { serverId: parts[0] || serverId } : {}) };
     const askedSection = kind === "section" ? parts[0] : kind;
-    const section = askedSection === "tasks" ? "board" : askedSection === "pull-requests" ? "prs" : askedSection;
+    const section = askedSection === "tasks" ? "board"
+      : askedSection === "pull-requests" ? "prs"
+      : askedSection === "inbox" ? "agents"
+      : askedSection;
     if (sections.has(section as PrimarySection)) return { kind: "section", section: section as PrimarySection };
   } catch {
     return undefined;
@@ -45,7 +48,10 @@ export function navigationDestination(raw: string): NavigationDestination | unde
 export function storedDestination(value: unknown): NavigationDestination | undefined {
   if (!value || typeof value !== "object") return undefined;
   const row = value as Record<string, unknown>;
-  if (row.kind === "section" && typeof row.section === "string" && sections.has(row.section as PrimarySection)) return { kind: "section", section: row.section as PrimarySection };
+  if (row.kind === "section" && typeof row.section === "string") {
+    const section = row.section === "inbox" ? "agents" : row.section;
+    if (sections.has(section as PrimarySection)) return { kind: "section", section: section as PrimarySection };
+  }
   if (row.kind === "thread" && typeof row.id === "string" && row.id) return { kind: "thread", id: row.id, ...(typeof row.serverId === "string" ? { serverId: row.serverId } : {}) };
   if (row.kind === "agent" && typeof row.id === "string" && row.id) return { kind: "agent", id: row.id };
   if (row.kind === "workspace" && typeof row.id === "string" && row.id) return { kind: "workspace", id: row.id, ...(typeof row.serverId === "string" ? { serverId: row.serverId } : {}) };

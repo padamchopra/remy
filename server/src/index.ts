@@ -1421,7 +1421,7 @@ const server = createServer(async (req, res) => {
       });
     }
 
-    // A routine can be created conversationally only by the agent whose Inbox
+    // A routine can be created conversationally only by the agent whose
     // conversation is running. The full app token may manage existing routines
     // in agent settings, but cannot create one outside that conversation.
     if (req.method === "POST" && url.pathname === "/routines") {

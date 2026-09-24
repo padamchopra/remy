@@ -118,6 +118,9 @@ test("deep links address every durable iPhone destination", options, async () =>
   assert.deepEqual(navigationDestination("remy://settings/studio"), { kind: "settings", serverId: "studio" });
   assert.deepEqual(navigationDestination("remy://prs"), { kind: "section", section: "prs" });
   assert.deepEqual(navigationDestination("remy://tasks"), { kind: "section", section: "board" });
+  assert.deepEqual(navigationDestination("remy://agents"), { kind: "section", section: "agents" });
+  assert.deepEqual(navigationDestination("remy://inbox"), { kind: "section", section: "agents" });
+  assert.deepEqual(storedDestination({ kind: "section", section: "inbox" }), { kind: "section", section: "agents" });
   assert.equal(navigationDestination("https://example.com"), undefined);
   assert.deepEqual(notificationDestination({ session: "chat-1", deviceId: "studio" }), { kind: "thread", id: "chat-1", serverId: "studio" });
   assert.deepEqual(storedDestination({ kind: "ticket", key: "REMY-27", ignored: "value" }), { kind: "ticket", key: "REMY-27" });

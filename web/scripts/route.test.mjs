@@ -79,3 +79,15 @@ test("old thread query links still parse, then format clean", () => {
   assert.equal(parsed.route.ownerOrganizationId, "team");
   assert.equal(formatPathLocation(parsed), "/threads/thread-1");
 });
+
+test("old Inbox links open Settings → Agents", () => {
+  const list = parseLocation("/inbox");
+  assert.equal(list.route.name, "settings");
+  assert.equal(list.route.tab, "agents");
+  assert.equal(formatPathLocation(list), "/settings/agents");
+  const named = parseLocation("/inbox/remy");
+  assert.equal(named.route.name, "settings");
+  assert.equal(named.route.tab, "agents");
+  assert.equal(named.route.agent, "remy");
+  assert.equal(formatPathLocation(named), "/settings/agents?agent=remy");
+});

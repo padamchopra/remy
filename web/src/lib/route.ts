@@ -9,10 +9,6 @@ import type { SettingsTab } from "@/lib/settings-sections";
 /// direct route, so browser URLs stay clean without weakening desktop reloads.
 
 export type Route = (
-  // Inbox is a list of agents and the conversation with one, so which agent is
-  // open is part of where the window is. Addressed by handle, which is what
-  // somebody types and what a mention already says.
-  | { name: "inbox"; agent?: string }
   // `focus` names the thread in front when the one the URL opens on has more
   // than one in its collection. How that collection is laid out is the
   // workbench's, kept on this device rather than in the address.
@@ -21,7 +17,7 @@ export type Route = (
   | { name: "board"; scope?: string }
   | { name: "ticket"; key: string }
   | { name: "prs" }
-  | { name: "settings"; tab: SettingsTab; organizationTab?: "general" | "members" | "teams" | "computers"; analyticsTab?: AnalyticsTab; deviceId?: string; organizationId?: string }) & { organizationId?: string; ownerOrganizationId?: string };
+  | { name: "settings"; tab: SettingsTab; organizationTab?: "general" | "members" | "teams" | "computers"; analyticsTab?: AnalyticsTab; deviceId?: string; agent?: string; organizationId?: string }) & { organizationId?: string; ownerOrganizationId?: string };
 
 export interface AppLocation {
   route: Route;
@@ -30,6 +26,7 @@ export interface AppLocation {
 const SETTINGS_TABS: SettingsTab[] = [
   "organization",
   "general",
+  "agents",
   "version-control",
   "providers",
   "devices",
@@ -37,9 +34,8 @@ const SETTINGS_TABS: SettingsTab[] = [
 ];
 
 /// The section a route belongs to, which is what the sidebar highlights.
-export function sectionOf(route: Route): "inbox" | "chats" | "workspaces" | "prs" | "tasks" {
-  if (route.name === "threads") return "chats";
-  if (route.name === "settings") return "chats";
+export function sectionOf(route: Route): "chats" | "workspaces" | "prs" | "tasks" {
+  if (route.name === "threads" || route.name === "settings") return "chats";
   if (route.name === "board" || route.name === "ticket") return "tasks";
   return route.name;
 }
@@ -50,7 +46,17 @@ function parseRoute(hash: string): AppLocation {
   const [head, tail] = path.replace(/^\/+/, "").split("/");
   const rest = tail ? decodeURIComponent(tail) : undefined;
 
-  if (head === "inbox") return { route: { name: "inbox", ...(rest ? { agent: rest } : {}) } };
+  // Older Inbox links open Agents in Settings. The handle or id in the path
+  // is the same agent query Settings already uses.
+  if (head === "inbox") {
+    return {
+      route: {
+        name: "settings",
+        tab: "agents",
+        ...(rest ? { agent: rest } : {}),
+      },
+    };
+  }
   if (head === "workspaces") return { route: { name: "workspaces", workspaceId: rest } };
   if (head === "pull-requests") return { route: { name: "prs" } };
   // Older links to recurring tickets land on the board now that routines live
@@ -66,6 +72,7 @@ function parseRoute(hash: string): AppLocation {
     const askedAnalyticsTab = params.get("tab");
     const analyticsTab: AnalyticsTab = askedAnalyticsTab === "usage" ? "usage" : "general";
     const deviceId = params.get("device") || undefined;
+    const agent = params.get("agent") || undefined;
     return {
       route: {
         name: "settings",
@@ -74,6 +81,7 @@ function parseRoute(hash: string): AppLocation {
         ...(tab === "organization" ? {organizationTab: params.get("section") === "members" ? "members" as const : params.get("section") === "teams" ? "teams" as const : params.get("section") === "computers" ? "computers" as const : "general" as const} : {}),
         ...(tab === "analytics" ? { analyticsTab } : {}),
         ...((tab === "providers" || tab === "devices") && deviceId ? { deviceId } : {}),
+        ...(tab === "agents" && agent ? { agent } : {}),
       },
     };
   }
@@ -104,14 +112,13 @@ export function formatPathLocation({ route }: AppLocation): string {
             ? `/tickets/${encodeURIComponent(route.key)}`
           : route.name === "settings"
               ? `/settings/${route.tab}`
-              : route.name === "prs"
-                ? "/pull-requests"
-                : `/inbox${route.agent ? `/${encodeURIComponent(route.agent)}` : ""}`;
+              : "/pull-requests";
   const params = new URLSearchParams();
   const threadId = route.name === "threads" ? route.threadId : undefined;
   if (route.name === "threads" && route.focus) params.set("focus", route.focus);
   if (route.name === "settings" && route.tab === "analytics" && route.analyticsTab === "usage") params.set("tab", "usage");
   if (route.name === "settings" && (route.tab === "providers" || route.tab === "devices") && route.deviceId) params.set("device", route.deviceId);
+  if (route.name === "settings" && route.tab === "agents" && route.agent) params.set("agent", route.agent);
   if (route.organizationId && route.organizationId !== "all" && !threadId) params.set("organization", route.organizationId);
   if (route.name === "settings" && route.tab === "organization" && route.organizationTab) params.set("section", route.organizationTab);
   if (route.ownerOrganizationId && !threadId) params.set("owner", route.ownerOrganizationId);
@@ -152,8 +159,16 @@ export function normalizeLocation(): AppLocation {
   const location = parseLocation(currentLocation());
   const hostedThread = isHostedRuntime() && location.route.name === "threads" && location.route.threadId
     && (search.has("computer") || search.has("owner") || search.has("organization") || legacyHash);
-  if (isHostedRuntime() && (legacyHash || redundantAll || hostedThread)) {
-    window.history.replaceState(null, "", `${hostedBasePath()}${formatPathLocation(location)}`);
+  const leftoverInbox = /(?:^|\/)inbox(?:\/|$)/.test(
+    isHostedRuntime()
+      ? window.location.pathname.slice(hostedBasePath().length) || "/"
+      : window.location.hash.replace(/^#/, ""),
+  );
+  if (leftoverInbox || (isHostedRuntime() && (legacyHash || redundantAll || hostedThread))) {
+    const next = isHostedRuntime()
+      ? `${hostedBasePath()}${formatPathLocation(location)}`
+      : formatLocation(location);
+    window.history.replaceState(null, "", next);
   }
   return location;
 }

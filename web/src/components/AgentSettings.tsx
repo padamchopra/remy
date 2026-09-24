@@ -35,11 +35,10 @@ import { apiError } from "@/lib/api-error";
 import { useStore } from "@/state/store";
 import type { Agent } from "@/state/types";
 
-/// Everything about one agent, opened from its conversation in the inbox.
+/// Everything about one agent, opened from Settings → Agents.
 ///
-/// The roster lives in the inbox rather than in Settings: an agent is somebody
-/// you talk to, and what it is called and how it thinks belongs next to the
-/// conversation rather than three panes away.
+/// The roster lives in Settings so the sidebar keeps Threads in reach. An agent
+/// is somebody you configure and talk to, and that conversation belongs here.
 ///
 /// Everything saves as you go. Menus and switches save on change; text saves
 /// when you leave the field, because saving a paragraph on every keystroke is a

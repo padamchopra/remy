@@ -443,7 +443,7 @@ function Entry({
   entry: ConvEntry;
   speaker: string;
   /// The agent whose conversation this is, when it is one. Its face goes beside
-  /// its name, the way it does on its own row in the Inbox.
+  /// its name, the way it does on its own row in Agents.
   mark?: Agent;
   chatId: string;
   serverId: string;
