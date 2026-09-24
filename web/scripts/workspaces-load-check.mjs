@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
+import { mkdirSync } from "node:fs";
 import { chromium } from "playwright-core";
 import { chromiumPath } from "./chromium.mjs";
 
-const url = new URL("/app/", process.env.WEBSITE_URL || "http://127.0.0.1:5180");
+const origin = process.env.WEBSITE_URL || "http://127.0.0.1:5180";
+const appPrefix = process.env.WEBSITE_APP_PREFIX ?? (new URL(origin).port === "5180" ? "/app" : "");
+const url = new URL(`${appPrefix}/`, origin);
+const artifacts = process.env.QA_ARTIFACTS;
+if (artifacts) mkdirSync(artifacts, { recursive: true });
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || (process.platform === "darwin" ? chromiumPath() : chromium.executablePath()),
 });
@@ -54,16 +59,18 @@ try {
     });
   });
 
-  await page.goto(new URL("/app/workspaces", url).href);
+  await page.goto(new URL(`${appPrefix}/workspaces`, origin).href);
   const loading = page.getByRole("status", { name: "Loading workspaces", exact: true });
   await loading.waitFor();
   assert.equal(await page.getByRole("status", { name: "Loading", exact: true }).count(), 0, "First open does not show a spinner");
   assert.ok(await loading.locator("[data-slot='item']").count() >= 3, "First open shows workspace tile skeletons");
+  if (artifacts) await page.screenshot({ path: `${artifacts}/workspaces-load-first-open.png` });
   releaseWorkspaces();
   holdWorkspaces = false;
   await page.getByText("Studio · https://github.com/example/repo", { exact: true }).waitFor();
   await loading.waitFor({ state: "hidden" });
   assert.equal(await page.getByRole("status", { name: "Loading workspaces", exact: true }).count(), 0);
+  if (artifacts) await page.screenshot({ path: `${artifacts}/workspaces-load-populated.png` });
 
   await page.getByRole("button", { name: "Threads", exact: true }).click();
   await page.getByRole("region", { name: "Threads", exact: true }).waitFor();
@@ -78,6 +85,7 @@ try {
   assert.equal(await page.getByRole("status", { name: "Loading workspaces", exact: true }).count(), 0, "Revisit does not shimmer");
   assert.equal(await page.getByRole("status", { name: "Loading", exact: true }).count(), 0, "Revisit does not spin");
   assert.deepEqual(blocked, [], "Revisit paints the last save without waiting on a new catalogue");
+  if (artifacts) await page.screenshot({ path: `${artifacts}/workspaces-load-revisit.png` });
 
   console.log("Workspaces load: first-open skeletons, revisit from last save.");
   await context.close();
