@@ -443,6 +443,10 @@ try {
           assert.equal(iconFill.width,40,"Icon button is 40px wide");
           assert.equal(iconFill.height,40,"Icon button is 40px tall");
           assert.ok(iconFill.left<3 && iconFill.top<3 && iconFill.right<3 && iconFill.bottom<3,"Workspace image fills the icon button");
+          if(artifacts && !mobile) {
+            await iconButton.screenshot({path:`${artifacts}/workspace-icon-button.png`});
+            await page.locator("main .flex.items-center.gap-3.rounded-lg.border").first().screenshot({path:`${artifacts}/workspace-icon-row.png`});
+          }
           let workspaceBreadcrumb=page.getByRole("navigation",{name:"breadcrumb",exact:true});
           await workspaceBreadcrumb.getByRole("button",{name:"Workspaces",exact:true}).waitFor();
           await workspaceBreadcrumb.getByRole("link",{name:"Example",exact:true}).waitFor();
