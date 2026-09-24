@@ -401,6 +401,7 @@ try {
           assert.equal(await page.getByRole("region",{name:"Agents",exact:true}).count(),1);
           assert.equal(await page.getByRole("button",{name:"Inbox",exact:true}).count(),0,"Inbox is gone from the sidebar");
           await page.goto(clean("/inbox"));
+          await page.waitForURL((current)=>/\/settings\/agents$/.test(current.pathname));
           assert.match(new URL(page.url()).pathname,/\/settings\/agents$/,"Old Inbox links open Settings → Agents");
           await page.goto(clean("/pull-requests"));
           await page.getByRole("heading",{name:"Pull requests",exact:true}).waitFor();

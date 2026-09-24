@@ -43,7 +43,10 @@ export function sectionOf(route: Route): "chats" | "workspaces" | "prs" | "tasks
 function parseRoute(hash: string): AppLocation {
   const raw = hash.replace(/^#/, "");
   const [path, query = ""] = raw.split("?");
-  const [head, tail] = path.replace(/^\/+/, "").split("/");
+  // Hosted app-shell links keep `/app` on the pathname. Strip it so `/app/inbox`
+  // parses the same as `/inbox`.
+  const trimmed = path.replace(/^\/app(?=\/|$)/, "") || "/";
+  const [head, tail] = trimmed.replace(/^\/+/, "").split("/");
   const rest = tail ? decodeURIComponent(tail) : undefined;
 
   // Older Inbox links open Agents in Settings. The handle or id in the path
@@ -144,28 +147,39 @@ function hostedBasePath(): string {
   return window.location.pathname === "/app" || window.location.pathname.startsWith("/app/") ? "/app" : "";
 }
 
+function pathInsideHostedBase(): string {
+  return window.location.pathname.slice(hostedBasePath().length) || "/";
+}
+
+function leftoverInboxFromPath(): string | undefined {
+  const path = pathInsideHostedBase();
+  if (/(?:^|\/)inbox(?:\/|$)/.test(path)) return `${path}${window.location.search}`;
+}
+
+function leftoverInboxFromHash(): string | undefined {
+  const hash = window.location.hash.replace(/^#/, "");
+  if (/(?:^|\/)inbox(?:\/|$)/.test(hash)) return hash;
+}
+
 export function currentLocation(): string {
   if (!isHostedRuntime()) return window.location.hash;
   if (window.location.hash.startsWith("#/")) return window.location.hash;
-  const base = hostedBasePath();
-  const path = window.location.pathname.slice(base.length) || "/";
-  return `${path}${window.location.search}`;
+  return `${pathInsideHostedBase()}${window.location.search}`;
 }
 
 export function normalizeLocation(): AppLocation {
+  const fromPath = leftoverInboxFromPath();
+  const fromHash = leftoverInboxFromHash();
   const legacyHash = window.location.hash.startsWith("#/");
   const search = new URLSearchParams(window.location.search);
   const redundantAll = search.get("organization") === "all";
-  const location = parseLocation(currentLocation());
+  const location = parseLocation(fromPath ?? fromHash ?? currentLocation());
   const hostedThread = isHostedRuntime() && location.route.name === "threads" && location.route.threadId
     && (search.has("computer") || search.has("owner") || search.has("organization") || legacyHash);
-  const leftoverInbox = /(?:^|\/)inbox(?:\/|$)/.test(
-    isHostedRuntime()
-      ? window.location.pathname.slice(hostedBasePath().length) || "/"
-      : window.location.hash.replace(/^#/, ""),
-  );
-  if (leftoverInbox || (isHostedRuntime() && (legacyHash || redundantAll || hostedThread))) {
-    const next = isHostedRuntime()
+  // Path leftovers such as `/app/inbox` must rewrite before `/api/runtime`
+  // answers, or a load waiter sees the old address.
+  if (fromPath || fromHash || (isHostedRuntime() && (legacyHash || redundantAll || hostedThread))) {
+    const next = fromPath || isHostedRuntime() || hostedBasePath()
       ? `${hostedBasePath()}${formatPathLocation(location)}`
       : formatLocation(location);
     window.history.replaceState(null, "", next);
