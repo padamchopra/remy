@@ -580,56 +580,213 @@ export class GitHubConnection {
 
   /// Open pull requests for the connected GitHub account. The saved credential
   /// is either the GitHub sign-in or a personal access token.
-  async openPullRequests(org: string, user: string) {
-    const data = await this.api<{
-      data?: {
-        viewer?: { login?: string };
-        search?: { nodes?: unknown[] };
-      };
-      errors?: { message?: string }[];
-    }>(org, user, "/graphql", "POST", {
-      query: `query { viewer { login } search(query:"is:open is:pr involves:@me", type:ISSUE, first:40) { nodes { ... on PullRequest { number title url body isDraft reviewDecision updatedAt additions deletions changedFiles headRefName baseRefName mergeable mergeStateStatus author { login } repository { nameWithOwner } commits(last:1) { nodes { commit { statusCheckRollup { contexts(first:20) { nodes { ... on CheckRun { name conclusion status } ... on StatusContext { context state } } } } } } } } } } }`,
+  async openPullRequests(org: string, user: string, refresh = false) {
+    const cacheKey = `${org}:${user}`;
+    const cached = hostedPullRequestCache.get(cacheKey);
+    if (!refresh && cached && Date.now() - cached.at < HOSTED_PULL_REQUEST_CACHE_FRESH_MS) {
+      return cached.value;
+    }
+    const value = await this.readOpenPullRequests(org, user);
+    hostedPullRequestCache.set(cacheKey, { at: Date.now(), value });
+    return value;
+  }
+
+  private async readOpenPullRequests(org: string, user: string) {
+    await this.access(org, user);
+    // The member subject is the PAT or GitHub sign-in for this account — never
+    // an organization-wide installation token, which cannot see repositories
+    // the GitHub App is not installed on.
+    await this.connections.token(org, "github", user);
+    const workspaces = await this.organizations.workspaces(org, user);
+    const workspaceByRepo = new Map(
+      workspaces.flatMap((workspace) => {
+        const repository = githubRepositoryFromOrigin(workspace.origin);
+        return repository ? [[repository.toLowerCase(), workspace] as const] : [];
+      }),
+    );
+    const repositories = [...workspaceByRepo.keys()].slice(0, HOSTED_PULL_REQUEST_WORKSPACE_REPOS);
+    const repoSelections = repositories.map((_, index) =>
+      `repo${index}: repository(owner:$o${index}, name:$n${index}) { pullRequests(states: OPEN, first: 20, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { ...HostedPullRequest } } }`);
+    const variables: Record<string, string> = Object.fromEntries(repositories.flatMap((repository, index) => {
+      const [owner, name] = repository.split("/");
+      return [[`o${index}`, owner], [`n${index}`, name]];
+    }));
+    const data = await this.graphql(org, user, {
+      query: `query OpenPullRequests${repositories.length ? `(${repositories.flatMap((_, index) => [`$o${index}: String!`, `$n${index}: String!`]).join(", ")})` : ""} {
+        viewer {
+          login
+          pullRequests(states: OPEN, first: 50, orderBy: { field: UPDATED_AT, direction: DESC }) {
+            nodes { ...HostedPullRequest }
+          }
+        }
+        search(query: "is:open is:pr involves:@me", type: ISSUE, first: 50) {
+          nodes { ... on PullRequest { ...HostedPullRequest } }
+        }
+        ${repoSelections.join("\n")}
+      }
+      ${HOSTED_PULL_REQUEST_FRAGMENT}`,
+      variables,
     });
-    if (data.errors?.length) throw new ConnectionError(data.errors[0]?.message || "GitHub could not list pull requests.");
-    const viewer = data.data?.viewer?.login ?? "";
-    const nodes = data.data?.search?.nodes ?? [];
-    const pullRequests = nodes.flatMap((value) => {
-      if (!value || typeof value !== "object") return [];
-      const pr = value as Record<string, unknown>;
-      const repository = (pr.repository as { nameWithOwner?: string } | undefined)?.nameWithOwner;
-      const number = pr.number;
-      if (!repository || typeof number !== "number") return [];
-      const author = (pr.author as { login?: string } | undefined)?.login ?? "";
-      const checks = pullRequestChecks(pr);
-      return [{
-        url: String(pr.url ?? `https://github.com/${repository}/pull/${number}`),
-        number,
-        title: String(pr.title ?? "Untitled pull request"),
-        body: String(pr.body ?? ""),
-        repository,
-        headRefName: String(pr.headRefName ?? ""),
-        baseRefName: String(pr.baseRefName ?? ""),
-        isDraft: pr.isDraft === true,
-        reviewDecision: String(pr.reviewDecision ?? ""),
-        authorLogin: author,
-        updatedAt: String(pr.updatedAt ?? new Date(0).toISOString()),
-        additions: Number(pr.additions ?? 0),
-        deletions: Number(pr.deletions ?? 0),
-        changedFiles: Number(pr.changedFiles ?? 0),
-        checks,
-        unreadComments: [],
-        hasUnreadActivity: false,
-        workspaceId: repository,
-        workspaceName: repository.split("/")[1] ?? repository,
-        workspacePath: "",
-        worktreePath: author.toLowerCase() === viewer.toLowerCase() ? "hosted" : null,
-        mergeable: String(pr.mergeable ?? ""),
-        mergeStateStatus: String(pr.mergeStateStatus ?? ""),
-        state: "OPEN",
-      }];
-    });
+    const payload = data.data ?? {};
+    const viewer = githubLogin(loginOf(payload.viewer));
+    const viewerNodes = nodesOf((payload.viewer as { pullRequests?: { nodes?: unknown[] } } | undefined)?.pullRequests);
+    const searchFailed = (data.errors ?? []).some((error) => Array.isArray(error.path) && error.path[0] === "search");
+    const searchNodes = searchFailed ? [] : nodesOf((payload.search as { nodes?: unknown[] } | undefined));
+    const workspaceNodes = repositories.flatMap((_, index) =>
+      nodesOf((payload[`repo${index}`] as { pullRequests?: { nodes?: unknown[] } } | undefined)?.pullRequests),
+    );
+    const byURL = new Map<string, HostedListedPullRequest>();
+    for (const value of [...viewerNodes, ...searchNodes, ...workspaceNodes]) {
+      const pullRequest = hostedPullRequest(value, viewer, workspaceByRepo);
+      if (!pullRequest) continue;
+      if (
+        workspaceNodes.includes(value)
+        && !viewerNodes.includes(value)
+        && !searchNodes.includes(value)
+        && !involvesGitHubUser(value, viewer)
+      ) continue;
+      const current = byURL.get(pullRequest.url);
+      if (!current || (!current.checks.length && pullRequest.checks.length)) byURL.set(pullRequest.url, pullRequest);
+    }
+    if (!byURL.size && data.errors?.length && !viewerNodes.length) {
+      throw new ConnectionError(data.errors[0]?.message || "GitHub could not list pull requests.");
+    }
+    const pullRequests: HostedListedPullRequest[] = [...byURL.values()].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
     return { viewer, pullRequests };
   }
+
+  private async graphql(
+    org: string,
+    user: string,
+    input: { query: string; variables?: Record<string, string> },
+  ) {
+    return this.api<{
+      data?: Record<string, unknown>;
+      errors?: { message?: string; path?: unknown[] }[];
+    }>(org, user, "/graphql", "POST", input);
+  }
+}
+
+/// Fresh enough that a reopen of Pull requests does not wait on GitHub again.
+export const HOSTED_PULL_REQUEST_CACHE_FRESH_MS = 60_000;
+const HOSTED_PULL_REQUEST_WORKSPACE_REPOS = 12;
+const hostedPullRequestCache = new Map<string, {
+  at: number;
+  value: { viewer: string; pullRequests: HostedListedPullRequest[] };
+}>();
+export function clearHostedPullRequestCache() {
+  hostedPullRequestCache.clear();
+}
+
+const HOSTED_PULL_REQUEST_FRAGMENT = `fragment HostedPullRequest on PullRequest {
+  number title url body isDraft reviewDecision updatedAt additions deletions changedFiles
+  headRefName baseRefName mergeable mergeStateStatus
+  author { login }
+  repository { nameWithOwner }
+  assignees(first: 10) { nodes { login } }
+  reviewRequests(first: 10) { nodes { requestedReviewer { ... on User { login } } } }
+  commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 20) { nodes {
+    ... on CheckRun { name conclusion status }
+    ... on StatusContext { context state }
+  } } } } } }
+}`;
+
+function githubRepositoryFromOrigin(origin: string) {
+  return /^github\.com\/([\w.-]+\/[\w.-]+)$/i.exec(origin)?.[1] ?? "";
+}
+
+function githubLogin(value: string) {
+  return /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(value) ? value : "";
+}
+
+function nodesOf(value: { nodes?: unknown[] } | undefined) {
+  return Array.isArray(value?.nodes) ? value.nodes : [];
+}
+
+function loginOf(value: unknown) {
+  if (!value || typeof value !== "object") return "";
+  const login = (value as { login?: unknown }).login;
+  return typeof login === "string" ? login : "";
+}
+
+function involvesGitHubUser(value: unknown, viewer: string) {
+  if (!viewer || !value || typeof value !== "object") return false;
+  const pr = value as Record<string, unknown>;
+  const needle = viewer.toLowerCase();
+  if (loginOf(pr.author).toLowerCase() === needle) return true;
+  const assignees = ((pr.assignees as { nodes?: unknown[] } | undefined)?.nodes ?? []).map(loginOf);
+  if (assignees.some((login) => login.toLowerCase() === needle)) return true;
+  return ((pr.reviewRequests as { nodes?: unknown[] } | undefined)?.nodes ?? []).some((node) => {
+    if (!node || typeof node !== "object") return false;
+    return loginOf((node as { requestedReviewer?: unknown }).requestedReviewer).toLowerCase() === needle;
+  });
+}
+
+type HostedListedPullRequest = {
+  url: string;
+  number: number;
+  title: string;
+  body: string;
+  repository: string;
+  headRefName: string;
+  baseRefName: string;
+  isDraft: boolean;
+  reviewDecision: string;
+  authorLogin: string;
+  updatedAt: string;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  checks: { name: string; state: "pass" | "fail" | "pending" | "skipping" }[];
+  unreadComments: unknown[];
+  hasUnreadActivity: boolean;
+  workspaceId: string;
+  workspaceName: string;
+  workspacePath: string;
+  worktreePath: string | null;
+  mergeable: string;
+  mergeStateStatus: string;
+  state: string;
+};
+
+function hostedPullRequest(
+  value: unknown,
+  viewer: string,
+  workspaceByRepo: Map<string, { id: string; name: string }>,
+): HostedListedPullRequest | undefined {
+  if (!value || typeof value !== "object") return;
+  const pr = value as Record<string, unknown>;
+  const repository = (pr.repository as { nameWithOwner?: string } | undefined)?.nameWithOwner;
+  const number = pr.number;
+  if (!repository || typeof number !== "number") return;
+  const author = loginOf(pr.author);
+  const workspace = workspaceByRepo.get(repository.toLowerCase());
+  return {
+    url: String(pr.url ?? `https://github.com/${repository}/pull/${number}`),
+    number,
+    title: String(pr.title ?? "Untitled pull request"),
+    body: String(pr.body ?? ""),
+    repository,
+    headRefName: String(pr.headRefName ?? ""),
+    baseRefName: String(pr.baseRefName ?? ""),
+    isDraft: pr.isDraft === true,
+    reviewDecision: String(pr.reviewDecision ?? ""),
+    authorLogin: author,
+    updatedAt: String(pr.updatedAt ?? new Date(0).toISOString()),
+    additions: Number(pr.additions ?? 0),
+    deletions: Number(pr.deletions ?? 0),
+    changedFiles: Number(pr.changedFiles ?? 0),
+    checks: pullRequestChecks(pr),
+    unreadComments: [] as unknown[],
+    hasUnreadActivity: false,
+    workspaceId: workspace?.id ?? repository,
+    workspaceName: workspace?.name ?? repository.split("/")[1] ?? repository,
+    workspacePath: "",
+    worktreePath: viewer && author.toLowerCase() === viewer.toLowerCase() ? "hosted" : null,
+    mergeable: String(pr.mergeable ?? ""),
+    mergeStateStatus: String(pr.mergeStateStatus ?? ""),
+    state: "OPEN",
+  };
 }
 
 function pullRequestChecks(pr: Record<string, unknown>) {

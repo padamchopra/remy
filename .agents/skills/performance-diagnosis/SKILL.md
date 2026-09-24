@@ -48,6 +48,27 @@ useEffect(() => {
 
 A subscription's first open is not a reason to read again. The read issued when the watcher was created already covers it; only a reconnect has missed messages. Refreshing on every open asks for every resource twice.
 
+Hosted GitHub listings are the same shape. Pull requests are cached per account (the PAT or GitHub sign-in on that computer's owner), painted immediately on reopen, and refreshed in the background. Do not start from a loading skeleton because the route is hosted, and do not throw away Search's neighbours when Search itself cannot see a private organization.
+
+BAD
+```tsx
+const [loading, setLoading] = useState(hostedOrganizationId ? true : !hasCachedPullRequests(serverIds));
+useEffect(() => {
+  void hubRequest(`${hubThreadBase(hostedOrganizationId)}/github/pull-requests`);
+}, [hostedOrganizationId]);
+```
+
+GOOD
+```tsx
+const cacheIds = hostedIds.map((id) => `github:${id}`);
+const [loading, setLoading] = useState(!hasCachedPullRequests(cacheIds));
+useEffect(() => {
+  if (hasCachedPullRequests(cacheIds)) setPullRequests(cachedPullRequests(cacheIds));
+  void load(); // GitHub runs in the background; a 409 is "not connected"
+}, [hostedKey]);
+```
+
+
 ## Performance is part of finishing a surface
 
 A surface is not done when it works. Open it with the network panel honest — request count, their order, and whether any of them wait on each other — before calling it done. A waterfall is easiest to remove on the day it is written and hardest to notice once it ships, because every individual request looks fast.

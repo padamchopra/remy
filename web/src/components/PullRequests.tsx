@@ -12,7 +12,7 @@ import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { workspaceGroups, type WorkspaceGroup } from "@/lib/projects";
 import { orderPullRequests } from "@/lib/pull-request-order";
 import { relativeDate } from "@/lib/relative-date";
-import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
+import { hubRequest, HubRequestError, hubThreadBase } from "@/lib/hub-threads";
 import { transport } from "@/lib/transport";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
@@ -183,31 +183,47 @@ function activeThread(pullRequest: AuthoredPullRequest, chats: Chat[]): Chat | u
     .sort((a, b) => b.updatedAt - a.updatedAt)[0];
 }
 
+function hostedCacheId(organizationId: string) {
+  return `github:${organizationId}`;
+}
+
 export function PullRequests({
   servers,
   workspaces,
   onOpenThread,
   onOpenWorkspace,
   hostedOrganizationId,
+  hostedOrganizationIds,
 }: {
   servers: Server[];
   workspaces: Workspace[];
   onOpenThread: (id: string) => void;
   onOpenWorkspace: (id: string) => void;
   hostedOrganizationId?: string;
+  hostedOrganizationIds?: string[];
 }) {
-  const serverIds = servers.filter((server) => !server.workspaceOnly).map((server) => server.id).sort();
-  const serverKey = servers
-    .filter((server) => !server.workspaceOnly)
-    .map((server) => `${server.id}:${server.online ? "online" : "offline"}`)
-    .sort()
-    .join("\u0000");
+  const hostedIds = hostedOrganizationIds
+    ?? (hostedOrganizationId ? [hostedOrganizationId] : []);
+  const hosted = hostedIds.length > 0;
+  const hostedCacheIds = hostedIds.map(hostedCacheId);
+  const serverIds = hosted
+    ? hostedCacheIds
+    : servers.filter((server) => !server.workspaceOnly).map((server) => server.id).sort();
+  const serverKey = hosted
+    ? hostedIds.slice().sort().join("\u0000")
+    : servers
+      .filter((server) => !server.workspaceOnly)
+      .map((server) => `${server.id}:${server.online ? "online" : "offline"}`)
+      .sort()
+      .join("\u0000");
   const serversRef = useRef(servers);
   serversRef.current = servers;
+  const hostedIdsRef = useRef(hostedIds);
+  hostedIdsRef.current = hostedIds;
   const [pullRequests, setPullRequests] = useState<AuthoredPullRequest[]>(() => cachedPullRequests(serverIds));
-  const [filter, setFilter] = useState<PullRequestFilter>("needs");
+  const [filter, setFilter] = useState<PullRequestFilter>(hosted ? "all" : "needs");
   const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(hostedOrganizationId ? true : !hasCachedPullRequests(serverIds));
+  const [loading, setLoading] = useState(!hasCachedPullRequests(serverIds));
   const [githubError, setGithubError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [selectedURL, setSelectedURL] = useState("");
@@ -228,17 +244,56 @@ export function PullRequests({
       progressRequestId.current = currentRequest;
       setRefreshing(true);
     }
-    if (hostedOrganizationId) {
-      try {
-        const response = await hubRequest<{ pullRequests: AuthoredPullRequest[] }>(`${hubThreadBase(hostedOrganizationId)}/github/pull-requests`);
-        if (currentRequest !== requestId.current) return;
-        setPullRequests(response.pullRequests.map((pullRequest) => ({ ...pullRequest, serverId: "github" })));
-        setGithubError("");
-      } catch (caught) {
-        if (currentRequest === requestId.current) {
-          setPullRequests([]);
-          setGithubError(caught instanceof Error ? caught.message : "Connect GitHub to see pull requests.");
+    if (hosted) {
+      const cacheIds = hostedIdsRef.current.map(hostedCacheId);
+      const cached = cachedPullRequests(cacheIds);
+      if (hasCachedPullRequests(cacheIds)) {
+        setPullRequests(cached);
+        setLoading(false);
+      } else {
+        setLoading(true);
+      }
+      const batches: Array<{ serverId: string; pullRequests: AuthoredPullRequest[] } | { serverId: string; error: string }> =
+        await Promise.all(hostedIdsRef.current.map(async (organizationId) => {
+        const serverId = hostedCacheId(organizationId);
+        try {
+          const response = await hubRequest<{ pullRequests: AuthoredPullRequest[] }>(
+            `${hubThreadBase(organizationId)}/github/pull-requests${refresh ? "?refresh=1" : ""}`,
+          );
+          return {
+            serverId,
+            pullRequests: (response.pullRequests ?? []).map((pullRequest) => ({
+              ...pullRequest,
+              serverId,
+            })),
+          };
+        } catch (caught) {
+          const message = caught instanceof Error ? caught.message : "Connect GitHub to see pull requests.";
+          if (caught instanceof HubRequestError && caught.status === 409) {
+            const known = pullRequestCache.get(serverId);
+            if (known?.length) return { serverId, pullRequests: known };
+          }
+          return { serverId, error: message };
         }
+      }));
+      if (currentRequest !== requestId.current) {
+        if (progressRequestId.current === currentRequest) {
+          progressRequestId.current = undefined;
+          setRefreshing(false);
+        }
+        return;
+      }
+      const errors = batches.flatMap((batch) => ("error" in batch && batch.error ? [batch.error] : []));
+      for (const batch of batches) {
+        if ("pullRequests" in batch) cachePullRequests(batch.serverId, batch.pullRequests);
+      }
+      const next = cachedPullRequests(cacheIds);
+      if (next.length > 0 || errors.length < batches.length) {
+        setPullRequests(next);
+        setGithubError("");
+      } else {
+        setPullRequests([]);
+        setGithubError(errors[0] || "Connect GitHub to see pull requests.");
       }
       setLoading(false);
       if (progressRequestId.current === currentRequest) {
@@ -287,7 +342,7 @@ export function PullRequests({
       progressRequestId.current = undefined;
       setRefreshing(false);
     }
-  }, [hostedOrganizationId]);
+  }, [hosted, serverKey]);
 
   useEffect(() => {
     void load();
@@ -366,7 +421,7 @@ export function PullRequests({
     });
   }
 
-  if (selected && hostedOrganizationId) {
+  if (selected && hosted) {
     return (
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex h-12 items-center gap-3 px-4">
@@ -453,7 +508,7 @@ export function PullRequests({
         <h1 className="text-sm font-medium">Pull requests</h1>
         <span className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
           <span className="size-1.5 rounded-full bg-success-foreground" />
-          {hostedOrganizationId
+          {hosted
             ? "Live from GitHub"
             : `Live from GitHub · ${onlineCount} of ${computerCount} ${computerCount === 1 ? "computer" : "computers"}`}
         </span>

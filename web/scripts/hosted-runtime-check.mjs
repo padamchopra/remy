@@ -360,6 +360,8 @@ try {
           assert.equal(await page.getByLabel("Filter pull requests",{exact:true}).count(),1);
           await page.getByText("No pull requests",{exact:true}).waitFor();
           await page.getByText("Live from GitHub",{exact:true}).waitFor();
+          assert.ok(requests.includes("/api/organizations/personal/github/pull-requests"), "All reads Personal GitHub pull requests");
+          assert.ok(requests.includes("/api/organizations/team/github/pull-requests"), "All reads organization GitHub pull requests");
           if(artifacts)await page.screenshot({path:`${artifacts}/unified-pull-requests-${mobile?'phone':'desktop'}.png`});
           await page.goto(clean("/workspaces"));
           await page.getByText("Studio · https://github.com/example/repo",{exact:true}).waitFor();
