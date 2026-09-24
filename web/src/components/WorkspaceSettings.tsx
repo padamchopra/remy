@@ -193,7 +193,7 @@ export function WorkspaceSettings({
               renderIcon={projectIcon}
               preview={
                 isProjectIconFile(workspace.icon) ? (
-                  <WorkspaceFileIcon workspaceId={workspace.id} path={workspace.icon} className="size-6" />
+                  <WorkspaceFileIcon workspaceId={workspace.id} path={workspace.icon} className="size-full object-cover" />
                 ) : undefined
               }
               files={{

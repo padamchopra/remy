@@ -134,6 +134,11 @@ try {
         if(path === `${base}/routing/preference`){if(route.request().method()==="POST"){await new Promise(resolve=>setTimeout(resolve,500));if(failPreference)return route.fulfill({status:500,json:{error:"Internal server error"}});preference=route.request().postDataJSON().computerId;}return route.fulfill({json:{computerId:preference}});}
         if(path === `${base}/routing/resolve` && route.request().method()==="POST") return route.fulfill({json:{computerId:org.personal?undefined:"personal-mac",workspaceId:"repo",reason:"Preview route.",recommendedVisibility:org.personal?"private":"open"}});
         if(path===`${base}/github/workspace-branches`) return route.fulfill({json:{branches:[{name:"main",current:true,checkout:null},{name:"feature/selected",current:false,checkout:null}]}});
+        if(path===`${base}/github/workspace-images`) {
+          const file=new URL(route.request().url()).searchParams.get("path");
+          if(file) return route.fulfill({json:{mime:"image/png",data:readFileSync(new URL("../public/favicon.png",import.meta.url)).toString("base64")}});
+          return route.fulfill({json:{images:[],truncated:false}});
+        }
         if(path===`${base}/hosted/repo/codex`)return route.fulfill({json:{phase:"disconnected"}});
         if(path===`${base}/threads` && route.request().method()==="POST") {
           threadInput=route.request().postDataJSON();
@@ -206,7 +211,7 @@ try {
           [`${base}/hosted`]: { settings: { enabled: cloudEnabled, provider: "fly-sprites", region: "", cpu: 1, memoryMiB: 2048, maxComputers: 5, idleMinutes: 12 }, secretNames: [], connections: [...connections], enabledProviders: [...enabledProviders], providerKeys, available },
           [`${base}/members`]: {members:[{id:"reader-member",userId:"reader",name:profile.name,image:profile.image,role:"owner"},...Array.from({length:4},(_,i)=>({id:`m${i}`,userId:`p${i}`,name:`Person ${i}`,image:`data:image/png;base64,${readFileSync(new URL('../public/favicon.png',import.meta.url)).toString('base64')}`,role:"member"}))]},
           [`${base}/teams`]: {teams:[]},
-          [`${base}/workspaces/repo`]: {id:"repo",name:"Example",origin:"github.com/example/repo",restricted:false},
+          [`${base}/workspaces/repo`]: {id:"repo",name:"Example",origin:"github.com/example/repo",restricted:false,icon:"icon.png"},
           [`${base}/workspaces`]: { workspaces: hasWorkspace && !(process.env.QA_SCOPE_ONLY === "1" && org.personal)?[{id:"repo",name:"Example",origin:"https://github.com/example/repo"}]:[], canManage: true },
           [`${base}/notifications`]: { notifications: [], devices: [] },
           [`${base}/environments`]: { environments: [], assignments: [], workspaces: [] },
@@ -426,6 +431,18 @@ try {
           await page.waitForURL(/\/app\/workspaces\/repo\?owner=team$/);
           await page.getByText("Repository",{exact:true}).waitFor();
           await page.getByText("github.com/example/repo",{exact:true}).waitFor();
+          const iconButton=page.getByRole("button",{name:"Change icon for Example",exact:true});
+          await iconButton.locator("img").waitFor();
+          const iconFill=await iconButton.evaluate(button=>{
+            const img=button.querySelector("img");
+            if(!img) return null;
+            const box=button.getBoundingClientRect(), image=img.getBoundingClientRect();
+            return {left:image.left-box.left,top:image.top-box.top,right:box.right-image.right,bottom:box.bottom-image.bottom,width:box.width,height:box.height};
+          });
+          assert.ok(iconFill,"Workspace image is in the icon button");
+          assert.equal(iconFill.width,40,"Icon button is 40px wide");
+          assert.equal(iconFill.height,40,"Icon button is 40px tall");
+          assert.ok(iconFill.left<3 && iconFill.top<3 && iconFill.right<3 && iconFill.bottom<3,"Workspace image fills the icon button");
           let workspaceBreadcrumb=page.getByRole("navigation",{name:"breadcrumb",exact:true});
           await workspaceBreadcrumb.getByRole("button",{name:"Workspaces",exact:true}).waitFor();
           await workspaceBreadcrumb.getByRole("link",{name:"Example",exact:true}).waitFor();

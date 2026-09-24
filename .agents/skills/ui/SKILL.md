@@ -101,6 +101,24 @@ Keep inline copy only for durable page state — loading, stale, reconnect — a
 
 A composed screen assembles primitives; it never replaces one that exists. A control that appears on two screens moves into its own module rather than being copied — `ComposerMenu.tsx`, `PathPicker.tsx`, and `ThreadMenu.tsx` are shared this way.
 
+## Filled image wells
+
+A workspace image in a rounded icon button fills that box. Clip overflow, drop inner padding, and give the `img` `size-full object-cover`. Glyphs stay at the button's default icon size. `ItemMedia` `variant="image"` and `WorkspaceMark`'s `fileClassName="size-full"` are the same treatment.
+
+BAD
+```tsx
+<Button size="icon" className="size-10 rounded-lg">
+  <WorkspaceFileIcon className="size-6" />
+</Button>
+```
+
+GOOD
+```tsx
+<Button size="icon" className="size-10 overflow-hidden rounded-lg p-0 [&_img]:size-full [&_img]:object-cover">
+  <WorkspaceFileIcon className="size-full object-cover" />
+</Button>
+```
+
 ## One pane title
 
 The main pane names the section once. `PaneHeader` is that name when the shell draws it. A section that owns its chrome — Pull requests — draws the title itself, and the shell does not add another `PaneHeader`. Do not put an `h1` of the same section name under `PaneHeader`.
