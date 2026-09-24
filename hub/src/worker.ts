@@ -1684,6 +1684,7 @@ export class HubCoordinator {
       if (organizationId) await this.computers.seen(organizationId, attachment.computerId, now, frame.capabilities, frame.daemonVersion);
       socket.serializeAttachment({ ...attachment, ready: true, boardSync: frame.boardSync === true, lastSeenAt: now });
       this.invalidateComputers();
+      await this.pushRetiredHostedThreads(attachment.computerId, socket);
       return;
     }
     if (!attachment.ready) { socket.close(1008, "Introduce this computer first."); return; }
@@ -1704,6 +1705,10 @@ export class HubCoordinator {
       return;
     }
     if (frame.kind === "thread.snapshot") {
+      if (await this.ctx.storage.get(`threads:retired:${attachment.computerId}:${frame.snapshot.id}`)) {
+        socket.send(JSON.stringify({ kind: "agent.deleted", threadIds: [frame.snapshot.id] }));
+        return;
+      }
       if (frame.snapshot.access.organizationId !== organizationId) {
         const targetOrganizationId = frame.snapshot.access.organizationId;
         const grant = await this.env.DB.prepare("SELECT 1 FROM organization_computer_shares WHERE organization_id=? AND source_organization_id=? AND computer_id=?").bind(targetOrganizationId, organizationId, attachment.computerId).first();
@@ -2019,6 +2024,19 @@ export class HubCoordinator {
       this.computerSocket(run.computerId)?.send(JSON.stringify({kind:"agent.deleted",threadIds:[id]}));
     }
   }
+  // Hub catalogue of a hosted thread. Archive and delete still succeed when
+  // the computer cannot be reached, and a later snapshot must not restore it.
+  private async retireHostedThread(computerId: string, threadId: string): Promise<void> {
+    const ids = [threadId, ...(await this.threads.list()).filter((thread) => thread.computerId === computerId && thread.detail.parentChatId === threadId).map((thread) => thread.id)];
+    for (const id of ids) await this.ctx.storage.put(`threads:retired:${computerId}:${id}`, true);
+    await this.threads.removeGroup(computerId, threadId);
+    this.computerSocket(computerId)?.send(JSON.stringify({ kind: "agent.deleted", threadIds: ids }));
+  }
+  private async pushRetiredHostedThreads(computerId: string, socket: WebSocket): Promise<void> {
+    const prefix = `threads:retired:${computerId}:`;
+    const ids = [...(await this.ctx.storage.list({ prefix })).keys()].map((key) => key.slice(prefix.length)).filter(Boolean);
+    if (ids.length) socket.send(JSON.stringify({ kind: "agent.deleted", threadIds: ids }));
+  }
   private async canReadAgentThread(id:string,userId:string):Promise<boolean> {
     const run=await this.ctx.storage.get<{agentId:string}>(`agent-run:${id}`);
     if(!run)return true;
@@ -2274,7 +2292,7 @@ export class HubCoordinator {
     try { target = await this.computerService().requireUse(request.headers.get("x-organization-id")!, computerId, actor.id); } catch { return jsonError("This computer is not available to you.", 404); }
     const snapshot = id ? await this.threads.get(computerId, id) : undefined;
     if (id && (!await this.canReadAgentThread(id,actor.id) || !snapshot || !canReadThread(snapshot.access, actor.id) || !await this.computerService().canReadWorkspace(target, actor.id, snapshot.detail.cwd, request.headers.get("x-organization-id")!))) return jsonError("This thread is no longer available.", 404);
-    const targetAvailable = target.lastSeenAt !== null && Date.now() - target.lastSeenAt <= COMPUTER_HEARTBEAT_TIMEOUT_MS;
+    let targetAvailable = target.lastSeenAt !== null && Date.now() - target.lastSeenAt <= COMPUTER_HEARTBEAT_TIMEOUT_MS;
     if (id && !action && request.method === "GET" && !targetAvailable) return Response.json({ ...snapshot!, stale: true, member: actor });
     if (id && action !== "join" && request.method !== "GET" && !canWriteThread(snapshot!.access, actor.id)) return jsonError("Join this thread before replying.", 403);
     if (action === "attachments" && id) {
@@ -2299,11 +2317,15 @@ export class HubCoordinator {
     }
     const allowed = id ? ((request.method === "GET" || request.method === "PATCH" || request.method === "DELETE") && !action) || (request.method === "POST" && !!action) : request.method === "POST";
     if (!allowed) return jsonError("This action is not available.", 404);
+    const hostedRetire = Boolean(id && target.ownership === "hosted" && (request.method === "DELETE" || action === "archive"));
     if(id && !targetAvailable && (request.method==="POST" || request.method==="PATCH" || request.method==="DELETE")) {
       const state=(await this.hostedService().list()).find(s=>s.computerId===computerId);
-      if(state){try{await this.hostedService().ensure(state.workspaceId,state.settings,state.taskId);}catch(error){return jsonError(error instanceof Error?error.message:"Your computer could not resume.",409);}}
+      if(state){try{await this.hostedService().ensure(state.workspaceId,state.settings,state.taskId);targetAvailable=true;}catch(error){if(!hostedRetire)return jsonError(error instanceof Error?error.message:"Your computer could not resume.",409);}}
     }
-    if (!targetAvailable) return jsonError("This computer is offline; try again when it reconnects.", 503);
+    if (!targetAvailable) {
+      if (hostedRetire) { await this.retireHostedThread(computerId, id!); return Response.json({ ok: true }); }
+      return jsonError("This computer is offline; try again when it reconnects.", 503);
+    }
     let payload = await limitedBody(request, 96_000);
     if (!payload) return jsonError("Send a shorter message.", 413);
     if (!id) {
@@ -2338,9 +2360,12 @@ export class HubCoordinator {
     if(payload.byteLength){try{input=JSON.parse(new TextDecoder().decode(payload));}catch{return jsonError("Send a valid thread request.",400);}}
     if(input.hubEnvironment!==undefined || input.hubTaskId!==undefined)return jsonError("This thread configuration is unavailable.",403);
     const answer=await this.dispatchComputer(computerId,actor,request.method,`/hub/threads${id?`/${id}`:""}${action?`/${action}`:""}`,input);
-    if (answer.ok && id && (request.method === "DELETE" || action === "archive")) {
-      await this.threads.removeGroup(computerId, id);
-      return answer;
+    if (id && (request.method === "DELETE" || action === "archive")) {
+      if (answer.ok) {
+        await this.threads.removeGroup(computerId, id);
+        return answer;
+      }
+      if (hostedRetire) { await this.retireHostedThread(computerId, id); return Response.json({ ok: true }); }
     }
     if (answer.ok) {
       const updated = threadSnapshotSchema.safeParse(await answer.clone().json());

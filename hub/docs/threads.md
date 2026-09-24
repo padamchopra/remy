@@ -13,7 +13,7 @@ because their computer connects to an organization.
 | Write | The hub derives the actor from the session and checks organization membership, computer ownership of the address, and cached thread access. The computer checks organization and thread access again, applies the action, persists it, and returns the authoritative snapshot. |
 | Live update | Local chat broadcasts trigger a coalesced computer snapshot. The coordinator records a cursor and publishes it to authorized viewers. A private thread is absent to other members; changing visibility removes it from readers who have not joined. |
 | Reconnect | Clients resume from the last cursor and suppress duplicates. Expired cursors receive reset and a new list read. A computer reconnect republishes its shared threads and a manifest, removing mirrors of deleted threads. Revisions prevent a late response overwriting a newer update. |
-| Unavailable computer | Cached transcripts remain readable, explicitly stale. Writes fail with 503, outstanding requests finish with an error, and snapshots become live again after reconnect. |
+| Unavailable computer | Cached transcripts remain readable, explicitly stale. A hosted computer is woken for pin, rename, archive, and delete. Archive and delete of a hosted thread you can write still succeed if that computer cannot resume, and the thread stays gone after it reconnects. Other writes fail with 503 until reconnect. |
 | Images | Browser uploads bytes over authenticated HTTP to R2. The computer downloads the named object using its own signed HTTP request, validates the image and stores a local copy for its provider. Only attachment references travel on the socket. |
 
 ## Access and defaults
