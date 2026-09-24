@@ -16,6 +16,7 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ProjectIconSearch } from "@/components/ProjectIconDialog";
+import { WorkspaceMarkFrame } from "@/components/WorkspaceMarkFrame";
 import { isProjectIconFile } from "@/lib/projects";
 import { TINT_IDS, isTint, tintOf, type TintId } from "@/lib/tints";
 import { cn } from "@/lib/utils";
@@ -58,17 +59,17 @@ export function IconPicker<Id extends string>({
       <DialogTrigger asChild>
         <Button
           type="button"
-          variant="outline"
+          variant="ghost"
           size="icon"
           className={cn(
-            "relative size-10 rounded-lg",
-            preview && "overflow-hidden p-0 [&_img]:block [&_img]:size-full [&_img]:object-cover",
-            colors.well,
-            colors.fg,
+            "relative size-10 rounded-lg p-0 hover:bg-transparent dark:hover:bg-transparent",
+            preview && "overflow-hidden [&_img]:block [&_img]:size-full [&_img]:object-cover",
           )}
           aria-label={label}
         >
-          {preview ?? <Icon />}
+          <WorkspaceMarkFrame size="md" tint={tint}>
+            {preview ?? <Icon className="size-4" />}
+          </WorkspaceMarkFrame>
           {badge}
         </Button>
       </DialogTrigger>

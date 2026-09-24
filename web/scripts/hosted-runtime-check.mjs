@@ -443,11 +443,12 @@ try {
           await remyWorkspace.getByRole("button",{name:"Open remy workspace details",exact:true}).click();
           await page.waitForURL(/\/app\/workspaces\/remy\?owner=team$/);
           const remyButton=page.getByRole("button",{name:"Change icon for remy",exact:true});
-          await remyButton.locator("svg").waitFor();
-          const detailIcon=await remyButton.evaluate(button=>{
-            const svg=button.querySelector("svg");
-            const style=getComputedStyle(button);
-            const box=button.getBoundingClientRect(), glyph=svg?.getBoundingClientRect();
+          const detailMark=remyButton.locator('[data-slot="workspace-mark"]');
+          await detailMark.locator("svg").waitFor();
+          const detailIcon=await detailMark.evaluate(mark=>{
+            const svg=mark.querySelector("svg");
+            const style=getComputedStyle(mark);
+            const box=mark.getBoundingClientRect(), glyph=svg?.getBoundingClientRect();
             return {svg:svg?.innerHTML??"",well:style.backgroundColor,fg:style.color,radius:style.borderRadius,width:box.width,height:box.height,glyph:glyph?.width??0};
           });
           assert.equal(detailIcon.svg,listIcon.svg,"List and detail use the same folder glyph");
@@ -456,7 +457,10 @@ try {
           assert.equal(detailIcon.width,listIcon.width,"List and detail wells are the same width");
           assert.equal(detailIcon.height,listIcon.height,"List and detail wells are the same height");
           assert.ok(Math.abs(detailIcon.glyph-listIcon.glyph)<1,"List and detail glyphs are the same size");
-          if(artifacts && !mobile) await remyButton.screenshot({path:`${artifacts}/workspace-detail-icon.png`});
+          if(artifacts && !mobile) {
+            await remyButton.screenshot({path:`${artifacts}/workspace-detail-icon.png`});
+            await page.locator("main .flex.items-center.gap-3.rounded-lg.border").first().screenshot({path:`${artifacts}/workspace-detail-row.png`});
+          }
           await page.getByRole("navigation",{name:"breadcrumb",exact:true}).getByRole("button",{name:"Workspaces",exact:true}).click();
           await page.getByText("Studio · https://github.com/example/repo",{exact:true}).waitFor();
           const studioWorkspace=page.locator('[data-slot="item"]',{hasText:"Studio · https://github.com/example/repo"});
