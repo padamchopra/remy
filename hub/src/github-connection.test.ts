@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { sqliteD1 } from "../test/sqlite-d1.js";
-import { GitHubConnection } from "./github-connection.js";
+import { GitHubConnection, clearHostedPullRequestCache } from "./github-connection.js";
 import type { Connections, ConnectionDelivery } from "./connections.js";
 function fixture() {
   const folder = new URL("../migrations/", import.meta.url),
@@ -24,6 +24,9 @@ function fixture() {
     }[] = [],
     comments: { id: number; body: string }[] = [];
   let lostReply = false;
+  let searchFails = false;
+  let omitViewer = false;
+  let githubDelayMs = 0;
   const send = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input)).pathname,
       method = init?.method ?? "GET",
@@ -33,7 +36,98 @@ function fixture() {
     if (path === "/repos/release/remy/git/trees/HEAD") return Response.json({tree:[{path:"assets/logo.png",type:"blob",size:10},{path:"README.md",type:"blob",size:1},{path:"large.png",type:"blob",size:2000000}]});
     if (path === "/repos/release/remy/contents/assets/logo.png") return Response.json({type:"file",size:10,encoding:"base64",content:"aGVsbG8=\n"});
     if (path === "/repos/release/remy/contents/large.png") return Response.json({type:"file",size:2000000,encoding:"base64",content:""});
+    if (path === "/graphql") {
+      if (githubDelayMs) await new Promise((resolve) => setTimeout(resolve, githubDelayMs));
+      const variables = (body?.variables ?? {}) as Record<string, string>;
+      const viewerPullRequests = [
+        {
+          number: 11,
+          title: "Ship the mobile home",
+          url: "https://github.com/jup-ag/mobile/pull/11",
+          body: "",
+          isDraft: false,
+          reviewDecision: "",
+          updatedAt: "2026-09-24T12:00:00Z",
+          additions: 12,
+          deletions: 1,
+          changedFiles: 2,
+          headRefName: "feature/home",
+          baseRefName: "main",
+          mergeable: "MERGEABLE",
+          mergeStateStatus: "CLEAN",
+          author: { login: "ada" },
+          repository: { nameWithOwner: "jup-ag/mobile" },
+          assignees: { nodes: [] },
+          reviewRequests: { nodes: [] },
+          commits: { nodes: [] },
+        },
+      ];
+      const searchPullRequests = [
+        {
+          number: 7,
+          title: "Ready to review",
+          url: "https://github.com/release/remy/pull/7",
+          body: "",
+          isDraft: false,
+          reviewDecision: "REVIEW_REQUIRED",
+          updatedAt: "2026-09-23T12:00:00Z",
+          additions: 4,
+          deletions: 0,
+          changedFiles: 1,
+          headRefName: "feature/next",
+          baseRefName: "main",
+          mergeable: "MERGEABLE",
+          mergeStateStatus: "CLEAN",
+          author: { login: "ada" },
+          repository: { nameWithOwner: "release/remy" },
+          assignees: { nodes: [] },
+          reviewRequests: { nodes: [] },
+          commits: { nodes: [] },
+        },
+      ];
+      const workspacePullRequests: Record<string, unknown[]> = {
+        "jup-ag/mobile": [
+          {
+            number: 12,
+            title: "Review the wallet sheet",
+            url: "https://github.com/jup-ag/mobile/pull/12",
+            body: "",
+            isDraft: false,
+            reviewDecision: "REVIEW_REQUIRED",
+            updatedAt: "2026-09-24T11:00:00Z",
+            additions: 8,
+            deletions: 2,
+            changedFiles: 3,
+            headRefName: "feature/wallet",
+            baseRefName: "main",
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "CLEAN",
+            author: { login: "grace" },
+            repository: { nameWithOwner: "jup-ag/mobile" },
+            assignees: { nodes: [] },
+            reviewRequests: { nodes: [{ requestedReviewer: { login: "ada" } }] },
+            commits: { nodes: [] },
+          },
+        ],
+      };
+      const repos: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(variables)) {
+        const index = /^o(\d+)$/.exec(key)?.[1];
+        if (index === undefined) continue;
+        const fullName = `${value}/${variables[`n${index}`]}`;
+        repos[`repo${index}`] = { pullRequests: { nodes: workspacePullRequests[fullName] ?? [] } };
+      }
+      return Response.json({
+        data: {
+          viewer: { login: "ada", pullRequests: { nodes: omitViewer ? [] : viewerPullRequests } },
+          search: { nodes: searchFails ? [] : searchPullRequests },
+          ...repos,
+        },
+        ...(searchFails ? { errors: [{ message: "Search requires the repo scope.", path: ["search"] }] } : {}),
+      });
+    }
     if (path === "/user/repos") return Response.json([{id:101,name:"Remy",full_name:"release/remy",description:"A remote for coding agents.",language:"TypeScript",private:true,pushed_at:"2026-09-18T10:00:00Z"}]);
+    if (path === "/repos/jup-ag/mobile") return Response.json({id:202,name:"mobile",full_name:"jup-ag/mobile",default_branch:"main"});
     if (path === "/repos/release/remy") return Response.json({id:101,name:"Remy",full_name:"release/remy",default_branch:"main"});
     if (path === "/repos/release/remy/branches") return Response.json([{name:"main"},{name:"feature/next"}]);
     if (path === "/user/installations")
@@ -85,6 +179,15 @@ function fixture() {
     comments,
     loseReply: () => {
       lostReply = true;
+    },
+    failSearch: () => {
+      searchFails = true;
+    },
+    hideViewerPullRequests: () => {
+      omitViewer = true;
+    },
+    delayGithub: (ms: number) => {
+      githubDelayMs = ms;
     },
   };
 }
@@ -244,5 +347,54 @@ test("cloud Git uses the initiating member's connection for imported workspaces"
   await assert.rejects(service.workspaceGitToken("other", "ada", workspace.id));
   sqlite.exec("DELETE FROM memberships WHERE user_id='ada'");
   await assert.rejects(service.workspaceGitToken("studio", "ada", workspace.id));
+  sqlite.close();
+});
+
+test("hosted pull requests use the member token, keep PAT-backed repos when search omits them, and cache the list", async () => {
+  clearHostedPullRequestCache();
+  const { service, calls, failSearch, sqlite } = fixture();
+  const listed = await service.openPullRequests("studio", "ada");
+  assert.equal(calls.filter((call) => call.path === "/graphql").at(-1)?.actor, "Bearer member-ada");
+  assert.deepEqual(
+    listed.pullRequests.map((pullRequest) => `${pullRequest.repository}#${pullRequest.number}`).sort(),
+    ["jup-ag/mobile#11", "release/remy#7"],
+  );
+  const graphqlCalls = calls.filter((call) => call.path === "/graphql").length;
+  assert.equal((await service.openPullRequests("studio", "ada")).pullRequests.length, 2);
+  assert.equal(calls.filter((call) => call.path === "/graphql").length, graphqlCalls);
+  await service.openPullRequests("studio", "ada", true);
+  assert.equal(calls.filter((call) => call.path === "/graphql").length, graphqlCalls + 1);
+  failSearch();
+  clearHostedPullRequestCache();
+  const afterSearchFailure = await service.openPullRequests("studio", "ada", true);
+  assert.ok(afterSearchFailure.pullRequests.some((pullRequest) => pullRequest.repository === "jup-ag/mobile"));
+  sqlite.close();
+});
+
+test("hosted pull requests include review-requested PRs from PAT-imported workspaces search missed", async () => {
+  clearHostedPullRequestCache();
+  const { service, hideViewerPullRequests, failSearch, sqlite } = fixture();
+  hideViewerPullRequests();
+  failSearch();
+  await service.importRepository("studio", "ada", "jup-ag/mobile");
+  const listed = await service.openPullRequests("studio", "ada");
+  assert.equal(listed.pullRequests[0]?.repository, "jup-ag/mobile");
+  assert.equal(listed.pullRequests[0]?.number, 12);
+  assert.equal(listed.pullRequests[0]?.workspaceName, "mobile");
+  sqlite.close();
+});
+
+test("hosted pull request cache returns the previous list without waiting on GitHub", async () => {
+  clearHostedPullRequestCache();
+  const { service, delayGithub, sqlite } = fixture();
+  delayGithub(80);
+  const coldStarted = Date.now();
+  await service.openPullRequests("studio", "ada");
+  const coldMs = Date.now() - coldStarted;
+  const warmStarted = Date.now();
+  await service.openPullRequests("studio", "ada");
+  const warmMs = Date.now() - warmStarted;
+  assert.ok(coldMs >= 80, `cold open waited on GitHub (${coldMs}ms)`);
+  assert.ok(warmMs < 20, `warm open reused the cache (${warmMs}ms)`);
   sqlite.close();
 });

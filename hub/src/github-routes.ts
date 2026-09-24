@@ -37,7 +37,7 @@ export async function githubRoute(
     service = githubFor(env);
   try {
     if (request.method === "GET") {
-      if (action === "pull-requests") return Response.json(await service.openPullRequests(org, user), { headers: { "cache-control": "no-store" } });
+      if (action === "pull-requests") return Response.json(await service.openPullRequests(org, user, url.searchParams.get("refresh") === "1"), { headers: { "cache-control": "no-store" } });
       if (action === "workspace-branches") return Response.json(await service.workspaceBranches(org, user, url.searchParams.get("workspace") ?? ""), { headers: { "cache-control": "no-store" } });
       if (action === "workspace-images") return Response.json(await service.workspaceImage(org, user, url.searchParams.get("workspace") ?? "", url.searchParams.get("path") ?? undefined, url.searchParams.get("q") ?? ""), { headers: { "cache-control": "no-store" } });
       if (action === "accessible-repositories") return Response.json(await service.accessibleRepositories(org, user, Number(url.searchParams.get("page") ?? 1)), {headers: {"cache-control":"no-store"}});
