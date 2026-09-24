@@ -85,9 +85,16 @@ function isCachedPullRequest(value: unknown): value is AuthoredPullRequest {
     && pullRequest.checks.every((check) => check && typeof check.state === "string")
     && typeof pullRequest.hasUnreadActivity === "boolean"
     && typeof pullRequest.workspaceId === "string"
+    && associatedWithWorkspace(pullRequest)
     && typeof pullRequest.workspaceName === "string"
     && typeof pullRequest.workspacePath === "string"
     && typeof pullRequest.serverId === "string";
+}
+
+function associatedWithWorkspace(pullRequest: { workspaceId?: string }) {
+  // Hosted rows without a workspace used to take owner/repo as workspaceId.
+  const workspaceId = pullRequest.workspaceId ?? "";
+  return workspaceId.length > 0 && !workspaceId.includes("/");
 }
 
 function boundedPullRequests(pullRequests: AuthoredPullRequest[]): AuthoredPullRequest[] {
@@ -121,7 +128,8 @@ function readPullRequestCache(): Map<string, AuthoredPullRequest[]> {
 const pullRequestCache = readPullRequestCache();
 
 function cachedPullRequests(serverIds: string[]): AuthoredPullRequest[] {
-  return mergePullRequests(serverIds.flatMap((serverId) => pullRequestCache.get(serverId) ?? []));
+  return mergePullRequests(serverIds.flatMap((serverId) =>
+    (pullRequestCache.get(serverId) ?? []).filter(associatedWithWorkspace)));
 }
 
 function hasCachedPullRequests(serverIds: string[]): boolean {
@@ -132,7 +140,7 @@ function cachePullRequests(serverId: string, pullRequests: AuthoredPullRequest[]
   // Re-inserted rather than replaced in place, so the map's own order is which
   // device answered least recently — which is the order the stored copy sheds.
   pullRequestCache.delete(serverId);
-  pullRequestCache.set(serverId, pullRequests);
+  pullRequestCache.set(serverId, pullRequests.filter(associatedWithWorkspace));
   try {
     localStorage.setItem(PULL_REQUEST_CACHE_KEY, JSON.stringify({
       savedAt: Date.now(),
