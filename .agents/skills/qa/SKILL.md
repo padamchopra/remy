@@ -93,7 +93,7 @@ For shared local and hosted UI, exercise runtime selection with both a fresh bro
 
 `web/scripts/hosted-runtime-check.mjs` is the built-app regression for this boundary, run by `.github/workflows/web.yml`. Its controlled API responses prove client behavior; use the isolated hosted setup for real authentication and backend integration, and report external provider steps separately.
 
-A shared menu check that only counts items will miss a fully disabled hosted menu. Assert `isDisabled()` on pin, rename, archive, and delete, including a stale cloud thread whose computer is missing from `/computers`. A hosted start check that only asserts the painted default will miss a 400 when that default is not enabled on the account; assert the POST body against enabled model access, including OpenRouter from a cloud computer shared into the organization. Cover private and shared visibility on that start.
+A shared menu check that only counts items will miss a fully disabled hosted menu. Assert `isDisabled()` on pin, rename, archive, and delete, including a stale cloud thread whose computer is missing from `/computers`. A hosted start check that only asserts the painted default will miss a 400 when that default is not enabled on the account; assert the POST body against enabled model access, including OpenRouter from a cloud computer shared into the organization. Cover private and shared visibility on that start. The organization Computers tab must list those same configured gateways under the shared cloud connection — not Codex unless Codex is actually configured.
 
 BAD
 ```text

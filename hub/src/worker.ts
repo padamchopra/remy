@@ -188,9 +188,10 @@ async function canStartOnCloud(
   userId: string,
   provider: HostedSettings["provider"],
   runtimeProvider?: string,
+  model?: string,
 ) {
   const grant = await cloudStartGrant(settings, org, provider, userId);
-  return canStartWithShareGrant(grant.owner, grant.stored, grant.advertised, runtimeProvider);
+  return canStartWithShareGrant(grant.owner, grant.stored, grant.advertised, runtimeProvider, model);
 }
 
 function encodeWireBody(value: ArrayBuffer): string {
@@ -1812,7 +1813,7 @@ export class HubCoordinator {
     }
     if (choice.hostedWorkspaceId || target?.ownership === "hosted") {
       const settings = await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSettings(org,workspaceId,choice.hostedProvider);
-      if(!await canStartOnCloud(new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()),org,userId,settings.provider,modelChoice?.provider)) throw Error(START_PROVIDER_DENIED);
+      if(!await canStartOnCloud(new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()),org,userId,settings.provider,modelChoice?.provider,modelChoice?.model)) throw Error(START_PROVIDER_DENIED);
       if (isCursorCloudProvider(settings.provider)) {
         if (modelChoice?.provider && modelChoice.provider !== "cursor") throw Error(START_PROVIDER_DENIED);
         return {computerId:CURSOR_CLOUD_COMPUTER_ID,workspaceId,reason:choice.reason};
@@ -2196,7 +2197,7 @@ export class HubCoordinator {
         const cloud=cloudComputerProvider(input.computerId);
         if(cloud) {
           if(isCursorCloudProvider(cloud) && start.provider && start.provider !== "cursor") return jsonError(START_PROVIDER_DENIED,403);
-          if(!await canStartOnCloud(new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()),org,actor.id,cloud,start.provider)) return jsonError(START_PROVIDER_DENIED,403);
+          if(!await canStartOnCloud(new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()),org,actor.id,cloud,start.provider,start.model)) return jsonError(START_PROVIDER_DENIED,403);
         } else {
           const target=await this.computers.computer(org,input.computerId);
           if(target && !await this.computerService().canStartWithProvider(target,actor.id,org,start.provider)) return jsonError(START_PROVIDER_DENIED,403);
@@ -2276,7 +2277,7 @@ export class HubCoordinator {
       if(target.ownership === "hosted") {
         const org=request.headers.get("x-organization-id")!;
         const state=(await this.hostedService().list()).find(s=>s.computerId===computerId);
-        if(state?.settings.provider && !await canStartOnCloud(new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()),org,actor.id,state.settings.provider,start.provider)) return jsonError(START_PROVIDER_DENIED,403);
+        if(state?.settings.provider && !await canStartOnCloud(new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()),org,actor.id,state.settings.provider,start.provider,start.model)) return jsonError(START_PROVIDER_DENIED,403);
       }
     }
     if(id && action==="message" && snapshot) {

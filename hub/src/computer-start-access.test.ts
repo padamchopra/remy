@@ -9,6 +9,7 @@ import {
   parseStartProviders,
   publicStartProviders,
   resolveStartProviders,
+  startGrantCandidates,
 } from "./computer-start-access.js";
 
 test("a stored start-provider list is the advertised intersection, and a missing list keeps every advertised provider", () => {
@@ -30,21 +31,39 @@ test("a stored start-provider list is the advertised intersection, and a missing
   assert.deepEqual(parseStartProviderInput(undefined, advertised), undefined);
   assert.deepEqual(parseStartProviderInput(["cursor"], advertised), ["cursor"]);
   assert.throws(() => parseStartProviderInput(["codex"], advertised), /currently has/);
-  assert.throws(() => parseStartProviderInput(["openrouter"], advertised), /providers others may start/);
+  assert.throws(() => parseStartProviderInput(["openrouter"], advertised), /currently has/);
+  assert.throws(() => parseStartProviderInput(["not-a-provider"], advertised), /providers others may start/);
 });
 
-test("cloud model access advertises Claude and Codex, and a share grant is start-only", () => {
+test("cloud model access advertises configured gateways, not the Codex runtime they execute through", () => {
   const advertised = advertisedCloudStartProviders([
     { id: "anthropic", enabled: true, configured: true },
     { id: "openrouter", enabled: true, configured: true },
     { id: "openai", enabled: false, configured: true },
     { id: "router", enabled: true, configured: false },
   ]);
-  assert.deepEqual(advertised, ["claude", "codex"]);
-  assert.equal(canStartWithShareGrant(true, ["claude"], advertised, "codex"), true);
-  assert.equal(canStartWithShareGrant(false, ["claude"], advertised, "codex"), false);
-  assert.equal(canStartWithShareGrant(false, ["claude"], advertised, "claude"), true);
-  assert.equal(canStartWithShareGrant(false, null, advertised, "codex"), true);
+  assert.deepEqual(advertised, ["anthropic", "openrouter"]);
+  assert.deepEqual(
+    publicStartProviders(advertised, null),
+    [
+      { id: "anthropic", label: "Anthropic", allowed: true },
+      { id: "openrouter", label: "OpenRouter", allowed: true },
+    ],
+  );
+  assert.deepEqual(advertisedCloudStartProviders([
+    { id: "openrouter", enabled: true, configured: true },
+  ]), ["openrouter"]);
+  assert.deepEqual(parseStartProviderInput(["openrouter"], advertised), ["openrouter"]);
+  assert.deepEqual(parseStartProviderInput(["codex"], advertised), ["openrouter"]);
+  assert.deepEqual(parseStartProviderInput(["claude"], advertised), ["anthropic"]);
+  assert.deepEqual(resolveStartProviders(["codex"], advertised), ["openrouter"]);
+  assert.equal(canStartWithShareGrant(true, ["anthropic"], advertised, "codex", "remy:openrouter:openrouter/auto"), true);
+  assert.equal(canStartWithShareGrant(false, ["anthropic"], advertised, "codex", "remy:openrouter:openrouter/auto"), false);
+  assert.equal(canStartWithShareGrant(false, ["anthropic"], advertised, "openrouter", "openrouter/auto"), false);
+  assert.equal(canStartWithShareGrant(false, ["anthropic"], advertised, "anthropic"), true);
+  assert.equal(canStartWithShareGrant(false, null, advertised, "codex", "remy:openrouter:openrouter/auto"), true);
+  assert.equal(canStartWithShareGrant(false, ["openrouter"], advertised, "codex", "remy:openrouter:openrouter/auto"), true);
+  assert.deepEqual(startGrantCandidates("codex", "remy:openrouter:openrouter/auto"), ["openrouter", "codex"]);
 });
 
 test("Cursor Cloud advertises only Cursor regardless of model access", () => {
@@ -54,5 +73,8 @@ test("Cursor Cloud advertises only Cursor regardless of model access", () => {
   ]), ["cursor"]);
   assert.deepEqual(advertisedCloudProvidersFor("modal", [
     { id: "anthropic", enabled: true, configured: true },
-  ]), ["claude"]);
+  ]), ["anthropic"]);
+  assert.deepEqual(advertisedCloudProvidersFor("fly-sprites", [
+    { id: "openrouter", enabled: true, configured: true },
+  ]), ["openrouter"]);
 });

@@ -378,24 +378,27 @@ test("members share their own cloud connections and start-provider grants block 
     assert.equal(row.canShare, true);
     assert.equal(row.canRevoke, false);
     assert.deepEqual(row.providers, [
-      { id: "claude", label: "Claude", allowed: true },
-      { id: "codex", label: "Codex", allowed: true },
+      { id: "anthropic", label: "Anthropic", allowed: true },
+      { id: "openrouter", label: "OpenRouter", allowed: true },
     ]);
-    assert.equal((await call("compute-shares/cloud/modal", "PATCH", { startProviders: ["claude"] })).status, 200);
+    assert.equal(row.providers.some(provider => provider.id === "codex"), false);
+    assert.equal((await call("compute-shares/cloud/modal", "PATCH", { startProviders: ["anthropic"] })).status, 200);
     assert.equal((await call("compute-shares/cloud/modal", "PATCH", { startProviders: ["cursor"] })).status, 400);
 
     userId = "ada";
-    const adminView = await (await call("compute-shares")).json() as { cloudConnections: { provider: string; canShare: boolean; canRevoke: boolean; providers: { id: string; allowed: boolean }[] }[] };
+    const adminView = await (await call("compute-shares")).json() as { cloudConnections: { provider: string; canShare: boolean; canRevoke: boolean; providers: { id: string; allowed: boolean; label: string }[] }[] };
     const adminRow = adminView.cloudConnections.find(connection => connection.provider === "modal")!;
     assert.equal(adminRow.canShare, false);
     assert.equal(adminRow.canRevoke, true);
-    assert.deepEqual(adminRow.providers.find(provider => provider.id === "codex"), { id: "codex", allowed: false, label: "Codex" });
-    assert.equal((await call("compute-shares/cloud/modal", "PATCH", { startProviders: ["claude", "codex"] })).status, 404);
+    assert.deepEqual(adminRow.providers.find(provider => provider.id === "openrouter"), { id: "openrouter", allowed: false, label: "OpenRouter" });
+    assert.equal(adminRow.providers.some(provider => provider.id === "codex"), false);
+    assert.equal((await call("compute-shares/cloud/modal", "PATCH", { startProviders: ["anthropic", "openrouter"] })).status, 404);
 
     const hosted = await (await call("hosted")).json() as { enabledProviders: string[]; cloudStart: Record<string, { owner: boolean; providers: { id: string; allowed: boolean }[] }> };
     assert.deepEqual(hosted.enabledProviders, ["modal"]);
     assert.equal(hosted.cloudStart.modal.owner, false);
-    assert.equal(hosted.cloudStart.modal.providers.find(provider => provider.id === "codex")?.allowed, false);
+    assert.equal(hosted.cloudStart.modal.providers.find(provider => provider.id === "openrouter")?.allowed, false);
+    assert.equal(hosted.cloudStart.modal.providers.some(provider => provider.id === "codex"), false);
 
     const values = new Map<string, unknown>([["organizationId", "org"]]);
     const coordinator = new HubCoordinator({ storage: { get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); }, delete: async (key: string) => values.delete(key), list: async () => new Map(), getAlarm: async () => null, setAlarm: async () => {}, transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn({ get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); } }) }, getWebSockets: () => [], waitUntil: (work: Promise<unknown>) => { void work; } } as unknown as DurableObjectState, { DB: db, AUTH_SECRET: { get: async () => "test-encryption-root-with-at-least-thirty-two-characters" }, BETTER_AUTH_URL: "https://hub.example" } as never);
