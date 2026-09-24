@@ -59,7 +59,12 @@ export function IconPicker<Id extends string>({
           type="button"
           variant="outline"
           size="icon"
-          className={cn("relative size-10 rounded-lg", colors.well, colors.fg)}
+          className={cn(
+            "relative size-10 rounded-lg",
+            preview && "overflow-hidden p-0 [&_img]:block [&_img]:size-full [&_img]:object-cover",
+            colors.well,
+            colors.fg,
+          )}
           aria-label={label}
         >
           {preview ?? <Icon />}
@@ -71,6 +76,7 @@ export function IconPicker<Id extends string>({
           <span
             className={cn(
               "flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border",
+              preview && "[&_img]:block [&_img]:size-full [&_img]:object-cover",
               colors.well,
               colors.fg,
             )}
