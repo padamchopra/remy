@@ -66,8 +66,8 @@ export class HostedSettingsStore {
     return this.ownConnection(share.source_organization_id, provider);
   }
 
-  /// First enabled Personal share for this cloud provider. Org-scoped keys and
-  /// named Fly credentials are a follow-up; this grant still uses one Personal connection.
+  /// First enabled Personal share for this cloud provider. Named keys stay on
+  /// the source account; this grant still uses that account's active connection.
   async cloudShare(org: string, provider: HostedSettings["provider"]) {
     const shares = await this.db.prepare("SELECT source_organization_id,shared_by,start_providers FROM organization_cloud_shares WHERE organization_id=? AND provider=? ORDER BY created_at").bind(org, provider).all<{source_organization_id:string;shared_by:string;start_providers:string|null}>();
     for (const share of shares.results) {

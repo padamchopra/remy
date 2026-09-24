@@ -826,16 +826,24 @@ export default function HubAllView({
     return <AllTasks organizations={organizations} navigate={navigate} />;
   if (route.name === "inbox")
     return <AllInbox organizations={organizations} navigate={navigate} />;
-  if (route.name === "settings" && route.tab === "general") {
+  if (route.name === "settings" && (route.tab === "general" || route.tab === "devices")) {
     const personal =
       organizations.find((organization) => organization.personal) ??
       organizations[0];
     return personal ? (
       <HubPersonalContext value={personal.personal === true}>
         <HubModelFavorites organizationId={personal.id}>
-          <div className="min-h-0 overflow-auto px-5 py-6">
-            <General organizationId={personal.id} />
-          </div>
+          {route.tab === "devices" ? (
+            <div className="min-h-0 overflow-auto p-6">
+              <Deferred open>
+                <Computers organizationId={personal.id} />
+              </Deferred>
+            </div>
+          ) : (
+            <div className="min-h-0 overflow-auto px-5 py-6">
+              <General organizationId={personal.id} />
+            </div>
+          )}
         </HubModelFavorites>
       </HubPersonalContext>
     ) : (
@@ -844,7 +852,7 @@ export default function HubAllView({
   }
   if (
     route.name === "settings" &&
-    ["devices", "environments", "connections", "routing"].includes(route.tab)
+    ["environments", "connections", "routing"].includes(route.tab)
   )
     return (
       <SettingsSummary

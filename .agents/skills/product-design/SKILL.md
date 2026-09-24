@@ -106,7 +106,7 @@ Name the capability, its durable owner, the actor that performs it, the event th
 A setting lives with the thing whose behavior it controls. The actor that carries out that behavior is a reference, not the owner, when another actor could reasonably take its place.
 
 - A machine integration belongs to that machine's settings. Hosted thread start uses the providers enabled on the chosen computer, including a cloud computer's OpenRouter, Router, OpenAI, and Anthropic access. A cloud computer shared into an organization carries that source account's enabled model access. A Remy-wide OpenRouter default does not start on an organization that has no OpenRouter key and no shared computer that does.
-- A Personal computer or cloud connection shared into an organization is a start grant. The member who owns that computer or connection can share it, unshare it, and choose which of its advertised providers other members may use to start a new thread. Administrators can revoke the grant; they cannot configure someone else's machine. Sharing turns every currently advertised provider on. The owner can always start with any provider on that computer. Other members can still reply, approve, and otherwise contribute on threads that already exist. Org-scoped API keys and multiple named Fly credentials are a later slice.
+- A Personal computer or cloud connection shared into an organization is a start grant. The member who owns that computer or connection can share it, unshare it, and choose which of its advertised providers other members may use to start a new thread. Administrators can revoke the grant; they cannot configure someone else's machine. Sharing turns every currently advertised provider on. The owner can always start with any provider on that computer. Other members can still reply, approve, and otherwise contribute on threads that already exist. An account can keep multiple named Fly.io, OpenRouter, and other integration keys; sharing and new work use the active key.
 - A shared cloud computer advertises the source account's enabled model access — OpenRouter, Router, OpenAI, Anthropic — not the Codex or Claude runtime those gateways execute through. Codex appears only when Codex itself is configured.
 
 BAD
@@ -120,6 +120,19 @@ GOOD
 Fly.io is shared from Personal, where OpenRouter is on.
 Organization → Computers shows OpenRouter under Fly.io Sprites.
 Codex stays off the row unless that account actually configured Codex.
+```
+
+Named integration keys belong to that account’s Computers settings. Management APIs return names and configured state, never values. Values stay encrypted at rest and out of logs, prompts, and snapshots. Agent capabilities cannot create, read, or replace them.
+
+BAD
+```text
+GET /hosted returns the Fly.io token. A thread can add an OpenRouter key.
+```
+
+GOOD
+```text
+Computers lists Production and Preview Fly.io keys, and Primary and Team OpenRouter keys.
+GET returns those names. A computer session cannot add or read a key.
 ```
 - Repository behavior belongs to the workspace or repository identity it follows.
 - Personal behavior and instructions belong to an agent.

@@ -361,11 +361,11 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               }))}
           groups={inSettings ? [] : threadGroups}
           emptyThreads={!inSettings && threadsLoaded && !threads.length ? "No threads yet." : undefined}
-          footer={organization ? [{
+          footer={organization && !inSettings ? [{
             label: "Settings",
             icon: Settings2,
-            selected: inSettings,
-            onSelect: () => navigate({ name: "settings", tab: "devices", organizationId }),
+            selected: false,
+            onSelect: () => navigate({ name: "settings", tab: "general", organizationId }),
           }] : []}
           accountMenu={{
             name: shownProfile?.name ?? "",

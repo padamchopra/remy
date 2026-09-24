@@ -3,11 +3,11 @@ import { validProfileImage } from "./profile-image.js";
 import { HostedStartupError } from "./hosted-startup-error.js";
 import { modelDefaults } from "./model-defaults.js";
 import { modelFavorites } from "./model-favorites.js";
-import { hostedGatewayError, hostedStartChoice, modelAccessIds, publicModelAccess, saveModelAccess, type ModelAccessId } from "./model-access.js";
+import { hostedGatewayError, hostedStartChoice, modelAccessIds, publicModelAccess, removeNamedModelKey, saveModelAccess, saveNamedModelKey, type ModelAccessId } from "./model-access.js";
 import { routerConnectionSchema, routerModels } from "./router-connection.js";
 import { CLOUD_COMPUTER_PROVIDERS, CURSOR_CLOUD_COMPUTER_ID, cloudComputerProvider, isCursorCloudProvider, isGuestCloudProvider, type HostedSettings } from "@remy/contract";
 import { managementCredential } from "./cloud-connection.js";
-import { cloudToggleSchema, cloudConnectionSchema, cloudConnectionKey, modelSecrets } from "./cloud-connection.js";
+import { cloudToggleSchema, cloudConnectionSchema, cloudConnectionKey, modelSecrets, publicProviderKeys, removeNamedCloudKey, saveNamedCloudKey } from "./cloud-connection.js";
 import { CursorCloudThreads, verifyCursorCloudKey } from "./cursor-cloud.js";
 import { allowedRequestOrigin } from "./request-origin.js";
 import { emailAvailable, sendAccountEmail, type AccountEmail } from "./email.js";
@@ -759,7 +759,24 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       if (tail === "model-access" || tail.startsWith("model-access/")) {
         const member=await organizations.member(organizationId,identity.userId);
         const store=new HostedSettingsStore(env.DB,()=>env.AUTH_SECRET.get());
-        if(tail === "model-access" && request.method === "GET") return Response.json({providers:publicModelAccess(await store.executionSecrets(organizationId))});
+        if(tail === "model-access" && request.method === "GET") return Response.json({providers:publicModelAccess(await store.executionSecrets(organizationId), await store.secrets(organizationId))});
+        const namedModel = /^model-access\/([^/]+)\/keys(?:\/([^/]+))?$/.exec(tail);
+        if (namedModel) {
+          const id = namedModel[1] as ModelAccessId;
+          if (!modelAccessIds.includes(id)) return jsonError("This model action is unavailable.",405);
+          if (member.role === "member" || identity.clientKind === "computer") return jsonError("Only an administrator can configure model access.",403);
+          if (!allowedRequestOrigin(request,env.PREVIEW_ORIGINS)) return jsonError("Configure model access from Remy.",403);
+          try {
+            const providers = namedModel[2] && request.method === "DELETE"
+              ? await removeNamedModelKey(store, organizationId, id, decodeURIComponent(namedModel[2]))
+              : (namedModel[2] ? ["PATCH"] : ["POST"]).includes(request.method)
+                ? await saveNamedModelKey(store, organizationId, id, await body(request), namedModel[2] ? decodeURIComponent(namedModel[2]) : undefined)
+                : null;
+            if (!providers) return jsonError("This model action is unavailable.",405);
+            await board().fetch(new Request("https://internal/organization/changed",{method:"POST",headers:{"x-organization-id":organizationId}}));
+            return Response.json({providers});
+          } catch { return jsonError("Your model access could not be saved; check your key and try again.",400); }
+        }
         const id=tail.slice("model-access/".length) as ModelAccessId;
         if(!modelAccessIds.includes(id) || request.method !== "PATCH") return jsonError("This model action is unavailable.",405);
         if(member.role === "member" || identity.clientKind === "computer") return jsonError("Only an administrator can configure model access.",403);
@@ -801,6 +818,28 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           headers: { authorization: `Bearer ${await managementCredential(await env.AUTH_SECRET.get())}` },
         }));
         return new Response(response.body, { status: response.status, headers: { "content-type": "application/json" } });
+      }
+      const namedCloud = /^cloud-connection\/keys(?:\/([^/]+))?$/.exec(tail);
+      if (namedCloud && ["POST", "PATCH", "DELETE"].includes(request.method)) {
+        const member = await organizations.member(organizationId, identity.userId);
+        if (member.role === "member" || identity.clientKind === "computer") return jsonError("Ask an administrator to connect a cloud provider.", 403);
+        if (!allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Connect your cloud provider from Remy.", 403);
+        const store = new HostedSettingsStore(env.DB, () => env.AUTH_SECRET.get());
+        try {
+          if (namedCloud[1] && request.method === "DELETE") {
+            const provider = (await body<{provider?:unknown}>(request))?.provider;
+            if (typeof provider !== "string" || !(CLOUD_COMPUTER_PROVIDERS as readonly string[]).includes(provider)) return jsonError("Choose a cloud provider.", 400);
+            const keys = await removeNamedCloudKey(store, organizationId, provider as HostedSettings["provider"], decodeURIComponent(namedCloud[1]));
+            await board().fetch(new Request("https://internal/organization/changed", { method: "POST", headers: { "x-organization-id": organizationId } }));
+            return Response.json({ keys });
+          }
+          if ((namedCloud[1] && request.method === "PATCH") || (!namedCloud[1] && request.method === "POST")) {
+            const keys = await saveNamedCloudKey(store, organizationId, await body(request), namedCloud[1] ? decodeURIComponent(namedCloud[1]) : undefined);
+            await board().fetch(new Request("https://internal/organization/changed", { method: "POST", headers: { "x-organization-id": organizationId } }));
+            return Response.json({ keys });
+          }
+        } catch { return jsonError("Enter the credentials for your cloud provider.", 400); }
+        return jsonError("This cloud action is unavailable.", 405);
       }
       if (tail === "cloud-connection" && ["PUT", "PATCH"].includes(request.method)) {
         const member = await organizations.member(organizationId, identity.userId);
@@ -844,7 +883,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
             const grant = await cloudStartGrant(settings, organizationId, provider, identity.userId);
             cloudStart[provider] = { owner: grant.owner, providers: publicStartProviders(grant.advertised, grant.stored) };
           }
-          return Response.json({ settings: await settings.settings(organizationId,workspaceId), secretNames: member.role !== "member" ? names.filter(name => !name.startsWith("cloud:") && !name.startsWith("model:") && !name.startsWith("access:")) : [], enabledProviders, cloudStart, routerConfigured: !!access.find(entry => entry.id === "router")?.configured, openrouterConfigured: !!access.find(entry => entry.id === "openrouter")?.configured, connections: names.filter(name => name.startsWith("cloud:")).map(name => name.slice(6)), available: enabledProviders.includes("cursor-cloud") || (!!env.HOSTED_IMAGE && (!!env.PROVIDER_RUNTIME || (!!env.HOSTED_CONTROL_URL && !!env.HOSTED_CONTROL_TOKEN))) });
+          return Response.json({ settings: await settings.settings(organizationId,workspaceId), secretNames: member.role !== "member" ? names.filter(name => !name.startsWith("cloud:") && !name.startsWith("model:") && !name.startsWith("access:") && !name.startsWith("named-")) : [], enabledProviders, cloudStart, routerConfigured: !!access.find(entry => entry.id === "router")?.configured, openrouterConfigured: !!access.find(entry => entry.id === "openrouter")?.configured, connections: names.filter(name => name.startsWith("cloud:")).map(name => name.slice(6)), providerKeys: publicProviderKeys(await settings.secrets(organizationId)), available: enabledProviders.includes("cursor-cloud") || (!!env.HOSTED_IMAGE && (!!env.PROVIDER_RUNTIME || (!!env.HOSTED_CONTROL_URL && !!env.HOSTED_CONTROL_TOKEN))) });
         }
         if (request.method === "PUT" && (!workspaceId || hostedMatch[2] === "settings")) {
           if (member.role === "member") return jsonError("Ask an admin to change hosted computers.",403);

@@ -703,9 +703,10 @@ test("hosted model keys are encrypted per organization and settings inherit expl
     assert.deepEqual(await store.connection('other','modal'),modal);
     assert.deepEqual(await store.secretNames('other'),[]);
     await saveModelAccess(store,"org","openrouter",{enabled:true,apiKey:"source-openrouter-key"});
-    const sharedAccess = publicModelAccess(await store.executionSecrets("other"));
+    const sharedAccess = publicModelAccess(await store.executionSecrets("other"), await store.secrets("other"));
     assert.equal(sharedAccess.find(entry => entry.id === "openrouter")?.enabled, true);
     assert.equal(sharedAccess.find(entry => entry.id === "openrouter")?.configured, true);
+    assert.deepEqual(sharedAccess.find(entry => entry.id === "openrouter")?.keys, []);
     assert.equal(hostedGatewayError("openrouter", "openrouter/auto", await store.executionSecrets("other")), undefined);
     assert.equal(modelEnvironment(await store.executionSecrets("other")).OPENROUTER_API_KEY, "source-openrouter-key");
     assert.equal("cloud:modal" in (await store.executionSecrets("other")), false);
@@ -787,6 +788,61 @@ test("OpenRouter routes enforce admin access and persist only encrypted credenti
   } finally {globalThis.fetch=originalFetch;sqlite.close();}
 });
 
+test("named Fly.io and OpenRouter keys stay encrypted and unused by computers", async () => {
+  const {sqlite, db} = database();
+  const {createRouteHandler} = await import("./worker.js");
+  const {HostedSettingsStore} = await import("./hosted-settings.js");
+  const {modelEnvironment} = await import("./model-access.js");
+  let role = "owner", clientKind = "web";
+  const secret = "test-encryption-root-with-at-least-thirty-two-characters";
+  const route = createRouteHandler({
+    accountStore: () => ({}) as never,
+    accountService: () => ({authenticate: async () => ({userId:"user",sessionId:"session",clientKind})}) as never,
+    organizationStore: () => ({}) as never,
+    organizationService: () => ({member: async () => ({role})}) as never,
+  });
+  const env = {DB:db, AUTH_SECRET:{get:async () => secret}, BETTER_AUTH_URL:"https://hub.example", COORDINATOR:{idFromName:()=>({}),get:()=>({fetch:async()=>Response.json({ok:true})})}} as never;
+  const call = (path:string, method="GET", input?:unknown, origin="https://hub.example") => route(new Request(`https://hub.example/api/organizations/org/${path}`, {method,headers:{authorization:"Bearer test",origin,"content-type":"application/json"},...(input ? {body:JSON.stringify(input)} : {})}),env);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => Response.json({data:[{id:"vendor/model"}]})) as typeof fetch;
+  try {
+    role="member";
+    assert.equal((await call("cloud-connection/keys","POST",{provider:"fly-sprites",name:"Production",token:"fly-one"})).status,403);
+    role="owner";clientKind="computer";
+    assert.equal((await call("cloud-connection/keys","POST",{provider:"fly-sprites",name:"Production",token:"fly-one"})).status,403);
+    assert.equal((await call("model-access/openrouter/keys","POST",{name:"Primary",apiKey:"openrouter-one"})).status,403);
+    clientKind="web";
+    assert.equal((await call("cloud-connection/keys","POST",{provider:"fly-sprites",name:"Production",token:"fly-one"})).status,200);
+    assert.equal((await call("cloud-connection/keys","POST",{provider:"fly-sprites",name:"Preview",token:"fly-two"})).status,200);
+    assert.equal((await call("model-access/openrouter/keys","POST",{name:"Primary",apiKey:"openrouter-one"})).status,200);
+    assert.equal((await call("model-access/openrouter/keys","POST",{name:"Team",apiKey:"openrouter-two"})).status,200);
+    const first = await (await call("model-access")).json() as {providers:{id:string;keys:{id:string;name:string}[]}[]};
+    const teamKey = first.providers.find(entry => entry.id === "openrouter")?.keys.find(key => key.name === "Team");
+    assert.ok(teamKey);
+    assert.equal((await call(`model-access/openrouter/keys/${teamKey.id}`,"PATCH",{active:true})).status,200);
+    const hosted = await (await call("hosted")).json() as {providerKeys:{["fly-sprites"]: {id:string;name:string;active:boolean}[]};connections:string[]};
+    assert.deepEqual(hosted.providerKeys["fly-sprites"].map(key => key.name).sort(),["Preview","Production"]);
+    assert.ok(!JSON.stringify(hosted).includes("fly-one"));
+    assert.ok(!JSON.stringify(hosted).includes("fly-two"));
+    const access = await (await call("model-access")).json() as {providers:{id:string;configured:boolean;keys:{name:string;active:boolean}[]}[]};
+    const openrouter = access.providers.find(entry => entry.id === "openrouter")!;
+    assert.equal(openrouter.configured, true);
+    assert.deepEqual(openrouter.keys.map(key => key.name).sort(), ["Primary","Team"]);
+    assert.equal(openrouter.keys.find(key => key.name === "Team")?.active, true);
+    assert.ok(!JSON.stringify(access).includes("openrouter-one"));
+    assert.ok(!JSON.stringify(access).includes("openrouter-two"));
+    const store = new HostedSettingsStore(db, async () => secret);
+    const secrets = await store.secrets("org");
+    assert.equal(JSON.parse(secrets["cloud:fly-sprites"]).token, "fly-one");
+    assert.equal(modelEnvironment(secrets).OPENROUTER_API_KEY, "openrouter-two");
+    assert.ok(!JSON.stringify(sqlite.prepare("SELECT * FROM organization_secrets").all()).includes("fly-one"));
+    assert.ok(!JSON.stringify(sqlite.prepare("SELECT * FROM organization_secrets").all()).includes("openrouter-two"));
+    const preview = hosted.providerKeys["fly-sprites"].find(key => key.name === "Preview")!;
+    assert.equal((await call(`cloud-connection/keys/${preview.id}`,"PATCH",{provider:"fly-sprites",active:true})).status,200);
+    assert.equal(JSON.parse((await store.secrets("org"))["cloud:fly-sprites"]).token, "fly-two");
+  } finally {globalThis.fetch=originalFetch;sqlite.close();}
+});
+
 test("model access toggles preserve encrypted keys and expose only enabled models to execution",async()=>{
   const {sqlite,db}=database();
   const {HostedSettingsStore}=await import("./hosted-settings.js");
@@ -806,7 +862,7 @@ test("model access toggles preserve encrypted keys and expose only enabled model
     secrets=await store.secrets("org");
     assert.equal(modelEnvironment(secrets).OPENROUTER_API_KEY,undefined);
     assert.equal(JSON.parse(secrets["access:openrouter"]).apiKey,"private-openrouter-key");
-    assert.deepEqual(publicModelAccess(secrets).find(p=>p.id==="openrouter"),{id:"openrouter",enabled:false,configured:true,models:["vendor/model"]});
+    assert.deepEqual(publicModelAccess(secrets).find(p=>p.id==="openrouter"),{id:"openrouter",enabled:false,configured:true,models:["vendor/model"],keys:[{id:"legacy",name:"Default",active:true}]});
     assert.ok(!JSON.stringify(publicModelAccess(secrets)).includes("private-"));
     await saveModelAccess(store,"org","openrouter",{enabled:true});
     assert.equal(modelEnvironment(await store.secrets("org")).OPENROUTER_API_KEY,"private-openrouter-key");
