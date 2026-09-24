@@ -411,6 +411,7 @@ try {
           if(artifacts)await page.screenshot({path:`${artifacts}/unified-pull-requests-${mobile?'phone':'desktop'}.png`});
           await page.goto(clean("/workspaces"));
           await page.getByText("Studio · https://github.com/example/repo",{exact:true}).waitFor();
+          assert.equal(await page.getByRole("status",{name:"Loading workspaces",exact:true}).count(),0,"Loaded workspaces do not keep a loading status");
           assert.equal(await page.locator('[data-slot="pane-header"]').count(),1,"Workspace list uses the shared pane header");
           assert.equal(await page.getByRole("heading",{name:"Workspaces",exact:true}).count(),0,"Workspaces does not repeat the pane title");
           assert.equal(await page.getByText("Personal · https://github.com/example/repo",{exact:true}).count(),0);
