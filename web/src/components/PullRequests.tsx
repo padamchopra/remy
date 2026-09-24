@@ -85,6 +85,8 @@ function isCachedPullRequest(value: unknown): value is AuthoredPullRequest {
     && pullRequest.checks.every((check) => check && typeof check.state === "string")
     && typeof pullRequest.hasUnreadActivity === "boolean"
     && typeof pullRequest.workspaceId === "string"
+    // Hosted rows without a workspace used to take owner/repo as workspaceId.
+    && !pullRequest.workspaceId.includes("/")
     && typeof pullRequest.workspaceName === "string"
     && typeof pullRequest.workspacePath === "string"
     && typeof pullRequest.serverId === "string";

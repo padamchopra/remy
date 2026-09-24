@@ -61,6 +61,27 @@ function fixture() {
           reviewRequests: { nodes: [] },
           commits: { nodes: [] },
         },
+        {
+          number: 3,
+          title: "Tidy notes",
+          url: "https://github.com/ada/notes/pull/3",
+          body: "",
+          isDraft: false,
+          reviewDecision: "",
+          updatedAt: "2026-09-24T10:00:00Z",
+          additions: 2,
+          deletions: 0,
+          changedFiles: 1,
+          headRefName: "chore/notes",
+          baseRefName: "main",
+          mergeable: "MERGEABLE",
+          mergeStateStatus: "CLEAN",
+          author: { login: "ada" },
+          repository: { nameWithOwner: "ada/notes" },
+          assignees: { nodes: [] },
+          reviewRequests: { nodes: [] },
+          commits: { nodes: [] },
+        },
       ];
       const searchPullRequests = [
         {
@@ -86,6 +107,29 @@ function fixture() {
         },
       ];
       const workspacePullRequests: Record<string, unknown[]> = {
+        "release/remy": [
+          {
+            number: 7,
+            title: "Ready to review",
+            url: "https://github.com/release/remy/pull/7",
+            body: "",
+            isDraft: false,
+            reviewDecision: "REVIEW_REQUIRED",
+            updatedAt: "2026-09-23T12:00:00Z",
+            additions: 4,
+            deletions: 0,
+            changedFiles: 1,
+            headRefName: "feature/next",
+            baseRefName: "main",
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "CLEAN",
+            author: { login: "ada" },
+            repository: { nameWithOwner: "release/remy" },
+            assignees: { nodes: [] },
+            reviewRequests: { nodes: [] },
+            commits: { nodes: [] },
+          },
+        ],
         "jup-ag/mobile": [
           {
             number: 12,
@@ -350,24 +394,34 @@ test("cloud Git uses the initiating member's connection for imported workspaces"
   sqlite.close();
 });
 
-test("hosted pull requests use the member token, keep PAT-backed repos when search omits them, and cache the list", async () => {
+test("hosted pull requests stay on workspace origins, keep PAT-backed workspaces when search omits them, and cache the list", async () => {
   clearHostedPullRequestCache();
   const { service, calls, failSearch, sqlite } = fixture();
+  const empty = await service.openPullRequests("studio", "ada");
+  assert.deepEqual(empty.pullRequests, []);
+  assert.equal(calls.filter((call) => call.path === "/graphql").length, 0);
+  await service.importRepository("studio", "ada", "release/remy");
+  clearHostedPullRequestCache();
   const listed = await service.openPullRequests("studio", "ada");
   assert.equal(calls.filter((call) => call.path === "/graphql").at(-1)?.actor, "Bearer member-ada");
   assert.deepEqual(
     listed.pullRequests.map((pullRequest) => `${pullRequest.repository}#${pullRequest.number}`).sort(),
-    ["jup-ag/mobile#11", "release/remy#7"],
+    ["release/remy#7"],
   );
+  assert.ok(!listed.pullRequests.some((pullRequest) => pullRequest.repository === "jup-ag/mobile"));
+  assert.ok(!listed.pullRequests.some((pullRequest) => pullRequest.repository === "ada/notes"));
   const graphqlCalls = calls.filter((call) => call.path === "/graphql").length;
-  assert.equal((await service.openPullRequests("studio", "ada")).pullRequests.length, 2);
+  assert.equal((await service.openPullRequests("studio", "ada")).pullRequests.length, 1);
   assert.equal(calls.filter((call) => call.path === "/graphql").length, graphqlCalls);
   await service.openPullRequests("studio", "ada", true);
   assert.equal(calls.filter((call) => call.path === "/graphql").length, graphqlCalls + 1);
   failSearch();
   clearHostedPullRequestCache();
   const afterSearchFailure = await service.openPullRequests("studio", "ada", true);
-  assert.ok(afterSearchFailure.pullRequests.some((pullRequest) => pullRequest.repository === "jup-ag/mobile"));
+  assert.deepEqual(
+    afterSearchFailure.pullRequests.map((pullRequest) => `${pullRequest.repository}#${pullRequest.number}`),
+    ["release/remy#7"],
+  );
   sqlite.close();
 });
 
@@ -381,12 +435,28 @@ test("hosted pull requests include review-requested PRs from PAT-imported worksp
   assert.equal(listed.pullRequests[0]?.repository, "jup-ag/mobile");
   assert.equal(listed.pullRequests[0]?.number, 12);
   assert.equal(listed.pullRequests[0]?.workspaceName, "mobile");
+  assert.ok(!listed.pullRequests.some((pullRequest) => pullRequest.repository === "ada/notes"));
+  sqlite.close();
+});
+
+test("hosted pull requests stay empty when a workspace has no matching GitHub pull requests", async () => {
+  clearHostedPullRequestCache();
+  const { service, hideViewerPullRequests, failSearch, sqlite } = fixture();
+  hideViewerPullRequests();
+  failSearch();
+  await service.organizations.createWorkspace("studio", "ada", {
+    name: "Notes",
+    origin: "https://github.com/ada/notes.git",
+  });
+  const listed = await service.openPullRequests("studio", "ada");
+  assert.deepEqual(listed.pullRequests, []);
   sqlite.close();
 });
 
 test("hosted pull request cache returns the previous list without waiting on GitHub", async () => {
   clearHostedPullRequestCache();
   const { service, delayGithub, sqlite } = fixture();
+  await service.importRepository("studio", "ada", "release/remy");
   delayGithub(80);
   const coldStarted = Date.now();
   await service.openPullRequests("studio", "ada");

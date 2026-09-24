@@ -578,8 +578,9 @@ export class GitHubConnection {
     await this.changed(org);
   }
 
-  /// Open pull requests for the connected GitHub account. The saved credential
-  /// is either the GitHub sign-in or a personal access token.
+  /// Open pull requests that belong to a workspace. The saved credential is
+  /// the GitHub sign-in or a personal access token; a repo that token can read
+  /// still has to be a workspace.
   async openPullRequests(org: string, user: string, refresh = false) {
     const cacheKey = `${org}:${user}`;
     const cached = hostedPullRequestCache.get(cacheKey);
@@ -587,7 +588,11 @@ export class GitHubConnection {
       return cached.value;
     }
     const value = await this.readOpenPullRequests(org, user);
-    hostedPullRequestCache.set(cacheKey, { at: Date.now(), value });
+    // Skip caching the no-workspace empty list so adding a first workspace is
+    // not stuck behind a PAT-wide miss for the rest of the fresh window.
+    if (value.viewer || value.pullRequests.length) {
+      hostedPullRequestCache.set(cacheKey, { at: Date.now(), value });
+    }
     return value;
   }
 
@@ -604,6 +609,7 @@ export class GitHubConnection {
         return repository ? [[repository.toLowerCase(), workspace] as const] : [];
       }),
     );
+    if (!workspaceByRepo.size) return { viewer: "", pullRequests: [] as HostedListedPullRequest[] };
     const repositories = [...workspaceByRepo.keys()].slice(0, HOSTED_PULL_REQUEST_WORKSPACE_REPOS);
     const repoSelections = repositories.map((_, index) =>
       `repo${index}: repository(owner:$o${index}, name:$n${index}) { pullRequests(states: OPEN, first: 20, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { ...HostedPullRequest } } }`);
@@ -611,6 +617,8 @@ export class GitHubConnection {
       const [owner, name] = repository.split("/");
       return [[`o${index}`, owner], [`n${index}`, name]];
     }));
+    // Viewer and search catch involvement beyond the per-workspace page. Both
+    // are filtered to workspace origins; a PAT-visible repo is not enough.
     const data = await this.graphql(org, user, {
       query: `query OpenPullRequests${repositories.length ? `(${repositories.flatMap((_, index) => [`$o${index}: String!`, `$n${index}: String!`]).join(", ")})` : ""} {
         viewer {
@@ -648,8 +656,8 @@ export class GitHubConnection {
       const current = byURL.get(pullRequest.url);
       if (!current || (!current.checks.length && pullRequest.checks.length)) byURL.set(pullRequest.url, pullRequest);
     }
-    if (!byURL.size && data.errors?.length && !viewerNodes.length) {
-      throw new ConnectionError(data.errors[0]?.message || "GitHub could not list pull requests.");
+    if (!byURL.size && (data.errors ?? []).some((error) => !(Array.isArray(error.path) && error.path[0] === "search")) && !viewerNodes.length) {
+      throw new ConnectionError(data.errors?.[0]?.message || "GitHub could not list pull requests.");
     }
     const pullRequests: HostedListedPullRequest[] = [...byURL.values()].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
     return { viewer, pullRequests };
@@ -761,6 +769,7 @@ function hostedPullRequest(
   if (!repository || typeof number !== "number") return;
   const author = loginOf(pr.author);
   const workspace = workspaceByRepo.get(repository.toLowerCase());
+  if (!workspace) return;
   return {
     url: String(pr.url ?? `https://github.com/${repository}/pull/${number}`),
     number,
@@ -779,8 +788,8 @@ function hostedPullRequest(
     checks: pullRequestChecks(pr),
     unreadComments: [] as unknown[],
     hasUnreadActivity: false,
-    workspaceId: workspace?.id ?? repository,
-    workspaceName: workspace?.name ?? repository.split("/")[1] ?? repository,
+    workspaceId: workspace.id,
+    workspaceName: workspace.name,
     workspacePath: "",
     worktreePath: viewer && author.toLowerCase() === viewer.toLowerCase() ? "hosted" : null,
     mergeable: String(pr.mergeable ?? ""),
