@@ -982,3 +982,115 @@ test("Cursor Cloud connects, stays encrypted, starts without a guest computer, a
     sqlite.close();
   }
 });
+
+test("owners can archive and delete hosted threads after the cloud computer sleeps", async () => {
+  const { sqlite, db, computers, service } = database();
+  const { HubCoordinator } = await import("./worker.js");
+  const hostedId = crypto.randomUUID();
+  const threadId = crypto.randomUUID();
+  const settings = { enabled: true, provider: "modal", idleMinutes: 15, maxComputers: 2 };
+  try {
+    sqlite.prepare("INSERT INTO organization_workspaces(id,organization_id,name,origin,created_at,updated_at) VALUES(?,?,?,?,?,?)").run("org-release", "org", "Release", "github.com/example/release", 1, 1);
+    await service.register("org", "ada", {
+      ...input,
+      computerId: hostedId,
+      ownership: "hosted",
+      name: "Cloud task",
+      icon: "cloud",
+      platform: "linux",
+      capabilities: {
+        ...input.capabilities,
+        workspaces: [{ id: "org-release", name: "Release", path: "/workspace", origin: "github.com/example/release" }],
+      },
+    });
+    await computers.seen("org", hostedId, 0);
+    const values = new Map<string, unknown>([["organizationId", "org"]]);
+    const coordinator = new HubCoordinator({ storage: { get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); }, delete: async (key: string) => values.delete(key), list: async (options?: { prefix?: string }) => new Map([...values].filter(([key]) => key.startsWith(options?.prefix ?? ""))), getAlarm: async () => null, setAlarm: async () => {}, transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn({ get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); }, delete: async (key: string) => values.delete(key) }) }, getWebSockets: () => [], waitUntil: (work: Promise<unknown>) => { void work; } } as unknown as DurableObjectState, { DB: db, AUTH_SECRET: { get: async () => "test-encryption-root-with-at-least-thirty-two-characters" }, BETTER_AUTH_URL: "https://hub.example" } as never);
+    const forwarded: unknown[][] = [];
+    let ensured = 0;
+    let wake: "ok" | "fail" = "ok";
+    (coordinator as unknown as { hostedService: () => { list: () => Promise<unknown[]>; ensure: () => Promise<unknown> } }).hostedService = () => ({
+      list: async () => [{ computerId: hostedId, workspaceId: "org-release", settings }],
+      ensure: async () => {
+        ensured += 1;
+        if (wake === "fail") throw new Error("Your computer could not resume.");
+        return { computerId: hostedId };
+      },
+    });
+    (coordinator as unknown as { dispatchComputer: (...args: unknown[]) => Promise<Response> }).dispatchComputer = async (...args) => {
+      forwarded.push(args);
+      return Response.json({ ok: true });
+    };
+    const threads = (coordinator as unknown as { threads: import("./thread-store.js").ThreadStore }).threads;
+    const snapshot = (id: string, owner: string) => threads.snapshot(hostedId, {
+      id,
+      revision: 1,
+      access: { organizationId: "org", owner: { id: owner, label: owner }, visibility: "private", participants: [{ id: owner, label: owner }] },
+      detail: { id, title: "Yo you see this?", cwd: "/workspace", state: "idle", entries: [] },
+    });
+    const request = (user: string, path: string, method: string, payload: unknown = {}) => new Request(`https://internal${path}`, { method, headers: { "content-type": "application/json", "x-thread-member": encodeURIComponent(JSON.stringify({ id: user, label: user })), "x-organization-id": "org" }, body: JSON.stringify(payload) });
+    const handle = (coordinator as unknown as { threadRequest: (r: Request) => Promise<Response | undefined> }).threadRequest.bind(coordinator);
+
+    await snapshot(threadId, "ada");
+    const archived = await handle(request("ada", `/computers/${hostedId}/threads/${threadId}/archive`, "POST"));
+    assert.equal(archived?.status, 200);
+    assert.equal(ensured, 1);
+    assert.equal(forwarded.at(-1)?.[2], "POST");
+    assert.equal(forwarded.at(-1)?.[3], `/hub/threads/${threadId}/archive`);
+    assert.equal(await threads.get(hostedId, threadId), undefined);
+
+    const deleteId = crypto.randomUUID();
+    await snapshot(deleteId, "ada");
+    const deleted = await handle(request("ada", `/computers/${hostedId}/threads/${deleteId}`, "DELETE"));
+    assert.equal(deleted?.status, 200);
+    assert.equal(ensured, 2);
+    assert.equal(forwarded.at(-1)?.[2], "DELETE");
+    assert.equal(forwarded.at(-1)?.[3], `/hub/threads/${deleteId}`);
+    assert.equal(await threads.get(hostedId, deleteId), undefined);
+
+    const stuckId = crypto.randomUUID();
+    await snapshot(stuckId, "ada");
+    wake = "fail";
+    const retired = await handle(request("ada", `/computers/${hostedId}/threads/${stuckId}/archive`, "POST"));
+    assert.equal(retired?.status, 200);
+    assert.equal(await threads.get(hostedId, stuckId), undefined);
+    assert.equal(values.get(`threads:retired:${hostedId}:${stuckId}`), true);
+
+    const socket = { send(message: string) { this.messages.push(message); }, messages: [] as string[], close() {}, serializeAttachment() {}, deserializeAttachment: () => ({ kind: "computer", computerId: hostedId, ready: true, lastSeenAt: Date.now() }), readyState: 1 };
+    (coordinator as unknown as { ctx: { getWebSockets: () => unknown[] } }).ctx.getWebSockets = () => [socket];
+    await (coordinator as unknown as { handleSocketMessage: (s: unknown, message: string) => Promise<void> }).handleSocketMessage(socket, JSON.stringify({
+      kind: "thread.snapshot",
+      snapshot: { id: stuckId, revision: 3, access: { organizationId: "org", owner: { id: "ada", label: "ada" }, visibility: "private", participants: [{ id: "ada", label: "ada" }] }, detail: { id: stuckId, title: "Yo you see this?", cwd: "/workspace", state: "idle", entries: [] } },
+    }));
+    assert.match(socket.messages.join("\n"), /agent.deleted/);
+    assert.equal(await threads.get(hostedId, stuckId), undefined);
+
+    const foreign = crypto.randomUUID();
+    await threads.snapshot(hostedId, {
+      id: foreign,
+      revision: 1,
+      access: { organizationId: "org", owner: { id: "ada", label: "ada" }, visibility: "open", participants: [{ id: "ada", label: "ada" }] },
+      detail: { id: foreign, title: "Shared thread", cwd: "/workspace", state: "idle", entries: [] },
+    });
+    wake = "ok";
+    const denied = await handle(request("grace", `/computers/${hostedId}/threads/${foreign}/archive`, "POST"));
+    assert.equal(denied?.status, 403);
+    assert.ok(await threads.get(hostedId, foreign));
+
+    const macId = input.computerId;
+    await service.register("org", "ada", { ...input, capabilities: { ...input.capabilities, workspaces: [{ id: "org-release", name: "Release", path: "/workspace", origin: "github.com/example/release" }] } });
+    await computers.seen("org", macId, 0);
+    const macThread = crypto.randomUUID();
+    await threads.snapshot(macId, {
+      id: macThread,
+      revision: 1,
+      access: { organizationId: "org", owner: { id: "ada", label: "ada" }, visibility: "private", participants: [{ id: "ada", label: "ada" }] },
+      detail: { id: macThread, title: "Local thread", cwd: "/workspace", state: "idle", entries: [] },
+    });
+    const offline = await handle(request("ada", `/computers/${macId}/threads/${macThread}/archive`, "POST"));
+    assert.equal(offline?.status, 503);
+    assert.ok(await threads.get(macId, macThread));
+  } finally {
+    sqlite.close();
+  }
+});
