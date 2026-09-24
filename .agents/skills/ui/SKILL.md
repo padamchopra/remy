@@ -101,6 +101,26 @@ Keep inline copy only for durable page state — loading, stale, reconnect — a
 
 A composed screen assembles primitives; it never replaces one that exists. A control that appears on two screens moves into its own module rather than being copied — `ComposerMenu.tsx`, `PathPicker.tsx`, and `ThreadMenu.tsx` are shared this way.
 
+## Workspace icons
+
+A workspace icon is `WorkspaceIcon` for the glyph or image, and `WorkspaceMark` when it sits in a tinted well. Hosted and local both go through those. Do not render `projectIcon` or a second hosted icon component at a call site — sizing may change, the glyph, fill, and rounded well must not.
+
+`WorkspaceMark` `sm` is the inline list and picker mark, `md` is the settings list (matching the IconPicker well), and `lg` sits on the composer heading. IconPicker wraps `WorkspaceMarkFrame` so its trigger is that well, not an outline button with a competing background.
+
+BAD
+```tsx
+<HubWorkspaceIcon className={tintOf(workspace.tint).fg} />
+<span className={cn("size-8 rounded-lg", colors.well, colors.fg)}>
+  <WorkspaceIcon className="size-4" />
+</span>
+```
+
+GOOD
+```tsx
+<WorkspaceMark home={false} workspace={workspace} size="md" organizationId={organizationId} />
+<IconPicker preview={<WorkspaceIcon workspaceId={workspace.id} icon={workspace.icon} className="size-4" fileClassName="size-full object-cover" />} />
+```
+
 ## Filled image wells
 
 A workspace image in a rounded icon button fills that box. Clip overflow, drop inner padding, and give the `img` `size-full object-cover`. Glyphs stay at the button's default icon size. `ItemMedia` `variant="image"` and `WorkspaceMark`'s `fileClassName="size-full"` are the same treatment.

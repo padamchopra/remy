@@ -79,7 +79,7 @@ Cover every new or changed control, not one happy path:
 - Buttons and icon-only actions — click, and confirm the tooltip or `aria-label` names the action.
 - Forms — type, submit, Shift+Enter where newlines matter, and submit while empty.
 - Empty, error, and populated — the branch you did not stare at is where it breaks.
-- File icons — a project PNG is an `img` and item CSS sizes `svg` only, so `WorkspaceIcon` defaults to `size-4`; a well that should fill passes a larger class. Measure an IconPicker image against its `size-10` trigger: the `img` must meet the rounded box, not sit as a padded thumbnail.
+- File icons — a project PNG is an `img` and item CSS sizes `svg` only, so `WorkspaceIcon` defaults to `size-4`; a well that should fill passes a larger class. Measure an IconPicker image against its `size-10` trigger: the `img` must meet the rounded box, not sit as a padded thumbnail. A settings list row and that workspace's detail must use `WorkspaceMark` / `WorkspaceIcon` so the glyph, fill, and well match.
 
 Read state back from the server rather than trusting the screen: the endpoints under `/chats` and `/server/settings` say what actually persisted.
 

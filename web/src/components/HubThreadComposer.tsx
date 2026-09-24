@@ -7,7 +7,7 @@ import type { GitBranch } from "@/state/types";
 import { toast } from "sonner";
 import { ThreadComposerEditor } from "./ThreadComposerEditor";
 import { NewThreadSurface, ComposerWorkspaceTrigger } from "./NewThreadSurface";
-import { HubWorkspaceIcon } from "./HubWorkspaceIcon";
+import { WorkspaceMark } from "./WorkspaceIcon";
 import { ComposerMenu } from "./ComposerMenu";
 import { Check, Cloud, Laptop, Lock, Users } from "lucide-react";
 import { InputGroupButton, InputGroupText } from "./ui/input-group";
@@ -252,12 +252,12 @@ export function HubThreadComposer({
     <NewThreadSurface heading={<>
       <DropdownMenu>
         <ComposerWorkspaceTrigger disabled={false} aria-label="Thread workspace">
-          {workspace && <HubWorkspaceIcon organizationId={workspace.organizationId} workspaceId={workspace.id} icon={workspace.icon} className="size-[0.65em]" />}
+          {workspace && <WorkspaceMark home={false} workspace={workspace} size="lg" organizationId={workspace.organizationId} />}
           {workspace?.name ?? "a workspace"}
         </ComposerWorkspaceTrigger>
         <DropdownMenuContent>
           {workspaceChoices.map(w => <DropdownMenuItem key={w.key} onSelect={() => { if (onWorkspaceChange) onWorkspaceChange(w); else setWorkspace(w.id); select(""); }}>
-            <HubWorkspaceIcon organizationId={w.organizationId} workspaceId={w.id} icon={w.icon} className="size-4" />{w.label}{w.organizationId === organizationId && w.id === workspaceId && <Check className="ml-auto" />}
+            <WorkspaceMark home={false} workspace={w} size="sm" organizationId={w.organizationId} />{w.label}{w.organizationId === organizationId && w.id === workspaceId && <Check className="ml-auto" />}
           </DropdownMenuItem>)}
         </DropdownMenuContent>
       </DropdownMenu>

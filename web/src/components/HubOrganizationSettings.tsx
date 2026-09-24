@@ -1,8 +1,7 @@
-import { HubWorkspaceIcon } from "./HubWorkspaceIcon";
+import { WorkspaceIcon, WorkspaceMark } from "./WorkspaceIcon";
 import { IconPicker } from "./IconPicker";
 import { HubWorkspaceComputers } from "./HubWorkspaceComputers";
 import { PROJECT_ICON_IDS, projectIcon } from "@/lib/projects";
-import { tintOf } from "@/lib/tints";
 import type { ComputerSummary } from "@remy/contract";
 import { HubAddWorkspace } from "./HubAddWorkspace";
 import { EmptyState } from "@/components/EmptyState";
@@ -302,7 +301,7 @@ export default function HubOrganizationSettings({
               ) : kind === "teams" ? (
                 <Users />
               ) : (
-                <HubWorkspaceIcon organizationId={organizationId} workspaceId={workspace.id} icon={workspace.icon} className={tintOf(workspace.tint).fg} />
+                <WorkspaceMark home={false} workspace={workspace} size="md" organizationId={organizationId} />
               )}
             </ItemMedia>
             <ItemContent className={`min-w-0 ${kind === "workspaces" ? "pointer-events-none" : ""}`}>
@@ -404,7 +403,7 @@ export default function HubOrganizationSettings({
             >
               <FieldGroup>
               <fieldset className="flex flex-col gap-6" disabled={kind === "workspaces" && !admin}>
-                {kind === "workspaces" && edit.id && <div className="flex justify-center"><IconPicker label="Change workspace icon" icon={edit.icon ?? "folder"} tint={edit.tint} icons={PROJECT_ICON_IDS} renderIcon={projectIcon} onChange={patch => setEdit({ ...edit, ...patch })} /></div>}
+                {kind === "workspaces" && edit.id && <div className="flex justify-center"><IconPicker label="Change workspace icon" icon={edit.icon ?? "folder"} tint={edit.tint} icons={PROJECT_ICON_IDS} renderIcon={projectIcon} preview={<WorkspaceIcon organizationId={organizationId} workspaceId={edit.id} icon={edit.icon} className="size-4" fileClassName="size-full object-cover" />} onChange={patch => setEdit({ ...edit, ...patch })} /></div>}
                 <Field>
                   <FieldLabel htmlFor="entity-name">
                     {kind === "members" ? "Email (optional)" : "Name"}

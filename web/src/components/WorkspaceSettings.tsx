@@ -20,7 +20,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { EditableName } from "@/components/EditableName";
 import { IconPicker } from "@/components/IconPicker";
 import { ModelPickerButton, REMY_DEFAULT } from "@/components/ModelPicker";
-import { WorkspaceFileIcon } from "@/components/WorkspaceIcon";
+import { WorkspaceIcon } from "@/components/WorkspaceIcon";
 import { WorkspaceEnvironmentSettings } from "@/components/WorkspaceEnvironmentSettings";
 import { WorkspaceWorktrees, WorktreeSelectionToolbar } from "@/components/WorkspaceWorktrees";
 import { useWorkspaceWorktrees } from "@/hooks/use-workspace-worktrees";
@@ -28,7 +28,7 @@ import { ScopedPullRequestMonitoring } from "@/components/PullRequestMonitoring"
 import { apiError } from "@/lib/api-error";
 import { deviceIcon } from "@/lib/devices";
 import { displayPath } from "@/lib/path";
-import { devicesForWorkspace, PROJECT_ICON_IDS, isProjectIcon, isProjectIconFile, projectIcon, workspaceCopies } from "@/lib/projects";
+import { devicesForWorkspace, PROJECT_ICON_IDS, isProjectIcon, projectIcon, workspaceCopies } from "@/lib/projects";
 import { tintOf } from "@/lib/tints";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -192,9 +192,12 @@ export function WorkspaceSettings({
               icons={PROJECT_ICON_IDS}
               renderIcon={projectIcon}
               preview={
-                isProjectIconFile(workspace.icon) ? (
-                  <WorkspaceFileIcon workspaceId={workspace.id} path={workspace.icon} className="size-full object-cover" />
-                ) : undefined
+                <WorkspaceIcon
+                  workspaceId={workspace.id}
+                  icon={workspace.icon}
+                  className="size-4"
+                  fileClassName="size-full object-cover"
+                />
               }
               files={{
                 workspaceId: workspace.id,

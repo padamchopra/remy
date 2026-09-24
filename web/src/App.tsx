@@ -59,7 +59,7 @@ import { notificationsEnabled } from "@/lib/notify";
 import { devicesForWorkspace, workspaceGroups } from "@/lib/projects";
 import { sectionOf, type Route } from "@/lib/route";
 import type { SettingsTab } from "@/lib/settings-sections";
-import { WorkspaceIcon } from "@/components/WorkspaceIcon";
+import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { tintOf } from "@/lib/tints";
 import { cn } from "@/lib/utils";
 import { openTab, updateWorkbench } from "@/lib/thread-workbench";
@@ -688,7 +688,6 @@ export function App() {
                   <div className="flex flex-col gap-2 p-4">
                     {groupedWorkspaces.map((group) => {
                       const workspace = group.workspace;
-                      const colors = tintOf(workspace.tint);
                       const devices = devicesForWorkspace(workspace, group.copies, servers);
                       return (
                       <Card
@@ -706,20 +705,7 @@ export function App() {
                         className="gap-0 py-0 shadow-none hover:bg-accent"
                       >
                         <div className="flex items-center gap-3 px-3.5 py-2.5">
-                          <span
-                            className={cn(
-                              "flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg",
-                              colors.well,
-                              colors.fg,
-                            )}
-                          >
-                            <WorkspaceIcon
-                              workspaceId={workspace.id}
-                              icon={workspace.icon}
-                              className="size-4"
-                              fileClassName="size-8"
-                            />
-                          </span>
+                          <WorkspaceMark home={false} workspace={workspace} size="md" />
                           <span className="min-w-0 flex-1">
                             <span className="block truncate text-sm leading-5 font-medium">{workspace.name}</span>
                           </span>

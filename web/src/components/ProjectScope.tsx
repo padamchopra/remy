@@ -10,7 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { WorkspaceIcon } from "@/components/WorkspaceIcon";
+import { WorkspaceIcon, WorkspaceMark } from "@/components/WorkspaceIcon";
 import { localWorkspace } from "@/lib/projects";
 import { tintOf } from "@/lib/tints";
 import { cn } from "@/lib/utils";
@@ -50,7 +50,7 @@ export function WorkspaceFaces({ projects, workspaces }: { projects: Project[]; 
               <Avatar className="size-6" aria-label={project.name}>
                 <AvatarFallback className={cn(colors.well, colors.fg)}>
                   {workspace ? (
-                    <WorkspaceIcon workspaceId={workspace.id} icon={workspace.icon} className="size-3" />
+                    <WorkspaceIcon workspaceId={workspace.id} icon={workspace.icon} className="size-3" fileClassName="size-full object-cover" />
                   ) : (
                     <span className="text-[10px] font-medium">{project.keyPrefix.slice(0, 1)}</span>
                   )}
@@ -108,7 +108,6 @@ export function ProjectFilter({
         <DropdownMenuSeparator />
         {projects.map((project) => {
           const workspace = localWorkspace(project, workspaces);
-          const colors = tintOf(workspace?.tint);
           return (
             <DropdownMenuItem
               key={project.id}
@@ -118,11 +117,13 @@ export function ProjectFilter({
                 toggle(project.keyPrefix);
               }}
             >
-              <span className={cn("flex size-5 items-center justify-center rounded", colors.well, colors.fg)}>
+              <span className="flex size-5 items-center justify-center">
                 {workspace ? (
-                  <WorkspaceIcon workspaceId={workspace.id} icon={workspace.icon} className="size-3" />
+                  <WorkspaceMark home={false} workspace={workspace} size="sm" />
                 ) : (
-                  <Folder className="size-3" />
+                  <span className="flex size-4 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                    <Folder className="size-3" />
+                  </span>
                 )}
               </span>
               <span className="truncate">{project.name}</span>
