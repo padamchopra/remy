@@ -313,6 +313,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
       ]
     : [];
   const paneLabel = links.find((link) => link.selected)?.label ?? "Remy";
+  const workspacesListOpen = route.name === "workspaces" && !route.workspaceId;
   const showPaneHeader =
     route.name !== "prs" &&
     !(route.name === "threads" && route.threadId) &&
@@ -398,12 +399,32 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                 </EmptyContent>
               )}
             </EmptyState>
-          ) : organizationSettings && route.name === "settings" ? (
+          ) : (
+            <>
+              <div
+                hidden={!workspacesListOpen}
+                className={workspacesListOpen ? "min-h-0 flex-1 overflow-auto" : undefined}
+              >
+                <Deferred open={workspacesListOpen}>
+                  <WorkspacesList
+                    organizations={contexts}
+                    filter={organizationId ?? "all"}
+                    onOpenWorkspace={(owner, id) => navigate({
+                      name: "workspaces",
+                      workspaceId: id,
+                      organizationId: isAll ? "all" : owner,
+                      ...(isAll ? { ownerOrganizationId: owner } : {}),
+                    })}
+                    onAdded={(owner) => {
+                      if (!isAll && owner !== organizationId) navigate({ name: "workspaces", organizationId: owner });
+                    }}
+                  />
+                </Deferred>
+              </div>
+          {workspacesListOpen ? null : organizationSettings && route.name === "settings" ? (
             <Deferred open><OrganizationAdmin organizations={organizations} selectedId={isAll ? route.ownerOrganizationId : organizationId} tab={route.organizationTab ?? "general"} onSelect={owner => navigate({...route,tab:"organization",organizationId:isAll ? "all" : owner,...(isAll ? {ownerOrganizationId:owner} : {})})} onTab={organizationTab => navigate({...route,tab:"organization",organizationTab,ownerOrganizationId:isAll ? route.ownerOrganizationId ?? organizations[0]?.id : undefined})} /></Deferred>
           ) : route.name === "prs" ? (
             <div className="flex min-h-0 flex-1"><Deferred open><PullRequests servers={[]} workspaces={[]} hostedOrganizationIds={isAll ? contexts.map((item) => item.id) : [organization.id]} onOpenThread={() => undefined} onOpenWorkspace={() => undefined} /></Deferred></div>
-          ) : route.name === "workspaces" && !route.workspaceId ? (
-            <div className="min-h-0 flex-1 overflow-auto"><Deferred open><WorkspacesList organizations={contexts} filter={organizationId ?? "all"} onOpenWorkspace={(owner,id) => navigate({name:"workspaces",workspaceId:id,organizationId:isAll ? "all" : owner,...(isAll ? {ownerOrganizationId:owner} : {})})} onAdded={owner => {if (!isAll && owner !== organizationId) navigate({name:"workspaces",organizationId:owner});}} /></Deferred></div>
           ) : isAll ? (
             <Deferred open><AllView organizations={contexts} route={route} userId={profile?.id ?? ""} navigate={navigate} threads={threads} threadsLoaded={threadsLoaded} /></Deferred>
           ) : (
@@ -507,6 +528,8 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                 </div>
               ))}
             </div>
+          )}
+            </>
           )}
         </SidebarInset>
         {organization && (

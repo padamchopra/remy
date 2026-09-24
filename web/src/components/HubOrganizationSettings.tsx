@@ -61,6 +61,7 @@ import {
   type HubMember,
   type HubWorkspace,
 } from "@/lib/hub-organization";
+import { cacheHubWorkspaces, cachedHubWorkspaces } from "@/lib/hub-workspace-cache";
 import type { OrganizationTeam } from "@remy/contract";
 import { HubWorkspaceAccess, type WorkspaceAccess } from "./HubWorkspaceAccess";
 
@@ -101,6 +102,9 @@ export default function HubOrganizationSettings({
     organizationId,
     "/workspaces",
   );
+  useEffect(() => {
+    if (workspaces.value) cacheHubWorkspaces(organizationId, workspaces.value.workspaces);
+  }, [organizationId, workspaces.value]);
   const computers = useHubResource<{computers:ComputerSummary[]}>(organizationId, kind === "workspaces" ? "/computers" : null);
   const cloud = useHubResource<{enabledProviders?:string[]}>(organizationId, kind === "workspaces" ? "/hosted" : null);
   const people = {
@@ -228,12 +232,14 @@ export default function HubOrganizationSettings({
     }, kind === "members" ? "Couldn't send that invitation" : "Couldn't save those changes");
   const title =
     kind === "members" ? "Members" : kind === "teams" ? "Teams" : "Workspaces";
+  const workspaceItems = workspaces.value?.workspaces
+    ?? cachedHubWorkspaces(organizationId) as HubWorkspace[];
   const items =
     kind === "members"
       ? people.members.map((m) => ({ ...m, id: m.userId }))
       : kind === "teams"
         ? people.teams
-        : (workspaces.value?.workspaces ?? []);
+        : workspaceItems;
   const emptyWorkspace = kind === "workspaces" && !!workspaces.value && items.length === 0;
   return (
     <section className={`flex min-w-0 flex-col gap-4 ${workspaceListOnly ? "" : emptyWorkspace ? "p-4" : "p-6"}`} aria-label={title}>
