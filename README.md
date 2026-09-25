@@ -1,6 +1,6 @@
 # Remy
 
-Remy is a remote for [Claude Code](https://claude.com/claude-code), [Codex](https://developers.openai.com/codex), and [Cursor](https://cursor.com/docs/cli/acp) on your own machines. Point it at a folder, say what you want done, and the agent runs on the machine that actually holds the repo — while you watch from a browser tab or the iPhone app on the couch.
+Remy is a remote for [Claude Code](https://claude.com/claude-code), [Codex](https://developers.openai.com/codex), and [Cursor](https://cursor.com/docs/cli/acp) on your own machines. Point it at a folder, say what you want done, and the work runs on the machine that actually holds the repo — while you watch from a browser tab or the iPhone app on the couch.
 
 <img src="docs/images/threads.png" alt="Remy showing four threads across two machines, with a composer for a new one" width="100%" />
 
@@ -42,7 +42,9 @@ Then open `http://127.0.0.1:5173`. That is the real app against your real folder
 
 ## What you actually do with it
 
-Start a thread in a workspace, pick a model and how much the agent may do unasked, and send. A folder with git worktrees lets you branch on send rather than beforehand. Threads that stop to ask you something say so in the sidebar, so a machine working on four things at once has one queue instead of four windows.
+Start a thread in a workspace, pick a model and how much it may do unasked, and send. A folder with git worktrees lets you branch on send rather than beforehand. Threads that stop to ask you something say so in the sidebar, so a machine working on four things at once has one queue instead of four windows.
+
+A thread runs on the computer you pick, or on the one you last used for that workspace — there is nothing to configure.
 
 Settings → Environments lets you define reusable values and assign one environment to several workspaces. Tasks inherit the selected values on their execution computer, including local computers and optional hosted task computers. Values are encrypted at rest and management screens return names only. Providers and their commands can read assigned values. Remy redacts exact values from supported output paths, but encoded or transformed values are not recognised; this is not a boundary against a hostile command.
 
@@ -50,11 +52,11 @@ Settings → Environments lets you define reusable values and assign one environ
 
 <img src="docs/images/palette.png" alt="The command palette listing threads that need you and threads still working" width="100%" />
 
-**Agents** live in Settings. Each one is a conversation you can pick up: ask Remy's own agent to write a ticket, add a workspace, or start a thread somewhere, and it does it while you watch. Write more agents there, each with its own instructions and its own model. Ask an agent to do something routinely and it keeps that routine in its settings, running each time on the first available device in your preferred order.
+**Tasks** is for planning rather than chatting: a board of tickets, each one a piece of work you can start a thread on. A ticket follows the thread working on it, so the board moves without you dragging cards.
 
-**Tasks** is for planning rather than chatting: a board of tickets, agents with their own instructions, and a handoff from one to the next. Agents sign their commits, so `git log` says which one wrote what. A ticket can be yours, an agent's, or the workspace's own model — an assignee you get without writing an agent first.
+<img src="docs/images/tasks-board.png" alt="The Tasks board, tickets in columns" width="100%" />
 
-<img src="docs/images/tasks-board.png" alt="The Tasks board, tickets in columns with an assignee on each card" width="100%" />
+**Pull requests** are the other side of that. Open one from the thread that wrote it, read its checks and comments beside the conversation, and have Remy follow it in that thread — or in no thread at all.
 
 ## Add your other machines
 
@@ -64,7 +66,7 @@ On each machine, open **Settings → Devices** and turn on **Reachable from your
 
 Then, on either machine, look under **On your tailnet**. Remy already knows your devices and has checked which of them are running it, so you pick one and press **Pair**. Both machines show a six-digit code; if they match, press **Allow** on the other one. Nothing is shared until you do.
 
-From then on the two share a planning board — tickets and agents converge on both without either being in charge. Threads stay put, on the machine holding the repo.
+From then on the two share a planning board — tickets converge on both without either being in charge. Threads stay put, on the machine holding the repo.
 
 If a machine is somewhere Tailscale is not, **Pair with a link instead** takes a `remy://configure?…` link you copy from the other side.
 

@@ -16,89 +16,45 @@ for (const command of ["claude", "codex", "agent"]) {
   chmodSync(path, 0o755);
 }
 process.env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
-
-const agents = await import("./agents.js");
 const chats = await import("./chat.js");
-const config = await import("./config.js");
 const monitoring = await import("./pull-request-monitoring.js");
-const workspaces = await import("./workspaces.js");
 
 const folder = mkdtempSync(join(tmpdir(), "remy-pr-workspace-"));
-const workspace = await workspaces.addWorkspace("Example", folder);
-const first = agents.createAgent({ name: "Builder", handle: "builder" });
-const second = agents.createAgent({ name: "QA", handle: "qa" });
 
-test("monitoring inherits from Remy through workspace and pull request scopes", async () => {
-  config.patchSettings({ pullRequestMonitoringEnabled: true, pullRequestMonitoringAgentId: first.id });
-  assert.deepEqual(monitoring.workspacePullRequestMonitoring(workspace.id), {
-    enabled: true,
-    agentId: first.id,
+test("a pull request is followed by nobody until a thread asks for it", () => {
+  assert.deepEqual(monitoring.pullRequestMonitoring("owner/repo", 42), {
+    enabled: false,
     chatId: null,
-    source: "default",
+    source: "pull-request",
     explicit: false,
   });
-
-  await monitoring.setWorkspacePullRequestMonitoring(workspace.id, { enabled: true, agentId: second.id });
-  assert.equal(monitoring.pullRequestMonitoring(workspace.id, "owner/repo", 42).agentId, second.id);
-  assert.equal(monitoring.pullRequestMonitoring(workspace.id, "owner/repo", 42).explicit, false);
-
-  monitoring.setPullRequestMonitoring(workspace.id, "owner/repo", 42, { enabled: false, agentId: null });
-  assert.deepEqual(monitoring.pullRequestMonitoring(workspace.id, "OWNER/REPO", 42), {
-    enabled: false,
-    agentId: null,
-    chatId: null,
-    source: "pull-request",
-    explicit: true,
-  });
-
-  monitoring.resetPullRequestMonitoring(workspace.id, "owner/repo", 42);
-  assert.equal(monitoring.pullRequestMonitoring(workspace.id, "owner/repo", 42).agentId, second.id);
-  await monitoring.resetWorkspacePullRequestMonitoring(workspace.id);
-  assert.equal(monitoring.pullRequestMonitoring(workspace.id, "owner/repo", 42).agentId, first.id);
+  assert.equal(monitoring.hasPullRequestMonitoring(), false);
 });
 
-test("deleting a selected agent turns every matching policy off", async () => {
-  config.patchSettings({ pullRequestMonitoringEnabled: true, pullRequestMonitoringAgentId: first.id });
-  await monitoring.setWorkspacePullRequestMonitoring(workspace.id, { enabled: true, agentId: first.id });
-  monitoring.setPullRequestMonitoring(workspace.id, "owner/repo", 9, { enabled: true, agentId: first.id });
-
-  agents.deleteAgent(first.id);
-  monitoring.clearAgentPullRequestMonitoring(first.id);
-
-  assert.equal(config.config.pullRequestMonitoringEnabled, false);
-  assert.deepEqual(workspaces.workspaceMonitoringOverride(workspace.id), { enabled: false, agentId: null });
-  assert.deepEqual(monitoring.pullRequestMonitoring(workspace.id, "owner/repo", 9), {
-    enabled: false,
-    agentId: null,
-    chatId: null,
-    source: "pull-request",
-    explicit: true,
-  });
-});
-
-test("one pull request can monitor inside its current thread", () => {
+test("one pull request is followed inside the thread that chose it", () => {
   const thread = chats.createChat({ cwd: folder, title: "Review this pull request" });
   assert.deepEqual(
-    monitoring.setPullRequestMonitoring(workspace.id, "owner/repo", 17, {
-      enabled: true,
-      agentId: null,
-      chatId: thread.id,
-    }),
-    {
-      enabled: true,
-      agentId: null,
-      chatId: thread.id,
-      source: "pull-request",
-      explicit: true,
-    },
+    monitoring.setPullRequestMonitoring("owner/repo", 17, { enabled: true, chatId: thread.id }),
+    { enabled: true, chatId: thread.id, source: "pull-request", explicit: true },
   );
+  assert.equal(monitoring.hasPullRequestMonitoring(), true);
+  // The key is case-insensitive, so the same pull request is one policy.
+  assert.equal(monitoring.pullRequestMonitoring("OWNER/REPO", 17).chatId, thread.id);
 
   monitoring.clearThreadPullRequestMonitoring(thread.id);
-  assert.deepEqual(monitoring.pullRequestMonitoring(workspace.id, "owner/repo", 17), {
+  assert.deepEqual(monitoring.pullRequestMonitoring("owner/repo", 17), {
     enabled: false,
-    agentId: null,
     chatId: null,
     source: "pull-request",
     explicit: true,
   });
+});
+
+test("monitoring needs a thread that exists, and returning to the default forgets it", () => {
+  assert.throws(() => monitoring.setPullRequestMonitoring("owner/repo", 9, { enabled: true, chatId: null }));
+  assert.throws(() => monitoring.setPullRequestMonitoring("owner/repo", 9, { enabled: true, chatId: "missing" }));
+
+  const thread = chats.createChat({ cwd: folder, title: "Follow this one" });
+  monitoring.setPullRequestMonitoring("owner/repo", 9, { enabled: true, chatId: thread.id });
+  assert.equal(monitoring.resetPullRequestMonitoring("owner/repo", 9).explicit, false);
 });

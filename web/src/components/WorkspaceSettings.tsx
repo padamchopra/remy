@@ -24,7 +24,6 @@ import { WorkspaceIcon } from "@/components/WorkspaceIcon";
 import { WorkspaceEnvironmentSettings } from "@/components/WorkspaceEnvironmentSettings";
 import { WorkspaceWorktrees, WorktreeSelectionToolbar } from "@/components/WorkspaceWorktrees";
 import { useWorkspaceWorktrees } from "@/hooks/use-workspace-worktrees";
-import { ScopedPullRequestMonitoring } from "@/components/PullRequestMonitoring";
 import { apiError } from "@/lib/api-error";
 import { deviceIcon } from "@/lib/devices";
 import { displayPath } from "@/lib/path";
@@ -215,8 +214,6 @@ export function WorkspaceSettings({
           </div>
 
           <ModelField workspace={workspace} />
-
-          <ScopedPullRequestMonitoring serverId={workspace.serverId} workspaceId={workspace.id} />
 
           <TicketSlugField workspace={workspace} />
 

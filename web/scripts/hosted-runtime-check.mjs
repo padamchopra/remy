@@ -25,7 +25,7 @@ try {
       if (returning) await context.addInitScript(() => localStorage.setItem("remy.warm-cache", JSON.stringify({
         version: 1, at: Date.now(),
         servers: [{ id: "local", name: "Build Mac", url: "/api", local: true, online: true }],
-        chats: [], dms: [], workspaces: [], agents: [], projects: [], details: [],
+        chats: [], workspaces: [], projects: [], details: [],
       })));
       const page = await context.newPage();
       page.setDefaultTimeout(8000);
@@ -80,7 +80,7 @@ try {
         }
         const org = path.startsWith("/api/organizations/team") ? team : personal;
         const base = `/api/organizations/${org.id}`;
-        if (holdComposerReads && (path === `${base}/model-access` || path === `${base}/routing/preference` || path === `${base}/github/workspace-branches` || path.startsWith(`${base}/model-defaults`))) await composerReads;
+        if (holdComposerReads && (path === `${base}/model-access` || path === `${base}/computers/preference` || path === `${base}/github/workspace-branches` || path.startsWith(`${base}/model-defaults`))) await composerReads;
         if(path === `${base}/profile-preferences`) {
           if(route.request().method() === "PATCH") permissionMode=route.request().postDataJSON().permissionMode;
           return route.fulfill({json:{permissionMode}});
@@ -131,8 +131,8 @@ try {
           if(route.request().method()==="PATCH") { const {key,enabled}=route.request().postDataJSON(); if(enabled)favorites.add(key);else favorites.delete(key); }
           return route.fulfill({json:{favorites:[...favorites]}});
         }
-        if(path === `${base}/routing/preference`){if(route.request().method()==="POST"){await new Promise(resolve=>setTimeout(resolve,500));if(failPreference)return route.fulfill({status:500,json:{error:"Internal server error"}});preference=route.request().postDataJSON().computerId;}return route.fulfill({json:{computerId:preference}});}
-        if(path === `${base}/routing/resolve` && route.request().method()==="POST") return route.fulfill({json:{computerId:org.personal?undefined:"personal-mac",workspaceId:"repo",reason:"Preview route.",recommendedVisibility:org.personal?"private":"open"}});
+        if(path === `${base}/computers/preference`){if(route.request().method()==="POST"){await new Promise(resolve=>setTimeout(resolve,500));if(failPreference)return route.fulfill({status:500,json:{error:"Internal server error"}});preference=route.request().postDataJSON().computerId;}return route.fulfill({json:{computerId:preference}});}
+        if(path === `${base}/computers/choice` && route.request().method()==="POST") return route.fulfill({json:{computerId:org.personal?undefined:"personal-mac",workspaceId:"repo",reason:"Preview route.",recommendedVisibility:org.personal?"private":"open"}});
         if(path===`${base}/github/workspace-branches`) return route.fulfill({json:{branches:[{name:"main",current:true,checkout:null},{name:"feature/selected",current:false,checkout:null}]}});
         if(path===`${base}/github/workspace-images`) {
           const file=new URL(route.request().url()).searchParams.get("path");
@@ -218,10 +218,8 @@ try {
           [`${base}/notifications`]: { notifications: [], devices: [] },
           [`${base}/environments`]: { environments: [], assignments: [], workspaces: [] },
           [`${base}/board/tickets`]: {items:process.env.QA_SCOPE_ONLY === "1"?[{id:`${org.id}-ticket`,entity:"ticket",fields:{title:org.personal?"Personal ticket":"Studio ticket",status:"todo",number:1,keyPrefix:org.personal?"PER":"STD"},lastActor:{id:"reader",label:"Reader"},activity:[]}]:[]},
-          [`${base}/agents`]: {agents:process.env.QA_SCOPE_ONLY === "1"?[{id:`${org.id}-agent`,entity:"agent",fields:{name:org.personal?"Personal agent":"Studio agent",role:"Builder",scope:"org"},lastActor:{id:"reader",label:"Reader"},activity:[]}]:[]},
           [`${base}/github/pull-requests`]: {pullRequests:[]},
           [`${base}/connections`]: {canManage:true,providers:[],connections:[]},
-          [`${base}/routing`]: {rules:[],canEdit:true,enabledProviders:[]},
           [`${base}/compute-shares`]: {canManage:true,computers:[{id:"personal-mac",name:"Personal Mac",icon:"laptop",platform:"darwin",shared:sharedComputer,available:true,sharedBy:sharedComputer?"Reader":null,canShare:true,canRevoke:true,providers:sharedComputer?[{id:"claude",label:"Claude",allowed:true},{id:"codex",label:"Codex",allowed:true}]:[]}],cloudConnections:[{provider:"fly-sprites",shared:true,available:true,sharedBy:"Reader",canShare:true,canRevoke:true,providers:[{id:"openrouter",label:"OpenRouter",allowed:true}]},{provider:"modal",shared:sharedCloud,available:true,sharedBy:sharedCloud?"Reader":null,canShare:true,canRevoke:true,providers:sharedCloud?[{id:"anthropic",label:"Anthropic",allowed:true},{id:"openrouter",label:"OpenRouter",allowed:true}]:[]}]},
         };
         if (!(path in responses)) unexpected.push(path);
@@ -326,7 +324,7 @@ try {
           await computer.getByText("Cloud · Fly.io Sprites",{exact:true}).waitFor();
           await computer.click();
           assert.equal(await page.getByRole("menuitem",{name:"Choose automatically",exact:true}).count(),0,"The composer always shows a concrete computer");
-          const saved=page.waitForResponse(r=>r.request().method()==="POST" && new URL(r.url()).pathname.endsWith("/routing/preference"));
+          const saved=page.waitForResponse(r=>r.request().method()==="POST" && new URL(r.url()).pathname.endsWith("/computers/preference"));
           await page.getByRole("menuitem",{name:"Cloud · Modal",exact:true}).click();
           await computer.getByText("Cloud · Modal",{exact:true}).waitFor();
           assert.equal(await computer.getAttribute("aria-busy"),null);
@@ -428,17 +426,11 @@ try {
           assert.equal(await page.getByRole("button",{name:"Create ticket",exact:true}).count(),1);
           assert.equal(await page.getByRole("region",{name:"Tasks",exact:true}).count(),1);
           if(artifacts)await page.screenshot({path:`${artifacts}/unified-tasks-${mobile?'phone':'desktop'}.png`});
-          await page.goto(clean("/settings/agents"));
-          await page.getByText("Personal agent",{exact:true}).waitFor();
-          await page.getByText("Studio agent",{exact:true}).waitFor();
-          assert.equal(await page.locator('[data-slot="pane-header"]').count(),1,"Agents uses the shared pane header");
-          assert.equal(await page.getByRole("heading",{name:"Agents",exact:true}).count(),0,"Agents does not repeat the pane title");
-          assert.equal(await page.getByRole("button",{name:"Create agent",exact:true}).count(),1);
-          assert.equal(await page.getByRole("region",{name:"Agents",exact:true}).count(),1);
-          assert.equal(await page.getByRole("button",{name:"Inbox",exact:true}).count(),0,"Inbox is gone from the sidebar");
+          assert.equal(await page.getByRole("button",{name:"Agents",exact:true}).count(),0,"Agents is gone from the sidebar");
+          assert.equal(await page.getByRole("button",{name:"Routing",exact:true}).count(),0,"Routing is gone from the sidebar");
           await page.goto(clean("/inbox"));
-          await page.waitForURL((current)=>/\/settings\/agents$/.test(current.pathname));
-          assert.match(new URL(page.url()).pathname,/\/settings\/agents$/,"Old Inbox links open Settings → Agents");
+          await page.waitForURL((current)=>/\/threads$/.test(current.pathname));
+          assert.match(new URL(page.url()).pathname,/\/threads$/,"A retired Inbox link opens threads");
           await page.goto(clean("/pull-requests"));
           await page.locator('[data-slot="pane-header"]').waitFor();
           assert.equal(await page.locator('[data-slot="pane-header"]').count(),1,"Pull requests uses the shared pane header");
@@ -824,7 +816,7 @@ try {
         await page.locator('[aria-label="Thread computer"]:not([disabled])').waitFor();
         const style=()=>control.evaluate(el=>{const s=getComputedStyle(el);return {tag:el.tagName,font:s.font,gap:s.gap,padding:s.padding,height:el.getBoundingClientRect().height};});
         const before=await style();
-        const saved=page.waitForResponse(r=>r.request().method()==="POST" && new URL(r.url()).pathname.endsWith("/routing/preference"));
+        const saved=page.waitForResponse(r=>r.request().method()==="POST" && new URL(r.url()).pathname.endsWith("/computers/preference"));
         await control.click();await page.getByRole("menuitem",{name:"Cloud · Fly.io Sprites",exact:true}).click();
         await control.getByText("Cloud · Fly.io Sprites",{exact:true}).waitFor();
         assert.equal(await control.getAttribute("aria-busy"),null);
@@ -1081,7 +1073,7 @@ try {
         const computerStyle = () => page.getByLabel("Thread computer",{exact:true}).evaluate(el=>{ const s=getComputedStyle(el);return {tag:el.tagName,font:s.font,fontWeight:s.fontWeight,lineHeight:s.lineHeight,gap:s.gap,padding:s.padding,height:el.getBoundingClientRect().height}; });
         const normalStyle = await computerStyle();
         const computer=page.getByLabel("Thread computer",{exact:true});
-        const saved=page.waitForResponse(r=>r.request().method()==="POST" && new URL(r.url()).pathname.endsWith("/routing/preference"));
+        const saved=page.waitForResponse(r=>r.request().method()==="POST" && new URL(r.url()).pathname.endsWith("/computers/preference"));
         await computer.click();
         await page.getByRole("menuitem",{name:"Cloud · Modal",exact:true}).click();
         await computer.getByText("Cloud · Modal",{exact:true}).waitFor();

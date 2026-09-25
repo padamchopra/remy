@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import { ThreadRuntime } from "~/client-runtime/thread-runtime";
 import { codeFor, type DeviceIconId } from "~/lib/devices";
-import { agentConversation, availableAgentServers } from "~/lib/inbox";
 import type { TintId } from "~/lib/tints";
 import type { Provider } from "~/lib/providers";
 import { applyProjectIdentity } from "~/lib/projects";
@@ -13,7 +12,6 @@ import { clearOptimisticUser, mergeEntryUpdates, registerOptimisticUser, uniqueE
 import { readWarmCache, warmSnapshot, writeWarmCache } from "~/lib/warm-cache";
 import { fixtureChats, fixtureServers, fixtureWorkspaces } from "./fixture";
 import type {
-  Agent,
   ArchivedThread,
   Chat,
   ChatApproval,
@@ -31,7 +29,6 @@ import type {
   PathSuggestion,
   Project,
   ProviderMcpStatus,
-  Routine,
   Server,
   ServerSettings,
   Ticket,
@@ -62,14 +59,12 @@ interface RawChat {
   cwd: string;
   state?: ChatState;
   provider?: string;
-  agentId?: string;
   model?: string;
   effort?: string;
   preview?: string;
   createdAt?: number;
   updatedAt?: number;
   workingSince?: number | null;
-  dm?: boolean;
   unread?: boolean;
   pinned?: boolean;
   parentChatId?: string;
@@ -85,7 +80,6 @@ interface RawArchive {
   summary?: boolean;
   conversation?: {
     title?: string;
-    agentId?: string;
     model?: string;
     effort?: string;
     permissionMode?: string;
@@ -120,9 +114,6 @@ export interface State {
   servers: Server[];
   chats: Chat[];
   archived: ArchivedThread[];
-  /// The inbox: one conversation per agent, across every paired machine. Held
-  /// apart from `chats` because they are two lists a person reads differently.
-  dms: Chat[];
   workspaces: Workspace[];
   /// Every transcript currently mounted in the thread workspace. Keyed by id so
   /// parallel panes can stream independently without painting over each other.
@@ -140,10 +131,8 @@ export interface State {
   /// Which ordinary provider sessions can use Remy's separately scoped MCP.
   mcpProviders?: Record<string, ProviderMcpStatus>;
   repoRun?: UpdateRun;
-  agents: Agent[];
   projects: Project[];
   tickets: Ticket[];
-  routines: Routine[];
   /// Which daemon each board device id belongs to. A ticket names the machine
   /// it runs on by that id rather than by a server row, because a server row is
   /// this client's pairing and means nothing to another client.
@@ -251,15 +240,7 @@ export interface State {
   /// Turns a thread you are already in into a ticket, adopting its worktree and
   /// branch rather than opening new ones.
   ticketFromThread(chatId: string): Promise<Ticket>;
-  saveRoutine(id: string, patch: Record<string, unknown>): Promise<Routine>;
-  deleteRoutine(id: string): Promise<void>;
-  runRoutine(id: string): Promise<Routine>;
-  saveAgent(id: string | undefined, patch: Record<string, unknown>): Promise<Agent>;
-  deleteAgent(id: string): Promise<void>;
-  /// Opens an agent's conversation, making it if this is the first time. The
-  /// first available device that can run it holds the conversation.
-  openDm(agent: Agent): Promise<Chat>;
-  /// Clears an inbox conversation's unread mark.
+  /// Clears a thread's unread mark.
   readChat(id: string): Promise<void>;
   /// Renames a project, or the slug its tickets are keyed by. Changing the slug
   /// re-keys every ticket it has, so the whole board is read back after.
@@ -347,12 +328,9 @@ export const useStore = create<State>((set, get) => ({
   servers: useFixture ? fixtureServers : warm?.servers ?? [],
   chats: useFixture ? fixtureChats : warm?.chats ?? [],
   archived: [],
-  dms: warm?.dms ?? [],
   workspaces: useFixture ? fixtureWorkspaces : warm?.workspaces ?? [],
-  agents: warm?.agents ?? [],
   projects: warm?.projects ?? [],
   tickets: [],
-  routines: [],
   pairRequests: [],
   boardDevices: [],
   boardLoading: false,
@@ -599,7 +577,6 @@ export const useStore = create<State>((set, get) => ({
         servers: mergeDiscoveredServers(current.servers, servers),
         chats: keepKnownServers(current.chats, known),
         archived: keepKnownServers(current.archived, known),
-        dms: keepKnownServers(current.dms, known),
         workspaces: keepKnownServers(current.workspaces, known),
       }));
 
@@ -637,13 +614,6 @@ export const useStore = create<State>((set, get) => ({
                   server.id,
                   (listed.chats ?? []).map((raw) => toChat(raw, server.id)),
                 ).sort(byNewest),
-                // The inbox comes back in the same answer, so it lands with the
-                // threads rather than costing a second round trip.
-                dms: replaceServerChats(
-                  current.dms,
-                  server.id,
-                  (listed.dms ?? []).map((raw) => toChat(raw, server.id)),
-                ),
               }));
             })
             .catch((error) => {
@@ -704,7 +674,6 @@ export const useStore = create<State>((set, get) => ({
       servers: current.servers.filter((server) => server.id !== id),
       chats: current.chats.filter((chat) => chat.serverId !== id),
       archived: current.archived.filter((chat) => chat.serverId !== id),
-      dms: current.dms.filter((chat) => chat.serverId !== id),
       workspaces: current.workspaces.filter((workspace) => workspace.serverId !== id),
     }));
     await get().refresh();
@@ -936,7 +905,7 @@ export const useStore = create<State>((set, get) => ({
 
     if (useFixture) {
       const serverId = input.serverId
-        ?? availableAgentServers(get().servers, get().settings?.devicePreferenceOrder)[0]?.id
+        ?? preferredServer(get().servers, get().settings?.devicePreferenceOrder)?.id
         ?? get().servers[0]?.id
         ?? "studio";
       const chat: Chat = {
@@ -960,7 +929,7 @@ export const useStore = create<State>((set, get) => ({
     }
 
     const server = get().servers.find((entry) => entry.id === input.serverId)
-      ?? availableAgentServers(get().servers, get().settings?.devicePreferenceOrder)[0]
+      ?? preferredServer(get().servers, get().settings?.devicePreferenceOrder)
       ?? localServer(get().servers);
     if (!server) throw new Error("This machine isn't connected.");
     const created = await transport.request<{ chat?: RawChat }>(server.id, "/chats", {
@@ -1129,9 +1098,7 @@ export const useStore = create<State>((set, get) => ({
 
   async openChat(id) {
     if (useSharedThreadRuntime) return sharedThreadRuntime().openChat(id);
-    // Both lists: an inbox conversation opens the same way a thread does.
-    const chat = get().chats.find((entry) => entry.id === id)
-      ?? get().dms.find((entry) => entry.id === id);
+    const chat = get().chats.find((entry) => entry.id === id);
     if (!chat) return;
     const cached = detailCache.get(detailKey(id, chat.serverId));
     if (cached) cacheDetail(cached);
@@ -1254,17 +1221,13 @@ export const useStore = create<State>((set, get) => ({
       ...(codeReferences.length > 0 ? { codeReferences } : {}),
     };
     registerOptimisticUser(detail.id, detail.serverId, optimistic);
-    const previousRow = get().chats.find((chat) => chat.id === id && chat.serverId === detail.serverId)
-      ?? get().dms.find((chat) => chat.id === id && chat.serverId === detail.serverId);
+    const previousRow = get().chats.find((chat) => chat.id === id && chat.serverId === detail.serverId);
     set((current) => ({
       details: {
         ...current.details,
         [id]: { ...current.details[id]!, entries: [...current.details[id]!.entries, optimistic] },
       },
       chats: current.chats.map((chat) => chat.id === id && chat.serverId === detail.serverId
-        ? { ...chat, preview: shownText, state: "working", updatedAt: optimisticAt }
-        : chat),
-      dms: current.dms.map((chat) => chat.id === id && chat.serverId === detail.serverId
         ? { ...chat, preview: shownText, state: "working", updatedAt: optimisticAt }
         : chat),
     }));
@@ -1293,11 +1256,9 @@ export const useStore = create<State>((set, get) => ({
               },
             }
           : current.details,
-        ...(previousRow?.dm
-          ? { dms: current.dms.map((chat) => chat.id === id && chat.serverId === detail.serverId ? previousRow : chat) }
-          : previousRow
-            ? { chats: current.chats.map((chat) => chat.id === id && chat.serverId === detail.serverId ? previousRow : chat) }
-            : {}),
+        ...(previousRow
+          ? { chats: current.chats.map((chat) => chat.id === id && chat.serverId === detail.serverId ? previousRow : chat) }
+          : {}),
       }));
       throw error;
     }
@@ -1467,7 +1428,7 @@ export const useStore = create<State>((set, get) => ({
     const servers = await transport.servers();
     // The board is read from the machines this window holds a daemon of, and a
     // paired one is not among them: daemons converge the board log between
-    // themselves, so a peer's tickets, agents and routines are already
+    // themselves, so a peer's tickets and projects are already
     // in the answer here. Asking that machine for them again waits on a device
     // that may be asleep for something this one already knows — and its answer
     // carries `workspaceIds` for folders on *its* disk, which are not ours.
@@ -1476,7 +1437,7 @@ export const useStore = create<State>((set, get) => ({
     // replicate nowhere, so `refresh` does go and ask each one.
     const asked = servers.filter((server) => !server.peer && !server.cloud);
     if (asked.length === 0) {
-      set({ agents: [], projects: [], tickets: [], routines: [], boardDevices: [], boardLoading: false });
+      set({ projects: [], tickets: [], boardDevices: [], boardLoading: false });
       return;
     }
     if (options?.fresh) {
@@ -1491,16 +1452,13 @@ export const useStore = create<State>((set, get) => ({
             server.id,
             () => transport.request<{
               deviceId?: string;
-              agents?: RawAgent[];
               projects?: RawProject[];
               tickets?: RawTicket[];
-              routines?: RawRoutine[];
             }>(server.id, "/board"),
           );
           return {
             serverId: server.id,
             devices: board.deviceId ? [{ deviceId: board.deviceId, serverId: server.id }] : [],
-            agents: (board.agents ?? []).map((raw) => ({ ...raw, serverId: server.id }) as Agent),
             projects: (board.projects ?? []).map((raw) => ({
               ...raw,
               serverId: server.id,
@@ -1511,7 +1469,6 @@ export const useStore = create<State>((set, get) => ({
               serverId: server.id,
               threads: raw.threads ?? [],
             }) as Ticket),
-            routines: (board.routines ?? []).map((raw) => ({ ...raw, serverId: server.id }) as Routine),
           };
         } catch {
           // A failed device contributes no replacement rows. Its useful board
@@ -1532,10 +1489,6 @@ export const useStore = create<State>((set, get) => ({
     set((current) => {
       const answered = results.filter((result): result is NonNullable<typeof result> => result !== undefined);
       const answeredServerIds = new Set(answered.map((result) => result.serverId));
-      const agents = dedupe([
-        ...current.agents.filter((row) => !answeredServerIds.has(row.serverId)),
-        ...answered.flatMap((result) => result.agents),
-      ]);
       const projects = dedupe([
         ...current.projects.filter((row) => !answeredServerIds.has(row.serverId)),
         ...answered.flatMap((result) => result.projects),
@@ -1544,16 +1497,10 @@ export const useStore = create<State>((set, get) => ({
         ...current.tickets.filter((row) => !answeredServerIds.has(row.serverId)),
         ...answered.flatMap((result) => result.tickets),
       ]);
-      const routines = dedupe([
-        ...current.routines.filter((row) => !answeredServerIds.has(row.serverId)),
-        ...answered.flatMap((result) => result.routines),
-      ]);
       return {
-        agents,
         projects,
         workspaces: applyProjectIdentity(current.workspaces, projects),
         tickets: tickets.sort(byRank),
-        routines: routines.sort((a, b) => a.nextRunAt - b.nextRunAt),
         boardDevices: [
           ...current.boardDevices.filter((entry) =>
             !answeredServerIds.has(entry.serverId)
@@ -1698,7 +1645,6 @@ export const useStore = create<State>((set, get) => ({
           chatId,
           deviceId: threadDevice,
           state: chat.state,
-          ...(chat.agentId ? { agentId: chat.agentId } : {}),
         },
       },
     );
@@ -1732,98 +1678,13 @@ export const useStore = create<State>((set, get) => ({
     return ticket;
   },
 
-  async saveRoutine(id, patch) {
-    const existing = get().routines.find((entry) => entry.id === id);
-    if (!existing) throw new Error("That routine is gone.");
-    const body = await transport.request<{ routine: RawRoutine }>(
-      existing.serverId,
-      `/routines/${encodeURIComponent(id)}`,
-      { method: "PATCH", body: patch },
-    );
-    const routine = { ...body.routine, serverId: existing.serverId } as Routine;
-    set((current) => ({ routines: withRoutine(current.routines, routine) }));
-    void get().loadBoard({ fresh: true }).catch(() => {});
-    return routine;
-  },
-
-  async deleteRoutine(id) {
-    const routine = get().routines.find((entry) => entry.id === id);
-    if (!routine) return;
-    await transport.request(routine.serverId, `/routines/${encodeURIComponent(id)}`, { method: "DELETE" });
-    set((current) => ({ routines: current.routines.filter((entry) => entry.id !== id) }));
-    void get().loadBoard({ fresh: true }).catch(() => {});
-  },
-
-  async runRoutine(id) {
-    const routine = get().routines.find((entry) => entry.id === id);
-    if (!routine) throw new Error("That routine is gone.");
-    const body = await transport.request<{ routine: RawRoutine }>(
-      routine.serverId,
-      `/routines/${encodeURIComponent(id)}/run`,
-      { method: "POST", body: {} },
-    );
-    const updated = { ...body.routine, serverId: routine.serverId } as Routine;
-    set((current) => ({ routines: withRoutine(current.routines, updated) }));
-    void get().loadBoard({ fresh: true }).catch(() => {});
-    return updated;
-  },
-
-  async saveAgent(id, patch) {
-    const existing = id ? get().agents.find((agent) => agent.id === id) : undefined;
-    const server = existing?.serverId ?? localServer(get().servers)?.id;
-    if (!server) throw new Error("This machine isn't connected.");
-    const body = await transport.request<{ agent: RawAgent }>(
-      server,
-      id ? `/agents/${encodeURIComponent(id)}` : "/agents",
-      { method: id ? "PATCH" : "POST", body: patch },
-    );
-    const agent = { ...body.agent, serverId: server } as Agent;
-    set((current) => ({ agents: withRow(current.agents, agent) }));
-    void get().loadBoard({ fresh: true }).catch(() => {});
-    return agent;
-  },
-
-  async deleteAgent(id) {
-    const agent = get().agents.find((entry) => entry.id === id);
-    if (!agent) return;
-    await transport.request(agent.serverId, `/agents/${encodeURIComponent(id)}`, { method: "DELETE" });
-    set((current) => ({ agents: current.agents.filter((entry) => entry.id !== id) }));
-    void get().loadBoard({ fresh: true }).catch(() => {});
-  },
-
-  async openDm(agent) {
-    const preferenceOrder = get().settings?.devicePreferenceOrder ?? [];
-    const servers = availableAgentServers(get().servers, preferenceOrder);
-    const available = new Set(servers.map((server) => server.id));
-    const existing = agentConversation(agent.id, get().dms, get().servers, preferenceOrder);
-    if (existing && available.has(existing.serverId)) return existing;
-
-    let failure: unknown;
-    for (const server of servers) {
-      try {
-        const body = await transport.request<{ chat: RawChat }>(
-          server.id,
-          `/agents/${encodeURIComponent(agent.id)}/dm`,
-          { method: "POST" },
-        );
-        const chat = toChat(body.chat, server.id);
-        set((current) => ({ dms: [chat, ...current.dms.filter((entry) => entry.id !== chat.id)] }));
-        return chat;
-      } catch (error) {
-        failure = error;
-      }
-    }
-    if (failure) throw failure;
-    throw new Error("No device is available.");
-  },
-
   async readChat(id) {
-    const chat = get().dms.find((entry) => entry.id === id);
+    const chat = get().chats.find((entry) => entry.id === id);
     if (!chat?.unread) return;
     // Cleared here first: the row should stop being bold the moment you open
     // it, not when the machine gets back to us.
     set((current) => ({
-      dms: current.dms.map((entry) => (entry.id === id ? { ...entry, unread: false } : entry)),
+      chats: current.chats.map((entry) => (entry.id === id ? { ...entry, unread: false } : entry)),
     }));
     await transport.request(chat.serverId, `/chats/${encodeURIComponent(id)}/read`, { method: "POST" })
       .catch(() => {
@@ -1934,7 +1795,6 @@ function optimisticChatOptions(current: State, id: string, patch: ChatOptionPatc
       ? { ...current.details, [id]: apply(current.details[id]) }
       : current.details,
     chats: current.chats.map((chat) => chat.id === id ? applyRow(chat) : chat),
-    dms: current.dms.map((chat) => chat.id === id ? applyRow(chat) : chat),
   };
 }
 
@@ -1957,7 +1817,6 @@ function settledChatRowsForWarm(current: State): State {
   return {
     ...current,
     chats: current.chats.map(settle),
-    dms: current.dms.map(settle),
   };
 }
 
@@ -2059,7 +1918,6 @@ function toDetail(raw: RawChatDetail, serverId: string): ChatDetail {
     cwd: raw.cwd,
     parentChatId: raw.parentChatId,
     provider: raw.provider,
-    agentId: raw.agentId,
     model: raw.model,
     effort: raw.effort,
     permissionMode: raw.permissionMode,
@@ -2128,7 +1986,6 @@ function applyChatListFrame(current: State, frame: ChatFrame, serverId: string):
     const removed = new Set(frame.chatIds);
     return {
       chats: current.chats.filter((chat) => chat.serverId !== serverId || !removed.has(chat.id)),
-      dms: current.dms.filter((chat) => chat.serverId !== serverId || !removed.has(chat.id)),
     };
   }
   if (frame.operation !== "upsert" || !frame.chat) return current;
@@ -2141,31 +1998,20 @@ function applyChatListFrame(current: State, frame: ChatFrame, serverId: string):
     next[existing] = chat;
     return next;
   };
-  return chat.dm
-    ? {
-        chats: current.chats.filter((entry) => entry.serverId !== serverId || entry.id !== chat.id),
-        dms: upsert(current.dms),
-      }
-    : {
-        chats: upsert(current.chats).sort(byNewest),
-        dms: current.dms.filter((entry) => entry.serverId !== serverId || entry.id !== chat.id),
-      };
+  return { chats: upsert(current.chats).sort(byNewest) };
 }
 
 function applyChatFrame(current: State, frame: ChatFrame, serverId: string): Partial<State> {
   // The row in the list is patched in place rather than re-sorted: a chat that
   // is streaming would otherwise walk up and down the sidebar on every frame.
-  // A frame does not say which list its conversation is in, so both are asked.
   const chats = patchChatList(current.chats, frame, serverId);
-  const dms = patchChatList(current.dms, frame, serverId);
   const detail = current.details[frame.chatId ?? ""];
   const details = detail && detail.serverId === serverId
     ? { ...current.details, [detail.id]: mergeDetail(detail, frame) }
     : current.details;
-  if (chats === current.chats && dms === current.dms && details === current.details) return current;
+  if (chats === current.chats && details === current.details) return current;
   return {
     ...(chats === current.chats ? {} : { chats }),
-    ...(dms === current.dms ? {} : { dms }),
     ...(details === current.details ? {} : { details }),
   };
 }
@@ -2216,14 +2062,12 @@ function toChat(raw: RawChat, serverId: string): Chat {
     cwd: raw.cwd,
     state: raw.state ?? "idle",
     provider: raw.provider,
-    agentId: raw.agentId,
     model: raw.model,
     effort: raw.effort,
     preview: raw.preview,
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt ?? 0,
     workingSince: raw.workingSince ?? undefined,
-    ...(raw.dm ? { dm: true } : {}),
     ...(raw.unread ? { unread: true } : {}),
     ...(raw.pinned ? { pinned: true } : {}),
     ...(raw.parentChatId ? { parentChatId: raw.parentChatId } : {}),
@@ -2295,7 +2139,6 @@ function toArchivedThread(raw: RawArchive, serverId: string): ArchivedThread {
     title: raw.conversation?.title?.trim() || raw.session,
     cwd: raw.cwd ?? "~",
     provider: raw.agent,
-    agentId: raw.conversation?.agentId,
     model: raw.conversation?.model,
     effort: raw.conversation?.effort,
     permissionMode: raw.conversation?.permissionMode,
@@ -2342,6 +2185,18 @@ function localServer(servers: Server[]): Server | undefined {
 /// Which machine owns a project's tickets. A project belongs to whichever
 /// server answered with it, so a write goes back to that one rather than to
 /// whichever machine happens to be local.
+/// The device a thread with no workspace starts on: the first available one in
+/// the person's own order.
+function preferredServer(servers: Server[], preferenceOrder: string[] = []): Server | undefined {
+  const available = servers.filter((server) => server.online && !server.cloud);
+  const ranked = [...available].sort((a, b) => {
+    const left = preferenceOrder.indexOf(a.id);
+    const right = preferenceOrder.indexOf(b.id);
+    return (left < 0 ? preferenceOrder.length : left) - (right < 0 ? preferenceOrder.length : right);
+  });
+  return ranked[0];
+}
+
 function boardServer(servers: Server[], projects: Project[], projectId: string): string {
   const project = projects.find((entry) => entry.id === projectId);
   const server = project?.serverId ?? localServer(servers)?.id;
@@ -2349,10 +2204,8 @@ function boardServer(servers: Server[], projects: Project[], projectId: string):
   return server;
 }
 
-type RawAgent = Omit<Agent, "serverId">;
 type RawProject = Omit<Project, "serverId" | "workspaceIds"> & { workspaceIds?: string[] };
 type RawTicket = Omit<Ticket, "serverId" | "threads"> & { threads?: Ticket["threads"] };
-type RawRoutine = Omit<Routine, "serverId">;
 
 function toTicket(raw: RawTicket, serverId: string): Ticket {
   return { ...raw, serverId, threads: raw.threads ?? [] } as Ticket;
@@ -2371,10 +2224,6 @@ function withRow<T extends { id: string }>(rows: T[], row: T): T[] {
 
 function withTicket(rows: Ticket[], row: Ticket): Ticket[] {
   return withRow(rows, row).sort(byRank);
-}
-
-function withRoutine(rows: Routine[], row: Routine): Routine[] {
-  return withRow(rows, row).sort((a, b) => a.nextRunAt - b.nextRunAt);
 }
 
 function nameFromPath(path: string): string {

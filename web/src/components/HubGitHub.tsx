@@ -24,12 +24,6 @@ type GitHubState = {
     full_name: string;
     repository_id: number;
   }[];
-  monitoring: {
-    workspace_id: string;
-    pull_number: number;
-    enabled: number;
-    agent_id: string | null;
-  }[];
   activity: {
     id: string;
     workspace_id: string;
@@ -52,9 +46,6 @@ export function HubGitHub({
     stale,
     error: readError,
   } = useHubResource<GitHubState>(organizationId, "/github");
-  const { value: agents } = useHubResource<{
-    agents: { id: string; fields: { name?: string; scope?: string } }[];
-  }>(organizationId, "/agents", "/board/live");
   const [busy, setBusy] = useState(false),
     [installations, setInstallations] = useState<
       { id: number; account: { login: string } }[]
@@ -63,8 +54,6 @@ export function HubGitHub({
     [repos, setRepos] = useState<{ id: number; full_name: string }[]>([]),
     [selected, setSelected] = useState<number[]>([]),
     [workspace, setWorkspace] = useState(""),
-    [agent, setAgent] = useState(""),
-    [pull, setPull] = useState("0"),
     [action, setAction] = useState("comment"),
     [number, setNumber] = useState(""),
     [title, setTitle] = useState(""),
@@ -202,109 +191,11 @@ export function HubGitHub({
             {pick(
               "Workspace",
               workspace,
-              (v) => {
-                setWorkspace(v);
-                const policy = value.monitoring.find(
-                  (p) => p.workspace_id === v && p.pull_number === 0,
-                );
-                setAgent(policy?.agent_id ?? "");
-                setPull("0");
-              },
+              setWorkspace,
               value.repositories.map((r) => ({
                 value: r.workspace_id,
                 label: r.full_name,
               })),
-            )}
-            {workspace && canManage && (
-              <>
-                <h3 className="font-medium">Pull request monitoring</h3>
-                <p className="text-sm text-muted-foreground">
-                  Choose an agent before enabling mentions, and use zero for
-                  every pull request in this workspace.
-                </p>
-                <Input
-                  aria-label="Monitor pull request number"
-                  type="number"
-                  min="0"
-                  value={pull}
-                  onChange={(e) => setPull(e.target.value)}
-                  disabled={disabled}
-                />
-                {pick(
-                  "Agent",
-                  agent,
-                  setAgent,
-                  (agents?.agents ?? [])
-                    .filter((a) => a.fields.scope !== "personal")
-                    .map((a) => ({
-                      value: a.id,
-                      label: a.fields.name ?? "Agent",
-                    })),
-                )}
-                {Number(pull) > 0 && (
-                  <Button
-                    variant="outline"
-                    disabled={disabled}
-                    onClick={() =>
-                      void run(async () => {
-                        await hubRequest(`${root}/monitoring`, "POST", {
-                          workspaceId: workspace,
-                          pullNumber: Number(pull),
-                          inherit: true,
-                        });
-                        toast.success(
-                          "This pull request uses your workspace default.",
-                        );
-                      })
-                    }
-                  >
-                    Use workspace default
-                  </Button>
-                )}
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    disabled={disabled || !agent}
-                    onClick={() =>
-                      void run(async () => {
-                        await hubRequest(`${root}/monitoring`, "POST", {
-                          workspaceId: workspace,
-                          pullNumber: Number(pull),
-                          enabled: true,
-                          agentId: agent,
-                        });
-                        toast.success("Pull request monitoring is on.");
-                      })
-                    }
-                  >
-                    Enable monitoring
-                  </Button>
-                  <Button
-                    variant="outline"
-                    disabled={disabled}
-                    onClick={() =>
-                      void run(async () => {
-                        await hubRequest(`${root}/monitoring`, "POST", {
-                          workspaceId: workspace,
-                          pullNumber: Number(pull),
-                          enabled: false,
-                        });
-                        toast.success("Pull request monitoring is off.");
-                      })
-                    }
-                  >
-                    Turn off monitoring
-                  </Button>
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  {value.monitoring
-                    .filter((p) => p.workspace_id === workspace)
-                    .map(
-                      (p) =>
-                        `${p.pull_number ? `#${p.pull_number}` : "Workspace"}: ${p.enabled ? "On" : "Off"}`,
-                    )
-                    .join(" · ") || "Monitoring is off."}
-                </p>
-              </>
             )}
             {workspace && (
               <>
@@ -397,13 +288,13 @@ export function HubGitHub({
                   )}
                   <p className="text-sm text-muted-foreground">
                     {a.phase === "unmapped"
-                      ? "Connect the commenter’s GitHub account to start work."
+                      ? "Connect the commenter’s GitHub account to follow this."
                       : a.phase === "unavailable"
-                        ? "This request could not start; check the agent and computer."
+                        ? "This request could not start; check the computer."
                         : a.phase === "replied"
-                          ? "Your agent replied on GitHub."
+                          ? "Remy replied on GitHub."
                           : a.phase === "running"
-                            ? "Your agent is working."
+                            ? "A thread is working on this."
                             : "Update received."}
                   </p>
                 </div>

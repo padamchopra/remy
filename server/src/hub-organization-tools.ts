@@ -1,6 +1,6 @@
 import { getKv } from "./db.js";
 import { connectionAuthorization } from "./hub-computer.js";
-export async function hubAgentTool(
+export async function hubOrganizationTool(
   chatId: string,
   action: string,
   input: unknown = {},
@@ -15,7 +15,7 @@ export async function hubAgentTool(
     throw Error("This thread is not connected to your organization.");
   const response = await fetch(
     new URL(
-      `/api/organizations/${encodeURIComponent(registration.organizationId)}/computers/agent-tools/${encodeURIComponent(chatId)}`,
+      `/api/organizations/${encodeURIComponent(registration.organizationId)}/computers/organization-tools/${encodeURIComponent(chatId)}`,
       registration.hubUrl,
     ),
     {
@@ -34,6 +34,6 @@ export async function hubAgentTool(
     },
   );
   if (!response.ok)
-    throw Error("This agent could not complete the organization action.");
+    throw Error("This thread could not complete the organization action.");
   return response.json();
 }

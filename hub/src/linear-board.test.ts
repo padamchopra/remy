@@ -156,21 +156,8 @@ async function fixture() {
   };
   const storage = new MemoryBoard(),
     board = new OrganizationBoard(storage, { now: () => now }),
-    starts: { user: string; workspace: string; agent: string }[] = [],
-    service = new LinearBoard(
-      "studio",
-      linear,
-      board,
-      storage,
-      async (user, workspace, agent) => {
-        starts.push({ user, workspace, agent });
-        return { threadId: "thread-1", computerId: "mac" };
-      },
-      "https://remy.test",
-    );
-  await service.configure("ada", workspace.id, true, {
-    "linear-agent": "builder",
-  });
+    service = new LinearBoard("studio", linear, board, storage, "https://remy.test");
+  await service.configure("ada", workspace.id, true);
   await service.tick();
   return {
     service,
@@ -181,7 +168,6 @@ async function fixture() {
     comments,
     calls,
     workspace,
-    starts,
     initial,
     now: (value: number) => {
       now = value;
@@ -289,7 +275,7 @@ test("fifty rapid edits and comments replay without duplicate Linear comments", 
 test("turning sync off preserves both sides and starts no new mirror writes", async () => {
   const f = await fixture(),
     ticket = (await f.board.list("tickets")).items[0];
-  await f.service.configure("ada", f.workspace.id, false, {});
+  await f.service.configure("ada", f.workspace.id, false);
   const before = f.calls.length;
   await f.board.append(
     {
@@ -308,37 +294,22 @@ test("turning sync off preserves both sides and starts no new mirror writes", as
     "Only Remy",
   );
 });
-test("assigned agents use the mapped actor and uncertain replies reconcile by stable comment id", async () => {
+test("an uncertain reply reconciles by its stable comment id", async () => {
   const f = await fixture(),
-    issue = {
-      ...f.initial,
-      assignee: { id: "linear-agent", name: "Remy" },
-      updatedAt: new Date(8000).toISOString(),
-    };
-  f.issues.set("initial", issue);
-  const payload = {
-    type: "Issue",
-    action: "update",
-    actor: { id: "linear-ada" },
-    data: issue,
-    updatedFrom: { assigneeId: null },
-  };
-  await f.service.receive(payload, "assign");
-  await f.service.receive(payload, "assign");
-  assert.equal(f.starts.length, 1);
-  assert.equal(f.starts[0].user, "ada");
+    ticket = (await f.board.list("tickets")).items[0];
+  await f.service.attachRun(ticket.id, "mac", "thread-1", "ada");
   f.lose();
   await assert.rejects(f.service.reply("mac", "thread-1", "Completed"));
   await f.service.reply("mac", "thread-1", "Completed");
   await f.service.reply("mac", "thread-1", "Completed");
-  assert.equal(f.comments.size, 2);
+  assert.equal(f.comments.size, 1);
   assert.ok(
     [...f.comments.values()].every((c) =>
       c.body.includes("https://remy.test/threads/"),
     ),
   );
 });
-test("sub-tickets create sub-issues and unknown actors cannot launch an agent", async () => {
+test("sub-tickets create sub-issues", async () => {
   const f = await fixture(),
     parent = (await f.board.list("tickets")).items[0];
   await f.board.append(
@@ -376,7 +347,6 @@ test("sub-tickets create sub-issues and unknown actors cannot launch an agent", 
     },
     "outside",
   );
-  assert.equal(f.starts.length, 0);
   assert.equal(
     (await f.service.resolve("ada", f.workspace.id, "ENG-7")).issue.id,
     "initial",

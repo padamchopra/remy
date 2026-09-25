@@ -16,7 +16,7 @@
 /// - Nothing here suppresses a request. Hydration seeds the first paint; the
 ///   refresh underneath it overwrites whatever it finds.
 
-import type { Agent, Chat, ChatDetail, Project, Server, Workspace } from "../state/types";
+import type { Chat, ChatDetail, Project, Server, Workspace } from "../state/types";
 
 /// Bump this whenever a persisted shape changes. A snapshot written by another
 /// version is discarded rather than migrated: it is a head start, and the read
@@ -30,9 +30,7 @@ export const WARM_CACHE_KEY = "remy.warm-cache";
 export const WARM_CACHE_BOUNDS = {
   servers: 12,
   chats: 60,
-  dms: 30,
   workspaces: 60,
-  agents: 40,
   projects: 40,
   details: 4,
   entriesPerDetail: 24,
@@ -43,18 +41,14 @@ export const WARM_CACHE_BOUNDS = {
 /// The lists a person sees before they touch anything, plus the transcripts
 /// they were last reading.
 ///
-/// The roster is here because Agents is in Settings and `/settings/agents?agent=` cannot
-/// find its conversation without it. Tickets and routines are not: they belong
-/// to a pane of their own, and a board is the one list here with no natural
-/// size. Archived threads are absent for the same reason — they carry whole
-/// conversations and nothing opens on them.
+/// Tickets are not here: they belong to a pane of their own, and a board is the
+/// one list with no natural size. Archived threads are absent for the same
+/// reason — they carry whole conversations and nothing opens on them.
 export interface WarmSnapshot {
   version: number;
   servers: Server[];
   chats: Chat[];
-  dms: Chat[];
   workspaces: Workspace[];
-  agents: Agent[];
   projects: Project[];
   details: ChatDetail[];
 }
@@ -143,9 +137,7 @@ export function warmSnapshot(
   state: {
     servers: readonly Server[];
     chats: readonly Chat[];
-    dms: readonly Chat[];
     workspaces: readonly Workspace[];
-    agents: readonly Agent[];
     projects: readonly Project[];
   },
   details: readonly ChatDetail[],
@@ -154,9 +146,7 @@ export function warmSnapshot(
     version: WARM_CACHE_VERSION,
     servers: state.servers.slice(0, WARM_CACHE_BOUNDS.servers).map(settledServer),
     chats: keptRows(state.chats, WARM_CACHE_BOUNDS.chats).map(settledChat),
-    dms: keptRows(state.dms, WARM_CACHE_BOUNDS.dms).map(settledChat),
     workspaces: state.workspaces.slice(0, WARM_CACHE_BOUNDS.workspaces),
-    agents: state.agents.slice(0, WARM_CACHE_BOUNDS.agents),
     projects: state.projects.slice(0, WARM_CACHE_BOUNDS.projects),
     details: details
       .flatMap((detail) => {
@@ -259,9 +249,7 @@ export function readWarmCache(
       servers: rows<Server>(stored.servers, WARM_CACHE_BOUNDS.servers, (server) => typeof server.url === "string")
         .map(settledServer),
       chats: rows<Chat>(stored.chats, WARM_CACHE_BOUNDS.chats, isChat).map(settledChat),
-      dms: rows<Chat>(stored.dms, WARM_CACHE_BOUNDS.dms, isChat).map(settledChat),
       workspaces: rows<Workspace>(stored.workspaces, WARM_CACHE_BOUNDS.workspaces, (w) => typeof w.path === "string"),
-      agents: rows<Agent>(stored.agents, WARM_CACHE_BOUNDS.agents, (agent) => typeof agent.handle === "string"),
       projects: rows<Project>(stored.projects, WARM_CACHE_BOUNDS.projects, (p) => typeof p.keyPrefix === "string"),
       details: rows<ChatDetail>(stored.details, WARM_CACHE_BOUNDS.details, (d) => Array.isArray(d.entries))
         .flatMap((detail) => {

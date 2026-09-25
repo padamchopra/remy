@@ -4,7 +4,6 @@ import type {
   ComputerSummary,
   HubThread,
   Organization,
-  RoutingRule,
 } from "@remy/contract";
 import type { Route } from "@/lib/route";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
@@ -34,13 +33,10 @@ import {
   SelectValue,
 } from "./ui/select";
 import {
-  Building2,
   Circle,
   Laptop,
   Lock,
   Plug,
-  Route as RouteIcon,
-  UserRound,
   Users,
 } from "lucide-react";
 import { HubAccountPickerDialog } from "./HubAccountPickerDialog";
@@ -50,18 +46,12 @@ import type { HubThreadWorkspaceOption } from "./HubThreadComposer";
 
 const Threads = lazy(() => import("./HubThreads"));
 const Board = lazy(() => import("./HubBoard"));
-const Inbox = lazy(() =>
-  import("./HubInbox").then((module) => ({ default: module.HubInbox })),
-);
 const Computers = lazy(() =>
   import("./HubComputers").then((module) => ({ default: module.HubComputers })),
 );
 const General = lazy(() => import("./HubGeneralSettings"));
 const Connections = lazy(() =>
   import("./HubConnections").then((module) => ({ default: module.HubConnections })),
-);
-const Routing = lazy(() =>
-  import("./HubRouting").then((module) => ({ default: module.HubRouting })),
 );
 const Environments = lazy(() =>
   import("./EnvironmentsSettings").then((module) => ({
@@ -132,15 +122,6 @@ function useOwnedResources<T>(
         stale: false,
         error: "",
       },
-  );
-}
-
-function OwnerMark({ organization }: { organization: Organization }) {
-  const Icon = organization.personal ? UserRound : Building2;
-  return (
-    <Icon
-      aria-label={organization.personal ? "Personal" : organization.name}
-    />
   );
 }
 
@@ -396,103 +377,6 @@ function AllTasks({
   );
 }
 
-function AllInbox({
-  organizations,
-  navigate,
-}: {
-  organizations: Organization[];
-  navigate: (route: Route) => void;
-}) {
-  const resources = useOwnedResources<{ agents: BoardProjection[] }>(
-    organizations,
-    "/agents",
-    "/board/live",
-  );
-  const agents = useMemo(
-    () =>
-      resources.flatMap((resource) =>
-        (resource.value?.agents ?? []).map((agent) => ({
-          organization: resource.organization,
-          agent,
-        })),
-      ),
-    [resources],
-  );
-  const loaded = resources.every((resource) => resource.value || resource.error);
-  const error = resources.find((resource) => resource.error)?.error;
-  return (
-    <section
-      className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-6"
-      aria-label="Agents"
-    >
-      <div className="flex items-center justify-end">
-        <AccountAction
-          organizations={organizations}
-          label="Create agent"
-          title="Create agent"
-          description="Choose who owns this agent."
-          action="Choose account"
-          onSelect={(organizationId) =>
-            navigate({
-              name: "settings",
-              tab: "agents",
-              organizationId: "all",
-              ownerOrganizationId: organizationId,
-            })
-          }
-        />
-      </div>
-      {error && <p role="alert">{error}</p>}
-      {!loaded ? (
-        <Spinner aria-label="Loading agents" />
-      ) : agents.length ? (
-        <ItemGroup>
-          {agents.map(({ organization, agent }) => (
-            <Item key={`${organization.id}:${agent.id}`} variant="outline" asChild>
-              <Button
-                variant="ghost"
-                className="h-auto w-full justify-start whitespace-normal text-left"
-                data-link
-                onClick={() =>
-                  navigate({
-                    name: "settings",
-                    tab: "agents",
-                    agent: agent.id,
-                    organizationId: "all",
-                    ownerOrganizationId: organization.id,
-                  })
-                }
-              >
-                <ItemMedia>
-                  <OwnerMark organization={organization} />
-                </ItemMedia>
-                <ItemContent className="min-w-0">
-                  <ItemTitle>{String(agent.fields.name)}</ItemTitle>
-                  <ItemDescription>
-                    <OwnerDescription
-                      organization={organization}
-                      detail={String(
-                        agent.fields.role ??
-                          agent.fields.description ??
-                          "Coding agent",
-                      )}
-                    />
-                  </ItemDescription>
-                </ItemContent>
-              </Button>
-            </Item>
-          ))}
-        </ItemGroup>
-      ) : (
-        <EmptyState
-          title="No agents yet"
-          description="Write one to hand work to, then talk to it here."
-        />
-      )}
-    </section>
-  );
-}
-
 type EnvironmentState = {
   environments: {
     id: string;
@@ -505,7 +389,6 @@ type SummaryResource = {
   computers?: ComputerSummary[];
   environments?: EnvironmentState["environments"];
   connections?: ConnectionsState["connections"];
-  rules?: RoutingRule[];
 };
 
 function SettingsSummary({
@@ -514,7 +397,7 @@ function SettingsSummary({
   navigate,
 }: {
   organizations: Organization[];
-  kind: "devices" | "environments" | "connections" | "routing";
+  kind: "devices" | "environments" | "connections";
   navigate: (route: Route) => void;
 }) {
   const path = kind === "devices" ? "/computers" : `/${kind}`;
@@ -547,13 +430,7 @@ function SettingsSummary({
         organization: resource.organization,
         icon: Plug,
       }));
-    return (resource.value?.rules ?? []).map((item) => ({
-      id: item.id,
-      title: item.name,
-      detail: "Routing rule",
-      organization: resource.organization,
-      icon: RouteIcon,
-    }));
+    return [];
   });
   const loaded = resources.every((resource) => resource.value || resource.error);
   const error = resources.find((resource) => resource.error)?.error;
@@ -573,11 +450,6 @@ function SettingsSummary({
       "Connection settings",
       "Choose the account that owns this connection.",
     ],
-    routing: [
-      "Add rule",
-      "Routing settings",
-      "Choose the account that owns this routing rule.",
-    ],
   } as const;
   const [label, title, description] = labels[kind];
   const empty = {
@@ -592,10 +464,6 @@ function SettingsSummary({
     connections: [
       "No connections yet",
       "Connect an account when you want Remy to use another tool.",
-    ],
-    routing: [
-      "No routing rules yet",
-      "Add a rule when work needs a specific computer.",
     ],
   } as const;
   return (
@@ -673,14 +541,12 @@ function SettingsSummary({
 export default function HubAllView({
   organizations,
   route,
-  userId,
   navigate,
   threads = [],
   threadsLoaded = true,
 }: {
   organizations: Organization[];
   route: Route;
-  userId: string;
   navigate: (route: Route) => void;
   threads?: HubThread[];
   threadsLoaded?: boolean;
@@ -770,21 +636,6 @@ export default function HubAllView({
                   navigate={scoped}
                 />
               )}
-              {section === "agents" && (
-                <Inbox
-                  organizationId={selectedOwner.id}
-                  userId={userId}
-                  agentId={route.name === "settings" && route.tab === "agents" ? route.agent : undefined}
-                  choose={(agent) =>
-                    scoped({
-                      name: "settings",
-                      tab: "agents",
-                      organizationId: selectedOwner.id,
-                      agent,
-                    })
-                  }
-                />
-              )}
               {section === "devices" && (
                 <div className="p-6">
                   <Computers organizationId={selectedOwner.id} />
@@ -797,9 +648,6 @@ export default function HubAllView({
               )}
               {section === "connections" && (
                 <Connections organizationId={selectedOwner.id} />
-              )}
-              {section === "routing" && (
-                <Routing organizationId={selectedOwner.id} />
               )}
               {section === "workspaces" &&
                 route.name === "workspaces" &&
@@ -827,8 +675,6 @@ export default function HubAllView({
     );
   if (route.name === "board")
     return <AllTasks organizations={organizations} navigate={navigate} />;
-  if (route.name === "settings" && route.tab === "agents")
-    return <AllInbox organizations={organizations} navigate={navigate} />;
   if (route.name === "settings" && (route.tab === "general" || route.tab === "devices")) {
     const personal =
       organizations.find((organization) => organization.personal) ??
@@ -853,14 +699,11 @@ export default function HubAllView({
       <EmptyState title="Your account is unavailable" />
     );
   }
-  if (
-    route.name === "settings" &&
-    ["environments", "connections", "routing"].includes(route.tab)
-  )
+  if (route.name === "settings" && ["environments", "connections"].includes(route.tab))
     return (
       <SettingsSummary
         organizations={organizations}
-        kind={route.tab as "devices" | "environments" | "connections" | "routing"}
+        kind={route.tab as "devices" | "environments" | "connections"}
         navigate={navigate}
       />
     );

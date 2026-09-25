@@ -1062,7 +1062,7 @@ test("owners can archive and delete hosted threads after the cloud computer slee
       kind: "thread.snapshot",
       snapshot: { id: stuckId, revision: 3, access: { organizationId: "org", owner: { id: "ada", label: "ada" }, visibility: "private", participants: [{ id: "ada", label: "ada" }] }, detail: { id: stuckId, title: "Yo you see this?", cwd: "/workspace", state: "idle", entries: [] } },
     }));
-    assert.match(socket.messages.join("\n"), /agent.deleted/);
+    assert.match(socket.messages.join("\n"), /thread\.retired/);
     assert.equal(await threads.get(hostedId, stuckId), undefined);
 
     const foreign = crypto.randomUUID();

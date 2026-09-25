@@ -31,7 +31,7 @@ function detail(id, patch = {}) {
   return { id, serverId: "local", title: `Thread ${id}`, cwd: "/tmp", state: "idle", entries: [], todos: [], ...patch };
 }
 
-const store = (patch = {}) => ({ servers: [server], chats: [], dms: [], workspaces: [], agents: [], projects: [], ...patch });
+const store = (patch = {}) => ({ servers: [server], chats: [], workspaces: [], projects: [], ...patch });
 
 test.beforeEach(() => clearWarmCache(storage()));
 
@@ -39,7 +39,6 @@ test("writes a settled snapshot and opens from it", () => {
   const kept = storage();
   const state = store({
     chats: [chat("a")],
-    agents: [{ id: "scout", serverId: "local", name: "Scout", handle: "scout" }],
     projects: [{ id: "remy", serverId: "local", name: "Remy", keyPrefix: "REMY" }],
   });
   assert.equal(writeWarmCache(warmSnapshot(state, [detail("a")]), kept), true);
@@ -47,9 +46,6 @@ test("writes a settled snapshot and opens from it", () => {
   const snapshot = readWarmCache(kept);
   assert.equal(snapshot.version, WARM_CACHE_VERSION);
   assert.deepEqual(snapshot.chats.map((row) => row.id), ["a"]);
-  // Inbox used to be the agents, and `/inbox/<handle>` cannot find its conversation
-  // without the roster.
-  assert.deepEqual(snapshot.agents.map((row) => row.handle), ["scout"]);
   assert.deepEqual(snapshot.projects.map((row) => row.keyPrefix), ["REMY"]);
   assert.deepEqual(snapshot.details.map((row) => row.id), ["a"]);
   // Whether a machine answers is this second's question, never a cached one.
@@ -95,18 +91,14 @@ test("bounds every list it keeps", () => {
     {
       servers: Array.from({ length: 40 }, (_, index) => ({ ...server, id: `s${index}` })),
       chats: many(200, "c"),
-      dms: many(200, "d"),
       workspaces: Array.from({ length: 200 }, (_, index) => ({ id: `w${index}`, serverId: "local", name: "W", path: "/tmp" })),
-      agents: Array.from({ length: 90 }, (_, index) => ({ id: `a${index}`, serverId: "local", handle: `a${index}` })),
       projects: Array.from({ length: 90 }, (_, index) => ({ id: `p${index}`, serverId: "local", keyPrefix: `P${index}` })),
     },
     Array.from({ length: 12 }, (_, index) => detail(`t${index}`)),
   );
   assert.equal(snapshot.servers.length, WARM_CACHE_BOUNDS.servers);
   assert.equal(snapshot.chats.length, WARM_CACHE_BOUNDS.chats);
-  assert.equal(snapshot.dms.length, WARM_CACHE_BOUNDS.dms);
   assert.equal(snapshot.workspaces.length, WARM_CACHE_BOUNDS.workspaces);
-  assert.equal(snapshot.agents.length, WARM_CACHE_BOUNDS.agents);
   assert.equal(snapshot.projects.length, WARM_CACHE_BOUNDS.projects);
   assert.equal(snapshot.details.length, WARM_CACHE_BOUNDS.details);
   // The rows a person sees first are the rows that survive.
@@ -206,9 +198,7 @@ test("drops rows that no longer have the shape they were written with", () => {
       at: Date.now(),
       servers: [server, { name: "no id" }],
       chats: [chat("a"), { id: "b" }, null],
-      dms: "not a list",
       workspaces: [{ id: "w", serverId: "local", name: "W", path: "/tmp" }, { id: "gone" }],
-      agents: [{ id: "a", serverId: "local", handle: "scout" }, { id: "no handle" }],
       projects: [{ id: "p", serverId: "local", keyPrefix: "REMY" }, { id: "no prefix" }],
       details: [detail("a"), { id: "b", serverId: "local" }],
     }),
@@ -216,9 +206,7 @@ test("drops rows that no longer have the shape they were written with", () => {
   const snapshot = readWarmCache(kept);
   assert.deepEqual(snapshot.servers.map((row) => row.id), ["local"]);
   assert.deepEqual(snapshot.chats.map((row) => row.id), ["a"]);
-  assert.deepEqual(snapshot.dms, []);
   assert.deepEqual(snapshot.workspaces.map((row) => row.id), ["w"]);
-  assert.deepEqual(snapshot.agents.map((row) => row.id), ["a"]);
   assert.deepEqual(snapshot.projects.map((row) => row.id), ["p"]);
   assert.deepEqual(snapshot.details.map((row) => row.id), ["a"]);
 });
@@ -231,16 +219,13 @@ test("applies the same bounds reading as writing", () => {
       at: Date.now(),
       servers: [server],
       chats: many(400, "c"),
-      dms: many(400, "d"),
       workspaces: [],
-      agents: [],
       projects: [],
       details: Array.from({ length: 12 }, (_, index) => detail(`t${index}`)),
     }),
   });
   const snapshot = readWarmCache(kept);
   assert.equal(snapshot.chats.length, WARM_CACHE_BOUNDS.chats);
-  assert.equal(snapshot.dms.length, WARM_CACHE_BOUNDS.dms);
   assert.equal(snapshot.details.length, WARM_CACHE_BOUNDS.details);
 });
 

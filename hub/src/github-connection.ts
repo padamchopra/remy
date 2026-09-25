@@ -234,7 +234,7 @@ export class GitHubConnection {
       ),
       this.db
         .prepare(
-          "DELETE FROM github_monitoring WHERE organization_id=? AND workspace_id NOT IN (SELECT workspace_id FROM github_repositories WHERE organization_id=?)",
+          "DELETE FROM github_repositories WHERE organization_id=? AND workspace_id NOT IN (SELECT workspace_id FROM organization_workspaces WHERE organization_id=?)",
         )
         .bind(org, org),
     ]);
@@ -255,17 +255,6 @@ export class GitHubConnection {
           installation_id: number;
         }>()
     ).results.filter((r) => ids.has(r.workspace_id));
-    const monitoring = (
-      await this.db
-        .prepare("SELECT * FROM github_monitoring WHERE organization_id=?")
-        .bind(org)
-        .all<{
-          workspace_id: string;
-          pull_number: number;
-          enabled: number;
-          agent_id: string | null;
-        }>()
-    ).results.filter((r) => ids.has(r.workspace_id));
     const activity = (
       await this.db
         .prepare(
@@ -274,7 +263,7 @@ export class GitHubConnection {
         .bind(org)
         .all<GitHubActivity>()
     ).results.filter((r) => ids.has(r.workspace_id));
-    return { repositories, monitoring, activity };
+    return { repositories, activity };
   }
   async repository(org: string, user: string, workspace: string) {
     await this.organizations.workspace(org, user, workspace);
@@ -287,39 +276,6 @@ export class GitHubConnection {
     if (!row)
       throw new ConnectionError("Connect this workspace to GitHub.", 404);
     return row.full_name;
-  }
-  async inherit(org: string, user: string, workspace: string, pull: number) {
-    await this.access(org, user, ["owner", "admin"]);
-    await this.repository(org, user, workspace);
-    if (!Number.isSafeInteger(pull) || pull <= 0)
-      throw new ConnectionError("Choose a pull request.");
-    await this.db
-      .prepare(
-        "DELETE FROM github_monitoring WHERE organization_id=? AND workspace_id=? AND pull_number=?",
-      )
-      .bind(org, workspace, pull)
-      .run();
-    await this.changed(org);
-  }
-  async configure(
-    org: string,
-    user: string,
-    workspace: string,
-    pull: number,
-    enabled: boolean,
-    agentId: string | null,
-  ) {
-    await this.access(org, user, ["owner", "admin"]);
-    await this.repository(org, user, workspace);
-    if (!Number.isSafeInteger(pull) || pull < 0 || (enabled && !agentId))
-      throw new ConnectionError("Choose an agent for pull request monitoring.");
-    await this.db
-      .prepare(
-        "INSERT INTO github_monitoring(organization_id,workspace_id,pull_number,enabled,agent_id) VALUES(?,?,?,?,?) ON CONFLICT(organization_id,workspace_id,pull_number) DO UPDATE SET enabled=excluded.enabled,agent_id=excluded.agent_id",
-      )
-      .bind(org, workspace, pull, enabled ? 1 : 0, agentId)
-      .run();
-    await this.changed(org);
   }
   async action(
     org: string,
@@ -370,16 +326,7 @@ export class GitHubConnection {
       });
     throw new ConnectionError("Choose a GitHub action.");
   }
-  async receive(
-    delivery: ConnectionDelivery,
-    start: (
-      org: string,
-      user: string,
-      workspace: string,
-      agent: string,
-      prompt: string,
-    ) => Promise<{ threadId: string; computerId: string }>,
-  ) {
+  async receive(delivery: ConnectionDelivery) {
     const value = JSON.parse(delivery.payload),
       installation = Number(value.installation?.id);
     if (!Number.isSafeInteger(installation)) return;
@@ -416,18 +363,12 @@ export class GitHubConnection {
       value.action === "removed"
     ) {
       for (const r of value.repositories_removed ?? [])
-        await this.db.batch([
-          this.db
-            .prepare(
-              "DELETE FROM github_monitoring WHERE organization_id=? AND workspace_id IN (SELECT workspace_id FROM github_repositories WHERE organization_id=? AND repository_id=?)",
-            )
-            .bind(org, org, r.id),
-          this.db
-            .prepare(
-              "DELETE FROM github_repositories WHERE organization_id=? AND repository_id=?",
-            )
-            .bind(org, r.id),
-        ]);
+        await this.db
+          .prepare(
+            "DELETE FROM github_repositories WHERE organization_id=? AND repository_id=?",
+          )
+          .bind(org, r.id)
+          .run();
       await this.changed(org);
       return;
     }
@@ -474,109 +415,8 @@ export class GitHubConnection {
       .run();
     if (!inserted.meta.changes) return;
     await this.changed(org);
-    if (
-      ![
-        "issue_comment",
-        "pull_request_review",
-        "pull_request_review_comment",
-      ].includes(delivery.event) ||
-      !["created", "submitted"].includes(value.action) ||
-      !/(^|\s)@remy\b/i.test(text) ||
-      text.includes("<!-- remy-reply:")
-    )
-      return;
-    const policy = await this.db
-      .prepare(
-        "SELECT enabled,agent_id FROM github_monitoring WHERE organization_id=? AND workspace_id=? AND pull_number IN (0,?) ORDER BY pull_number DESC LIMIT 1",
-      )
-      .bind(org, workspace, pull)
-      .first<{ enabled: number; agent_id: string | null }>();
-    if (!policy?.enabled || !policy.agent_id) return;
-    const identity = await this.db
-      .prepare(
-        "SELECT i.user_id FROM connection_identities i JOIN connections c ON c.id=i.connection_id WHERE i.organization_id=? AND c.provider='github' AND i.external_user_id=?",
-      )
-      .bind(org, String(value.sender?.id ?? ""))
-      .first<{ user_id: string }>();
-    if (!identity) {
-      await this.db
-        .prepare("UPDATE github_activity SET phase='unmapped' WHERE id=?")
-        .bind(delivery.id)
-        .run();
-      await this.changed(org);
-      return;
-    }
-    try {
-      await this.organizations.workspace(org, identity.user_id, workspace);
-      await this.db
-        .prepare(
-          "UPDATE github_activity SET phase='starting',member_id=? WHERE id=?",
-        )
-        .bind(identity.user_id, delivery.id)
-        .run();
-      const run = await start(
-        org,
-        identity.user_id,
-        workspace,
-        policy.agent_id,
-        `GitHub pull request #${pull}\n${text}\n\nTreat the GitHub message as a request from the linked member. Your final response will be posted to this pull request.`,
-      );
-      await this.db
-        .prepare(
-          "UPDATE github_activity SET phase='running',thread_id=?,computer_id=? WHERE id=?",
-        )
-        .bind(run.threadId, run.computerId, delivery.id)
-        .run();
-    } catch {
-      await this.db
-        .prepare("UPDATE github_activity SET phase='unavailable' WHERE id=?")
-        .bind(delivery.id)
-        .run();
-    }
-    await this.changed(org);
   }
-  async reply(org: string, thread: string, text: string) {
-    const activity = await this.db
-      .prepare(
-        "SELECT * FROM github_activity WHERE organization_id=? AND thread_id=? AND phase='running'",
-      )
-      .bind(org, thread)
-      .first<GitHubActivity>();
-    if (!activity?.member_id || !text.trim()) return;
-    const repo = await this.repository(
-        org,
-        activity.member_id,
-        activity.workspace_id,
-      ),
-      path = `/repos/${repo}/issues/${activity.pull_number}/comments`,
-      marker = `<!-- remy-reply:${activity.id} -->`;
-    let found: { id: number } | undefined;
-    for (let page = 1; page <= 100; page++) {
-      const comments = await this.api<{ id: number; body: string }[]>(
-        org,
-        activity.member_id,
-        `${path}?per_page=100&page=${page}`,
-      );
-      found = comments.find((c) => c.body.includes(marker));
-      if (found || comments.length < 100) break;
-      if (page === 100)
-        throw new ConnectionError(
-          "This conversation is too large to verify a reply.",
-        );
-    }
-    const posted =
-      found ??
-      (await this.api<{ id: number }>(org, activity.member_id, path, "POST", {
-        body: `${text.slice(0, 59000)}\n\n${marker}`,
-      }));
-    await this.db
-      .prepare(
-        "UPDATE github_activity SET phase='replied',reply_id=? WHERE id=?",
-      )
-      .bind(posted.id, activity.id)
-      .run();
-    await this.changed(org);
-  }
+
 
   /// Open pull requests that belong to a workspace. The saved credential is
   /// the GitHub sign-in or a personal access token; a repo that token can read

@@ -16,10 +16,6 @@ test("builds each required deterministic data size", () => {
   for (const threadCount of [25, 250]) {
     assert.equal(createFixture({ threadCount }).responses["/chats"].chats.length, threadCount);
   }
-  const inbox = createFixture({ agentCount: 25 });
-  assert.equal(inbox.responses["/board"].agents.length, 25);
-  assert.equal(inbox.responses["/chats"].dms.length, 25);
-  assert.equal(inbox.responses[`/chats/${inbox.primaryDmId}`].entries.length, 100);
 });
 
 test("adds an unavailable device without changing the local catalogue", () => {

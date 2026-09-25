@@ -1,12 +1,7 @@
-import { Folder } from "lucide-react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { AgentAvatar as AgentFace } from "@/components/AgentAvatar";
-import { UserAvatar } from "@/components/UserAvatar";
-import { WorkspaceMark } from "@/components/WorkspaceIcon";
-import { STATUS_LABEL, STATUS_TEXT, WORKSPACE_AGENT, YOU } from "@/lib/tickets";
+import { STATUS_LABEL, STATUS_TEXT } from "@/lib/tickets";
 import { cn } from "@/lib/utils";
-import type { Agent, TicketStatus, Workspace } from "@/state/types";
+import type { TicketStatus } from "@/state/types";
 
 /// The small marks a card is read by.
 ///
@@ -152,62 +147,3 @@ export function SubTicketProgress({
     </Tooltip>
   );
 }
-
-/// An agent's face, on the shared avatar primitive. The mark and tint match the
-/// agent roster, so the same person remains recognisable across the app.
-/// Whoever has the ticket: you, an agent, or nobody yet.
-export function AssigneeAvatar({
-  assignee,
-  agents,
-  workspace,
-  workspaceName,
-  size = "sm",
-  className,
-}: {
-  assignee?: string;
-  agents: Agent[];
-  workspace?: Workspace;
-  workspaceName?: string;
-  size?: "sm" | "md";
-  className?: string;
-}) {
-  if (assignee === YOU) {
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <UserAvatar className={cn(size === "md" ? "size-6" : "size-5", className)} />
-        </TooltipTrigger>
-        <TooltipContent>You</TooltipContent>
-      </Tooltip>
-    );
-  }
-  // The workspace itself, which is not an agent and so has no colour of its own.
-  if (assignee === WORKSPACE_AGENT) {
-    const name = workspace?.name ?? workspaceName ?? "Workspace agent";
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Avatar className={cn(size === "md" ? "size-6" : "size-5", className)} aria-label={name}>
-            <AvatarFallback className="bg-transparent p-0 text-muted-foreground">
-              {workspace ? (
-                <WorkspaceMark home={false} workspace={workspace} size="sm" />
-              ) : (
-                <Folder className={size === "md" ? "size-3.5" : "size-3"} />
-              )}
-            </AvatarFallback>
-          </Avatar>
-        </TooltipTrigger>
-        <TooltipContent>{name}</TooltipContent>
-      </Tooltip>
-    );
-  }
-  return (
-    <AgentFace
-      agent={agents.find((entry) => entry.id === assignee)}
-      size={size}
-      className={className}
-    />
-  );
-}
-
-export { AgentAvatar } from "@/components/AgentAvatar";

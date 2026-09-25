@@ -48,14 +48,14 @@ export interface Config {
   /// How much reasoning a new thread asks its selected model to use. Empty
   /// leaves the choice to that provider's configuration.
   defaultEffort: string;
-  /// What a new thread and every inherited agent thinks with. The pair is
-  /// validated together: a provider only ever holds one of its own models.
+  /// What a new thread thinks with. The pair is validated together: a provider
+  /// only ever holds one of its own models.
   defaultProvider: ProviderId;
   /// Providers offered for new work on this machine. Existing threads keep
   /// their provider so their history remains readable.
   enabledProviders: ProviderId[];
-  /// What a new thread may do without being asked. An agent or the thread
-  /// itself can still say otherwise; this is where one starts when neither has.
+  /// What a new thread may do without being asked. A thread can still say
+  /// otherwise; this is where one starts when it has not.
   defaultPermissionMode: ChatPermissionMode;
   /// The face on your messages: empty for the default, `preset:<id>` for one
   /// of the built-in ones, or a `data:` URL for a picture you chose.
@@ -77,20 +77,10 @@ export interface Config {
   /// made it.
   worktreeBranchPrefix: string;
   /// Whoever this machine is signed in as on GitHub, read from `gh` at boot.
-  /// An agent's commit address is built from it, so a commit says both which
-  /// agent wrote it and whose account stood behind the machine that ran it.
   githubLogin: string;
   /// How often Remy refreshes the repositories it knows about. `off` never
   /// does, which is the setting for anyone who wants git touched only by them.
   repoUpdate: RepoUpdateEvery;
-  /// Who every inherited agent's commits credit. `off` keeps this machine's
-  /// git identity; `author` credits the agent while leaving you as committer.
-  /// Attribution only — a git identity says who wrote a commit, never proves it.
-  defaultGitIdentity: GitIdentity;
-  /// The machine-wide policy inherited by workspaces and individual pull
-  /// requests until either says otherwise.
-  pullRequestMonitoringEnabled: boolean;
-  pullRequestMonitoringAgentId: string;
   /// Whether notifications raised on this machine are shown on this machine.
   /// Off routes them only to the paired devices that asked for them, which is
   /// the setting for a machine that runs the work while you watch from another.
@@ -110,7 +100,6 @@ export type PreventSleepMode = "off" | "whileBusy" | "always";
 export type CheckoutMode = "main" | "worktree";
 export type WorktreeBase = "remote" | "local";
 export type RepoUpdateEvery = "off" | "hourly" | "sixHourly" | "daily";
-export type GitIdentity = "off" | "author";
 
 /// Listed here rather than imported, so the type above can stay type-only. The
 /// same shape `agents.ts` keeps, and for the same reason.
@@ -120,16 +109,8 @@ const SLEEP_MODES: PreventSleepMode[] = ["off", "whileBusy", "always"];
 const CHECKOUT_MODES: CheckoutMode[] = ["main", "worktree"];
 const WORKTREE_BASES: WorktreeBase[] = ["remote", "local"];
 const REPO_UPDATES: RepoUpdateEvery[] = ["off", "hourly", "sixHourly", "daily"];
-const GIT_IDENTITIES: GitIdentity[] = ["off", "author"];
 const DEVICE_ICONS = ["laptop", "monitor", "smartphone", "tablet", "server", "house"];
 const DEVICE_TINTS = ["zinc", "red", "orange", "amber", "green", "teal", "blue", "violet", "pink"];
-
-function gitIdentity(value: unknown, fallback: GitIdentity): GitIdentity {
-  // Older builds offered agent-as-committer. Keep those settings as agent
-  // attribution while retiring the distinction from every current surface.
-  if (value === "full") return "author";
-  return oneOf(GIT_IDENTITIES, value, fallback);
-}
 
 /// How long between refreshes, or nothing when they are off.
 export function repoUpdateInterval(every: RepoUpdateEvery): number | undefined {
@@ -234,10 +215,6 @@ function deviceNameValue(value: unknown): string {
   return typeof value === "string" ? value.trim().slice(0, 80) : "";
 }
 
-function agentIdValue(value: unknown): string {
-  return typeof value === "string" ? value.trim().slice(0, 128) : "";
-}
-
 export function devicePreferenceOrder(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return [...new Set(value.flatMap((entry) => {
@@ -310,9 +287,6 @@ function load(): Config {
     remyEffort: remyModel === OFF ? "" : providerEffort(remyProvider, remyModel, parsed.remyEffort),
     favoriteModels: favoriteModels(parsed.favoriteModels),
     repoUpdate: oneOf(REPO_UPDATES, parsed.repoUpdate, "off"),
-    defaultGitIdentity: gitIdentity(parsed.defaultGitIdentity, "author"),
-    pullRequestMonitoringEnabled: parsed.pullRequestMonitoringEnabled === true,
-    pullRequestMonitoringAgentId: agentIdValue(parsed.pullRequestMonitoringAgentId),
     worktreeBranchPrefix: branchPrefix(parsed.worktreeBranchPrefix) ?? "",
     githubLogin: githubAccount(parsed.githubLogin),
     avatar: avatarValue(parsed.avatar),
@@ -359,9 +333,6 @@ export interface PublicSettings {
   deviceTint: string;
   devicePreferenceOrder: string[];
   tailscaleServeEnabled: boolean;
-  defaultGitIdentity: GitIdentity;
-  pullRequestMonitoringEnabled: boolean;
-  pullRequestMonitoringAgentId: string;
   notifySelf: boolean;
 }
 
@@ -390,9 +361,6 @@ export function publicSettings(): PublicSettings {
     deviceTint: config.deviceTint,
     devicePreferenceOrder: config.devicePreferenceOrder,
     tailscaleServeEnabled: config.tailscaleServeEnabled,
-    defaultGitIdentity: config.defaultGitIdentity,
-    pullRequestMonitoringEnabled: config.pullRequestMonitoringEnabled,
-    pullRequestMonitoringAgentId: config.pullRequestMonitoringAgentId,
     notifySelf: config.notifySelf,
   };
 }
@@ -459,15 +427,6 @@ export function patchSettings(patch: Record<string, unknown>): PublicSettings {
   }
   if (patch.repoUpdate !== undefined) {
     set("repoUpdate", oneOf(REPO_UPDATES, patch.repoUpdate, config.repoUpdate));
-  }
-  if (patch.defaultGitIdentity !== undefined) {
-    set("defaultGitIdentity", gitIdentity(patch.defaultGitIdentity, config.defaultGitIdentity));
-  }
-  if (patch.pullRequestMonitoringEnabled !== undefined) {
-    set("pullRequestMonitoringEnabled", patch.pullRequestMonitoringEnabled === true);
-  }
-  if (patch.pullRequestMonitoringAgentId !== undefined) {
-    set("pullRequestMonitoringAgentId", agentIdValue(patch.pullRequestMonitoringAgentId));
   }
   if (patch.avatar !== undefined) {
     set("avatar", avatarValue(patch.avatar));

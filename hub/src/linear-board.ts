@@ -29,7 +29,6 @@ type Policy = {
   external_id: string;
   enabled: number;
   bootstrap: number;
-  agent_map: string;
   error: string | null;
   updated_at: number;
 };
@@ -42,19 +41,12 @@ type Binding = {
   created: boolean;
   clocks: Record<string, Clock>;
 };
-type Start = (
-  user: string,
-  workspace: string,
-  agent: string,
-  prompt: string,
-) => Promise<{ threadId: string; computerId: string }>;
 export class LinearBoard {
   constructor(
     readonly org: string,
     readonly linear: LinearConnection,
     readonly board: OrganizationBoard,
     readonly storage: BoardStorage,
-    readonly start: Start,
     readonly origin: string,
   ) {}
   private key(id: string) {
@@ -83,30 +75,21 @@ export class LinearBoard {
     user: string,
     workspace: string,
     enabled: boolean,
-    agentMap: Record<string, string>,
   ) {
     await this.linear.access(this.org, user, true);
     await this.linear.organizations.workspace(this.org, user, workspace);
     const mapping = await this.mapping(workspace);
     if (!mapping)
       throw new ConnectionError("Map this workspace to Linear first.");
-    const catalog = await this.linear.catalog(this.org);
-    if (
-      Object.keys(agentMap).some(
-        (id) => !catalog?.users.some((u) => u.id === id),
-      )
-    )
-      throw new ConnectionError("Choose a Linear member for each agent.");
     await this.linear.db
       .prepare(
-        "INSERT INTO linear_board_settings(organization_id,workspace_id,external_id,enabled,agent_map,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(organization_id,workspace_id) DO UPDATE SET external_id=excluded.external_id,enabled=excluded.enabled,agent_map=excluded.agent_map,bootstrap=CASE WHEN enabled=0 AND excluded.enabled=1 THEN 1 ELSE bootstrap END,error=NULL,updated_at=excluded.updated_at",
+        "INSERT INTO linear_board_settings(organization_id,workspace_id,external_id,enabled,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(organization_id,workspace_id) DO UPDATE SET external_id=excluded.external_id,enabled=excluded.enabled,bootstrap=CASE WHEN enabled=0 AND excluded.enabled=1 THEN 1 ELSE bootstrap END,error=NULL,updated_at=excluded.updated_at",
       )
       .bind(
         this.org,
         workspace,
         mapping.external_id,
         enabled ? 1 : 0,
-        JSON.stringify(agentMap),
         Date.now(),
       )
       .run();
@@ -154,7 +137,7 @@ export class LinearBoard {
         kind,
         payload: { ...payload, source: { provider: "linear", id: key } },
       },
-      { kind: "agent", id: "linear", label },
+      { kind: "computer", id: "linear", label },
       { id, at },
     );
   }
@@ -202,11 +185,8 @@ export class LinearBoard {
         "Map the new Linear state before syncing this ticket.",
       );
     const member = issue.assignee
-        ? await this.member(issue.assignee.id, map.external_id)
-        : null,
-      agent = issue.assignee
-        ? JSON.parse(policy.agent_map)[issue.assignee.id]
-        : undefined;
+      ? await this.member(issue.assignee.id, map.external_id)
+      : null;
     let parentId: null | string = null;
     if (issue.parent) {
       parentId =
@@ -227,7 +207,6 @@ export class LinearBoard {
       title: issue.title,
       body: issue.description ?? "",
       status,
-      assigneeAgentId: agent ?? "you",
       assigneeMemberId: member?.member_id ?? null,
       assigneeName: issue.assignee?.name ?? null,
       labels: issue.labels.nodes,
@@ -297,8 +276,8 @@ export class LinearBoard {
         description: "body",
         state: "status",
         stateId: "status",
-        assignee: "assigneeAgentId",
-        assigneeId: "assigneeAgentId",
+        assignee: "assigneeMemberId",
+        assigneeId: "assigneeMemberId",
         labelIds: "labels",
         parent: "parentId",
       };
@@ -312,10 +291,7 @@ export class LinearBoard {
         !["number", "keyPrefix", "linearIssueId", "externalUrl"].includes(
           field,
         ) &&
-        !(
-          ["assigneeMemberId", "assigneeName"].includes(field) &&
-          selected.has("assigneeAgentId")
-        )
+        !(field === "assigneeName" && selected.has("assigneeMemberId"))
       )
         continue;
       const clock: Clock = { at, source: "linear", value };
@@ -339,17 +315,8 @@ export class LinearBoard {
   }
   private async mappedAssignee(
     map: LinearMapping,
-    policy: Policy,
     fields: Record<string, unknown>,
   ) {
-    const agents = JSON.parse(policy.agent_map) as Record<string, string>,
-      agent = String(fields.assigneeAgentId ?? "");
-    if (agent && !["you", "workspace"].includes(agent)) {
-      const matched = Object.entries(agents).find(([, id]) => id === agent);
-      if (!matched)
-        throw new ConnectionError("Map this agent to a Linear member.");
-      return matched[0];
-    }
     if (fields.assigneeMemberId) {
       const row = await this.linear.db
         .prepare(
@@ -380,11 +347,8 @@ export class LinearBoard {
         throw new ConnectionError("Map this ticket column to a Linear state.");
       input.stateId = state;
     }
-    if (
-      fields.assigneeAgentId !== undefined ||
-      fields.assigneeMemberId !== undefined
-    )
-      input.assigneeId = await this.mappedAssignee(map, policy, fields);
+    if (fields.assigneeMemberId !== undefined)
+      input.assigneeId = await this.mappedAssignee(map, fields);
     if (Array.isArray(fields.labels))
       input.labelIds = fields.labels.map((l) =>
         typeof l === "string" ? l : (l as { id: string }).id,
@@ -586,16 +550,14 @@ export class LinearBoard {
       );
       return;
     }
-    if (!["create", "field", "status", "handoff"].includes(event.kind)) return;
+    if (!["create", "field", "status"].includes(event.kind)) return;
     const input = { ...event.payload };
-    if (event.kind === "handoff") input.assigneeAgentId = input.toAgentId;
     const accepted: Record<string, unknown> = {},
       restore: Record<string, unknown> = {};
     for (const field of [
       "title",
       "body",
       "status",
-      "assigneeAgentId",
       "assigneeMemberId",
       "labels",
       "parentId",
@@ -616,13 +578,6 @@ export class LinearBoard {
       } else restore[field] = binding.clocks[field]!.value;
     }
     if (Object.keys(accepted).length) {
-      if (
-        accepted.assigneeAgentId !== undefined ||
-        accepted.assigneeMemberId !== undefined
-      ) {
-        accepted.assigneeAgentId ??= ticket.fields.assigneeAgentId;
-        accepted.assigneeMemberId ??= ticket.fields.assigneeMemberId;
-      }
       const patch = await this.outboundFields(accepted, map, policy);
       if (Object.keys(patch).length) {
         const result = await this.linear.query<{
@@ -677,13 +632,6 @@ export class LinearBoard {
         key,
         payload.updatedFrom ? Object.keys(payload.updatedFrom) : undefined,
       );
-      if (
-        ticketId &&
-        payload.updatedFrom &&
-        ("assigneeId" in payload.updatedFrom ||
-          "assignee" in payload.updatedFrom)
-      )
-        await this.handoff(issue, ticketId, payload, key);
     }
     if (payload.type === "Comment" && payload.action === "create") {
       const data = payload.data,
@@ -707,66 +655,6 @@ export class LinearBoard {
       await this.storage.put(
         `linear:comment-imported:${binding.externalId}:${id}`,
         true,
-      );
-    }
-  }
-  private async handoff(
-    issue: LinearIssue,
-    ticket: string,
-    payload: Record<string, any>,
-    key: string,
-  ) {
-    const map = await this.matched(issue);
-    if (!map || !issue.assignee) return;
-    const policy = (await this.policies()).find(
-        (p) => p.workspace_id === map.workspace_id,
-      )!,
-      agent = JSON.parse(policy.agent_map)[issue.assignee.id];
-    if (!agent) return;
-    const actor = await this.member(
-      String(payload.actor?.id ?? ""),
-      map.external_id,
-    );
-    if (!actor) return;
-    await this.linear.organizations.workspace(
-      this.org,
-      actor.member_id,
-      map.workspace_id,
-    );
-    const claim = `linear:handoff:${key}`;
-    if (await this.storage.get(claim)) return;
-    await this.storage.put(claim, { phase: "starting" });
-    try {
-      const run = await this.start(
-        actor.member_id,
-        map.workspace_id,
-        agent,
-        `Work on ${issue.identifier}: ${issue.title}\n\n${issue.description ?? ""}`,
-      );
-      await this.storage.put(`linear:run:${run.threadId}`, {
-        ...run,
-        ticketId: ticket,
-        userId: actor.member_id,
-        workspaceId: map.workspace_id,
-      });
-      await this.append(
-        ticket,
-        "link",
-        { chatId: run.threadId, computerId: run.computerId },
-        `run:${key}`,
-      );
-      const binding = (await this.storage.get<Binding>(this.key(ticket)))!;
-      await this.comment(
-        binding,
-        `started:${key}`,
-        `[Open thread](${this.origin}/threads/${run.threadId}) — work started.`,
-        "Remy",
-      );
-      await this.storage.put(claim, { phase: "started", ...run });
-    } catch {
-      await this.storage.put(claim, { phase: "unavailable" });
-      throw new ConnectionError(
-        "This assigned agent could not start; check its computer and access.",
       );
     }
   }

@@ -279,27 +279,11 @@ test("PR actions use the caller identity and reject inaccessible workspaces", as
     }),
   );
 });
-test("mentions require explicit monitoring and mapped members; deliveries and uncertain replies deduplicate", async () => {
-  const { service, sqlite, comments, loseReply } = fixture(),
-    selected = await service.select("studio", "ada", 20, [101]),
-    workspace = selected.repositories[0].workspace_id;
-  sqlite
-    .prepare(
-      "INSERT INTO connections(id,organization_id,provider,subject,external_id,label,credentials,updated_at) VALUES('c','studio','github','grace','102','Grace','encrypted',1)",
-    )
-    .run();
-  sqlite
-    .prepare(
-      "INSERT INTO connection_identities(connection_id,organization_id,user_id,external_user_id) VALUES('c','studio','grace','102')",
-    )
-    .run();
-  let starts = 0;
-  const start = async (_org: string, user: string) => {
-    assert.equal(user, "grace");
-    starts++;
-    return { threadId: "thread-1", computerId: "mac-1" };
-  };
-  const delivery = (id: string, sender = 102): ConnectionDelivery => ({
+test("a delivery is recorded once and never starts work of its own", async () => {
+  const {service, sqlite} = fixture();
+  const selected = await service.select("studio", "ada", 20, [101]);
+  assert.ok(selected.repositories[0].workspace_id);
+  const delivery = (id: string): ConnectionDelivery => ({
     id,
     provider: "github",
     delivery_id: id,
@@ -309,30 +293,22 @@ test("mentions require explicit monitoring and mapped members; deliveries and un
       repository: { id: 101 },
       issue: { number: 7, pull_request: {} },
       comment: { body: "@remy please fix this" },
-      sender: { id: sender },
+      sender: { id: 102 },
       action: "created",
     }),
     status: "pending",
     received_at: 1,
   });
-  await service.receive(delivery("off"), start);
-  assert.equal(starts, 0);
-  await service.configure("studio", "ada", workspace, 0, true, "agent-1");
-  await service.receive(delivery("unknown", 999), start);
-  assert.equal(starts, 0);
-  await service.receive(delivery("work"), start);
-  await service.receive(delivery("work"), start);
-  assert.equal(starts, 1);
-  loseReply();
-  await assert.rejects(
-    service.reply("studio", "thread-1", "Fixed and tested."),
+  await service.receive(delivery("first"));
+  await service.receive(delivery("first"));
+  const listed = await service.list("studio", "ada");
+  assert.equal(listed.activity.length, 1);
+  assert.equal(listed.activity[0].pull_number, 7);
+  // Nothing starts a thread from GitHub any more, so no activity is running.
+  assert.equal(
+    sqlite.prepare("SELECT count(*) AS n FROM github_activity WHERE phase='running'").get()?.n,
+    0,
   );
-  await service.reply("studio", "thread-1", "Fixed and tested.");
-  await service.reply("studio", "thread-1", "Fixed and tested.");
-  assert.equal(comments.length, 1);
-  await service.configure("studio", "ada", workspace, 7, false, null);
-  await service.receive(delivery("override"), start);
-  assert.equal(starts, 1);
 });
 
 

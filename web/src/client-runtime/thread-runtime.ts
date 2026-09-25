@@ -126,8 +126,6 @@ interface ChatFrame {
 export class ThreadRuntime {
   private readonly rows = new Map<string, Chat>();
   private readonly rowOrder: string[] = [];
-  private readonly dms = new Map<string, Chat>();
-  private readonly dmOrder: string[] = [];
   private readonly details = new Map<string, ChatDetail>();
   private readonly pendingDetails = new Map<string, Promise<ChatDetail>>();
   private readonly detailSubscriptions = new Map<string, () => void>();
@@ -144,7 +142,6 @@ export class ThreadRuntime {
   ) {
     const initial = store.getState();
     this.replaceAll(this.rows, this.rowOrder, initial.chats);
-    this.replaceAll(this.dms, this.dmOrder, initial.dms);
     for (const detail of [...initialDetails, ...Object.values(initial.details)]) if (detail) this.cacheDetail(detail);
   }
 
@@ -203,11 +200,9 @@ export class ThreadRuntime {
   async openChat(id: string): Promise<void> {
     const state = this.store.getState();
     const chat = this.rows.get(id)
-      ?? this.dms.get(id)
-      ?? state.chats.find((entry) => entry.id === id)
-      ?? state.dms.find((entry) => entry.id === id);
+      ?? state.chats.find((entry) => entry.id === id);
     if (!chat) return;
-    if (!this.rows.has(id) && !chat.dm) {
+    if (!this.rows.has(id)) {
       this.rows.set(id, chat);
       this.rowOrder.unshift(id);
     }
@@ -312,10 +307,8 @@ export class ThreadRuntime {
     if (servers.length === 0) {
       this.rows.clear();
       this.rowOrder.length = 0;
-      this.dms.clear();
-      this.dmOrder.length = 0;
       this.store.setState({
-        servers: [], chats: [], archived: [], dms: [], workspaces: [],
+        servers: [], chats: [], archived: [], workspaces: [],
         loading: false, catalogLoading: false, error: undefined,
       });
       return;
@@ -323,11 +316,9 @@ export class ThreadRuntime {
 
     const known = new Set(servers.map((server) => server.id));
     this.removeUnknown(this.rows, this.rowOrder, known);
-    this.removeUnknown(this.dms, this.dmOrder, known);
     this.store.setState((current) => ({
       servers: mergeDiscoveredServers(current.servers, servers),
       chats: this.ordered(this.rows, this.rowOrder),
-      dms: this.ordered(this.dms, this.dmOrder),
       archived: current.archived.filter((entry) => known.has(entry.serverId)),
       workspaces: current.workspaces.filter((entry) => known.has(entry.serverId)),
     }));
@@ -336,14 +327,13 @@ export class ThreadRuntime {
     await Promise.all(servers.map(async (server) => {
       try {
         const [listed, archives, workspaces] = await Promise.all([
-          this.transport.request<{ chats?: RawChat[]; dms?: RawChat[] }>(server.id, "/chats"),
+          this.transport.request<{ chats?: RawChat[] }>(server.id, "/chats"),
           this.transport.request<{ archives?: RawArchive[] }>(server.id, "/archives")
             .then((answer) => answer.archives ?? []).catch(() => []),
           this.transport.request<{ workspaces?: RawWorkspace[] }>(server.id, "/workspaces")
             .then((answer) => answer.workspaces ?? []).catch(() => undefined),
         ]);
         this.replaceServer(this.rows, this.rowOrder, server.id, (listed.chats ?? []).map((raw) => toChat(raw, server.id)));
-        this.replaceServer(this.dms, this.dmOrder, server.id, (listed.dms ?? []).map((raw) => toChat(raw, server.id)));
         this.store.setState((current) => {
           const nextWorkspaces = workspaces === undefined
             ? current.workspaces
@@ -355,8 +345,7 @@ export class ThreadRuntime {
             loading: false,
             servers: setServerOnline(current.servers, server.id, true),
             chats: this.ordered(this.rows, this.rowOrder).sort(byNewest),
-            dms: this.ordered(this.dms, this.dmOrder),
-            archived: [
+                  archived: [
               ...current.archived.filter((entry) => entry.serverId !== server.id),
               ...archives.map((raw) => toArchivedThread(raw, server.id)),
             ].sort((left, right) => right.archivedAt - left.archivedAt),
@@ -419,13 +408,10 @@ export class ThreadRuntime {
 
     const row = this.rows.get(frame.chatId);
     if (row?.serverId === serverId) this.rows.set(row.id, patchRow(row, frame));
-    const dm = this.dms.get(frame.chatId);
-    if (dm?.serverId === serverId) this.dms.set(dm.id, patchRow(dm, frame));
     const state = this.store.getState();
     const detail = state.details[frame.chatId];
     this.store.setState({
       chats: this.ordered(this.rows, this.rowOrder),
-      dms: this.ordered(this.dms, this.dmOrder),
       ...(detail?.serverId === serverId
         ? { details: { ...state.details, [detail.id]: this.cacheDetail(mergeDetail(detail, frame)) } }
         : {}),
@@ -559,7 +545,6 @@ function toChat(raw: RawChat, serverId: string): Chat {
     cwd: raw.cwd,
     state: raw.state ?? "idle",
     provider: raw.provider,
-    agentId: raw.agentId,
     model: raw.model,
     effort: raw.effort,
     preview: raw.preview,
@@ -681,7 +666,6 @@ function toArchivedThread(raw: RawArchive, serverId: string): ArchivedThread {
     title: raw.conversation?.title?.trim() || raw.session,
     cwd: raw.cwd ?? "~",
     provider: raw.agent,
-    agentId: raw.conversation?.agentId,
     model: raw.conversation?.model,
     effort: raw.conversation?.effort,
     permissionMode: raw.conversation?.permissionMode,

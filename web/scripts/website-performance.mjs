@@ -16,11 +16,11 @@ try {
   });
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   const startupTabs = page.getByRole('tablist', { name: 'Explore Remy features', exact: true });
-  for (const name of ['Review', 'Worktrees', 'Agents']) {
+  for (const name of ['Review', 'Threads', 'Worktrees']) {
     await startupTabs.getByRole('tab', { name, exact: true }).click();
   }
   releasePreview();
-  await page.frameLocator('.hero-preview iframe').locator('html[data-preview-scene="agents"]').waitFor();
+  await page.frameLocator('.hero-preview iframe').locator('html[data-preview-scene="worktrees"]').waitFor();
   await page.unroute('**/demo/index.html?**');
   await page.goto(url, { waitUntil: 'networkidle' });
   const timings = [];
@@ -36,7 +36,7 @@ try {
     const record = (request) => { if (request.isNavigationRequest() && request.url().includes('/demo/')) navigations.push(request.url()); };
     page.on('request', record);
     await page.context().setOffline(true);
-    for (const [name, scene] of [['Review', 'review'], ['Agents', 'agents'], ['Threads', 'threads'], ['Worktrees', 'worktrees'], ['Review', 'review']]) {
+    for (const [name, scene] of [['Review', 'review'], ['Threads', 'threads'], ['Worktrees', 'worktrees'], ['Review', 'review']]) {
       const start = Date.now();
       await page.getByRole('tablist', { name: label, exact: true }).getByRole('tab', { name, exact: true }).click();
       await frame.locator(`html[data-preview-scene="${scene}"]`).waitFor({ timeout: 1500 });

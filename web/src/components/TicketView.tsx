@@ -66,12 +66,7 @@ import {
 } from "@/components/ui/empty";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
-import {
-  Message,
-  MessageAvatar,
-  MessageContent,
-  MessageHeader,
-} from "@/components/ui/message";
+import { Message, MessageContent, MessageHeader } from "@/components/ui/message";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
@@ -86,13 +81,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { EditableName } from "@/components/EditableName";
-import { Markdown, type Mention } from "@/components/Markdown";
-import { MentionField } from "@/components/MentionField";
+import { Markdown } from "@/components/Markdown";
 import { ModelPickerButton } from "@/components/ModelPicker";
 import { PaneHeader } from "@/components/PaneHeader";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { NewTicketDialog } from "@/components/Board";
-import { AssigneeAvatar, StatusIcon, SubTicketProgress } from "@/components/TicketGlyphs";
+import { StatusIcon, SubTicketProgress } from "@/components/TicketGlyphs";
 import { apiError } from "@/lib/api-error";
 import { deviceIcon } from "@/lib/devices";
 import type { ModelChoice } from "@/lib/providers";
@@ -101,18 +95,16 @@ import {
   DERIVED_STATUSES,
   STATUS_LABEL,
   TICKET_STATUSES,
-  WORKSPACE_AGENT,
   YOU,
   byRank,
   deviceForTicket,
-  people,
   shortDate,
 } from "@/lib/tickets";
 import { useStore } from "@/state/store";
-import type { Agent, Ticket, TicketActivity, TicketStatus, Workspace } from "@/state/types";
+import type { Ticket, TicketActivity, TicketStatus } from "@/state/types";
 
-/// One ticket: what it is, who has it, what it is broken into, and every thread
-/// that has worked on it.
+/// One ticket: what it is, what it is broken into, and every thread that has
+/// worked on it.
 ///
 /// A reading column down the middle and its properties down the side, so the
 /// description keeps a comfortable measure however wide the window is. The
@@ -125,20 +117,17 @@ export function TicketView({
   onOpenTicket,
   onOpenThread,
   onOpenWorkspace,
-  onOpenAgent,
 }: {
   ticket: Ticket;
   onBack: () => void;
   onOpenTicket: (key: string) => void;
   onOpenThread: (chatId: string) => void;
   onOpenWorkspace: (workspaceId: string) => void;
-  onOpenAgent: (handle: string) => void;
 }) {
   const projects = useStore((s) => s.projects);
   const servers = useStore((s) => s.servers);
   const workspaces = useStore((s) => s.workspaces);
   const boardDevices = useStore((s) => s.boardDevices);
-  const agents = useStore((s) => s.agents);
   const linkedChatIds = useMemo(
     () => new Set(ticket.threads.map((link) => link.chatId)),
     [ticket.threads],
@@ -435,12 +424,6 @@ export function TicketView({
                         <StatusIcon status={child.status} />
                         <span className="font-mono text-[11px] text-muted-foreground">{child.key}</span>
                         <span className="min-w-0 flex-1 truncate text-sm">{child.title}</span>
-                        <AssigneeAvatar
-                          assignee={child.assigneeAgentId}
-                          agents={agents}
-                          workspace={workspace}
-                          workspaceName={project?.name}
-                        />
                       </button>
                     </li>
                   ))}
@@ -462,7 +445,6 @@ export function TicketView({
                 <ul className="flex flex-col gap-1.5">
                   {ticket.threads.map((link) => {
                     const chat = chats.find((entry) => entry.id === link.chatId);
-                    const agent = agents.find((entry) => entry.id === link.agentId);
                     return (
                       <li
                         key={link.chatId}
@@ -474,7 +456,6 @@ export function TicketView({
                             {chat?.title ?? "A thread on another machine"}
                           </span>
                           <span className="block truncate text-[11px] text-muted-foreground">
-                            {agent ? `${agent.name} · ` : ""}
                             {link.linkedBy === "runner" ? "started by the board" : "attached by you"}
                           </span>
                         </span>
@@ -525,9 +506,6 @@ export function TicketView({
               <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Activity</h2>
               <ActivityFeed
                 activity={activity}
-                agents={agents}
-                workspace={workspace}
-                onOpenAgent={onOpenAgent}
                 onEdit={async (commentId, body) => {
                   try {
                     await editTicketComment(ticket.id, commentId, body);
@@ -548,7 +526,6 @@ export function TicketView({
                 }}
               />
               <CommentBox
-                agents={agents}
                 onSend={async (body) => {
                   try {
                     await commentOnTicket(ticket.id, body);
@@ -564,7 +541,7 @@ export function TicketView({
 
         {/* Properties sit beside the reading column rather than above it, so the
             description keeps its measure and nothing has to be scrolled past to
-            change an assignee. */}
+            change a status. */}
         <aside className="hidden w-64 shrink-0 flex-col gap-5 border-l border-border px-4 py-7 lg:flex">
           <Property label="Status" htmlFor="ticket-status">
             <Select
@@ -588,48 +565,6 @@ export function TicketView({
             {DERIVED_STATUSES.includes(ticket.status) && ticket.threads.length > 0 && (
               <p className="text-[11px] text-muted-foreground">
                 Remy moves this between In progress and Needs input while a thread is on it.
-              </p>
-            )}
-          </Property>
-
-          <Property label="Assignee" htmlFor="ticket-assignee">
-            <Select
-              value={ticket.assigneeAgentId ?? "none"}
-              onValueChange={(value) =>
-                void save({ assigneeAgentId: value === "none" ? "" : value }, "the assignee")
-              }
-            >
-              <SelectTrigger id="ticket-assignee" size="sm" className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent align="end">
-                <SelectGroup>
-                  <SelectItem value="none">
-                    {/* An avatar slot of its own, so every name in the list
-                        starts in the same column. */}
-                    <AssigneeAvatar agents={agents} />
-                    Nobody
-                  </SelectItem>
-                  {/* You first, then the workspace itself: a ticket you keep is
-                      the common case, and an agent only starts on one that was
-                      handed to it. */}
-                  {people(agents, workspace?.name ?? project?.name).map((person) => (
-                    <SelectItem key={person.id} value={person.id}>
-                      <AssigneeAvatar
-                        assignee={person.id}
-                        agents={agents}
-                        workspace={workspace}
-                        workspaceName={project?.name}
-                      />
-                      {person.name}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-            {ticket.assigneeAgentId === WORKSPACE_AGENT && (
-              <p className="text-[11px] text-muted-foreground">
-                This workspace's own default model, with no agent in front of it.
               </p>
             )}
           </Property>
@@ -751,16 +686,10 @@ function Property({
 
 function ActivityFeed({
   activity,
-  agents,
-  workspace,
-  onOpenAgent,
   onEdit,
   onDelete,
 }: {
   activity: TicketActivity[];
-  agents: Agent[];
-  workspace?: Workspace;
-  onOpenAgent: (handle: string) => void;
   onEdit: (commentId: string, body: string) => Promise<void>;
   onDelete: (commentId: string) => Promise<void>;
 }) {
@@ -773,9 +702,6 @@ function ActivityFeed({
         <CommentActivity
           key={entry.id}
           entry={entry}
-          agents={agents}
-          workspace={workspace}
-          onOpenAgent={onOpenAgent}
           onEdit={onEdit}
           onDelete={onDelete}
         />
@@ -787,7 +713,7 @@ function ActivityFeed({
             </MarkerIcon>
             <MarkerContent className="flex flex-col gap-0.5">
               <span className="flex items-baseline gap-1.5">
-                <span className="text-foreground">{actorName(entry.actor, agents)}</span>
+                <span className="text-foreground">{actorName(entry.actor)}</span>
                 <span>{describe(entry)}</span>
                 <time className="ml-auto shrink-0 text-xs" dateTime={new Date(entry.at).toISOString()}>
                   {when(entry.at)}
@@ -805,16 +731,10 @@ function ActivityFeed({
 
 function CommentActivity({
   entry,
-  agents,
-  workspace,
-  onOpenAgent,
   onEdit,
   onDelete,
 }: {
   entry: TicketActivity;
-  agents: Agent[];
-  workspace?: Workspace;
-  onOpenAgent: (handle: string) => void;
   onEdit: (commentId: string, body: string) => Promise<void>;
   onDelete: (commentId: string) => Promise<void>;
 }) {
@@ -823,7 +743,6 @@ function CommentActivity({
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const roster = useMemo(() => people(agents), [agents]);
   const own = entry.actor === YOU;
 
   useEffect(() => setDraft(entry.body ?? ""), [entry.body]);
@@ -849,17 +768,9 @@ function CommentActivity({
   return (
     <li>
       <Message>
-        <MessageAvatar className="self-start bg-transparent">
-          <AssigneeAvatar
-            assignee={activityActorId(entry.actor, agents)}
-            agents={agents}
-            workspace={workspace}
-            size="md"
-          />
-        </MessageAvatar>
         <MessageContent className="gap-1.5">
           <MessageHeader className="gap-1.5 px-0">
-            <span className="truncate text-foreground">{actorName(entry.actor, agents)}</span>
+            <span className="truncate text-foreground">{actorName(entry.actor)}</span>
             <time className="shrink-0" dateTime={new Date(entry.at).toISOString()}>{when(entry.at)}</time>
             {entry.editedAt && <span>Edited</span>}
             {own && !editing && (
@@ -888,13 +799,16 @@ function CommentActivity({
             <BubbleContent className="w-full">
               {editing ? (
                 <div className="flex flex-col gap-2">
-                  <MentionField
+                  <Textarea
                     rows={3}
                     value={draft}
-                    onChange={setDraft}
-                    people={roster}
-                    agents={agents}
-                    onSubmit={() => void save()}
+                    onChange={(event) => setDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      // Enter saves; Shift+Enter is a newline, as in the composer.
+                      if (event.key !== "Enter" || event.shiftKey) return;
+                      event.preventDefault();
+                      void save();
+                    }}
                     aria-label="Edit comment"
                   />
                   <div className="flex justify-end gap-2">
@@ -915,7 +829,7 @@ function CommentActivity({
                   </div>
                 </div>
               ) : (
-                <Markdown text={entry.body ?? ""} mentions={named(entry, agents, onOpenAgent)} />
+                <Markdown text={entry.body ?? ""} />
               )}
             </BubbleContent>
           </Bubble>
@@ -950,11 +864,6 @@ function CommentActivity({
   );
 }
 
-function activityActorId(actor: string, agents: Agent[]): string | undefined {
-  if (actor === YOU || actor === WORKSPACE_AGENT) return actor;
-  return agents.find((agent) => agent.id === actor || agent.handle === actor)?.id;
-}
-
 function activityIcon(entry: TicketActivity) {
   if (entry.kind === "status" && typeof entry.detail?.status === "string") {
     return <StatusIcon status={entry.detail.status as TicketStatus} decorative />;
@@ -962,35 +871,14 @@ function activityIcon(entry: TicketActivity) {
   if (entry.kind === "create") return <CirclePlus />;
   if (entry.kind === "link") return <Link2 />;
   if (entry.kind === "unlink") return <Link2Off />;
-  if (entry.kind === "handoff") return <MessagesSquare />;
   if (entry.kind === "field") return <Pencil />;
   return <MessageSquare />;
 }
 
-/// What the entry's `@` tokens should render as now.
-///
-/// The stored handle says what text is in the prose; the stored id says who
-/// that was. So an agent renamed after the fact still renders under its
-/// current name, and a mention of somebody since deleted quietly stays plain
-/// text rather than pointing at nothing.
-function named(entry: TicketActivity, agents: Agent[], onOpenAgent: (handle: string) => void): Mention[] {
-  return (entry.mentions ?? []).flatMap((mention) => {
-    if (mention.id === YOU) return [{ handle: mention.handle, label: "You" }];
-    // The workspace agent has no pane of its own to open: it is the workspace's
-    // own model rather than a roster entry.
-    if (mention.id === WORKSPACE_AGENT) return [{ handle: mention.handle, label: "Workspace agent" }];
-    const agent = agents.find((candidate) => candidate.id === mention.id);
-    return agent
-      ? [{ handle: mention.handle, label: agent.name, onOpen: () => onOpenAgent(agent.handle) }]
-      : [];
-  });
-}
-
-function actorName(actor: string, agents: Agent[]): string {
-  if (actor === "you") return "You";
+function actorName(actor: string): string {
+  if (actor === YOU) return "You";
   if (actor === "remy") return "Remy";
-  if (actor === WORKSPACE_AGENT) return "Workspace agent";
-  return agents.find((agent) => agent.id === actor || agent.handle === actor)?.name ?? actor;
+  return actor;
 }
 
 function describe(entry: TicketActivity): string {
@@ -999,7 +887,6 @@ function describe(entry: TicketActivity): string {
   if (entry.kind === "comment") return "commented";
   if (entry.kind === "link") return "attached a thread";
   if (entry.kind === "unlink") return "detached a thread";
-  if (entry.kind === "handoff") return "handed this on";
   if (entry.kind === "status" && status) {
     return `moved this to ${STATUS_LABEL[status as TicketStatus] ?? status}`;
   }
@@ -1022,16 +909,9 @@ function when(at: number): string {
   });
 }
 
-function CommentBox({
-  agents,
-  onSend,
-}: {
-  agents: Agent[];
-  onSend: (body: string) => Promise<void>;
-}) {
+function CommentBox({ onSend }: { onSend: (body: string) => Promise<void> }) {
   const [value, setValue] = useState("");
   const [sending, setSending] = useState(false);
-  const roster = useMemo(() => people(agents), [agents]);
 
   const send = async () => {
     const body = value.trim();
@@ -1047,14 +927,18 @@ function CommentBox({
 
   return (
     <div className="flex flex-col gap-2">
-      <MentionField
+      <Textarea
         rows={3}
         value={value}
-        onChange={setValue}
-        people={roster}
-        agents={agents}
-        onSubmit={() => void send()}
-        placeholder="Write a comment. @ names an agent or you."
+        onChange={(event) => setValue(event.target.value)}
+        onKeyDown={(event) => {
+          // Enter sends; Shift+Enter is a newline, as in the composer.
+          if (event.key !== "Enter" || event.shiftKey) return;
+          event.preventDefault();
+          void send();
+        }}
+        aria-label="Write a comment"
+        placeholder="Write a comment."
       />
       <Button size="sm" className="self-end" disabled={!value.trim() || sending} onClick={() => void send()}>
         <Send />

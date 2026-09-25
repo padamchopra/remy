@@ -1,8 +1,8 @@
 import { useStore } from "@/state/store";
 import { PROVIDERS } from "@/lib/providers";
-import type { Chat, ChatDetail, ConvEntry, ConvDiffLine, Server, Workspace, Agent, Routine } from "@/state/types";
+import type { Chat, ChatDetail, ConvEntry, ConvDiffLine, Server, Workspace } from "@/state/types";
 
-export const scenes = ["threads", "worktrees", "review", "agents"] as const;
+export const scenes = ["threads", "worktrees", "review"] as const;
 export type Scene = typeof scenes[number];
 const timestamp = Date.now() - 180_000;
 const servers: Server[] = [
@@ -13,14 +13,6 @@ export const workspace: Workspace = { id: "demo-workspace", serverId: "demo-mac"
   { path: "/workspace/acme", branch: "main", isMain: true, dirty: false },
   { path: "/workspace/acme/.remy/onboarding", branch: "improve-onboarding", isMain: false, dirty: true },
 ] };
-export const sampleAgent: Agent = {
-  id: "demo-agent", serverId: "demo-mac", name: "Review agent", handle: "review", role: "A second pair of eyes on your changes.",
-  instructions: "Review changes for correctness and clear, maintainable code.", provider: "claude", permissionMode: "auto", autoStart: false, handoffTo: [], gitIdentity: "default",
-};
-const sampleRoutines: Routine[] = [
-  { id: "demo-morning", name: "Morning pull request review", cadence: "weekdays", hour: 9, minute: 0 },
-  { id: "demo-weekly", name: "Weekly dependency check", cadence: "weekly", hour: 10, minute: 0, weekday: 1 },
-].map((routine) => ({ ...routine, cadence: routine.cadence as Routine["cadence"], serverId: "demo-mac", agentId: sampleAgent.id, prompt: routine.name, enabled: true, schedulerDeviceId: "demo-mac", runs: 0, nextRunAt: Date.now() + 86_400_000, createdAt: timestamp, updatedAt: timestamp }));
 export const sampleDiff: ConvDiffLine[] = [
   { kind: "ctx", text: "export async function pairComputer(request) {" },
   { kind: "ctx", text: "  const identity = await verifyIdentity(request);" },
@@ -62,12 +54,11 @@ const examples: { title: string; prompt: string; reply: string; tool: string; ou
   { title: "Improve the pairing flow", prompt: "Make it easier to connect my other Mac. Keep the confirmation for computers with a different owner.", reply: "Both pairing paths are covered.\n\n- Your verified Mac connects directly.\n- A different owner still confirms the six-digit code.\n- The connection stays on your private network.\n\n**Validation**\n\nAll 18 pairing checks pass. The change is ready for review.", tool: "Read", output: "Checked the ownership and confirmation paths." },
   { title: "Build the onboarding screen", prompt: "Build a clearer welcome screen in a separate worktree so the other changes can keep moving.", reply: "The welcome screen is ready on **improve-onboarding**. Your main checkout is untouched, and the new flow explains how to open your first workspace.", tool: "Bash", output: "Created branch improve-onboarding\nWorking in /workspace/acme/.remy/onboarding\nAll checks passed." },
   { title: "Review the keyboard fix", prompt: "Review this change and check that keyboard users can still reach every action.", reply: "The fix keeps focus on the selected thread when the menu closes. Tab, Enter, and Escape all work, and the regression test passes.", tool: "Edit", output: "Updated keyboard navigation and its regression test." },
-  { title: "Plan the morning review", prompt: "Help me set up a weekday review of the open pull requests.", reply: "You can give your review agent this routine in Settings: “Review open pull requests every weekday at 9:00.” Pick the computers it can use in your preferred device order.", tool: "Read", output: "Reviewed the repository contribution guide." },
 ];
 const baseChats: Chat[] = examples.map((example, index) => ({
   id: `demo-${scenes[index]}`, title: example.title, serverId: index === 2 ? "demo-studio" : "demo-mac",
   cwd: index === 1 ? "/workspace/acme/.remy/onboarding" : workspace.path,
-  provider: ["claude", "codex", "cursor", "claude"][index], model: "", state: "idle", pinned: index === 0,
+  provider: ["claude", "codex", "cursor"][index], model: "", state: "idle", pinned: index === 0,
   createdAt: timestamp, updatedAt: timestamp + index * 20_000, preview: example.reply,
 }));
 function initialDetails(): Record<string, ChatDetail> {
@@ -89,7 +80,6 @@ export function resetDemo() {
   for (const timer of replyTimers.values()) clearTimeout(timer);
   replyTimers.clear();
   useStore.setState({ servers, chats: structuredClone(baseChats), workspaces: [workspace], details: initialDetails(),
-    agents: [sampleAgent], routines: structuredClone(sampleRoutines),
     catalogLoading: false, loading: false, connected: true, openIds: [], detailLoading: {}, historyLoading: {},
     providers: PROVIDERS.map((provider) => ({ ...provider, installed: true })),
     openChat: async () => {}, closeChat: () => {}, readChat: async () => {}, loadBoard: async () => {},

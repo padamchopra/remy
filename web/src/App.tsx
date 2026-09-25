@@ -52,8 +52,6 @@ import { useAppLocation } from "@/hooks/use-location";
 import { useRelease } from "@/hooks/use-release";
 import { useProviderUpdateToasts } from "@/hooks/use-provider-update-toasts";
 import { deviceIcon } from "@/lib/devices";
-import { apiError } from "@/lib/api-error";
-import { agentConversation } from "@/lib/inbox";
 import { notificationsEnabled } from "@/lib/notify";
 import { devicesForWorkspace, workspaceGroups } from "@/lib/projects";
 import { sectionOf, type Route } from "@/lib/route";
@@ -73,7 +71,6 @@ const Board = lazy(() => import("@/components/Board").then((module) => ({ defaul
 const NewTicketDialog = lazy(() => import("@/components/Board").then((module) => ({ default: module.NewTicketDialog })));
 const TicketView = lazy(() => import("@/components/TicketView").then((module) => ({ default: module.TicketView })));
 const MissingTicket = lazy(() => import("@/components/TicketView").then((module) => ({ default: module.MissingTicket })));
-const AgentsPane = lazy(() => import("@/components/Inbox").then((module) => ({ default: module.Inbox })));
 const WorkspaceSettings = lazy(() => import("@/components/WorkspaceSettings").then((module) => ({ default: module.WorkspaceSettings })));
 const PullRequests = lazy(() => import("@/components/PullRequests").then((module) => ({ default: module.PullRequests })));
 
@@ -230,7 +227,6 @@ export function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [addWorkspaceOpen, setAddWorkspaceOpen] = useState(false);
   const [addTicketOpen, setAddTicketOpen] = useState(false);
-  const [creatingAgent, setCreatingAgent] = useState(false);
   const [sidebarShown, setSidebarShown] = useState(initialSidebarShown);
 
   const toggleSidebar = () => {
@@ -271,9 +267,6 @@ export function App() {
   const loadArchivedThread = useStore((s) => s.loadArchivedThread);
   const tickets = useStore((s) => s.tickets);
   const projects = useStore((s) => s.projects);
-  const agents = useStore((s) => s.agents);
-  const boardLoading = useStore((s) => s.boardLoading);
-  const saveAgent = useStore((s) => s.saveAgent);
   const loadBoard = useStore((s) => s.loadBoard);
   const release = useRelease();
   const openProviderSettings = useCallback(() => {
@@ -316,37 +309,6 @@ export function App() {
   );
   const workspaces = allWorkspaces;
 
-  // Remy leads the roster; the rest keep the order they were written in. It
-  // answers for the app, so it is the one you land on with nothing else said.
-  const roster = useMemo(
-    () => [...agents].sort((a, b) => Number(b.builtIn ?? false) - Number(a.builtIn ?? false)),
-    [agents],
-  );
-  const settingsAgentHandle = route.name === "settings" && route.tab === "agents" ? route.agent : undefined;
-  // A named handle is the one you get, or nothing. Falling back to the first
-  // agent would race the roster: opening an agent the moment it is made would
-  // bounce back to whoever happens to lead the list.
-  const settingsAgent = settingsAgentHandle
-    ? roster.find((entry) => entry.handle === settingsAgentHandle)
-    : undefined;
-  const settingsAgentDmId = useStore((state) => settingsAgent
-    ? agentConversation(settingsAgent.id, state.dms, state.servers, state.settings?.devicePreferenceOrder)?.id
-    : undefined);
-
-  const newAgent = async () => {
-    setCreatingAgent(true);
-    try {
-      // Made straight away rather than behind a form: its settings are the
-      // form, and the machine makes the handle unique.
-      const made = await saveAgent(undefined, { name: "New agent" });
-      go({ name: "settings", tab: "agents", agent: made.handle });
-    } catch (caught) {
-      toast.error("Couldn't create that agent", { description: apiError(caught) });
-    } finally {
-      setCreatingAgent(false);
-    }
-  };
-
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "k" && (event.metaKey || event.ctrlKey)) {
@@ -388,7 +350,6 @@ export function App() {
     cwd: activeArchive.cwd,
     state: "idle" as const,
     provider: activeArchive.provider,
-    agentId: activeArchive.agentId,
     model: activeArchive.model,
     effort: activeArchive.effort,
     preview: activeArchive.preview,
@@ -444,24 +405,13 @@ export function App() {
     go({ name: "threads", threadId: parentId, ...(threadId !== parentId ? { focus: threadId } : {}) }, true);
   };
 
-  /// Where a conversation opens, whichever list it is in. A notification only
-  /// carries an id, and an agent conversation opened as a thread would land on
-  /// a route that cannot find it.
-  const openConversation = (id: string) => {
-    const dm = useStore.getState().dms.find((chat) => chat.id === id);
-    const agent = dm && roster.find((entry) => entry.id === dm.agentId);
-    if (agent) go({ name: "settings", tab: "agents", agent: agent.handle });
-    else openChat(id);
-  };
-
   // Banners come from the same socket the feed does, so a thread that needs you
   // says so whether or not this window is the one in front.
   useNotifications({
     enabled: notificationsEnabled(),
-    // What is already on screen, so a banner is not raised for it: a thread, or
-    // the agent conversation Settings has open.
-    openThreadId: selected ?? settingsAgentDmId ?? null,
-    onOpen: openConversation,
+    // What is already on screen, so a banner is not raised for it.
+    openThreadId: selected ?? null,
+    onOpen: openChat,
   });
 
   // Opening with no hash writes the one it resolved to, so the address bar
@@ -556,21 +506,7 @@ export function App() {
           <Deferred open={hubOpen}>{hubTarget.current && <HubThreads {...hubTarget.current} navigate={(next) => go(next)} />}</Deferred>
         </div>
         <Suspense fallback={<SurfaceLoading />}>
-        {hubOpen ? null : view === "settings" && settingsTab === "agents" ? (
-          <AgentsPane
-            agents={roster}
-            {...(settingsAgent ? { selected: settingsAgent } : {})}
-            {...(!settingsAgent && settingsAgentHandle ? { missing: settingsAgentHandle } : {})}
-            loading={boardLoading && roster.length === 0}
-            onSelectAgent={(handle) => go({ name: "settings", tab: "agents", agent: handle })}
-            onNewAgent={() => void newAgent()}
-            creatingAgent={creatingAgent}
-            onOpenTicket={(key) => go({ name: "ticket", key })}
-            onOpenThread={openChat}
-            onOpenWorkspace={(workspaceId) => go({ name: "workspaces", workspaceId })}
-            onDeleted={() => go({ name: "settings", tab: "agents" }, true)}
-          />
-        ) : view === "settings" ? (
+        {hubOpen ? null : view === "settings" ? (
           <SettingsPane
             organizationId={route.name === "settings" ? route.organizationId : undefined}
             tab={settingsTab}
@@ -596,7 +532,6 @@ export function App() {
               onOpenTicket={(key) => go({ name: "ticket", key })}
               onOpenThread={openChat}
               onOpenWorkspace={(workspaceId) => go({ name: "workspaces", workspaceId })}
-              onOpenAgent={(handle) => go({ name: "settings", tab: "agents", agent: handle })}
             />
           ) : (
             <MissingTicket ticketKey={route.key} onBack={() => go({ name: "board" })} />
@@ -627,9 +562,6 @@ export function App() {
                 key={`archived:${activeArchive.id}`}
                 chat={archivedChat}
                 archived={activeArchive}
-                persona={agents.find(
-                  (agent) => agent.id === activeArchive.agentId && agent.serverId === activeArchive.serverId,
-                )}
                 onRestored={openChat}
                 onOpenThread={openChat}
                 onOpenWorkspace={(workspaceId) => go({ name: "workspaces", workspaceId })}

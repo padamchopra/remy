@@ -77,36 +77,6 @@ function chats(count) {
   }));
 }
 
-function agents(count) {
-  return Array.from({ length: count }, (_, index) => ({
-    id: `agent-${index + 1}`,
-    name: `Performance agent ${index + 1}`,
-    handle: `performance-${index + 1}`,
-    role: `Fixture agent ${index + 1}`,
-    instructions: "Exercise Inbox rendering.",
-    provider: "claude",
-    model: "fixture-model",
-    permissionMode: "auto",
-    autoStart: false,
-    handoffTo: [],
-    gitIdentity: "off",
-  }));
-}
-
-function dms(roster) {
-  return roster.map((agent, index) => ({
-    id: `dm-${index + 1}`,
-    title: agent.name,
-    cwd: "~",
-    state: "idle",
-    provider: "claude",
-    agentId: agent.id,
-    model: "fixture-model",
-    preview: `Fixture conversation ${index + 1}`,
-    updatedAt: 1_700_000_000_000 - index,
-    dm: true,
-  }));
-}
 
 function usage() {
   return {
@@ -127,7 +97,6 @@ function timing(medianMs) {
 export function createFixture({
   threadCount = 25,
   entryCount = 100,
-  agentCount = 0,
   unavailableDevice = false,
   serverId = "local",
   readDelayMs = 4,
@@ -136,8 +105,6 @@ export function createFixture({
   terminalOutput = "",
 } = {}) {
   const listedChats = chats(threadCount);
-  const listedAgents = agents(agentCount);
-  const listedDms = dms(listedAgents);
   const primary = listedChats[0];
   const detail = {
     ...primary,
@@ -174,8 +141,6 @@ export function createFixture({
     primaryThreadId: primary.id,
     primaryTitle: primary.title,
     lastEntryText: detail.entries.at(-1).text,
-    primaryDmId: listedDms[0]?.id,
-    primaryAgentHandle: listedAgents[0]?.handle,
     readDelayMs,
     archiveDelayMs,
     messageDelayMs,
@@ -184,7 +149,7 @@ export function createFixture({
     responses: {
       "/peers": { name: "Performance fixture", peers: unavailableDevice ? [peer] : [] },
       "/cursor-cloud/status": {},
-      "/chats": { chats: listedChats, dms: listedDms, projection: true, sequence: 0 },
+      "/chats": { chats: listedChats, projection: true, sequence: 0 },
       "/archives": { archives: [] },
       "/workspaces": { workspaces: [workspace] },
       "/board": {
@@ -195,9 +160,7 @@ export function createFixture({
           keyPrefix: "PERF",
           workspaceIds: [workspace.id],
         }],
-        agents: listedAgents,
         tickets: [],
-        routines: [],
       },
       "/server/settings": DEFAULT_SETTINGS,
       "/server/identity": {
@@ -268,13 +231,6 @@ export function createFixture({
           { id: "tool-2", label: "Read package.json", durationMs: 120, status: "ok" },
         ],
       },
-      ...Object.fromEntries(listedDms.map((dm) => [`/chats/${dm.id}`, {
-        ...dm,
-        permissionMode: "auto",
-        entries: entries(entryCount),
-        todos: [],
-        live: true,
-      }])),
     },
   };
 }

@@ -14,11 +14,9 @@ import {
   SquareKanban,
   Users,
   User,
-  Bot,
   LogOut,
   Settings2,
   Building2,
-  Network,
   Plug,
   Bell,
 } from "lucide-react";
@@ -77,12 +75,6 @@ const WorkspaceDetails = lazy(() => import("./HubWorkspaceDetails"));
 const OrganizationSettings = lazy(() => import("./HubOrganizationSettings"));
 const Connections = lazy(() =>
   import("./HubConnections").then((m) => ({ default: m.HubConnections })),
-);
-const Inbox = lazy(() =>
-  import("./HubInbox").then((m) => ({ default: m.HubInbox })),
-);
-const Routing = lazy(() =>
-  import("./HubRouting").then((m) => ({ default: m.HubRouting })),
 );
 
 function SidebarNavigation({ route }: { route: Route }) {
@@ -290,24 +282,12 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           selected: section === "general",
         },
         {
-          label: "Agents",
-          icon: Bot,
-          route: { name: "settings", tab: "agents", organizationId },
-          selected: section === "agents",
-        },
-        {
           label: "Computers",
           icon: Laptop,
           route: { name: "settings", tab: "devices", organizationId },
           selected: section === "devices",
         },
         { label:"Environments", icon:Plug, route:{name:"settings",tab:"environments",organizationId}, selected:section==="environments" },
-        {
-          label: "Routing",
-          icon: Network,
-          route: { name: "settings", tab: "routing", organizationId },
-          selected: section === "routing",
-        },
         {
           label: "Connections",
           icon: Plug,
@@ -436,7 +416,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           ) : route.name === "prs" ? (
             <div className="flex min-h-0 flex-1"><Deferred open><PullRequests servers={[]} workspaces={[]} hostedOrganizationIds={isAll ? contexts.map((item) => item.id) : [organization.id]} onOpenThread={() => undefined} onOpenWorkspace={() => undefined} /></Deferred></div>
           ) : isAll ? (
-            <Deferred open><AllView organizations={contexts} route={route} userId={profile?.id ?? ""} navigate={navigate} threads={threads} threadsLoaded={threadsLoaded} /></Deferred>
+            <Deferred open><AllView organizations={contexts} route={route} navigate={navigate} threads={threads} threadsLoaded={threadsLoaded} /></Deferred>
           ) : (
             <div key={organization.id} className="flex min-h-0 flex-1 flex-col">
               <div hidden={section !== "general"} className="min-h-0 overflow-auto px-5 py-6"><Deferred open={section === "general"}><GeneralSettings organizationId={organization.id} showModelDefault={organization.personal === true} /></Deferred></div>
@@ -480,26 +460,6 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                   <Computers organizationId={organization.id} />
                 </Deferred>
               </div>
-              <div
-                hidden={section !== "agents"}
-                className="min-h-0 flex-1 overflow-auto"
-              >
-                <Deferred open={section === "agents"}>
-                  <Inbox
-                    organizationId={organization.id}
-                    userId={profile?.id ?? ""}
-                    agentId={route.name === "settings" && route.tab === "agents" ? route.agent : undefined}
-                    choose={(id) =>
-                      navigate({
-                        name: "settings",
-                        tab: "agents",
-                        agent: id,
-                        organizationId: organization.id,
-                      })
-                    }
-                  />
-                </Deferred>
-              </div>
               <div hidden={section !== "environments"} className="min-h-0 flex-1 overflow-auto p-6"><Deferred open={section === "environments"}><Environments organizationId={organization.id} /></Deferred></div>
               <div
                 hidden={section !== "connections"}
@@ -507,14 +467,6 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               >
                 <Deferred open={section === "connections"}>
                   <Connections organizationId={organization.id} />
-                </Deferred>
-              </div>
-              <div
-                hidden={section !== "routing"}
-                className="min-h-0 overflow-auto"
-              >
-                <Deferred open={section === "routing"}>
-                  <Routing organizationId={organization.id} />
                 </Deferred>
               </div>
               {(["members", "teams", "workspaces"] as const).map((kind) => (
