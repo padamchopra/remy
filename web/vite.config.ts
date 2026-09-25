@@ -48,10 +48,9 @@ export default defineConfig({
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
-  // In a plain browser the UI has no Electron main process to proxy through, so
-  // Vite plays that role: same-origin `/api`, with the bearer header injected
-  // on each request from remy.db so a just-spawned server is usable
-  // without restarting Vite. The token never reaches the page.
+  // The page never holds a credential, so Vite carries it: same-origin `/api`,
+  // with the bearer header injected on each request from remy.db so a
+  // just-spawned server is usable without restarting Vite.
   server: {
     port: 5173,
     strictPort: true,
@@ -86,8 +85,8 @@ export default defineConfig({
       },
     },
   },
-  // Electron loads the build off disk with a file:// URL, so assets must be
-  // referenced relatively rather than from the server root.
+  // The hosted app is served under /app, so assets are referenced relatively
+  // rather than from the server root.
   base: "./",
   build: { outDir: "dist", emptyOutDir: true },
 });

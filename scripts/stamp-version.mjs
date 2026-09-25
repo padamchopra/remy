@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
+const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const run = process.env.GITHUB_RUN_NUMBER;
 if (!run || !/^\d+$/.test(run)) {
   console.error("GITHUB_RUN_NUMBER is required");
@@ -19,7 +19,7 @@ if (!major || !minor) {
 }
 const version = `${major}.${minor}.${run}`;
 
-for (const rel of ["package.json", "desktop/package.json", "web/package.json", "server/package.json"]) {
+for (const rel of ["package.json", "web/package.json", "server/package.json"]) {
   const path = join(root, rel);
   const pkg = JSON.parse(readFileSync(path, "utf8"));
   pkg.version = version;

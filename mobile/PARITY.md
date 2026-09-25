@@ -23,14 +23,14 @@ does not run repositories, agents, browsers, or terminals itself.
 | Computers and settings | Discovers and pairs computers on the tailnet, retains QR/link fallback, and manages per-computer providers, defaults, worktrees, Remy model, tooling, integrations, identity, monitoring, notifications, availability, preference order, and analytics. | REMY-26 |
 | Navigation and recovery | Keeps Threads, Workspaces, Tasks, Pull requests, Devices, and Agents primary; deep-links every durable destination; routes pushes to the originating computer; restores a useful location; and retains cached content with retry. | REMY-27 |
 
-## Intentional desktop-only behavior
+## Intentional computer-only behavior
 
 | Capability | Decision |
 |---|---|
-| Run a repository or provider locally | Desktop-only. The iPhone chooses a paired computer; it is never an execution daemon. |
-| Store workspace folders, worktrees, credentials, or environment values | Desktop-only. The phone stores direct pairing credentials and metadata needed to operate the fleet, never repository secrets or files. |
-| Host a native browser process or terminal shell | Desktop-only. The phone controls and observes the process owned by the thread's computer. |
-| Install or update the desktop application itself | Desktop-only. The phone reports the computer's tooling and update state and can manage supported integrations. |
+| Run a repository or provider locally | On a computer only. The iPhone chooses a paired computer; it is never an execution daemon. |
+| Store workspace folders, worktrees, credentials, or environment values | On a computer only. The phone stores direct pairing credentials and metadata needed to operate the fleet, never repository secrets or files. |
+| Host a browser process or terminal shell | On a computer only. The phone controls and observes the process owned by the thread's computer. |
+| Install or update Remy on a computer | On that computer only, with `remy` in its terminal. The phone reports the computer's tooling and update state and can manage supported integrations. |
 
 ## Release gates
 

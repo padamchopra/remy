@@ -10,7 +10,7 @@ The `local-remy` name is a tag on the final local-only release, not a branch.
 
 ## Consequences
 
-The DMG keeps shipping from `main`. The installed daemon is also the computer binary, including when it runs headless inside a Sprite. Hub work cannot make local mode depend on the hosted service.
+`main` ships the web app, the daemon, and the `remy` CLI; the Electron app moved to a long-lived branch. The installed daemon is also the computer binary, including when it runs headless inside a Sprite. Hub work cannot make local mode depend on the hosted service.
 
 ## Rejected alternatives
 

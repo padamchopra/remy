@@ -52,7 +52,6 @@ export function useNotifications(input: {
         });
         banner.onclick = () => {
           window.focus();
-          void window.remy?.focus?.();
           if (threadId) onOpen(threadId);
           banner.close();
         };

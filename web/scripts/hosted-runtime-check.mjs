@@ -911,10 +911,8 @@ try {
         await page.getByRole("button", { name: "Connect a computer", exact: true }).click();
         await page.getByRole("region", { name: "General computer settings" }).waitFor();
         await page.getByRole("button", { name: "Create a connection key", exact: true }).waitFor();
-        const download = page.getByRole("link", { name: "Download for Mac", exact: true });
-        const guide = page.getByRole("link", { name: "Read the setup guide", exact: true });
-        const downloadBox = await download.boundingBox(), guideBox = await guide.boundingBox();
-        assert.ok(Math.abs(downloadBox.width - guideBox.width) < 1, "Mac setup actions have equal widths");
+        assert.equal(await page.getByRole("link", { name: "Download for Mac" }).count(), 0);
+        await page.getByRole("link", { name: "Read the setup guide", exact: true }).waitFor();
         await page.reload();
         await page.getByRole("region", { name: "General computer settings" }).waitFor();
         await page.getByRole("navigation", { name: "Computer settings" }).getByRole("button", { name: "Cloud", exact: true }).click();

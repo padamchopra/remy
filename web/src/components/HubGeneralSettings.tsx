@@ -16,7 +16,7 @@ export default function HubGeneralSettings({organizationId,showModelDefault=true
   const { profile, error } = useHubProfile(organizationId);
   return <section className="mx-auto flex w-full max-w-2xl flex-col gap-6" aria-label="General settings">
     <AppInfo detail={<p className="text-xs text-muted-foreground">Web app</p>}>
-      <Button asChild size="sm" variant="outline"><a href="https://github.com/padamchopra/remy/releases/latest" target="_blank" rel="noreferrer">Download for Mac</a></Button>
+      <Button asChild size="sm" variant="outline" data-link><a href="https://tryremy.dev/docs/#installation" target="_blank" rel="noreferrer">Set up a computer</a></Button>
     </AppInfo>
     {profile && <AvatarField avatar={profile.image ?? ""} onSave={saveHubAvatar} onGithub={async () => {
       const {image} = await hubRequest<{image:string}>(`${hubThreadBase(organizationId)}/github/profile`);

@@ -8,7 +8,6 @@ let hostedRuntime = false;
 export const isHostedRuntime = () => hostedRuntime;
 
 export async function readRuntime(): Promise<HubRuntime | undefined> {
-  if (window.remy || window.missionControl) return;
   try {
     const response = await fetch("/api/runtime", {
       credentials: "same-origin",

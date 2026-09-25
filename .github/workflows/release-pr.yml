@@ -1,4 +1,4 @@
-name: Mac PR
+name: Release PR
 
 on:
   pull_request:
@@ -7,15 +7,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: mac-pr-${{ github.event.pull_request.number }}
+  group: release-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  # One job so GitHub publishes a single Build Mac app check. Path decide still
-  # skips install, tests, and pack:mac when the Mac app did not change.
+  # One job so GitHub publishes a single Build computer check. Path decide still
+  # skips install and tests when nothing a computer runs changed.
   build:
-    name: Build Mac app
-    runs-on: macos-latest
+    name: Build computer
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,14 +27,14 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           if git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- \
-            'desktop/**' 'server/**' 'web/**' package.json \
-            .github/workflows/mac.yml .github/workflows/mac-pr.yml '.github/actions/**' \
+            'contract/**' 'server/**' 'web/**' package.json \
+            .github/workflows/release.yml .github/workflows/release-pr.yml '.github/actions/**' \
             ':(exclude,glob)**/*.md'; then
             echo "build=false" >> "$GITHUB_OUTPUT"
-            echo "Nothing in the Mac app changed."
+            echo "Nothing a computer runs changed."
           else
             echo "build=true" >> "$GITHUB_OUTPUT"
-            echo "The Mac app changed."
+            echo "What a computer runs changed."
           fi
 
       - uses: actions/setup-node@v4
@@ -46,21 +46,17 @@ jobs:
             contract/package-lock.json
             server/package-lock.json
             web/package-lock.json
-            desktop/package-lock.json
 
       - name: Install
         if: steps.paths.outputs.build == 'true'
-        run: npm run install:mac
+        run: npm run install:computer
 
-      - name: Test update handoff
+      - name: Test the daemon and the CLI
         if: steps.paths.outputs.build == 'true'
         env:
           NODE_OPTIONS: --import=${{ github.workspace }}/contract/node_modules/tsx/dist/loader.mjs
-        run: |
-          npm --prefix desktop test
-          npm --prefix server run build
-          node --test server/dist/hub-thread-branch.test.js server/dist/hosted-git-config.test.js server/dist/hosted-sprite-lease.test.js server/dist/app-update.test.js server/dist/service-restart*.test.js server/dist/ticket-tool-auth.test.js
+        run: npm --prefix contract test && npm --prefix server test
 
-      - name: Build unsigned app
+      - name: Build the web app
         if: steps.paths.outputs.build == 'true'
-        run: npm run pack:mac
+        run: npm run build
