@@ -5,21 +5,12 @@ import { isHostedRuntime } from "./hub-session";
 
 /// How the UI reaches a Remy server.
 ///
-/// Two implementations, because the app runs in two places:
-///
-///   - **Electron.** The main process owns the connection and the token. The
-///     renderer asks over IPC. This is the real one, and it exists because the
-///     server sends no CORS headers and authorises the `/notify/stream`
-///     upgrade with a header a browser `WebSocket` cannot set.
-///
-///   - **A plain browser.** Vite proxies `/api` to the server and injects the
-///     bearer header, so the same UI runs at `localhost:5173` for development
-///     and for the screenshot harness. Same-origin, so CORS never applies.
-///
-/// Both speak the same interface, so no component knows which one it has.
+/// The page is served beside the daemon, which proxies `/api` and injects the
+/// bearer header, so the token never reaches the page and same-origin means
+/// CORS never applies. `/api/notify/stream` upgrades through the same proxy.
 
 export interface Transport {
-  readonly kind: "electron" | "proxy";
+  readonly kind: "proxy";
   servers(): Promise<Server[]>;
   request<T>(serverId: string, path: string, init?: { method?: string; body?: unknown }): Promise<T>;
   upload<T>(serverId: string, path: string, input: { file: File }): Promise<T>;
@@ -249,53 +240,6 @@ interface ListedServer {
   builtin?: boolean;
 }
 
-interface Bridge {
-  platform: string;
-  arch?: string;
-  version?: string;
-  info?: () => Promise<{ version: string; name: string; packaged?: boolean }>;
-  downloadUpdate?(): Promise<void>;
-  installUpdate?(): Promise<void>;
-  onUpdateProgress?(handler: (progress: { received: number; total: number }) => void): () => void;
-  servers(): Promise<ListedServer[]>;
-  request(
-    serverId: string,
-    path: string,
-    init?: { method?: string; body?: unknown },
-  ): Promise<{ ok: true; data: unknown } | { ok: false; error: string }>;
-  upload?(
-    serverId: string,
-    path: string,
-    input: { data: Uint8Array; filename: string; mimeType: string },
-  ): Promise<{ ok: true; data: unknown } | { ok: false; error: string }>;
-  onPush(handler: (serverId: string, payload: unknown) => void): () => void;
-  setLiveTopics?(topics: string[]): Promise<void>;
-  onStatus(handler: (serverId: string, online: boolean, error?: string) => void): () => void;
-  /// Raises the desktop window. Absent in a browser, and on an older shell.
-  focus?(): Promise<void>;
-  /// Captures the window to a file, and answers with where it went.
-  snapshot?(): Promise<string>;
-  presentBrowser?(input: {
-    serverId: string;
-    chatId: string;
-    browserId: string;
-    visible: boolean;
-    focused: boolean;
-    bounds: { x: number; y: number; width: number; height: number };
-  }): Promise<boolean>;
-  openBrowserExternally?(url: string): Promise<void>;
-  removeServer(id: string): Promise<ListedServer[]>;
-  updateServer?(id: string, patch: { name?: string; icon?: string }): Promise<ListedServer[]>;
-}
-
-declare global {
-  interface Window {
-    missionControl?: Bridge;
-    remy?: Bridge;
-  }
-}
-
-
 function toServer(listed: ListedServer, online: boolean): Server {
   const appearance = loadAppearance()[listed.id];
   const name = appearance?.name || listed.name;
@@ -312,58 +256,6 @@ function toServer(listed: ListedServer, online: boolean): Server {
   };
 }
 
-function electronTransport(bridge: Bridge): LocalTransport {
-  const topicRefs = new Map<string, number>();
-  const syncTopics = () => {
-    void bridge.setLiveTopics?.([...topicRefs.keys()].sort());
-  };
-  return {
-    kind: "electron",
-    async servers() {
-      const list = await bridge.servers();
-      return list.map((item) => toServer(item, false));
-    },
-    async request<T>(serverId: string, path: string, init?: { method?: string; body?: unknown }) {
-      const result = await bridge.request(serverId, path, init);
-      if (!result.ok) throw new Error(result.error);
-      return result.data as T;
-    },
-    async upload<T>(serverId: string, path: string, input: { file: File }) {
-      if (!bridge.upload) throw new Error("Update Remy on this machine to attach images.");
-      const data = new Uint8Array(await input.file.arrayBuffer());
-      const result = await bridge.upload(serverId, path, {
-        data,
-        filename: input.file.name,
-        mimeType: input.file.type,
-      });
-      if (!result.ok) throw new Error(result.error);
-      return result.data as T;
-    },
-    subscribe(handler, topics) {
-      const off = bridge.onPush(handler);
-      for (const topic of topics) topicRefs.set(topic, (topicRefs.get(topic) ?? 0) + 1);
-      syncTopics();
-      return () => {
-        off();
-        for (const topic of topics) {
-          const next = (topicRefs.get(topic) ?? 0) - 1;
-          if (next > 0) topicRefs.set(topic, next);
-          else topicRefs.delete(topic);
-        }
-        syncTopics();
-      };
-    },
-    onStatus: (handler) => bridge.onStatus(handler),
-    async removeServer(id) {
-      await bridge.removeServer(id);
-    },
-    async updateServer(id, patch) {
-      saveAppearance(id, patch);
-      if (bridge.updateServer) await bridge.updateServer(id, patch);
-    },
-  };
-}
-
 /// The browser path. `/api` is proxied by Vite; `/api/notify/stream` upgrades
 /// through the same proxy, so the token stays server-side there too.
 function proxyTransport(): LocalTransport {
@@ -371,7 +263,7 @@ function proxyTransport(): LocalTransport {
   const pushHandlers = new Set<(serverId: string, payload: unknown) => void>();
   const statusHandlers = new Set<(serverId: string, online: boolean, error?: string) => void>();
   // A single proxied server has no id of its own; everything is tagged "local"
-  // so the shape matches the multi-server Electron case.
+  // so the shape matches a paired machine.
   const ID = "local";
   let attempt = 0;
   let closed = false;
@@ -530,27 +422,22 @@ function proxyTransport(): LocalTransport {
   };
 }
 
-const desktopBridge = window.remy ?? window.missionControl;
-
+/// A page draws the shared browser itself. A native surface over the top of it
+/// belonged to the desktop shell.
 export const nativeBrowserSurface = {
-  available: Boolean(desktopBridge?.presentBrowser),
-  present: (input: {
+  available: false,
+  present: (_input: {
     serverId: string;
     chatId: string;
     browserId: string;
     visible: boolean;
     focused: boolean;
     bounds: { x: number; y: number; width: number; height: number };
-  }): Promise<boolean> => desktopBridge?.presentBrowser?.(input) ?? Promise.resolve(false),
-  openExternal: (url: string): Promise<void> => desktopBridge?.openBrowserExternally?.(url)
-    ?? Promise.resolve().then(() => { window.open(url, "_blank", "noopener,noreferrer"); }),
+  }): Promise<boolean> => Promise.resolve(false),
+  openExternal: (url: string): Promise<void> => Promise.resolve().then(() => { window.open(url, "_blank", "noopener,noreferrer"); }),
 };
 
-export const transport: Transport = withPeers(
-  desktopBridge
-    ? electronTransport(desktopBridge)
-      : proxyTransport(),
-);
+export const transport: Transport = withPeers(proxyTransport());
 
 /// Hosted reads carry the organization in the path and use the same-origin session cookie.
 export const hubTransport = {

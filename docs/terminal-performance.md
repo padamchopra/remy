@@ -57,4 +57,4 @@ MC_TERMINAL_CANDIDATES=candidate=/absolute/path/to/index.html npm run perf:termi
 
 Separate candidates with commas. The first target is always the current bundle, and candidate results include percentage changes from it for the matching fixture and interaction.
 
-The benchmark injects the same deterministic Electron transport into every target. It measures renderer work without opening a real terminal or changing Remy data. CPU is Chromium main-thread task time, memory is JavaScript heap usage, and dropped frames are normalized against the display capacity measured immediately before each interaction.
+The benchmark injects the same deterministic transport into every target. It measures renderer work without opening a real terminal or changing Remy data. CPU is Chromium main-thread task time, memory is JavaScript heap usage, and dropped frames are normalized against the display capacity measured immediately before each interaction.

@@ -8,10 +8,6 @@ import { AppLoading } from "@/components/AppLoading";
 
 import "./index.css";
 
-if (window.remy || window.missionControl) {
-  document.documentElement.classList.add("electron");
-}
-
 // Rewrite leftover `/app/inbox` before the hosted runtime fetch, so a full
 // navigation's load waiter already sees Settings → Agents.
 normalizeLocation();

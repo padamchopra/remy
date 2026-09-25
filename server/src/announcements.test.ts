@@ -1,10 +1,22 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 process.env.MC_CONFIG_DIR = mkdtempSync(join(tmpdir(), "remy-announcements-"));
+
+// A thread is refused outright on a machine without the provider's command, so
+// all are stood up here rather than letting the suite depend on what happens to
+// be installed.
+const binDir = mkdtempSync(join(tmpdir(), "remy-announcements-bin-"));
+for (const command of ["claude", "codex", "agent"]) {
+  const path = join(binDir, command);
+  writeFileSync(path, "#!/bin/sh\nexit 0\n");
+  chmodSync(path, 0o755);
+}
+process.env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
+
 const { deliverAnnouncements } = await import("./announcements.js");
 const { dmChatFor, getChat, listChats, listDms } = await import("./chat.js");
 const { REMY_AGENT_ID } = await import("./remy-agent.js");

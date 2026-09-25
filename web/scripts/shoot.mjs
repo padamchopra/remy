@@ -1,6 +1,6 @@
 // Screenshot harness for the web window.
 //
-// The UI is a web app (Electron in production, Vite in preview). This script
+// The UI is a web app, served beside the daemon or by Vite in preview. This script
 // renders states and interactions to PNGs that can be looked at directly.
 //
 // Uses Playwright's already-cached Chromium; nothing is downloaded.

@@ -34,8 +34,6 @@ export function threadLink(
   extra?: { hosted?: boolean },
 ): string {
   const url = new URL(currentUrl);
-  // A packaged file path is not a shareable URL; use Remy's app deep link.
-  if (url.protocol === "file:") return `remy://chat/${encodeURIComponent(id)}`;
   const hosted = extra?.hosted
     || url.pathname === "/app"
     || url.pathname.startsWith("/app/");

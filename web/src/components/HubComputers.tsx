@@ -301,11 +301,8 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
               </Field>
               <HubComputerConnect organizationId={org} ownership={isPersonal || options.role === "member" ? "personal" : "organization"} />
               <Field>
-                <FieldDescription>Or install the Mac app and choose Attach this Mac in its own Settings → Computers.</FieldDescription>
-                <div className="grid max-w-sm grid-cols-1 gap-2 sm:grid-cols-2">
-                  <Button asChild variant="outline" className="w-full"><a href="https://github.com/padamchopra/remy/releases/latest" target="_blank" rel="noreferrer">Download for Mac</a></Button>
-                  <Button asChild variant="outline" className="w-full"><a href="https://tryremy.dev/docs/#web" target="_blank" rel="noreferrer">Read the setup guide</a></Button>
-                </div>
+                <FieldDescription>The setup guide covers installing the CLI and the providers it runs.</FieldDescription>
+                <Button asChild variant="outline" className="max-w-sm" data-link><a href="https://tryremy.dev/docs/#installation" target="_blank" rel="noreferrer">Read the setup guide</a></Button>
               </Field>
               <FieldDescription>Your computer appears in Computers after you sign it in.</FieldDescription>
             </section>}

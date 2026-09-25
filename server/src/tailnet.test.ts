@@ -40,7 +40,7 @@ writeFileSync(
 );
 chmodSync(stub, 0o755);
 
-// The daemon is started by Electron or by launchd, neither of which sets TERM.
+// The daemon is started by `remy start` or by launchd, neither of which sets TERM.
 delete process.env.TERM;
 process.env.PATH = binDir;
 

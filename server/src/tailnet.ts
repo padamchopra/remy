@@ -32,7 +32,7 @@ const TAILSCALE_PATHS = [
 /// when it cannot it prints "The Tailscale GUI failed to start" on stdout and
 /// exits **0**, so the caller is handed a sentence where it asked for JSON.
 ///
-/// Remy's daemon has no shell around it: Electron starts it, or launchd does.
+/// Remy's daemon has no shell around it: `remy start` runs it, or launchd does.
 /// What hid this is `/usr/local/bin/tailscale`, a `#!/bin/sh` shim into the
 /// bundle — `sh` sets `TERM=dumb` itself when nothing else has, so a machine
 /// with the shim worked and a machine without it did not. On an install that

@@ -40,7 +40,6 @@ test("workspace navigation respects device ownership and worktrees", () => {
 test("copied links target the clicked thread without stale layout or query parameters", () => {
   assert.equal(threadLink("new/id", "http://127.0.0.1:5173/?temporary=1#/threads/old?layout=x&focus=y"), "http://127.0.0.1:5173/#/threads/new%2Fid");
   assert.equal(threadLink("archived", "https://remy.example/ui/#/settings/providers"), "https://remy.example/ui/#/threads/archived");
-  assert.equal(threadLink("desktop", "file:///Applications/Remy.app/Contents/Resources/web/index.html"), "remy://chat/desktop");
   assert.equal(threadLink("hosted", "https://app.tryremy.dev/app/threads/old?organization=team", { hosted: true }), "https://app.tryremy.dev/app/threads/hosted");
   assert.equal(threadLink("hosted", "https://app.tryremy.dev/app/inbox"), "https://app.tryremy.dev/app/threads/hosted");
 });

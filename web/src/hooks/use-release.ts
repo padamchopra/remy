@@ -19,21 +19,15 @@ const POLL_MS = 60 * 60_000;
 const FOCUS_FLOOR_MS = 5 * 60_000;
 
 export function useRelease() {
-  const [current, setCurrent] = useState(window.remy?.version ?? REMY_VERSION);
-  // The check reads this rather than closing over `current`, so learning the
-  // real version from the shell does not have to rebuild the callback.
+  const [current] = useState(REMY_VERSION);
+  // The check reads this rather than closing over `current`, so a rebuilt
+  // callback is not part of asking again.
   const currentRef = useRef(current);
   currentRef.current = current;
   const [pending, setPending] = useState<RemyRelease[]>([]);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string>();
   const checkedAt = useRef(0);
-
-  useEffect(() => {
-    void window.remy?.info?.().then((info) => {
-      if (info.version) setCurrent(info.version);
-    });
-  }, []);
 
   // Everything newer than this build, not just the newest of them: what you
   // would be getting is the whole run of releases in between.
@@ -48,7 +42,7 @@ export function useRelease() {
       setError(undefined);
     }
     try {
-      const releases = await fetchReleasesSince(currentRef.current, window.remy?.arch);
+      const releases = await fetchReleasesSince(currentRef.current);
       checkedAt.current = Date.now();
       setPending(releases);
       return releases[0];

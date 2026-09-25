@@ -1,0 +1,133 @@
+name: Release
+
+on:
+  # A merge that changes what a computer runs ships it. The nightly is the
+  # safety net for a merge whose build never ran or did not finish.
+  push:
+    branches: [main]
+    paths:
+      - "contract/**"
+      - "server/**"
+      - "web/**"
+      - "hub/runtime/Dockerfile.computer"
+      - "package.json"
+      - ".github/workflows/release.yml"
+      - ".github/actions/**"
+      - "!**/*.md"
+  schedule:
+    - cron: "5 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+# Let a run finish rather than cancelling it under a second merge; the marker
+# branch keeps the two from shipping twice.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  # Decide on a cheap step whether there is anything to ship, so a quiet day
+  # does not publish the same commit again under a new version.
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+      sha: ${{ steps.decide.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # History, so the marker branch can be compared with this commit.
+          fetch-depth: 0
+
+      - id: decide
+        uses: ./.github/actions/build-needed
+        with:
+          branch: nightly/release
+          # A computer is the daemon, the CLI, and the web build together, so a
+          # change to any of them changes what somebody installs.
+          paths: |
+            contract/**
+            server/**
+            web/**
+            hub/runtime/Dockerfile.computer
+            package.json
+            .github/workflows/release.yml
+            .github/actions/**
+            :(exclude,glob)**/*.md
+
+  computer:
+    needs: preflight
+    if: needs.preflight.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            contract/package-lock.json
+            server/package-lock.json
+            web/package-lock.json
+
+      - name: Version
+        id: version
+        run: |
+          version="$(node scripts/stamp-version.mjs)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "Stamped $version from run ${GITHUB_RUN_NUMBER}"
+
+      - name: Install
+        run: npm run install:computer
+
+      - name: Test the daemon and the CLI
+        env:
+          NODE_OPTIONS: --import=${{ github.workspace }}/contract/node_modules/tsx/dist/loader.mjs
+        run: npm --prefix contract test && npm --prefix server test
+
+      - name: Build the web app
+        run: npm run build
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish the computer image
+        id: image
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER}/remy-computer:$VERSION"
+          docker build -f hub/runtime/Dockerfile.computer --build-arg "DAEMON_VERSION=$VERSION" -t "$image" .
+          docker push "$image"
+          container=$(docker create "$image")
+          mkdir -p "$RUNNER_TEMP/computer/opt" "$RUNNER_TEMP/computer/usr"
+          docker cp "$container:/opt/remy" "$RUNNER_TEMP/computer/opt/remy"
+          docker cp "$container:/usr/local" "$RUNNER_TEMP/computer/usr/local"
+          docker rm "$container"
+          tar -czf "$RUNNER_TEMP/remy-computer-linux.tar.gz" -C "$RUNNER_TEMP/computer" opt usr
+
+      - uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          artifacts: ${{ runner.temp }}/remy-computer-linux.tar.gz
+          generateReleaseNotes: true
+          allowUpdates: true
+          omitBodyDuringUpdate: true
+          replacesArtifacts: true
+          makeLatest: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Last, so a release that did not happen is one the next run tries again.
+      - uses: ./.github/actions/mark-shipped
+        with:
+          branch: nightly/release
+          sha: ${{ needs.preflight.outputs.sha }}

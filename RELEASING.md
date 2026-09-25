@@ -47,48 +47,29 @@ compliance questionnaire.
 7. Merge a change to `mobile/`, wait for the nightly, or open Actions →
    TestFlight → Run workflow to build straight away.
 
-## Mac builds
+## Computer builds
 
-macOS will not open a downloaded app unless Apple has notarized it, so the
-`Mac` workflow signs with a Developer ID and notarizes before publishing a
-GitHub release. Without the secrets below that job fails on purpose, so an
-unsigned build never ships.
+The `Release` workflow publishes what a computer runs: the Linux computer image
+on GHCR and its archive on a GitHub release, so a cloud computer and a machine
+you install by hand come from the same build.
 
-It runs when a merge to main changes what the app is made of — `desktop/`,
-`server/` or `web/`, which the DMG carries together — at 00:05 UTC nightly, and
-on demand from the Actions tab. A merge that only touches the phone app or the
-docs signs and notarises nothing. See **What decides a build** below.
+It runs when a merge to main changes `contract/`, `server/`, `web/`, the
+computer image, or the workflow itself, at 00:05 UTC nightly, and on demand from
+the Actions tab. A merge that only touches the phone app or the docs ships
+nothing. See **What decides a build** below.
 
 The tag is `{major}.{minor}.{run}` from `package.json` plus the workflow run
 number (`v0.1.5`, `v0.1.6`, …), so each build is its own release. Do not bump
 `version` in `package.json` by hand.
 
-## One-time setup
-
-1. Enrol in the [Apple Developer Program](https://developer.apple.com/programs/).
-2. In Keychain Access, create a **Developer ID Application** certificate, export
-   it as a `.p12`, then `base64 -i Remy.p12 | pbcopy`.
-3. In [App Store Connect](https://appstoreconnect.apple.com/access/api) →
-   Integrations → Team Keys, create a key with Developer access. Download the
-   `.p8` once. Note the Key ID and the Issuer ID.
-4. Add these GitHub Actions secrets on `padamchopra/remy`:
-
-   | Secret | Value |
-   |---|---|
-   | `CSC_LINK` | base64 of the `.p12` |
-   | `CSC_KEY_PASSWORD` | password for that `.p12` |
-   | `APPLE_API_KEY` | the `.p8` itself (`gh secret set APPLE_API_KEY < AuthKey_….p8`) or a base64 of that file |
-   | `APPLE_API_KEY_ID` | the Key ID |
-   | `APPLE_API_ISSUER` | the Issuer UUID |
-   | `APPLE_TEAM_ID` | 10-character Team ID |
-
-5. Merge a change to the app, wait for the nightly, or run the **Mac** workflow
-   from the Actions tab.
+The Mac app is not part of a release. It lives on the long-lived
+`padam/desktop-electron-9236` branch, which still carries `desktop/` and its
+signing and notarisation workflow; nothing on `main` builds a DMG.
 
 ## What decides a build
 
 Both workflows ask the same question before spending a runner, and each keeps
-its answer in a branch: `nightly/mac` and `nightly/testflight` hold the commit
+its answer in a branch: `nightly/release` and `nightly/testflight` hold the commit
 that target last shipped. A run builds when something it ships changed between
 that marker and the head of main, and moves the marker only after the build
 succeeds — so a build that fails is one the next merge or the next night tries
@@ -113,19 +94,18 @@ made.
 ## Building locally
 
 ```sh
-npm run pack:mac     # web + daemon + Electron DMG → desktop/release/
+npm run install:computer   # contract + server + web
+npm test                   # the daemon, the CLI, and the phone's contract rules
+npm run build              # the web app
 ```
 
-A local build has no Developer ID, so it is ad-hoc signed. After copying it into
-Applications, clear quarantine once:
+## Updating a computer
+
+Pull and rebuild on that machine, then `remy start` again:
 
 ```sh
-xattr -cr /Applications/Remy.app
+git pull && npm --prefix server ci && npm --prefix server run build
 ```
 
-## Updating in place
-
-The shipped window offers Download, then Relaunch, using the zip on GitHub
-Releases rather than the DMG. A daemon installed as a login item by
-`deploy/setup.sh` can use the authenticated update endpoint after one manual
-`git pull` and rebuild.
+A daemon installed as a login item by `deploy/setup.sh` can use the
+authenticated update endpoint after one manual `git pull` and rebuild.

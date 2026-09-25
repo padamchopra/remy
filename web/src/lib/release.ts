@@ -1,5 +1,6 @@
-/// GitHub is where Remy ships. The desktop app compares its own version to the
-/// latest published release and offers the DMG when that release is newer.
+/// GitHub is where Remy ships. The window compares the version it was built
+/// from to the latest published release, so a machine running an old copy says
+/// so.
 
 export const REMY_VERSION = import.meta.env.VITE_REMY_VERSION ?? "0.1.0";
 export const REMY_REPO = "padamchopra/remy";
@@ -8,32 +9,8 @@ export interface RemyRelease {
   version: string;
   notes?: string;
   pageUrl: string;
-  downloadUrl?: string;
 }
 
-/// Prefer the DMG built for this Mac. CI names them `Remy-{version}-{arch}.dmg`.
-export function pickDmgUrl(
-  assets: { name?: string; browser_download_url?: string }[] | undefined,
-  arch?: string,
-): string | undefined {
-  if (!assets) return undefined;
-  const dmgs = assets.filter(
-    (asset) => asset.name?.toLowerCase().endsWith(".dmg") && asset.browser_download_url,
-  );
-  if (arch) {
-    const tag = `-${arch.toLowerCase()}.`;
-    const tagged = dmgs.find((asset) => asset.name?.toLowerCase().includes(tag));
-    if (tagged) return tagged.browser_download_url;
-  }
-  return dmgs[0]?.browser_download_url;
-}
-
-/// Whether this copy was built here rather than shipped by CI.
-///
-/// The release workflow stamps `{major}.{minor}.{run}` from the CI run number,
-/// which is always 1 or more, so a patch of 0 is a version no release ever had.
-/// A dev server is local by definition. Either way there is nothing to update
-/// to: the newest GitHub release is not this build.
 export function isLocalBuild(version: string): boolean {
   if (import.meta.env.DEV) return true;
   return (parts(version)[2] ?? 0) === 0;
@@ -84,7 +61,7 @@ export function summarizeNotes(notes: string | undefined): string | undefined {
 
 /// Every release newer than `current`, newest first — what you would be getting,
 /// not just what the newest one changed.
-export async function fetchReleasesSince(current: string, arch?: string): Promise<RemyRelease[]> {
+export async function fetchReleasesSince(current: string): Promise<RemyRelease[]> {
   const response = await fetch(`https://api.github.com/repos/${REMY_REPO}/releases?per_page=30`, {
     headers: { Accept: "application/vnd.github+json", "User-Agent": `Remy/${REMY_VERSION}` },
   });
@@ -100,19 +77,13 @@ export async function fetchReleasesSince(current: string, arch?: string): Promis
 
   return body
     .filter((entry) => !entry.draft && !entry.prerelease)
-    .map((entry) => toRelease(entry, arch))
+    .map((entry) => toRelease(entry))
     .filter((release): release is RemyRelease => Boolean(release) && isNewer(release!.version, current))
     .sort((a, b) => (isNewer(a.version, b.version) ? -1 : 1));
 }
 
 function toRelease(
-  body: {
-    tag_name?: string;
-    html_url?: string;
-    body?: string;
-    assets?: { name?: string; browser_download_url?: string }[];
-  },
-  arch?: string,
+  body: { tag_name?: string; html_url?: string; body?: string },
 ): RemyRelease | undefined {
   const version = (body.tag_name ?? "").replace(/^v/i, "").trim();
   if (!version) return undefined;
@@ -120,23 +91,17 @@ function toRelease(
     version,
     notes: body.body?.trim() || undefined,
     pageUrl: body.html_url || `https://github.com/${REMY_REPO}/releases/latest`,
-    downloadUrl: pickDmgUrl(body.assets, arch),
   };
 }
 
-export async function fetchLatestRelease(arch?: string): Promise<RemyRelease | undefined> {
+export async function fetchLatestRelease(): Promise<RemyRelease | undefined> {
   const response = await fetch(`https://api.github.com/repos/${REMY_REPO}/releases/latest`, {
     headers: { Accept: "application/vnd.github+json", "User-Agent": `Remy/${REMY_VERSION}` },
   });
   if (response.status === 404) return undefined;
   if (!response.ok) throw new Error("Couldn't reach the update feed.");
-  const body = (await response.json()) as {
-    tag_name?: string;
-    html_url?: string;
-    body?: string;
-    assets?: { name?: string; browser_download_url?: string }[];
-  };
-  return toRelease(body, arch);
+  const body = (await response.json()) as { tag_name?: string; html_url?: string; body?: string };
+  return toRelease(body);
 }
 
 function parts(version: string): number[] {
