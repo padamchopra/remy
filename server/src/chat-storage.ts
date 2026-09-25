@@ -15,10 +15,6 @@ export interface ChatRow {
   model?: string;
   effort?: string;
   permissionMode: ChatPermissionMode;
-  agentId?: string;
-  /// True when this thread is an agent's inbox conversation rather than work in
-  /// a repository. There is one per agent and it is never listed with threads.
-  dm?: boolean;
   /// When this conversation was last read, so an inbox row knows to be bold.
   readAt?: number;
   /// Pinned threads lead the sidebar until you unpin them.
@@ -53,12 +49,10 @@ function writeChat(row: ChatRow): void {
   db.prepare(
     `insert into chats (
        id, title, cwd, provider, model, effort, permission_mode, created_at, updated_at,
-       claude_session_id, codex_thread_id, cursor_session_id, turns, cost_usd, context_json, todos_json, error, agent_id, dm, read_at, pinned, parent_chat_id
-     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       claude_session_id, codex_thread_id, cursor_session_id, turns, cost_usd, context_json, todos_json, error, read_at, pinned, parent_chat_id
+     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      on conflict(id) do update set
        title = excluded.title,
-       agent_id = excluded.agent_id,
-       dm = excluded.dm,
        read_at = excluded.read_at,
        pinned = excluded.pinned,
        parent_chat_id = excluded.parent_chat_id,
@@ -94,8 +88,6 @@ function writeChat(row: ChatRow): void {
     row.context ? JSON.stringify(row.context) : null,
     row.todos.length ? JSON.stringify(row.todos) : null,
     row.error ?? null,
-    row.agentId ?? null,
-    row.dm ? 1 : 0,
     row.readAt ?? null,
     row.pinned ? 1 : 0,
     row.parentChatId ?? null,
@@ -184,8 +176,6 @@ function toChatRow(row: Record<string, unknown>): ChatRow {
     ...(row.model ? { model: String(row.model) } : {}),
     ...(row.effort ? { effort: String(row.effort) } : {}),
     permissionMode: String(row.permission_mode) as ChatPermissionMode,
-    ...(row.agent_id ? { agentId: String(row.agent_id) } : {}),
-    ...(Number(row.dm) === 1 ? { dm: true } : {}),
     ...(typeof row.read_at === "number" ? { readAt: row.read_at } : {}),
     ...(Number(row.pinned) === 1 ? { pinned: true } : {}),
     ...(row.parent_chat_id ? { parentChatId: String(row.parent_chat_id) } : {}),

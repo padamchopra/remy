@@ -13,9 +13,7 @@ process.env.MC_CONFIG_DIR = stateDir;
 
 const { db } = await import("./db.js");
 const log = await import("./board-log.js");
-const agents = await import("./agents.js");
 const projects = await import("./projects.js");
-const memories = await import("./agent-memories.js");
 const tickets = await import("./tickets.js");
 const peers = await import("./peers.js");
 
@@ -106,11 +104,11 @@ test("a merged event notifies subscribers with the exact changed entity", async 
   const stop = log.onRemoteMerge((event) => seen.push(`${event.entity}:${event.entityId}`));
   log.mergeRemote([
     remoteEvent("alpha", 1, { entity: "ticket", entityId: "ticket-one" }),
-    remoteEvent("alpha", 2, { entity: "agent", entityId: "agent-one" }),
+    remoteEvent("alpha", 2, { entity: "project", entityId: "project-one" }),
   ]);
   await new Promise<void>((resolve) => queueMicrotask(resolve));
   stop();
-  assert.deepEqual(seen, ["ticket:ticket-one", "agent:agent-one"]);
+  assert.deepEqual(seen, ["ticket:ticket-one", "project:project-one"]);
 });
 
 test("a merged lamport carries this machine's clock forward", () => {
@@ -181,67 +179,6 @@ test("a peer's events fold into a ticket on this machine", () => {
   assert.equal(ticket?.title, "Wire the peers");
   assert.equal(ticket?.status, "in_progress", "later events fold over earlier ones");
   assert.equal(projects.getProject("p-shared")?.name, "Shared");
-});
-
-test("a peer's memory event becomes durable agent context on this machine", () => {
-  const events = [
-    remoteEvent("alpha", 20, {
-      id: "alpha-memory",
-      entity: "memory",
-      entityId: "memory-shared",
-      kind: "create",
-      payload: {
-        agentId: "agent-shared",
-        scope: "global",
-        content: "Prefer direct progress updates.",
-      },
-    }),
-  ];
-
-  assert.equal(peers.acceptEvents({ events }), 1);
-  assert.equal(memories.getMemory("memory-shared")?.content, "Prefer direct progress updates.");
-});
-
-test("a peer's agent edits and deletion converge on this machine", () => {
-  const events = [
-    remoteEvent("alpha", 30, {
-      id: "alpha-agent",
-      entity: "agent",
-      entityId: "agent-shared",
-      kind: "create",
-      payload: {
-        name: "Builder",
-        handle: "builder",
-        instructions: "Build the smallest complete change.",
-        avatar: "blobatar:v2:builder?s=round&h=42&t=pastel&e=happy",
-      },
-    }),
-    remoteEvent("alpha", 31, {
-      id: "alpha-agent-edit",
-      entity: "agent",
-      entityId: "agent-shared",
-      kind: "field",
-      payload: {
-        name: "Mobile builder",
-        avatar: "blobatar:v2:builder?s=cloud&h=218&t=ink&e=thinking",
-      },
-    }),
-  ];
-
-  assert.equal(peers.acceptEvents({ events }), 2);
-  assert.equal(agents.getAgent("agent-shared")?.name, "Mobile builder");
-  assert.equal(
-    agents.getAgent("agent-shared")?.avatar,
-    "blobatar:v2:builder?s=cloud&h=218&t=ink&e=thinking",
-  );
-
-  assert.equal(peers.acceptEvents({ events: [remoteEvent("alpha", 32, {
-    id: "alpha-agent-delete",
-    entity: "agent",
-    entityId: "agent-shared",
-    kind: "tombstone",
-  })] }), 1);
-  assert.equal(agents.getAgent("agent-shared"), undefined);
 });
 
 // ── the peer list ───────────────────────────────────────────────────────────

@@ -215,7 +215,7 @@ export function reproject(id: string): Ticket | undefined {
        id, number, key, project_id, title, body, status, priority,
        parent_id, rank, device_id, branch,
        created_at, updated_at, started_at, closed_at, deleted
-     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
      on conflict(id) do update set
        number = excluded.number, key = excluded.key,
        project_id = excluded.project_id, title = excluded.title,
