@@ -10,6 +10,7 @@ import {
   type SDKMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import { claudeLinearMcp, linearHttpMcp } from "../linear-mcp.js";
 import {
   applyAnswers,
   applyNotes,
@@ -114,7 +115,7 @@ class ClaudeAdapterSession implements ProviderSession {
       ...(options.effort ? { effort: options.effort as NonNullable<Options["effort"]> } : {}),
       ...(options.sessionId ? { resume: options.sessionId } : {}),
       includePartialMessages: true,
-      ...(options.inProcessMcp ? { mcpServers: { remy: options.inProcessMcp as NonNullable<Options["mcpServers"]>[string] } } : {}),
+      ...claudeMcpServers(options),
       canUseTool: (name, input, callback) => this.permission(name, input, callback),
       ...(options.env ? { env: options.env } : {}),
       ...(options.additionalDirectories ? { additionalDirectories: options.additionalDirectories } : {}),
@@ -395,6 +396,15 @@ function userMessage(input: ProviderTurn): SDKUserMessage {
     parent_tool_use_id: null,
     session_id: "",
   } as SDKUserMessage;
+}
+
+function claudeMcpServers(options: ProviderSessionOptions): { mcpServers?: NonNullable<Options["mcpServers"]> } {
+  const linear = linearHttpMcp(options.httpMcp);
+  const mcpServers = {
+    ...(options.inProcessMcp ? { remy: options.inProcessMcp as NonNullable<Options["mcpServers"]>[string] } : {}),
+    ...(linear ? { [linear.name]: claudeLinearMcp(linear) as NonNullable<Options["mcpServers"]>[string] } : {}),
+  };
+  return Object.keys(mcpServers).length ? { mcpServers } : {};
 }
 
 function claudePermissionMode(mode: ProviderSessionOptions["permissionMode"]): PermissionMode {

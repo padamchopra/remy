@@ -53,9 +53,11 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   hubRequest,
+  hubThreadBase,
   hubThreadPath,
   watchHubThreads,
 } from "@/lib/hub-threads";
+import { LinearThreadNotice } from "./LinearConnection";
 import type { Route } from "@/lib/route";
 
 type Approval = {
@@ -157,6 +159,18 @@ export default function HubThreads({
     access: {organizationId, owner: member ?? {id: "pending", label: "You"}, participants: [], visibility: pending.visibility},
     detail: {id: pending.requestId, title: pending.message.slice(0, 200), state: "working", entries: [{id: `u-${pending.requestId}`, kind: "user", text: pending.message}]},
   } : undefined);
+  const [liveNotice, setLiveNotice] = useState<string | null>();
+  useEffect(() => {
+    if (!savedThread || savedThread.access.owner.id !== member?.id) {
+      setLiveNotice(undefined);
+      return;
+    }
+    let stop = false;
+    void hubRequest<{ notice: string | null }>(`${hubThreadBase(organizationId)}/linear-access`).then((result) => {
+      if (!stop) setLiveNotice(result.notice);
+    }, () => { if (!stop) setLiveNotice(undefined); });
+    return () => { stop = true; };
+  }, [savedThread, member?.id, organizationId]);
   const actingComputer = savedThread?.computerId ?? pending?.created?.computerId;
   const actingThread = savedThread?.id ?? pending?.created?.id ?? threadId;
   useEffect(() => {
@@ -434,6 +448,10 @@ export default function HubThreads({
               </Button>
             </form>
           )}
+          <LinearThreadNotice
+            notice={liveNotice !== undefined ? liveNotice ?? undefined : typeof thread.detail.linearNotice === "string" ? thread.detail.linearNotice : undefined}
+            organizationId={organizationId}
+          />
           <div className={replyComposerFrame}>
             <form className={replyComposerForm} onSubmit={event => { event.preventDefault(); void send(); }}>
               <ReplyComposer

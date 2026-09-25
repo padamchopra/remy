@@ -101,6 +101,7 @@ import { useStore } from "@/state/store";
 import type { ProviderMcpStatus, Server, ServerSettings, TailnetDevice, Tooling, ToolStatus } from "@/state/types";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { AnalyticsTab } from "@/components/AnalyticsSettings";
+import { LocalLinearSettings } from "./LinearConnection";
 import { SETTINGS_SECTIONS, type SettingsTab } from "@/lib/settings-sections";
 
 const EnvironmentsSettings = lazy(() => import("./EnvironmentsSettings").then(m=>({default:m.EnvironmentsSettings})));
@@ -145,6 +146,8 @@ export function SettingsPane({
             <DevicesPane organizationId={organizationId} />
           ) : tab === "version-control" ? (
             <VersionControlPane />
+          ) : tab === "connections" ? (
+            <LocalLinearSettings />
           ) : tab === "providers" ? (
             <ProvidersPane deviceId={providerDeviceId} onDevice={onProviderDevice} />
           ) : tab === "analytics" ? (

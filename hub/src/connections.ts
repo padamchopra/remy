@@ -156,7 +156,14 @@ export class Connections {
         configured: !!p.clientId && !!p.clientSecret,
       })),
       connections: rows.results,
+      linearAccounts: await this.linearAccounts().then((accounts) => accounts.list(user)),
     };
+  }
+  private linearAccounts() {
+    return import("./linear-accounts.js").then(
+      ({ LinearAccounts }) =>
+        new LinearAccounts(this.db, this.vault, this.organizations, this.changed, this.now),
+    );
   }
   async get(org: string, provider: string, subject = "") {
     return this.db
@@ -275,6 +282,11 @@ export class Connections {
     const provider = this.provider(providerId);
     const identity = await provider.identity(tokens.access_token, this.send);
     await this.authorize(saved.organization_id, user, saved.subject);
+    if (providerId === "linear") {
+      await (await this.linearAccounts()).save(user, tokens, identity);
+      await this.changed(saved.organization_id);
+      return saved.organization_id;
+    }
     const existing = await this.get(
       saved.organization_id,
       providerId,
@@ -440,7 +452,15 @@ export class Connections {
     user: string,
     provider: string,
     subject: string,
+    accountId?: string,
   ) {
+    if (provider === "linear") {
+      await this.authorize(org, user, user);
+      if (!accountId) throw new ConnectionError("Choose a Linear account.");
+      await (await this.linearAccounts()).disconnect(user, accountId);
+      await this.changed(org);
+      return;
+    }
     await this.authorize(org, user, subject);
     await this.epoch(org, provider, subject);
     await this.db.batch([

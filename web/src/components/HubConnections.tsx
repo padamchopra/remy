@@ -7,6 +7,7 @@ import { useHubResource } from "@/lib/hub-organization";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { toast } from "sonner";
 import { apiError } from "@/lib/api-error";
+import { LinearAccountsCard } from "./LinearConnection";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -44,6 +45,13 @@ export type ConnectionsState = {
     configured: boolean;
   }[];
   connections: ConnectionSummary[];
+  linearAccounts?: {
+    id: string;
+    externalId: string;
+    label: string;
+    status: string;
+    updatedAt: number;
+  }[];
 };
 
 export function HubConnections({ organizationId }: { organizationId: string }) {
@@ -87,7 +95,29 @@ export function HubConnections({ organizationId }: { organizationId: string }) {
         </p>
       )}
       {!value && <p role="status">Reading your connections…</p>}
-      {value?.providers.map((provider) => (
+      {value && (
+        <LinearAccountsCard
+          accounts={value.linearAccounts ?? []}
+          busy={busy || stale}
+          onConnect={() => void start("linear", "member")}
+          onDisconnect={async (accountId) => {
+            setBusy(true);
+            try {
+              await hubRequest(
+                `${hubThreadBase(organizationId)}/connections/linear`,
+                "DELETE",
+                { scope: "member", accountId },
+              );
+              toast.success("This account is disconnected.");
+            } catch (e) {
+              toast.error("Couldn't disconnect that account", { description: apiError(e) });
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
+      )}
+      {value?.providers.filter((provider) => provider.id !== "linear").map((provider) => (
         <Card key={provider.id} className="min-w-0">
           <CardHeader>
             <CardTitle>{provider.name}</CardTitle>

@@ -26,7 +26,9 @@ import {
   stopChat,
   stopChatGroup,
   updateChat,
+  publishLinearNotice,
 } from "./chat.js";
+import { setHubLinear } from "./linear-session.js";
 import { archiveChat } from "./archives.js";
 import { closeBrowser } from "./browser.js";
 import { clearThreadPullRequestMonitoring } from "./pull-request-monitoring.js";
@@ -155,6 +157,7 @@ export async function handleHubThreadRequest(
       });
       if(taskKey)setKv(taskKey,chat.id);
       if(input.hubEnvironment!==undefined)setTaskEnvironment(chat.id,input.hubEnvironment);
+      if(input.hubLinear!==undefined){setHubLinear(chat.id,input.hubLinear);publishLinearNotice(chat.id);}
       if(input.hubInbox===true)setKv(`hubInbox:${chat.id}`,true);
       if(typeof input.hubInstructions==="string")setKv(`hubPersona:${chat.id}`,input.hubInstructions.slice(0,64000));
       shareHubThread(
@@ -201,6 +204,7 @@ export async function handleHubThreadRequest(
       broadcast({ type: "hub-thread", chatId: id });
     } else if (method === "POST" && action === "message") {
       if(input.hubEnvironment!==undefined)setTaskEnvironment(id,input.hubEnvironment);
+      if(input.hubLinear!==undefined){setHubLinear(id,input.hubLinear);publishLinearNotice(id);}
       if (
         typeof input.text !== "string" ||
         !input.text.trim() ||

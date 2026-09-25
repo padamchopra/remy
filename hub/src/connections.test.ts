@@ -17,7 +17,7 @@ import { sqliteD1 } from "../test/sqlite-d1.js";
 
 function fixture() {
   const { db, sqlite } = sqliteD1(
-    `CREATE TABLE organizations(id TEXT PRIMARY KEY);CREATE TABLE memberships(organization_id TEXT,user_id TEXT,PRIMARY KEY(organization_id,user_id));INSERT INTO organizations VALUES('studio'),('other');INSERT INTO memberships VALUES('studio','ada'),('studio','grace');${readFileSync(new URL("../migrations/0012_connections.sql", import.meta.url), "utf8")}`,
+    `CREATE TABLE organizations(id TEXT PRIMARY KEY);CREATE TABLE user(id TEXT PRIMARY KEY);CREATE TABLE memberships(organization_id TEXT,user_id TEXT,PRIMARY KEY(organization_id,user_id));INSERT INTO organizations VALUES('studio'),('other');INSERT INTO memberships VALUES('studio','ada'),('studio','grace');${readFileSync(new URL("../migrations/0012_connections.sql", import.meta.url), "utf8")}${readFileSync(new URL("../migrations/0029_linear_accounts.sql", import.meta.url), "utf8")}`,
   );
   let now = 1_000_000,
     fail = false,

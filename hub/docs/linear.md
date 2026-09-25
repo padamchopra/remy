@@ -2,9 +2,13 @@
 
 Configure the organization OAuth app and webhook secret described in `connections.md`. In the Linear OAuth app settings, enable issue, comment, user, label and grouping webhooks at `/api/connections/linear/webhook`. The broker acknowledges accepted Linear deliveries with HTTP 200, as required by Linear. The app's organization identity determines the recipient; a payload cannot choose a Remy organization.
 
-An administrator connects Linear, refreshes its teams and members, then maps a team or a grouping within that team to a Remy workspace. An optional Remy team is a mapping, not an implicit grant of workspace access. Existing workspace restrictions remain authoritative. Every Linear state must map to a Remy column. Unknown people retain their names; email matches are suggestions that an administrator confirms. Email addresses and tokens do not appear in the connection response.
+You connect your own Linear account in Settings → Connections. Each Linear workspace is its own row. Settings → Organization ties this organization to one of your workspaces, or to none. Personal can hold the same kind of link. Another member's accounts are not listed, and an administrator does not connect Linear for everyone.
 
-The full catalog is administrator-only. Other members cannot enumerate private Linear teams or people. Paginated lists are fetched completely before replacing the catalog, and a failed refresh preserves the previous catalog. Mappings are bound to the external Linear account; replacing a connection does not carry another account's mappings into the new one. Member departure removes the corresponding match.
+A thread starts even when Linear is not connected. When this organization has a Linear workspace and you have a sign-in for it, the thread uses Linear's hosted MCP with your token. If the sign-in is missing or needs reconnect, the thread says so. Team mapping does not gate that access.
+
+An administrator can still refresh teams and map a team or a grouping to a Remy workspace. That refresh uses the acting member's sign-in. An optional Remy team is a mapping, not an implicit grant of workspace access. Existing workspace restrictions remain authoritative. Every Linear state must map to a Remy column. Unknown people retain their names; email matches are suggestions that an administrator confirms. Email addresses and tokens do not appear in the connection response.
+
+The full catalog is administrator-only. Other members cannot enumerate private Linear teams or people. Paginated lists are fetched completely before replacing the catalog, and a failed refresh preserves the previous catalog. Mappings follow the organization's Linear workspace. Leaving removes your sign-in from the organization. Sync continues only while some remaining member still has that workspace; it does not keep a shared organization token.
 
 Verified issue, comment and state-bearing issue updates enter a durable inbox. WRK-24 consumes that inbox for ticket mirroring. OAuth revocation prompts reconnection. The connection page updates through the organization's live stream and replaces cached state on reconnect.
 

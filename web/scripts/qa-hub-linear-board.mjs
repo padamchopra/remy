@@ -90,7 +90,9 @@ try {
   await page
     .getByRole("link", { name: "Allow connection", exact: true })
     .click();
-  await page.getByText("Release team · Connected", { exact: true }).waitFor();
+  await page.getByRole("listitem", { name: "Release team", exact: true }).getByText("Connected", { exact: true }).waitFor();
+  const connected = await call("/connections");
+  await call("/linear-workspace", "PUT", { accountId: connected.linearAccounts[0].id });
   await page
     .getByRole("button", { name: "Refresh Linear teams", exact: true })
     .click();
