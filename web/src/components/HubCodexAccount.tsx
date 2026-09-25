@@ -70,14 +70,15 @@ export function HubCodexAccount({
                 Connected
                 {account.email ? ` as ${account.email}` : " to ChatGPT"}.
               </p>
-              <Button
-                className="self-start"
-                variant="outline"
-                disabled={busy || stale}
-                onClick={() => void change("logout")}
-              >
-                Disconnect Codex
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  disabled={busy || stale}
+                  onClick={() => void change("logout")}
+                >
+                  Disconnect Codex
+                </Button>
+              </div>
             </>
           ) : account?.phase === "pending" ? (
             <>
@@ -114,13 +115,14 @@ export function HubCodexAccount({
             </>
           ) : (
             <>
-              <Button
-                className="self-start"
-                disabled={busy || stale}
-                onClick={() => void change("start")}
-              >
-                {busy ? "Connecting…" : "Connect Codex"}
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  disabled={busy || stale}
+                  onClick={() => void change("start")}
+                >
+                  {busy ? "Connecting…" : "Connect Codex"}
+                </Button>
+              </div>
               <FieldDescription>
                 {account?.apiKeyConfigured
                   ? "You use your OpenAI API key until you connect ChatGPT."

@@ -39,7 +39,7 @@ export function HubModelAccess({organizationId}:{organizationId:string}) {
     {!resource.value && !resource.error && <div aria-label="Loading model access" role="status" className="space-y-4">{["claude-code","codex",...Object.keys(labels)].map(id=><Skeleton key={id} className="h-[54px] w-full rounded-xl" />)}</div>}
     {resource.value && <>
       <AccountSection id="claude-code" label="Claude Code">
-        <HubClaudeAccount organizationId={organizationId} />
+        <HubClaudeAccount organizationId={organizationId} listed={resource.value.accounts?.claude} />
       </AccountSection>
       <AccountSection id="codex" label="Codex">
         <CodexAccess organizationId={organizationId} />
