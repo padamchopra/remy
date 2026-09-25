@@ -18,7 +18,7 @@ Removing a computer closes its hub connection and removes its hub thread catalog
 | --- | --- | --- |
 | Durable owner | Organization D1 registration, ownership and policy | Computer SQLite outbox; organization D1 receipts and Apple Push delivery queue |
 | Credentials | Device authorization in the computer; member session for settings; signed computer connection | Computer signing key; member session; Apple key in a hub Secrets Store binding |
-| Read | Authenticated computer list filters by use/manage access; cards join visible running thread snapshots | Each member reads only their authorized notifications and their own phone preferences |
+| Read | Authenticated computer list filters by use/manage access; cards join visible running thread snapshots | Each member reads only their authorized notifications and their own device preferences |
 | Write | Hub checks current organization membership, ownership/admin role, and selected member/team tenant | Computer supplies thread identity; hub derives recipients from its owner and participants, then checks computer and thread access |
 | Live update | Coordinator invalidates computer and thread views on policy changes, removal, reconnect, and team/member changes | Recipient windows refresh their addressed inbox; device preferences invalidate the member's other open windows |
 | Reconnect | Computer/policy views make a full authorized read; threads resume or reset their existing cursor | SQLite retries until the hub acknowledges a persisted receipt; unique receipts prevent duplicate delivery; clients refetch and deduplicate alerts |
@@ -30,11 +30,11 @@ Access checks apply to start, read, write, join, approval, question, interrupt, 
 
 ## Apple Push
 
-A phone session registers its native Apple token at `POST /api/organizations/:id/notifications/devices` with `{token, environment: "production" | "sandbox", name}`. Tokens are never returned by management reads. Members can disable or delete their own destinations. Session revocation, expiration, membership removal and access changes are checked again before delivery. Open-thread spectators are not notification recipients unless they join.
+A native session registers its Apple Push token at `POST /api/organizations/:id/notifications/devices` with `{token, environment: "production" | "sandbox", name}`. Tokens are never returned by management reads. Members can disable or delete their own destinations. Session revocation, expiration, membership removal and access changes are checked again before delivery. Open-thread spectators are not notification recipients unless they join.
 
 Configure `APNS_KEY` as a Secrets Store binding containing the `.p8` signing key, with `APNS_KEY_ID`, `APNS_TEAM_ID`, and `APNS_TOPIC` as configuration values. `BETTER_AUTH_URL` supplies the organization URL carried by a notification. These optional bindings do not affect local Remy or ordinary in-app alerts. The provider uses signed ES256 requests, honors Apple's invalid-device responses, retries transient failures up to eight times, and retains the member's in-app receipt for seven days. Apple transport follows [Apple's provider request documentation](https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns).
 
-Until native organization navigation lands in WRK-32, the iPhone's notification tap opens the organization thread in its browser. It never interprets the organization thread as a local paired-computer thread. Native account onboarding owns calling the registration API; computer registration and the member-authenticated phone API are ready independently of that later navigation work.
+No native client ships from `main`, so nothing registers a push token today. The registration API and the member-authenticated device routes stay, and a notification tap would open the organization thread in a browser rather than as a local paired-computer thread.
 
 ## Reproduce
 

@@ -1,5 +1,4 @@
 const COMPUTER_LABEL = "release: computer";
-const TESTFLIGHT_LABEL = "release: testflight";
 
 function isMarkdown(path) {
   return path.toLowerCase().endsWith(".md");
@@ -17,12 +16,7 @@ function releaseLabelsForPaths(paths) {
     || path === ".github/workflows/release.yml"
     || path.startsWith(".github/actions/")
   ))) labels.push(COMPUTER_LABEL);
-  if (changed.some((path) => (
-    path.startsWith("mobile/")
-    || path === ".github/workflows/testflight.yml"
-    || path.startsWith(".github/actions/")
-  ))) labels.push(TESTFLIGHT_LABEL);
   return labels;
 }
 
-module.exports = { COMPUTER_LABEL, TESTFLIGHT_LABEL, releaseLabelsForPaths };
+module.exports = { COMPUTER_LABEL, releaseLabelsForPaths };

@@ -18,7 +18,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Check, Cloud, Copy, Folder, GripVertical, Laptop, Plus, RefreshCw, Smartphone, Trash2, X } from "lucide-react";
+import { Check, Cloud, Copy, Folder, GripVertical, Laptop, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -1018,7 +1018,7 @@ function DevicesPane({ organizationId }: { organizationId?: string }) {
   const [latestRelease, setLatestRelease] = useState<RemyRelease>();
   const hasPeer = servers.some((server) => server.peer);
   // Pairing lives in the daemon on this machine rather than in any one window,
-  // so the desktop app, a browser and the phone all pair once and see one list.
+  // so every client of that computer pairs once and sees one list.
   const home = servers.find((server) => server.local) ?? servers.find((server) => !server.cloud);
   // Nothing can pair with a machine nothing can reach, so the list below says
   // so rather than offering buttons that cannot work.
@@ -1161,7 +1161,6 @@ function DevicesPane({ organizationId }: { organizationId?: string }) {
           </SortableContext>
         </DndContext>
       </Field>
-      {home ? <PhonesField serverId={home.id} /> : null}
       <DiscoveredDevices homeId={home?.id} reachable={homeReachable} />
       <AddDevice onAdd={addServer} />
     </div>
@@ -1781,7 +1780,7 @@ function ReachableField({ serverId, identity }: { serverId: string; identity?: I
             <FieldContent>
               <FieldLabel>Pairing link</FieldLabel>
               <FieldDescription className="text-xs">
-                Scan it from the iPhone app, or paste it on a machine that never shows up below.
+                Paste it on a machine that never shows up below.
               </FieldDescription>
             </FieldContent>
             <Button variant="outline" size="sm" className="shrink-0" onClick={() => void copy()}>
@@ -1796,77 +1795,6 @@ function ReachableField({ serverId, identity }: { serverId: string; identity?: I
           </div>
         </>
       )}
-    </div>
-  );
-}
-
-/// iPhones that have registered an Apple Push token with this machine.
-///
-/// They buzz when a thread here needs you and no window is open to show a
-/// banner. The key that signs those pushes lives in `~/.remy/apns.json`, not
-/// in this pane — this is just who will hear it.
-function PhonesField({ serverId }: { serverId: string }) {
-  const [status, setStatus] = useState<{
-    configured: boolean;
-    devices: { token: string; name: string; lastSeen: number }[];
-  }>();
-
-  const reload = useCallback(() => {
-    void transport
-      .request<{ configured?: boolean; devices?: { token: string; name: string; lastSeen: number }[] }>(
-        serverId,
-        "/push/devices",
-      )
-      .then((body) => setStatus({ configured: body.configured === true, devices: body.devices ?? [] }))
-      .catch(() => {
-        // A daemon from before Apple Push landed has no phones.
-      });
-  }, [serverId]);
-
-  useEffect(() => reload(), [reload]);
-
-  const forget = async (token: string, name: string) => {
-    try {
-      await transport.request(serverId, `/push/devices/${encodeURIComponent(token)}`, { method: "DELETE" });
-      toast.success(`Forgot ${name}.`);
-      reload();
-    } catch (caught) {
-      toast.error("Couldn't forget that iPhone", { description: apiError(caught) });
-    }
-  };
-
-  if (!status) return null;
-
-  return (
-    <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/40 px-3.5 py-3">
-      <Field>
-        <FieldContent>
-          <FieldLabel className="flex items-center gap-2">
-            <Smartphone className="size-3.5" />
-            iPhone
-          </FieldLabel>
-          <FieldDescription className="text-xs">
-            {!status.configured
-              ? "Apple Push isn't set up on this machine yet, so the iPhone stays quiet."
-              : status.devices.length === 0
-                ? "Pair the iPhone app and it gets a push when no window is open."
-                : "A thread on this machine reaches these phones when no window is open."}
-          </FieldDescription>
-        </FieldContent>
-      </Field>
-      {status.devices.map((device) => (
-        <div key={device.token} className="flex items-center gap-3 border-t border-border pt-3">
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm">{device.name}</span>
-            <span className="block text-xs text-muted-foreground">
-              Last seen {new Date(device.lastSeen).toLocaleString(undefined, { month: "short", day: "numeric" })}
-            </span>
-          </span>
-          <Button variant="ghost" size="icon-xs" aria-label={`Forget ${device.name}`} onClick={() => void forget(device.token, device.name)}>
-            <Trash2 />
-          </Button>
-        </div>
-      ))}
     </div>
   );
 }
