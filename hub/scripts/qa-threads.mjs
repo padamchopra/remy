@@ -347,6 +347,12 @@ const control = createServer(async (req, res) => {
   if (controlPath.pathname === "/mail") {
     const value = await db.prepare("SELECT url FROM qa_emails WHERE recipient=? ORDER BY rowid DESC LIMIT 1").bind(controlPath.searchParams.get("email") ?? "").first();
     res.setHeader("content-type", "application/json"); res.end(JSON.stringify(value ?? {})); return;
+  } else if (controlPath.pathname === "/model-keys") {
+    // Names only: the value never leaves the computer that was given it.
+    const { hubModelKeys } = await import("../../server/dist/hub-model-keys.js");
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ names: Object.keys(hubModelKeys()) }));
+    return;
   } else if (controlPath.pathname === "/local-thread") {
     const { getChat } = await import("../../server/dist/chat.js");
     const local = getChat(askedThread);

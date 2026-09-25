@@ -12,6 +12,7 @@ import { CursorCloudThreads, verifyCursorCloudKey } from "./cursor-cloud.js";
 import { allowedRequestOrigin } from "./request-origin.js";
 import { emailAvailable, sendAccountEmail, type AccountEmail } from "./email.js";
 import { EnvironmentStore } from "./environments.js";
+import { ComputerModelKeyStore, computerModelKeyName, computerModelKeyWrite, publicComputerModelKeys } from "./computer-model-keys.js";
 import { personalSpace } from "./personal-space.js";
 import {LinearBoard} from "./linear-board.js";
 import {linearFor} from "./linear-routes.js";
@@ -349,6 +350,13 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     }
     return Response.json({workspaces},{headers:{"cache-control":"no-store"}});
   }
+  const modelKeySync=/^\/api\/organizations\/([^/]+)\/computers\/model-keys$/.exec(url.pathname);
+  if(modelKeySync && request.method==="POST") {
+    const org=decodeURIComponent(modelKeySync[1]),computer=await authenticateComputer(request,org,computerStore);
+    if(!computer)return jsonError("This computer cannot read its provider keys.",403);
+    const keys=new ComputerModelKeyStore(env.DB,()=>env.AUTH_SECRET.get());
+    return Response.json({values:await keys.values(computer.computerId)},{headers:{"cache-control":"no-store"}});
+  }
   const codexTokens=/^\/api\/organizations\/([^/]+)\/computers\/codex-tokens$/.exec(url.pathname);
   if(codexTokens && request.method==="POST") {
     const org=decodeURIComponent(codexTokens[1]),computer=await authenticateComputer(request,org,computerStore);
@@ -418,6 +426,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     const computer = await authenticateComputer(request, org, computerStore);
     if (!computer) return jsonError("This computer could not be authenticated.", 401);
     await computerStore.remove(org, computer.computerId);
+    await new ComputerModelKeyStore(env.DB, () => env.AUTH_SECRET.get()).forget(computer.computerId);
     await env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${org}`)).fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": org, "x-removed-computer": computer.computerId } }));
     return Response.json({ ok: true });
   }
@@ -691,6 +700,21 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         await organizations.member(organizationId, identity.userId);
         return board().fetch(new Request("https://internal/computers/live", { headers: { upgrade: request.headers.get("upgrade") ?? "", "x-organization-id": organizationId, "x-user-id": identity.userId, "x-session-id": identity.sessionId } }));
       }
+      const computerModelKeys = /^computers\/([^/]+)\/model-keys$/.exec(tail);
+      if (computerModelKeys && ["GET", "PUT"].includes(request.method)) {
+        await organizations.member(organizationId, identity.userId);
+        const id = decodeURIComponent(computerModelKeys[1]);
+        const computer = await computerStore.computer(organizationId, id);
+        if (!computer || computer.ownership === "hosted" || identity.clientKind === "computer" || !await computers.canManage(computer, identity.userId, organizationId)) return jsonError("Computer not found.", 404);
+        const keys = new ComputerModelKeyStore(env.DB, () => env.AUTH_SECRET.get());
+        if (request.method === "GET") return Response.json({ providers: publicComputerModelKeys(await keys.names(id)) }, { headers: { "cache-control": "no-store" } });
+        if (!allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Set provider keys in Remy.", 403);
+        const input = computerModelKeyWrite.safeParse(await body(request));
+        if (!input.success) return jsonError("Enter an API key for this provider.", 400);
+        await keys.set(id, computerModelKeyName(input.data.id), input.data.apiKey);
+        await board().fetch(new Request("https://internal/computer-model-keys/changed", { method: "POST", headers: { "x-organization-id": organizationId, "x-computer-id": id } }));
+        return Response.json({ providers: publicComputerModelKeys(await keys.names(id)) });
+      }
       const computerMatch = /^computers\/([^/]+)$/.exec(tail);
       if (computerMatch && ["PATCH", "DELETE"].includes(request.method)) {
         await organizations.member(organizationId, identity.userId);
@@ -706,6 +730,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
             if(!removed.ok) return removed;
           }
           await computers.remove(organizationId, id, identity.userId);
+          await new ComputerModelKeyStore(env.DB, () => env.AUTH_SECRET.get()).forget(id);
           for (const targetOrganizationId of sharedOrganizationIds) await env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${targetOrganizationId}`)).fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": targetOrganizationId, "x-removed-computer": id } }));
         }
         else {
@@ -1500,6 +1525,11 @@ export class HubCoordinator {
       if(!account)return new Response(null,{status:204});
       if(!this.computerSocket(account.computerId))await this.hostedService().ensure(account.workspaceId,account.settings);
       return this.dispatchComputer(account.computerId,{id:"remy",label:"Remy"},"POST","/hub/codex-tokens",{});
+    }
+    if(url.pathname==="/computer-model-keys/changed" && request.method==="POST") {
+      const computerId=request.headers.get("x-computer-id") ?? "";
+      try{this.computerSocket(computerId)?.send(JSON.stringify({kind:"board.changed"}));}catch{}
+      return new Response(null,{status:204});
     }
     if(url.pathname==="/environment-changed" && request.method==="POST") {this.invalidateComputers();for(const socket of this.ctx.getWebSockets()){const meta=socket.deserializeAttachment() as {kind?:string};if(meta?.kind==="computer")try{socket.send(JSON.stringify({kind:"board.changed"}));}catch{}}return new Response(null,{status:204});}
     const removeWorkspace = /^\/hosted-workspace\/([^/]+)$/.exec(url.pathname);

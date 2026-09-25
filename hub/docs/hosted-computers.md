@@ -38,6 +38,10 @@ The provider enforces the outbound domain allowlist outside the guest. The compu
 
 Sign in to Codex with ChatGPT, or to Claude Code with your Claude account, on a Mac or other computer you own. Cloud Model access does not start those logins. Hub routes that would begin a ChatGPT device code or Claude Code paste-code session on a hosted computer return an error.
 
+## Provider keys on a computer you connected
+
+Computers → Connected sets an Anthropic or OpenAI key on one connected computer, so nobody has to open a shell on that machine to sign Claude Code or Codex in. Only someone who can manage the computer can set a key, `computer_model_keys` rows are AES-GCM encrypted with the computer id as authenticated data, and management reads return the configured state rather than the value. The computer pulls the cleartext over its own authenticated connection, applies it to the environment its providers inherit, and restarts a provider session on the next turn so the new key takes effect. Removing the computer, or detaching it from the machine, forgets the keys. Cloud computers keep using organization model access instead. A provider or command can read the environment it inherits; keys set this way are no more contained than a workspace environment value.
+
 Official Codex protocol: https://developers.openai.com/codex/app-server/#auth-endpoints. Headless sign-in: https://developers.openai.com/codex/auth/#login-on-headless-devices.
 
 ## Lifecycle and accounting
