@@ -10,9 +10,9 @@ import { InputGroupText } from "./ui/input-group";
 import { ModelPickerButton } from "./ModelPicker";
 import { ComposerMenu } from "./ComposerMenu";
 import { PERMISSIONS, permissionOf } from "@/lib/chat-options";
-import { hostedModels } from "@/lib/hub-models";
+import { claudeCodeConnected, hostedModels } from "@/lib/hub-models";
 import { useHubResource } from "@/lib/hub-organization";
-import type { ModelAccessEntry } from "./HubModelAccess";
+import type { ModelAccessResponse } from "./HubModelAccess";
 import { AvatarFrom } from "./UserAvatar";
 import { useHubProfile } from "@/lib/hub-profile";
 import { useThreadStarts, retryHubThread, forgetThreadStart } from "@/lib/hub-thread-start";
@@ -101,7 +101,7 @@ export default function HubThreads({
   newThreadWorkspaceId?: string;
   onNewThreadWorkspaceChange?: (workspace: HubThreadWorkspaceOption) => void;
 }) {
-  const modelAccess = useHubResource<{providers:ModelAccessEntry[]}>(organizationId,"/model-access");
+  const modelAccess = useHubResource<ModelAccessResponse>(organizationId,"/model-access");
   const { profile } = useHubProfile(organizationId);
   const transcript = useRef<HTMLDivElement>(null);
   const followsLatest = useRef(true);
@@ -185,7 +185,7 @@ export default function HubThreads({
   const runtimeModel = String(thread?.detail.model ?? pending?.model ?? "");
   const gateway = /^remy:(openrouter|router|openai):(.+)$/.exec(runtimeModel);
   const modelProvider = gateway?.[1] ?? (runtimeProvider === "claude" ? "anthropic" : runtimeProvider);
-  const providers = hostedModels(modelAccess.value?.providers ?? [], true, {provider: modelProvider, model: gateway?.[2] ?? runtimeModel});
+  const providers = hostedModels(modelAccess.value?.providers ?? [], true, {provider: modelProvider, model: gateway?.[2] ?? runtimeModel}, claudeCodeConnected(modelAccess.value));
   const permission = permissionOf(typeof thread?.detail.permissionMode === "string" ? thread.detail.permissionMode : undefined);
   const approval = thread?.detail.approval as Approval | undefined;
   const question = thread?.detail.question as Question | undefined;

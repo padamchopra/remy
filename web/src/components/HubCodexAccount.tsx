@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { Field, FieldDescription } from "@/components/ui/field";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { watchHubResource } from "@/lib/hub-computers";
@@ -55,7 +55,6 @@ export function HubCodexAccount({
   };
   return (
     <Field>
-      <FieldLabel>Codex connection</FieldLabel>
       <FieldDescription>
         Threads on this computer use your connected ChatGPT account.
       </FieldDescription>

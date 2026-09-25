@@ -1,5 +1,5 @@
 import { startHubThread } from "@/lib/hub-thread-start";
-import { cloudShareAllowsProvider, hostedComposerChoice, hostedExecutionChoice, hostedModels } from "@/lib/hub-models";
+import { claudeCodeConnected, cloudShareAllowsProvider, hostedComposerChoice, hostedExecutionChoice, hostedModels } from "@/lib/hub-models";
 import { resolveModelDefault } from "@/lib/model-defaults";
 import { useHubModelDefaults } from "./HubModelDefault";
 import { BranchPicker } from "./BranchPicker";
@@ -15,7 +15,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "./ui/dropdo
 import { EmptyState } from "@/components/EmptyState";
 import { ModelPickerButton } from "./ModelPicker";
 import { PROVIDERS, type ModelChoice } from "@/lib/providers";
-import type { ModelAccessEntry } from "./HubModelAccess";
+import type { ModelAccessResponse } from "./HubModelAccess";
 import { CLOUD_COMPUTERS, cloudComputerProvider } from "@remy/contract";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ComputerSummary } from "@remy/contract";
@@ -126,7 +126,7 @@ export function HubThreadComposer({
     return () => { cancelled = true; };
   }, [base, isPersonal, preferenceLoaded, selected, workspaceId]);
   const codexAccount=useHubResource<{phase:string}>(organizationId,workspaceId ? `/hosted/${encodeURIComponent(workspaceId)}/codex` : null);
-  const modelAccess = useHubResource<{providers:ModelAccessEntry[]}>(organizationId,"/model-access");
+  const modelAccess = useHubResource<ModelAccessResponse>(organizationId,"/model-access");
   const defaults = useHubModelDefaults(organizationId, workspaceId || undefined, selected || undefined);
   const [pickedModel,setPickedModel]=useState<{workspaceId:string;choice:ModelChoice}>();
   const latchedDefaults = useRef(defaults.value);
@@ -137,12 +137,13 @@ export function HubThreadComposer({
   const usingCloud=!!cloudComputerProvider(selected);
   const usingCursorCloud=cloudComputerProvider(selected)==="cursor-cloud";
   const chatgpt = codexAccount.value?.phase === "connected";
+  const claudeCode = claudeCodeConnected(modelAccess.value);
   const cloudConnections = useHubResource<{settings?:{provider?:string};enabledProviders?: string[];cloudStart?: Record<string, {owner:boolean;providers:{id:string;allowed:boolean}[]}>}>(organizationId, "/hosted");
   const cloudStart = usingCloud ? cloudConnections.value?.cloudStart?.[cloudComputerProvider(selected) ?? ""] : undefined;
   const allowedCloudRuntimes = cloudStart && !cloudStart.owner ? new Set(cloudStart.providers.filter(provider => provider.allowed).map(provider => provider.id)) : undefined;
-  const resolvedChoice = hostedComposerChoice(modelAccess.value?.providers ?? [], chatgpt, inheritedModel);
+  const resolvedChoice = hostedComposerChoice(modelAccess.value?.providers ?? [], chatgpt, inheritedModel, claudeCode);
   const modelChoice = pickedModel?.workspaceId === workspaceId ? pickedModel.choice : resolvedChoice;
-  const cloudModels = hostedModels(modelAccess.value?.providers ?? [], chatgpt, modelChoice).filter(provider => cloudShareAllowsProvider(allowedCloudRuntimes, provider.id));
+  const cloudModels = hostedModels(modelAccess.value?.providers ?? [], chatgpt, modelChoice, claudeCode).filter(provider => cloudShareAllowsProvider(allowedCloudRuntimes, provider.id));
   const localModels = (computers.find(c=>c.computerId===selected)?.capabilities.providers ?? []).flatMap(p=>{
     const runtime=PROVIDERS.find(v=>v.id===p.id);
     return runtime ? [{...runtime,models:p.models.map(value=>({value,label:value || "Default"}))}] : [];

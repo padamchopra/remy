@@ -1,12 +1,18 @@
 import { PROVIDERS, type ModelChoice, type Provider, type ProviderModel } from "./providers";
-import type { ModelAccessEntry } from "@/components/HubModelAccess";
+import type { ModelAccessEntry, ModelAccessResponse } from "@/components/HubModelAccess";
 
 const HOSTED_LABELS: Record<string, string> = {
   anthropic: "Anthropic",
   openai: "OpenAI",
   router: "Router.com",
   openrouter: "OpenRouter",
+  claude: "Claude Code",
+  codex: "ChatGPT",
 };
+
+export function claudeCodeConnected(access?: Pick<ModelAccessResponse, "accounts"> | null) {
+  return access?.accounts?.claude?.phase === "connected";
+}
 
 export function hostedRuntimeProvider(id: string): string {
   if (id === "anthropic") return "claude";
@@ -42,7 +48,12 @@ function withEnsuredModel(models: ProviderModel[], model?: string): ProviderMode
 /// default selectable only while access is still arriving, or by adding its
 /// model onto a provider that is already on. An unconfigured gateway is not a
 /// start choice.
-export function hostedModels(entries: ModelAccessEntry[], chatgpt = false, ensure?: ModelChoice): Provider[] {
+export function hostedModels(
+  entries: ModelAccessEntry[],
+  chatgpt = false,
+  ensure?: ModelChoice,
+  claudeCode = false,
+): Provider[] {
   const cloudModels: Provider[] = entries.filter((entry) => entry.enabled && entry.configured).flatMap((entry) => {
     const runtime = runtimeFor(entry.id);
     if (!runtime) return [];
@@ -66,6 +77,18 @@ export function hostedModels(entries: ModelAccessEntry[], chatgpt = false, ensur
       });
     }
   }
+  if (claudeCode && !cloudModels.some((entry) => entry.id === "claude")) {
+    const runtime = PROVIDERS.find((entry) => entry.id === "claude");
+    if (runtime) {
+      cloudModels.unshift({
+        ...runtime,
+        id: "claude",
+        label: HOSTED_LABELS.claude,
+        efforts: [],
+        models: withEnsuredModel(runtime.models, ensure?.provider === "claude" ? ensure.model : undefined),
+      });
+    }
+  }
   if (chatgpt) {
     const runtime = PROVIDERS.find((entry) => entry.id === "codex");
     if (runtime) cloudModels.push({ ...runtime, label: "ChatGPT" });
@@ -75,8 +98,13 @@ export function hostedModels(entries: ModelAccessEntry[], chatgpt = false, ensur
 
 /// The model a new cloud thread should send: the saved default when that
 /// account can run it, otherwise the first enabled provider.
-export function hostedComposerChoice(entries: ModelAccessEntry[], chatgpt: boolean, inherited: ModelChoice): ModelChoice {
-  const catalogue = hostedModels(entries, chatgpt, inherited);
+export function hostedComposerChoice(
+  entries: ModelAccessEntry[],
+  chatgpt: boolean,
+  inherited: ModelChoice,
+  claudeCode = false,
+): ModelChoice {
+  const catalogue = hostedModels(entries, chatgpt, inherited, claudeCode);
   const match = catalogue.find((entry) => entry.id === inherited.provider);
   if (match?.models.some((model) => model.value === inherited.model)) return inherited;
   if (match) return { provider: match.id, model: match.models[0]?.value ?? "" };

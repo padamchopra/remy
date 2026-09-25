@@ -25,7 +25,10 @@ mkdirSync(process.env.CODEX_HOME, { recursive: true });
 mkdirSync(process.env.CLAUDE_CONFIG_DIR, { recursive: true });
 const { setKv, getKv } = await import("./db.js");
 const { configureHostedCodex } = await import("./hosted-codex-account.js");
+const { configureHostedClaude } = await import("./hosted-claude-account.js");
+const claudeCredentials = process.env.CLAUDE_CREDENTIALS_JSON;
 configureHostedCodex(process.env.CODEX_HOME, getKv<boolean>("hostedCodexConnected") === true);
+configureHostedClaude(process.env.CLAUDE_CONFIG_DIR, claudeCredentials);
 setKv("deviceId", bootstrap.registration.computerId);
 setKv("hubComputerPrivateKey", bootstrap.privateKey);
 setKv("hubComputerRegistration", bootstrap.registration);
@@ -38,7 +41,7 @@ rememberProviderModels("codex",models);
 setKv("config", {
   ...getKv<Record<string, unknown>>("config"),
   hubMode: true,
-  defaultProvider: process.env.ANTHROPIC_API_KEY ? "claude" : "codex",
+  defaultProvider: process.env.ANTHROPIC_API_KEY || claudeCredentials ? "claude" : "codex",
   deviceName: `Hosted ${bootstrap.workspace.name}`,
 });
 if (bootstrap.workspace.id) {

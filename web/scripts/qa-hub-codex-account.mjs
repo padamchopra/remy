@@ -29,7 +29,10 @@ const click=async locator=>{await locator.scrollIntoViewIfNeeded();const box=awa
 const button=name=>p.getByRole('button',{name,exact:true});
 const openWorkspace=async()=>{
  await p.goto(`${info.hubUrl}/app/#/settings/devices?organization=${info.organizationId}`);
- await click(p.getByRole('combobox',{name:'Hosted workspace',exact:true}));await click(p.getByRole('option',{name:'Website',exact:true}));
+ const codex=p.getByRole('region',{name:'Codex model access',exact:true});
+ await codex.waitFor();
+ const picker=codex.getByRole('combobox',{name:'Workspace',exact:true});
+ if(await picker.getByText('Website',{exact:true}).count()===0){await click(picker);await click(p.getByRole('option',{name:'Website',exact:true}));}
  await button('Connect Codex').waitFor();
 };
 try {
@@ -62,10 +65,23 @@ try {
  assert.equal((await call('ada',path+'/codex/unknown','POST')).status,404);
  const foreign=await fetch(base+path+'/codex/start',{method:'POST',headers:{authorization:`Bearer ${info.tokens.ada}`,origin:'https://unrelated.example'}});assert.equal(foreign.status,403);
  await api('logout');
+ assert.equal((await call('grace','/claude-account/start','POST')).status,403);
+ const claude=await call('ada','/claude-account/start','POST');
+ assert.equal(claude.status,200);
+ assert.equal(claude.body.phase,'pending');
+ assert.ok(claude.body.verificationUrl);
+ assert.ok(!JSON.stringify(claude.body).includes('codeVerifier'));
+ const listed=await call('ada','/model-access');
+ assert.equal(listed.body.accounts.claude.phase,'pending');
+ assert.ok(!JSON.stringify(listed.body).includes('codeVerifier'));
+ assert.equal((await call('ada','/claude-account/cancel','POST')).status,200);
+ const foreignClaude=await fetch(base+'/claude-account/start',{method:'POST',headers:{authorization:`Bearer ${info.tokens.ada}`,origin:'https://unrelated.example'}});assert.equal(foreignClaude.status,403);
  const narrow=await browser.newContext({viewport:{width:390,height:844},colorScheme:'dark'});
  await narrow.addCookies([{name:'remy_session',value:info.tokens.ada,url:info.hubUrl,httpOnly:true,sameSite:'Lax'}]);const mobile=await narrow.newPage();
  await mobile.goto(`${info.hubUrl}/app/#/settings/devices?organization=${info.organizationId}`);
- await mobile.getByRole('combobox',{name:'Hosted workspace',exact:true}).click();await mobile.getByRole('option',{name:'Website',exact:true}).click();
+ await mobile.getByRole('region',{name:'Codex model access',exact:true}).waitFor();
+ const picker=mobile.getByRole('combobox',{name:'Workspace',exact:true});
+ if(await picker.getByText('Website',{exact:true}).count()===0){await picker.click();await mobile.getByRole('option',{name:'Website',exact:true}).click();}
  await mobile.getByRole('button',{name:'Connect Codex',exact:true}).click();await mobile.getByLabel('Codex sign-in code',{exact:true}).waitFor();
  assert.ok(await mobile.locator('main').first().evaluate(e=>e.scrollWidth<=e.clientWidth));await mobile.getByRole('button',{name:'Cancel sign-in',exact:true}).scrollIntoViewIfNeeded();await mobile.screenshot({path:out+'/mobile-codex.png'});
  await mobile.getByRole('button',{name:'Cancel sign-in',exact:true}).click();await narrow.close();

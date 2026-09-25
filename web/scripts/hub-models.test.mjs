@@ -86,6 +86,17 @@ test("cloud share grants match a gateway id or a legacy Codex runtime", () => {
   assert.equal(cloudShareAllowsProvider(new Set(["openrouter"]), "codex"), false);
 });
 
+test("hosted models put a connected Claude Code account on the catalogue without an Anthropic key", () => {
+  const models = hostedModels(
+    [{ id: "openai", enabled: true, configured: true, models: [] }],
+    false,
+    undefined,
+    true,
+  );
+  assert.deepEqual(models.map((entry) => entry.id), ["claude", "openai"]);
+  assert.equal(models[0].label, "Claude Code");
+});
+
 test("hosted execution maps OpenRouter onto Codex without a double remy prefix", () => {
   assert.deepEqual(hostedExecutionChoice({ provider: "openrouter", model: "openrouter/auto" }), {
     provider: "codex",
