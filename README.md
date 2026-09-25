@@ -18,6 +18,16 @@ You need a Mac that can stay awake, with at least one provider installed: [Claud
 
 **Install the app.** Grab the newest DMG from [Releases](https://github.com/padamchopra/remy/releases) and drag it to Applications. It is signed and notarized, so it just opens. The DMG carries both the window and the daemon — opening Remy starts everything, quitting it stops everything, and it brings its own Node.
 
+**Or run it from a terminal.** A machine you reach over SSH has nowhere to open an approval page, so the CLI signs in with a key instead. Build the daemon, link the `remy` command, then create a connection key in Remy on the web under **Settings → Computers → Connected**:
+
+```sh
+npm --prefix server ci && npm --prefix server run build && npm --prefix server link
+remy login remy_…   # the command that page gives you
+remy start          # keeps this computer available
+```
+
+`remy status` says what it is connected to and `remy logout` disconnects it. The daemon still listens on `127.0.0.1`, and the iPhone app reaches it over your tailnet as before.
+
 **Or run it from source** (Node 22.5+, for `node:sqlite`):
 
 ```sh

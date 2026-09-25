@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CONTRACT_VERSION, accountProfileSchema, boardAppendInputSchema, boardLiveFrameSchema, boardLogEventSchema, computerHeartbeatSchema, computerRegistrationInputSchema, computerToHubFrameSchema, deviceAuthorizationSchema, hubToComputerFrameSchema, organizationDeletionImpactSchema, organizationSchema, organizationWorkspaceSchema, parseHubHealth, tokenPairSchema, uptimeCheckFrameSchema } from "./index.js";
+import { CONTRACT_VERSION, accountProfileSchema, decodeComputerConnectionKey, encodeComputerConnectionKey, boardAppendInputSchema, boardLiveFrameSchema, boardLogEventSchema, computerHeartbeatSchema, computerRegistrationInputSchema, computerToHubFrameSchema, deviceAuthorizationSchema, hubToComputerFrameSchema, organizationDeletionImpactSchema, organizationSchema, organizationWorkspaceSchema, parseHubHealth, tokenPairSchema, uptimeCheckFrameSchema } from "./index.js";
 
 test("accepts a compatible hub health response", () => {
   const health = parseHubHealth({
@@ -93,4 +93,15 @@ test("validates attributed board events and resumable live frames", () => {
   assert.equal(boardLiveFrameSchema.parse({ kind: "event", cursor: 1, event }).cursor, 1);
   assert.equal(boardLiveFrameSchema.parse({ kind: "reset", cursor: 8, reason: "cursor_unavailable" }).kind, "reset");
   assert.throws(() => boardLogEventSchema.parse({ ...event, actor: undefined }));
+});
+
+test("carries one connection key from the web to a computer's terminal", () => {
+  const key = encodeComputerConnectionKey({ v: 1, url: "https://app.example.test", organizationId: "org-1", ownership: "personal", key: "a".repeat(43) });
+  assert.match(key, /^remy_[A-Za-z0-9_-]+$/);
+  assert.deepEqual(decodeComputerConnectionKey(` ${key}\n`), { v: 1, url: "https://app.example.test", organizationId: "org-1", ownership: "personal", key: "a".repeat(43) });
+
+  assert.throws(() => decodeComputerConnectionKey("a".repeat(43)), /not a Remy connection key/);
+  assert.throws(() => decodeComputerConnectionKey("remy_notbase64!!"), /incomplete/);
+  assert.throws(() => decodeComputerConnectionKey(`remy_${btoa('{"v":1}').replace(/=+$/, "")}`), /incomplete/);
+  assert.throws(() => encodeComputerConnectionKey({ v: 1, url: "not-a-url", organizationId: "org-1", ownership: "personal", key: "a".repeat(43) }));
 });

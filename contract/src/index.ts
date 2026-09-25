@@ -226,6 +226,42 @@ export function computerConnectionMessage(organizationId: string, authorization:
   return ["remy-computer-connect-v1", organizationId, authorization.computerId, String(authorization.timestamp), authorization.nonce].join("\n");
 }
 
+/// What someone pastes into `remy login`: which Remy, which account, who owns
+/// the computer, and one approved authorization. One string so a headless
+/// machine needs no questions answered and no browser.
+export const computerConnectionKeySchema = z.object({
+  v: z.literal(1),
+  url: z.string().url(),
+  organizationId: z.string().min(1).max(200),
+  ownership: computerOwnershipSchema,
+  key: z.string().min(32).max(512),
+});
+export type ComputerConnectionKey = z.infer<typeof computerConnectionKeySchema>;
+export const COMPUTER_CONNECTION_KEY_PREFIX = "remy_" as const;
+
+export function encodeComputerConnectionKey(value: ComputerConnectionKey): string {
+  const json = JSON.stringify(computerConnectionKeySchema.parse(value));
+  const bytes = new TextEncoder().encode(json);
+  return `${COMPUTER_CONNECTION_KEY_PREFIX}${btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "")}`;
+}
+
+export function decodeComputerConnectionKey(value: string): ComputerConnectionKey {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith(COMPUTER_CONNECTION_KEY_PREFIX)) throw new Error("That is not a Remy connection key.");
+  const encoded = trimmed.slice(COMPUTER_CONNECTION_KEY_PREFIX.length).replaceAll("-", "+").replaceAll("_", "/");
+  let json: string;
+  try {
+    json = new TextDecoder().decode(Uint8Array.from(atob(encoded.padEnd(Math.ceil(encoded.length / 4) * 4, "=")), (c) => c.charCodeAt(0)));
+  } catch {
+    throw new Error("That connection key is incomplete; create another one.");
+  }
+  let parsed: unknown;
+  try { parsed = JSON.parse(json); } catch { throw new Error("That connection key is incomplete; create another one."); }
+  const result = computerConnectionKeySchema.safeParse(parsed);
+  if (!result.success) throw new Error("That connection key is incomplete; create another one.");
+  return result.data;
+}
+
 export const accountClientKindSchema = z.enum(["web", "phone", "computer", "cli"]);
 export type AccountClientKind = z.infer<typeof accountClientKindSchema>;
 
