@@ -5,6 +5,7 @@ const decode = (text: string) =>
   Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
 const modelSecretName = (name: string) =>
   name.startsWith("access:") ||
+  name.startsWith("account:") ||
   name.startsWith("model:") ||
   name === "ANTHROPIC_API_KEY" ||
   name === "OPENAI_API_KEY" ||
