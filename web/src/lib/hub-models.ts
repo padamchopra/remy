@@ -31,17 +31,41 @@ function runtimeFor(id: string): Provider | undefined {
     ?? PROVIDERS.find((entry) => entry.id === hostedRuntimeProvider(id));
 }
 
+function catalogueSlug(value: string): string {
+  return value.replace(/\[.*\]$/, "").replace(/-/g, ".");
+}
+
+/// OpenRouter and Router ids such as `anthropic/claude-opus-5.5` keep the
+/// Claude catalogue's name so a search for Opus finds them beside Claude Code.
+function hostedGatewayLabel(value: string): string {
+  const [vendor, ...rest] = value.split("/");
+  const id = rest.length ? rest.join("/") : vendor;
+  const runtimeId = vendor === "anthropic" ? "claude" : vendor === "openai" ? "codex" : undefined;
+  if (!runtimeId) return value;
+  const slug = catalogueSlug(id);
+  const provider = PROVIDERS.find((entry) => entry.id === runtimeId);
+  for (const model of provider?.models ?? []) {
+    if (!model.value) continue;
+    const candidate = catalogueSlug(model.value);
+    if (slug !== candidate && slug !== catalogueSlug(`claude-${model.value}`)) continue;
+    return model.context ? `${model.label} (${model.context})` : model.label;
+  }
+  return value;
+}
+
 function hostedModelsFor(entry: ModelAccessEntry): ProviderModel[] {
   const runtime = runtimeFor(entry.id);
   if (!runtime) return [];
-  if (entry.id === "router" || entry.id === "openrouter") return entry.models.map((value) => ({ value, label: value }));
+  if (entry.id === "router" || entry.id === "openrouter") {
+    return entry.models.map((value) => ({ value, label: hostedGatewayLabel(value) }));
+  }
   if (entry.id === "openai") return runtime.models.filter((model) => model.value);
   return runtime.models;
 }
 
 function withEnsuredModel(models: ProviderModel[], model?: string): ProviderModel[] {
   if (!model || models.some((entry) => entry.value === model)) return models;
-  return [{ value: model, label: model }, ...models];
+  return [{ value: model, label: hostedGatewayLabel(model) }, ...models];
 }
 
 /// Cloud thread catalogue: enabled and configured providers. Keep a saved

@@ -58,6 +58,7 @@ test("a model only ever belongs to the provider that answers to it", () => {
 });
 
 test("a model reads as its own name, and an empty one as the default", () => {
+  assert.equal(modelLabel("claude", "claude-opus-5-5"), "Opus 5.5");
   assert.equal(modelLabel("claude", "opus"), "Opus 5");
   assert.equal(modelLabel("claude", "claude-fable-5-1[1m]"), "Fable 5.1");
   assert.equal(modelLabel("codex", "gpt-6-astra"), "GPT-6 Astra");

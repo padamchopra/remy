@@ -239,7 +239,9 @@ try {
         hasWorkspace=true;cloudEnabled=true;connections.add("fly-sprites");connections.add("modal");enabledProviders.add("fly-sprites");enabledProviders.add("modal");
         if(process.env.QA_COMPOSER_ONLY === "1") {
           holdComposerReads=true;
-          const entry=modelEntries.find(p=>p.id==="openrouter");entry.enabled=true;entry.configured=true;entry.models=["openrouter/auto","test/model-a","test/model-b"];
+          const anthropic=modelEntries.find(p=>p.id==="anthropic");anthropic.enabled=true;anthropic.configured=true;
+          const entry=modelEntries.find(p=>p.id==="openrouter");entry.enabled=true;entry.configured=true;entry.models=["openrouter/auto","test/model-a","test/model-b","anthropic/claude-opus-5.5"];
+          claudeAccount={phase:"connected",subscription:"pro"};
           remyDefault={provider:"openrouter",model:"openrouter/auto"};preference="cloud:fly-sprites";
         }
         if(process.env.QA_SCOPE_ONLY === "1") {
@@ -276,13 +278,27 @@ try {
           for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"ready",cursor:0}));}catch{}
           await new Promise(resolve=>setTimeout(resolve,400));
           assert.deepEqual(await snapshot(),first,"Computer, model, and branch keep their first labels");
+          const viewport=page.viewportSize();
+          const composerBox=composer.locator('[data-slot="input-group"]');
+          assert.ok(await composerBox.evaluate(el => el.scrollWidth <= el.clientWidth + 1),"Composer toolbar must not overflow horizontally");
+          for (const [kind, name] of [["button","Model"],["button","Send"],["label","Thread computer"],["button","Branch"]]) {
+            const control=kind==="label"?composer.getByLabel(name,{exact:true}):composer.getByRole("button",{name,exact:true});
+            const box=await control.boundingBox();
+            assert.ok(box && box.width>8 && box.height>8,`${name} must be fully painted`);
+            assert.ok(box.x>=-1 && box.x+box.width<=viewport.width+1,`${name} must stay in the viewport`);
+          }
           if(artifacts)await page.screenshot({path:`${artifacts}/composer-chips-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
           await model.click();
           await page.getByRole("option",{name:/openrouter\/auto/}).waitFor();
           await page.getByRole("option",{name:/test\/model-a/}).waitFor();
+          await page.getByPlaceholder("Search providers and models",{exact:true}).fill("Opus 5.5");
+          const opus=page.getByRole("option",{name:/Opus 5.5/});
+          await opus.first().waitFor();
+          assert.ok((await opus.count())>=2,"Opus 5.5 stays on Claude Code and Anthropic while OpenRouter is selected");
           assert.equal(await page.getByText("No model by that name.",{exact:true}).count(),0);
           if(artifacts)await new Promise(resolve=>setTimeout(resolve,500));
           if(artifacts)await page.screenshot({path:`${artifacts}/composer-picker-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
+          await page.getByPlaceholder("Search providers and models",{exact:true}).fill("");
           await page.getByRole("option",{name:/test\/model-a/}).click();
           await model.getByText("test/model-a",{exact:true}).waitFor();
           await model.click();
@@ -290,6 +306,26 @@ try {
           await page.getByRole("option",{name:/test\/model-b/}).click();
           await model.getByText("test/model-b",{exact:true}).waitFor();
           if(artifacts)await new Promise(resolve=>setTimeout(resolve,800));
+          if(mobile) {
+            const orgUrl=new URL("/app/threads?organization=team",url);
+            await page.goto(orgUrl.href);
+            const orgComposer=page.getByRole("form",{name:"New thread",exact:true});
+            await orgComposer.waitFor();
+            const sharing=orgComposer.getByLabel("Thread sharing",{exact:true});
+            await sharing.waitFor();
+            await orgComposer.getByRole("button",{name:"Model",exact:true}).waitFor();
+            await orgComposer.getByLabel("Thread computer",{exact:true}).waitFor();
+            await orgComposer.getByRole("button",{name:"Branch",exact:true}).waitFor();
+            await orgComposer.getByRole("button",{name:"Send",exact:true}).waitFor();
+            assert.ok(await orgComposer.locator('[data-slot="input-group"]').evaluate(el => el.scrollWidth <= el.clientWidth + 1),"Organization composer must not overflow on a phone");
+            for (const [kind, name] of [["button","Model"],["button","Send"],["label","Thread computer"],["label","Thread sharing"],["button","Branch"]]) {
+              const control=kind==="label"?orgComposer.getByLabel(name,{exact:true}):orgComposer.getByRole("button",{name,exact:true});
+              const box=await control.boundingBox();
+              assert.ok(box && box.width>8 && box.height>8,`${name} must be fully painted on a phone`);
+              assert.ok(box.x>=-1 && box.x+box.width<=page.viewportSize().width+1,`${name} must stay in the phone viewport`);
+            }
+            if(artifacts)await page.screenshot({path:`${artifacts}/composer-chips-org-phone.png`});
+          }
           assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);
           await context.close();console.log(`Composer model picker passed: ${returning?'saved local state':'fresh profile'}, ${mobile?'touch phone':'desktop'}.`);continue;
         }

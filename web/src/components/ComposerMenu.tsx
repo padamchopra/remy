@@ -36,7 +36,7 @@ export function ComposerMenu({
 }) {
   if (disabled) {
     return (
-      <InputGroupText aria-label={ariaLabel} title={title} className="max-w-40 truncate">
+      <InputGroupText aria-label={ariaLabel} title={title} className="min-w-0 max-w-40 truncate">
         <Icon />
         {label}
       </InputGroupText>
@@ -46,9 +46,9 @@ export function ComposerMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <InputGroupButton aria-label={ariaLabel} title={title} disabled={pending} aria-busy={pending || undefined} className="disabled:opacity-100">
+        <InputGroupButton aria-label={ariaLabel} title={title} disabled={pending} aria-busy={pending || undefined} className="min-w-0 shrink disabled:opacity-100 [@media(pointer:coarse)]:h-8">
           <Icon />
-          <span className="max-w-40 truncate">{label}</span>
+          <span className="min-w-0 max-w-40 truncate">{label}</span>
           <ChevronDown />
         </InputGroupButton>
       </DropdownMenuTrigger>
