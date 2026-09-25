@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import {hubAgentTool} from "./hub-agent-tools.js";
+import {hubOrganizationTool} from "./hub-organization-tools.js";
 import { appendHubBoard, configureHubBoard, hubBoardList, hubBoardState, importHubBoard } from "./hub-board.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID, timingSafeEqual } from "node:crypto";
@@ -398,7 +398,7 @@ const server = createServer(async (req, res) => {
     }
     if(req.method==="POST" && /^\/organization-tools\/[a-z_]+$/.test(url.pathname)) {
       if(!scopedChatId)return json(res,403,{error:"Open a thread on this computer first."});
-      return json(res,200,await hubAgentTool(scopedChatId,url.pathname.split("/")[2],await readJson(req)));
+      return json(res,200,await hubOrganizationTool(scopedChatId,url.pathname.split("/")[2],await readJson(req)));
     }
     if (req.method === "GET" && url.pathname === "/health") {
       return json(res, 200, { ok: true, release: serviceRelease, instance: serviceInstance });

@@ -202,6 +202,7 @@ export const computerToHubFrameSchema = z.discriminatedUnion("kind", [
 ]);
 export type ComputerToHubFrame = z.infer<typeof computerToHubFrameSchema>;
 export const hubToComputerFrameSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("thread.retired"), threadIds: z.array(z.string().uuid()).max(1000) }),
   z.object({ kind: z.literal("board.changed") }),
   z.object({ kind: z.literal("sharing.changed"), organizationIds: z.array(z.string().min(1)).max(100) }),
   z.object({ kind: z.literal("welcome"), protocolVersion: z.number().int().positive(), heartbeatIntervalMs: z.number().int().positive(), threadRelay: z.boolean().optional(), notifications: z.boolean().optional(), sharedOrganizationIds: z.array(z.string().min(1)).max(100).optional() }),

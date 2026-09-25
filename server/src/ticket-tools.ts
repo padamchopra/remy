@@ -1,6 +1,6 @@
 import {hubLinearResolveInput,hubTicketCommentInput} from "./hub-linear-input.js";
 import {hubGitHubInput} from "./hub-github-input.js";
-import {hubAgentTool} from "./hub-agent-tools.js";
+import {hubOrganizationTool} from "./hub-organization-tools.js";
 import { createSdkMcpServer, tool } from "./provider-adapters/claude.js";
 import { basename } from "node:path";
 import { homedir } from "node:os";
@@ -172,11 +172,11 @@ export function inProcessTicketMcpServer(
     version: "1",
     instructions: REMY_TOOL_INSTRUCTIONS,
     tools: [
-      tool("resolve_linear_ticket","Resolve a Linear ticket in this workspace.",hubLinearResolveInput,async input=>{const result=await hubAgentTool(chatId,"resolve_linear_ticket",input) as {artifact?:ConvArtifact};return ok(JSON.stringify(result),result.artifact);}),
-      tool("comment_organization_ticket","Comment on a shared ticket with a link to this thread.",hubTicketCommentInput,async input=>ok(JSON.stringify(await hubAgentTool(chatId,"comment_organization_ticket",input)))),
-      tool("github_action","Create a pull request, comment or review using the linked member account.",hubGitHubInput,async input=>ok(JSON.stringify(await hubAgentTool(chatId,"github_action",input)))),
-      ...["list_organization_computers","list_organization_workspaces"].map(action=>tool(action,"List organization resources visible to the person.",{},async()=>ok(JSON.stringify(await hubAgentTool(chatId,action))))),
-      ...["start_organization_thread","create_organization_ticket","move_organization_thread"].map(action=>tool(action,"Act within the person's visible organization workspaces.",{workspaceId:z.string(),prompt:z.string().optional(),title:z.string().optional(),ticketId:z.string().optional(),threadId:z.string().optional(),computerId:z.string().optional()},async input=>{const result=await hubAgentTool(chatId,action,input) as {artifact?:ConvArtifact};return ok(JSON.stringify(result),result.artifact);})),
+      tool("resolve_linear_ticket","Resolve a Linear ticket in this workspace.",hubLinearResolveInput,async input=>{const result=await hubOrganizationTool(chatId,"resolve_linear_ticket",input) as {artifact?:ConvArtifact};return ok(JSON.stringify(result),result.artifact);}),
+      tool("comment_organization_ticket","Comment on a shared ticket with a link to this thread.",hubTicketCommentInput,async input=>ok(JSON.stringify(await hubOrganizationTool(chatId,"comment_organization_ticket",input)))),
+      tool("github_action","Create a pull request, comment or review using the linked member account.",hubGitHubInput,async input=>ok(JSON.stringify(await hubOrganizationTool(chatId,"github_action",input)))),
+      ...["list_organization_computers","list_organization_workspaces"].map(action=>tool(action,"List organization resources visible to the person.",{},async()=>ok(JSON.stringify(await hubOrganizationTool(chatId,action))))),
+      ...["start_organization_thread","create_organization_ticket","move_organization_thread"].map(action=>tool(action,"Act within the person's visible organization workspaces.",{workspaceId:z.string(),prompt:z.string().optional(),title:z.string().optional(),ticketId:z.string().optional(),threadId:z.string().optional(),computerId:z.string().optional()},async input=>{const result=await hubOrganizationTool(chatId,action,input) as {artifact?:ConvArtifact};return ok(JSON.stringify(result),result.artifact);})),
       tool(
         "list_workspaces",
         "List the workspace folders registered on this machine.",
