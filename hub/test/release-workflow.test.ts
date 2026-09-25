@@ -24,9 +24,6 @@ const releaseWorkflow = parse(readFileSync(join(hubRoot, "../.github/workflows/r
   on: { push: { paths: string[] } };
   jobs: Record<string, { steps?: Array<{ id?: string; name?: string; uses?: string; run?: string; with?: Record<string, string>; env?: Record<string, string> }> }>;
 };
-const testflightWorkflow = parse(readFileSync(join(hubRoot, "../.github/workflows/testflight.yml"), "utf8")) as {
-  on: { push: { paths: string[] } };
-};
 
 test("the required computer check reports on every pull request", () => {
   assert.ok("pull_request" in workflow.on);
@@ -47,16 +44,11 @@ test("the expensive steps run only for relevant changes", () => {
   assert.ok(expensive.some((step) => step.name === "Build the web app"));
 });
 
-test("main release workflows do not preflight unrelated changes", () => {
+test("the main release workflow does not preflight unrelated changes", () => {
   assert.ok(releaseWorkflow.on.push.paths.includes("server/**"));
   assert.ok(!releaseWorkflow.on.push.paths.includes("hub/**"));
   assert.ok(!releaseWorkflow.on.push.paths.includes("desktop/**"));
-  assert.deepEqual(testflightWorkflow.on.push.paths, [
-    "mobile/**",
-    ".github/workflows/testflight.yml",
-    ".github/actions/**",
-    "!**/*.md",
-  ]);
+  assert.ok(!releaseWorkflow.on.push.paths.includes("mobile/**"));
 });
 
 test("a release publishes the computer image and its Linux archive", () => {

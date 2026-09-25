@@ -1,6 +1,6 @@
 # Remy
 
-Remy is a remote for [Claude Code](https://claude.com/claude-code), [Codex](https://developers.openai.com/codex), and [Cursor](https://cursor.com/docs/cli/acp) on your own machines. Point it at a folder, say what you want done, and the work runs on the machine that actually holds the repo — while you watch from a browser tab or the iPhone app on the couch.
+Remy is a remote for [Claude Code](https://claude.com/claude-code), [Codex](https://developers.openai.com/codex), and [Cursor](https://cursor.com/docs/cli/acp) on your own machines. Point it at a folder, say what you want done, and the work runs on the machine that actually holds the repo — while you watch from a browser tab anywhere.
 
 <img src="docs/images/threads.png" alt="Remy showing four threads across two machines, with a composer for a new one" width="100%" />
 
@@ -24,7 +24,7 @@ remy login remy_…   # the command that page gives you
 remy start          # keeps this computer available
 ```
 
-`remy status` says what it is connected to and `remy logout` disconnects it. The daemon still listens on `127.0.0.1`, and the iPhone app reaches it over your tailnet as before.
+`remy status` says what it is connected to and `remy logout` disconnects it. The daemon still listens on `127.0.0.1`, and another device reaches it over your tailnet.
 
 **Or run the window from source**, against the same daemon:
 
@@ -70,20 +70,11 @@ From then on the two share a planning board — tickets converge on both without
 
 If a machine is somewhere Tailscale is not, **Pair with a link instead** takes a `remy://configure?…` link you copy from the other side.
 
-## On the iPhone
-
-The same remote, in your pocket. Pair it from **Settings → Devices**.
-
-<p>
-<img src="docs/images/phone-pair.png" alt="Pairing the iPhone app with a Mac" width="280" />
-<img src="docs/images/phone-threads.png" alt="The iPhone app with its sidebar open on a new thread" width="280" />
-</p>
-
 ## Where notifications go
 
 Every device card has a **Notifications** switch, and it means: when a thread on *this* machine needs you, tell *that* device. Turn on the ones you want. Turn off the machine you never sit at.
 
-When a window is open, notifications are banners. When none is, they go to your iPhone through Apple Push. Pair the iPhone app from **Settings → Devices**, and put your APNs key in `~/.remy/apns.json` (see `deploy/apns.json.example`).
+When a window is open, notifications are banners. When none is, they go to the paired computers that asked for them.
 
 ## Some notes
 

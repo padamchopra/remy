@@ -7,7 +7,7 @@ This repository ships two products on one release train:
 
 Local mode remains the default. Work for the hub must not make the local app, its daemon, or its CLI depend on a hosted service.
 
-The Electron desktop app is off `main`. It lives on the long-lived `padam/desktop-electron-9236` branch; do not reintroduce `desktop/`, an Electron bridge in `web/`, or a DMG here. `main` is the web app, the daemon, the CLI, and the phone.
+The Electron desktop app and the iPhone app are both off `main`. Electron lives on the long-lived `padam/desktop-electron-9236` branch and the Expo app on `padam/mobile-expo-b423`; do not reintroduce `desktop/`, `mobile/`, an Electron bridge in `web/`, a DMG, or an Expo build here. `main` is the web app, the daemon, and the CLI.
 
 `README.md` is the product story. This file is how to work in the code.
 
@@ -32,8 +32,6 @@ Verify the opened shell, not only a responding port: the local shell shows this 
 
 For a local daemon change, run `npm run qa:web` instead. For hosted backend changes, use the isolated hosted setup in `hub/docs/web.md` for QA; use `dev:hosted` when the user asks to try the live-account web shell. It builds the current checkout, starts its daemon and Vite on unused loopback ports, and prints the URL. Its database and sample workspace are temporary and removed when the command stops. Use `npm run qa:web -- --empty` when the empty state is what you need to inspect, or `npm run qa:web -- --check` for a non-interactive startup and proxy check.
 
-The iPhone app is `cd mobile && npx expo run:ios`. It talks to the same daemon over Tailscale after you pair it from Settings → Devices.
-
 The local Vite preview talks to the same daemon as `remy start` (`127.0.0.1:8420`) and the same database (`~/.remy/remy.db`), so threads, workspaces, settings and the token are the real ones. If that daemon is already running, Vite attaches to it rather than starting a second one.
 
 The page does not live-reload. Refresh it to see a change: editing Remy while watching Remy meant every save yanked the window out from under whatever was on screen.
@@ -50,7 +48,6 @@ Skip `VITE_MC_FIXTURE=1`; that is fake data, not your real state.
 |---|---|
 | `web/` | The UI. React 19, Tailwind v4, [shadcn/ui](https://ui.shadcn.com) in `web/src/components/ui` (still largely New York / Radix; **new work and redesigns use Base UI**), Zustand store in `web/src/state`. |
 | `server/` | The daemon. Node and TypeScript, binds `127.0.0.1` only, SQLite at `~/.remy/remy.db` through `node:sqlite`. Threads run on the Claude Agent SDK, Codex app-server, or Cursor ACP — see **Providers**. |
-| `mobile/` | The iPhone app (Expo / React Native). A remote for a computer's daemon — it cannot run standalone. |
 | `deploy/` | Optional launchd login item, provider hooks, `tailscale serve`, pairing QR. |
 | `.agents/skills/` | House rules. Read the one that covers what you are about to change. |
 
@@ -87,7 +84,7 @@ mistake in this repo, so check the table before naming anything.
 |---|---|---|
 | `project` | **workspace** | A project is the repository, keyed on its origin remote so two machines land on the same one. A workspace is one machine's folder holding it. Nobody adds a project — they add a folder, so that is the only word the UI uses. |
 | `chat` | **thread** | A conversation you have in a workspace. The API, the database and the code all still say chat. |
-| `server`, `peer`, `device`, `runner` | **computer** | A Mac running Remy or a hosted computer that can run threads. A phone is a client, not a computer. |
+| `server`, `peer`, `device`, `runner` | **computer** | A machine running Remy or a hosted computer that can run threads. |
 | `keyPrefix` | **ticket slug** | The letters in front of a ticket key. |
 
 Nothing a person reads says project, job, workflow, cron, daemon, projection,
@@ -114,13 +111,13 @@ The homepage is a curated product story, not a release feed. Promote a capabilit
 
 The changelog is one supporting surface; keep feature guides, setup documentation, FAQs, and download information accurate too. Describe the user benefit, group related changes, and link to details rather than reproducing commits. Keep unreleased work explicitly unreleased; use real release versions and dates only when confirmed. Never advertise planned or gated capabilities as generally available.
 
-Check removals and changed defaults for stale promises. Screenshots and demos must match the behavior they illustrate and use safe sample content. Keep local Remy and optional Remy for Teams availability distinct. Verify links and review affected desktop and mobile layouts before shipping website changes. Test real touch gestures through the page, including over embedded previews; `scrollTo` and viewport resizing alone do not prove that a phone can scroll. Keep the app’s viewport and scroll-lock rules inside the demo, and let the marketing document own page scrolling.
+Check removals and changed defaults for stale promises. Screenshots and demos must match the behavior they illustrate and use safe sample content. Keep local Remy and optional Remy for Teams availability distinct. Verify links and review affected desktop and phone layouts before shipping website changes. Test real touch gestures through the page, including over embedded previews; `scrollTo` and viewport resizing alone do not prove that a phone can scroll. Keep the app’s viewport and scroll-lock rules inside the demo, and let the marketing document own page scrolling.
 
 ## Checks
 
 ```sh
 npm run typecheck    # contract + hub + web + mobile
-npm test             # contract; server: tsc, then node --test on dist/*.test.js; then the phone's contract rules
+npm test             # contract; server: tsc, then node --test on dist/*.test.js
 npm run qa:web -- --check  # current server + UI, temporary state, alternate ports
 npm run shots        # Playwright PNGs of the page
 npm run live-check   # assert the page is showing threads
@@ -179,8 +176,7 @@ A server module opens its database at import time, so a test that touches state 
 - **The `remy` MCP is a thread's control surface.** Claude gets the in-process server in `server/src/ticket-tools.ts`; Codex and Cursor get the STDIO server in `server/src/ticket-mcp.ts`. Every tool exists on both paths. A thread may orchestrate only the operations allowlisted by `isRemyToolRoute`; add each new capability to the smallest explicit route and method set, derive its thread, device and actor from the capability where relevant, and test both an allowed route and a neighbouring forbidden one. STDIO providers receive the HMAC capability from `remyToolToken` through inherited environment variable names, never `config.token` or another daemon-wide credential. "Work on REMY-1" is resolved and linked before the model sees the prompt; a key that does not exist in Remy's board is not invented.
 - **Every provider keeps a live conversation.** A Claude thread holds one SDK query process across turns; a Codex thread holds one `codex app-server` JSON-RPC connection; a Cursor thread holds one `agent acp` connection through the official Agent Client Protocol SDK. Hosted Cursor Cloud threads use the Cursor SDK cloud VM instead of ACP. They can stop mid-turn for approvals and questions, stream tool progress, interrupt the active turn, and resume their own provider transcript after a restart. Cursor models come from `agent --list-models`, and its current default comes from `agent about`; do not replace ACP with the older headless JSON stream. Never quietly grant what a person would have been asked about.
 - **Reusable environments are assigned to repositories.** Settings owns shared definitions and workspace assignments. Cloud and model-access keys on Computers follow the same rule: values are encrypted at rest and management APIs return names and configured state, never values; the `remy` MCP cannot manage them. An account can keep multiple named Fly.io, OpenRouter, and other integration keys; execution uses the active key. Authenticated computer channels deliver assigned environment values, and providers inherit them automatically for each task. Restart a provider session when its environment changes. Keep values out of arguments, prompts, logs and snapshots. Exact output redaction cannot recognise encoded or transformed values and cannot prevent a provider or command from reading its inherited environment; keep that limitation visible anywhere the guarantee is described.
-- **Computer pairing lives in the daemon**, in the `peers` table, so one pairing serves every client reading that computer. Those clients reach a paired computer through `/peers/:id/api/...`; the native phone may use that authenticated route once to learn the computer's identity and keep its own direct credential in secure storage. `GET /server/identity` is how a computer introduces itself; `tailscale serve` is the only way in, so the daemon's bind stays on `127.0.0.1`, and `PATCH /server/identity {exposed}` is the switch for it.
-- **The iPhone app is a fleet client**, never an execution daemon of its own. Its first `remy://configure?url=&token=` pairing bootstraps the fleet; as reachable paired computers introduce themselves, the phone stores a direct credential for each in secure storage and connects to them independently. Shared state can come from any computer that answers, while threads and workspaces remain owned by the computer that can run them.
+- **Computer pairing lives in the daemon**, in the `peers` table, so one pairing serves every client reading that computer. Those clients reach a paired computer through `/peers/:id/api/...`. `GET /server/identity` is how a computer introduces itself; `tailscale serve` is the only way in, so the daemon's bind stays on `127.0.0.1`, and `PATCH /server/identity {exposed}` is the switch for it.
 - **Pairing starts on the device you are using.** An authenticated client asks
   its computer to pair with another on the tailnet. The receiving computer can
   approve without a second confirmation only when Tailscale Serve's identity
@@ -202,10 +198,10 @@ A server module opens its database at import time, so a test that touches state 
   card once, and a card you moved by hand stays where you put it.
 - **Which computer a thread runs on is a choice, not a rule.** The person picks it in the composer, or Remy takes the one they last used for that workspace; `chooseComputer` in `hub/src/computer-choice.ts` is that decision on the hub, and `preferredServer` with `devicePreferenceOrder` is its local equivalent. There is nothing to configure, so do not add a rules table, a resolver endpoint, or a settings section for it.
 - **Device administration and device preference are separate.** The detailed Devices list always keeps this machine first so its settings are easy to find. A compact **Preferred device order** field owns the order used when a new thread or other work can run on any available computer.
-- **Notifications are addressed, not broadcast.** The machine that raises one decides where it goes: `notifySelf` for itself, a `notify` flag per peer. A forwarded notification is always shown by whoever receives it. When no window is open, `notifySelf` falls through to Apple Push for iPhones registered on that daemon (`~/.remy/apns.json`).
+- **Notifications are addressed, not broadcast.** The machine that raises one decides where it goes: `notifySelf` for itself, a `notify` flag per peer. A forwarded notification is always shown by whoever receives it. When no window is open, `notifySelf` falls through to Apple Push for any phone still registered on that daemon (`~/.remy/apns.json`); nothing on `main` registers one.
 - **Commit subjects** are a sentence in the imperative with no prefix or scope tag: "Store chats in SQLite instead of a file each". PRs land squashed with the `(#n)` suffix.
 - **Version** is `{major}.{minor}.{run}`, where the run number comes from CI. Do not bump `version` in `package.json` by hand.
 
 ## Prerequisites
 
-Node 22.5+ for `node:sqlite`, `git`, `gh` authenticated for pull requests, at least one of Claude Code, Codex, or Cursor Agent, and `tmux` for the older session remote. Tailscale only if another device needs to reach the daemon. Xcode and an Apple Push key in `~/.remy/apns.json` for the iPhone app.
+Node 22.5+ for `node:sqlite`, `git`, `gh` authenticated for pull requests, at least one of Claude Code, Codex, or Cursor Agent, and `tmux` for the older session remote. Tailscale only if another device needs to reach the daemon.
