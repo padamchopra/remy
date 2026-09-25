@@ -19,7 +19,7 @@ const { cloudShareAllowsProvider, hostedComposerChoice, hostedExecutionChoice, h
 );
 
 test("hosted models keep the current choice selectable before access arrives", () => {
-  const models = hostedModels([], false, { provider: "openrouter", model: "openrouter/auto" });
+  const models = hostedModels([], { provider: "openrouter", model: "openrouter/auto" });
   assert.deepEqual(
     models.map((entry) => ({ id: entry.id, values: entry.models.map((model) => model.value) })),
     [{ id: "openrouter", values: ["openrouter/auto"] }],
@@ -29,7 +29,6 @@ test("hosted models keep the current choice selectable before access arrives", (
 test("hosted models list enabled providers and prepend a missing current choice", () => {
   const models = hostedModels(
     [{ id: "openrouter", enabled: true, configured: true, models: ["test/model-a", "test/model-b"] }],
-    false,
     { provider: "openrouter", model: "openrouter/auto" },
   );
   assert.deepEqual(
@@ -41,7 +40,6 @@ test("hosted models list enabled providers and prepend a missing current choice"
 test("hosted models omit providers that are turned off", () => {
   const models = hostedModels(
     [{ id: "openrouter", enabled: false, configured: true, models: ["openrouter/auto"] }],
-    false,
   );
   assert.deepEqual(models.map((entry) => entry.id), []);
 });
@@ -52,7 +50,6 @@ test("hosted models do not paint an unconfigured saved default once access has a
       { id: "anthropic", enabled: true, configured: true, models: [] },
       { id: "openrouter", enabled: false, configured: false, models: [] },
     ],
-    false,
     { provider: "openrouter", model: "openrouter/auto" },
   );
   assert.deepEqual(models.map((entry) => entry.id), ["anthropic"]);
@@ -64,14 +61,12 @@ test("hosted composer start uses an enabled provider instead of an unconfigured 
       { id: "anthropic", enabled: true, configured: true, models: [] },
       { id: "openrouter", enabled: false, configured: false, models: [] },
     ],
-    false,
     { provider: "openrouter", model: "openrouter/auto" },
   );
   assert.equal(choice.provider, "anthropic");
   assert.equal(
     hostedComposerChoice(
       [{ id: "openrouter", enabled: true, configured: true, models: ["vendor/model"] }],
-      false,
       { provider: "openrouter", model: "openrouter/auto" },
     ).model,
     "openrouter/auto",
@@ -86,15 +81,12 @@ test("cloud share grants match a gateway id or a legacy Codex runtime", () => {
   assert.equal(cloudShareAllowsProvider(new Set(["openrouter"]), "codex"), false);
 });
 
-test("hosted models put a connected Claude Code account on the catalogue without an Anthropic key", () => {
+test("hosted models do not add Claude Code or ChatGPT account rows", () => {
   const models = hostedModels(
     [{ id: "openai", enabled: true, configured: true, models: [] }],
-    false,
-    undefined,
-    true,
   );
-  assert.deepEqual(models.map((entry) => entry.id), ["claude", "openai"]);
-  assert.equal(models[0].label, "Claude Code");
+  assert.deepEqual(models.map((entry) => entry.id), ["openai"]);
+  assert.equal(models[0].label, "OpenAI");
 });
 
 test("hosted models keep Claude Opus 5.5 choosable while OpenRouter is selected", () => {
@@ -103,13 +95,11 @@ test("hosted models keep Claude Opus 5.5 choosable while OpenRouter is selected"
       { id: "anthropic", enabled: true, configured: true, models: [] },
       { id: "openrouter", enabled: true, configured: true, models: ["openrouter/auto", "anthropic/claude-opus-5.5"] },
     ],
-    false,
     { provider: "openrouter", model: "openrouter/auto" },
-    true,
   );
-  assert.deepEqual(models.map((entry) => entry.id), ["claude", "anthropic", "openrouter"]);
+  assert.deepEqual(models.map((entry) => entry.id), ["anthropic", "openrouter"]);
   assert.ok(models.find((entry) => entry.id === "anthropic")?.models.some((model) => model.value === "claude-opus-5-5" && model.label === "Opus 5.5"));
-  assert.ok(models.find((entry) => entry.id === "claude")?.models.some((model) => model.value === "claude-opus-5-5" && model.label === "Opus 5.5"));
+  assert.equal(models.find((entry) => entry.id === "claude"), undefined);
   assert.equal(
     models.find((entry) => entry.id === "openrouter")?.models.find((model) => model.value === "anthropic/claude-opus-5.5")?.label,
     "Opus 5.5 (1M)",

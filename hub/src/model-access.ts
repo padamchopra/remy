@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { HostedSettingsStore } from "./hosted-settings.js";
 import { routerModels } from "./router-connection.js";
-import { claudeAccountConnected, publicClaudeAccount } from "./claude-account.js";
 
 export const modelAccessIds = ["anthropic", "openai", "router", "openrouter"] as const;
 export type ModelAccessId = typeof modelAccessIds[number];
@@ -78,17 +77,6 @@ export function publicModelKeys(id: ModelAccessId, secrets: Record<string, strin
 /// named keys.
 export function publicModelAccess(secrets:Record<string,string>, keySecrets = secrets) {
   return modelAccess(secrets).map(({apiKey,...value})=>({...value,configured:!!apiKey,keys:publicModelKeys(value.id, keySecrets)}));
-}
-/// Gateways plus a connected Claude Code account. Share grants and start
-/// allowlists read this; Model Access still lists API keys separately.
-export function cloudStartAccess(secrets: Record<string, string>) {
-  const access = publicModelAccess(secrets);
-  return claudeAccountConnected(secrets)
-    ? [...access, { id: "claude", enabled: true, configured: true, models: [] as string[], keys: [] }]
-    : access;
-}
-export function publicModelAccessResponse(secrets: Record<string, string>, keySecrets = secrets) {
-  return { providers: publicModelAccess(secrets, keySecrets), accounts: { claude: publicClaudeAccount(secrets) } };
 }
 /// Maps a composer or stored gateway choice onto Codex plus a `remy:` model.
 /// OpenRouter auto and other defaults are not a second catalogue allowlist.

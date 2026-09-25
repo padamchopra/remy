@@ -3,8 +3,7 @@ import { validProfileImage } from "./profile-image.js";
 import { HostedStartupError } from "./hosted-startup-error.js";
 import { modelDefaults } from "./model-defaults.js";
 import { modelFavorites } from "./model-favorites.js";
-import { cloudStartAccess, hostedGatewayError, hostedStartChoice, modelAccessIds, publicModelAccess, publicModelAccessResponse, removeNamedModelKey, saveModelAccess, saveNamedModelKey, type ModelAccessId } from "./model-access.js";
-import { cancelClaudeAccount, claudeComputerEnvironment, completeClaudeAccount, logoutClaudeAccount, startClaudeAccount, claudeAccountStatus } from "./claude-account.js";
+import { hostedGatewayError, hostedStartChoice, modelAccessIds, publicModelAccess, removeNamedModelKey, saveModelAccess, saveNamedModelKey, type ModelAccessId } from "./model-access.js";
 import { routerConnectionSchema, routerModels } from "./router-connection.js";
 import { CLOUD_COMPUTER_PROVIDERS, CURSOR_CLOUD_COMPUTER_ID, cloudComputerProvider, isCursorCloudProvider, isGuestCloudProvider, type HostedSettings } from "@remy/contract";
 import { managementCredential } from "./cloud-connection.js";
@@ -165,7 +164,7 @@ async function cloudStartGrant(
   provider: HostedSettings["provider"],
   userId: string,
 ) {
-  const advertisedFor = async (source: string) => advertisedCloudProvidersFor(provider, cloudStartAccess(await settings.secrets(source)));
+  const advertisedFor = async (source: string) => advertisedCloudProvidersFor(provider, publicModelAccess(await settings.secrets(source)));
   if (await settings.ownConnection(org, provider)) {
     return { owner: true, advertised: await advertisedFor(org), stored: null };
   }
@@ -591,7 +590,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           const saved = sourceSecrets[cloudConnectionKey(share.provider)];
           const parsed = saved ? cloudConnectionSchema.safeParse(JSON.parse(saved)) : null;
           sharedCloudAvailability.set(`${share.source_organization_id}:${share.provider}`, !!parsed?.success && parsed.data.enabled);
-          sharedCloudAdvertised.set(`${share.source_organization_id}:${share.provider}`, advertisedCloudProvidersFor(share.provider, cloudStartAccess(sourceSecrets)));
+          sharedCloudAdvertised.set(`${share.source_organization_id}:${share.provider}`, advertisedCloudProvidersFor(share.provider, publicModelAccess(sourceSecrets)));
         }
         const names = new Map<string,string>();
         for (const userId of new Set([...computerShares.map(share => share.shared_by), ...cloudShares.map(share => share.shared_by)])) names.set(userId, (await store.profile(userId))?.name ?? "Member");
@@ -610,7 +609,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
               const canShare = share.shared_by === identity.userId || share.source_organization_id === personal.id;
               return { provider: share.provider, shared: true, available: sharedCloudAvailability.get(`${share.source_organization_id}:${share.provider}`) ?? false, sharedBy: names.get(share.shared_by) ?? "Member", canShare, canRevoke: admin, providers: publicStartProviders(sharedCloudAdvertised.get(`${share.source_organization_id}:${share.provider}`) ?? [], parseStartProviders(share.start_providers)) };
             }),
-            ...ownCloud.filter(provider => !cloudShares.some(share => share.source_organization_id === personal.id && share.provider === provider)).map(provider => ({ provider, shared: false, available: true, sharedBy: (null as string | null), canShare: true, canRevoke: false, providers: publicStartProviders(advertisedCloudProvidersFor(provider, cloudStartAccess(personalSecrets)), null) })),
+            ...ownCloud.filter(provider => !cloudShares.some(share => share.source_organization_id === personal.id && share.provider === provider)).map(provider => ({ provider, shared: false, available: true, sharedBy: (null as string | null), canShare: true, canRevoke: false, providers: publicStartProviders(advertisedCloudProvidersFor(provider, publicModelAccess(personalSecrets)), null) })),
           ],
         });
       }
@@ -659,7 +658,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           const owns = !!(await settings.ownConnection(personal.id, provider));
           if (request.method === "PUT") {
             if (!owns) return jsonError("Enable this cloud provider in Personal first.", 409);
-            const advertised = advertisedCloudProvidersFor(provider, cloudStartAccess(await settings.secrets(personal.id)));
+            const advertised = advertisedCloudProvidersFor(provider, publicModelAccess(await settings.secrets(personal.id)));
             let startProviders;
             try { startProviders = parseStartProviderInput((await body<{startProviders?:unknown}>(request))?.startProviders, advertised); }
             catch (error) { return jsonError(error instanceof Error ? error.message : "Choose the providers others may start.", 400); }
@@ -667,7 +666,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           } else if (request.method === "PATCH") {
             if (!owns) return jsonError("Choose one of your cloud connections.", 404);
             if (!existing) return jsonError("Share this connection first.", 409);
-            const advertised = advertisedCloudProvidersFor(provider, cloudStartAccess(await settings.secrets(personal.id)));
+            const advertised = advertisedCloudProvidersFor(provider, publicModelAccess(await settings.secrets(personal.id)));
             let startProviders;
             try { startProviders = parseStartProviderInput((await body<{startProviders?:unknown}>(request))?.startProviders, advertised); }
             catch (error) { return jsonError(error instanceof Error ? error.message : "Choose the providers others may start.", 400); }
@@ -746,43 +745,16 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       }
       const claudeAccount = /^claude-account(?:\/(start|complete|cancel|logout))?$/.exec(tail);
       if (claudeAccount) {
-        const member = await organizations.member(organizationId, identity.userId);
-        const store = new HostedSettingsStore(env.DB, () => env.AUTH_SECRET.get());
-        if (request.method === "GET" && !claudeAccount[1]) {
-          return Response.json(await claudeAccountStatus(store, organizationId), { headers: { "cache-control": "no-store" } });
-        }
-        if (member.role === "member") return jsonError("Ask an admin to connect Claude Code.", 403);
-        if (identity.clientKind === "computer") return jsonError("Connect Claude Code from Remy.", 403);
-        if (!allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Connect Claude Code from Remy.", 403);
-        if (request.method !== "POST" || !claudeAccount[1]) return jsonError("This account action is unavailable.", 405);
-        try {
-          const account = claudeAccount[1] === "start" ? await startClaudeAccount(store, organizationId)
-            : claudeAccount[1] === "complete" ? await completeClaudeAccount(store, organizationId, await body(request))
-            : claudeAccount[1] === "cancel" ? await cancelClaudeAccount(store, organizationId)
-            : await logoutClaudeAccount(store, organizationId);
-          await board().fetch(new Request("https://internal/organization/changed", { method: "POST", headers: { "x-organization-id": organizationId } }));
-          return Response.json(account, { headers: { "cache-control": "no-store" } });
-        } catch (error) {
-          return jsonError(error instanceof Error ? error.message : "Claude Code could not connect; try again.", 400);
-        }
+        return jsonError("Connect Claude Code on a computer you own.", 403);
       }
       const hostedAccount = /^hosted\/([^/]+)\/codex(?:\/(start|cancel|logout))?$/.exec(tail);
       if (hostedAccount) {
-        const member = await organizations.member(organizationId, identity.userId);
-        if (member.role === "member") return jsonError("Ask an admin to connect Codex.", 403);
-        if (identity.clientKind === "computer") return jsonError("Connect Codex from Remy.", 403);
-        if (!allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Connect Codex from Remy.", 403);
-        const workspaceId = decodeURIComponent(hostedAccount[1]);
-        await organizations.workspace(organizationId, identity.userId, workspaceId);
-        if (!(request.method === "GET" && !hostedAccount[2]) && !(request.method === "POST" && hostedAccount[2])) return jsonError("This account action is unavailable.", 405);
-        return board().fetch(new Request(`https://internal/hosted-account/${encodeURIComponent(workspaceId)}${hostedAccount[2] ? `/${hostedAccount[2]}` : ""}`, {
-          method: request.method, headers: { "x-organization-id": organizationId, "x-user-id": identity.userId },
-        }));
+        return jsonError("Connect Codex on a computer you own.", 403);
       }
       if (tail === "model-access" || tail.startsWith("model-access/")) {
         const member=await organizations.member(organizationId,identity.userId);
         const store=new HostedSettingsStore(env.DB,()=>env.AUTH_SECRET.get());
-        if(tail === "model-access" && request.method === "GET") return Response.json(publicModelAccessResponse(await store.executionSecrets(organizationId), await store.secrets(organizationId)));
+        if(tail === "model-access" && request.method === "GET") return Response.json({providers:publicModelAccess(await store.executionSecrets(organizationId), await store.secrets(organizationId))});
         const namedModel = /^model-access\/([^/]+)\/keys(?:\/([^/]+))?$/.exec(tail);
         if (namedModel) {
           const id = namedModel[1] as ModelAccessId;
@@ -1535,17 +1507,8 @@ export class HubCoordinator {
     const removeHosted=/^\/hosted-computers\/([^/]+)$/.exec(url.pathname);
     if(removeHosted && request.method==="DELETE") {try{await this.hostedService().remove(decodeURIComponent(removeHosted[1]));return Response.json({ok:true});}catch{return jsonError("This hosted computer could not be removed; try again.",502);}}
     const hostedAccount = /^\/hosted-account\/([^/]+)(?:\/(start|cancel|logout))?$/.exec(url.pathname);
-    if (hostedAccount && org && user) {
-      const organizations = new OrganizationService(new D1OrganizationStore(this.env.DB));
-      if ((await organizations.member(org, user)).role === "member") return jsonError("Ask an admin to connect Codex.", 403);
-      await organizations.workspace(org, user, decodeURIComponent(hostedAccount[1]));
-      const state = await this.hostedService().get(decodeURIComponent(hostedAccount[1]));
-      if (!state || state.phase !== "ready") return jsonError("Start your computer to connect Codex.", 409);
-      if (!(request.method === "GET" && !hostedAccount[2]) && !(request.method === "POST" && hostedAccount[2])) return jsonError("This account action is unavailable.", 405);
-      if (request.method === "POST" && state.active && hostedAccount[2] !== "cancel") return jsonError("Wait for running threads to finish before changing your Codex connection.", 409);
-      const response = await this.dispatchComputer(state.computerId, { id: user, label: "Admin" }, request.method,
-        `/hub/codex-account${hostedAccount[2] ? `/${hostedAccount[2]}` : ""}`, {});
-      return new Response(response.body, { status: response.status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
+    if (hostedAccount) {
+      return jsonError("Connect Codex on a computer you own.", 403);
     }
     const hostedMatch=/^\/hosted\/([^/]+)$/.exec(url.pathname);
     if(hostedMatch && org){
@@ -2028,7 +1991,7 @@ export class HubCoordinator {
       }
       const actual=await this.computers.computer(org,state.computerId);
       const secrets=await settings.executionSecrets(org);
-      const environment={...modelSecrets(secrets),...(await claudeComputerEnvironment(settings,org,secrets)),MC_CONFIG_DIR:"/data/remy",REMY_HOSTED_BOOTSTRAP:JSON.stringify({registration:{...actual,hubUrl:this.env.BETTER_AUTH_URL},privateKey:keys.privateKey,...(state.taskId?{taskId:state.taskId}:{}),workspace:{id:workspace.id,name:workspace.name,origin:workspace.origin}})};
+      const environment={...modelSecrets(secrets),MC_CONFIG_DIR:"/data/remy",REMY_HOSTED_BOOTSTRAP:JSON.stringify({registration:{...actual,hubUrl:this.env.BETTER_AUTH_URL},privateKey:keys.privateKey,...(state.taskId?{taskId:state.taskId}:{}),workspace:{id:workspace.id,name:workspace.name,origin:workspace.origin}})};
       const domains=[new URL(this.env.BETTER_AUTH_URL).hostname,"api.anthropic.com","console.anthropic.com","claude.ai","api.openai.com","api.router.com","openrouter.ai","api.openrouter.ai","auth.openai.com","chatgpt.com","ab.chatgpt.com","github.com","api.github.com","codeload.github.com","objects.githubusercontent.com","release-assets.githubusercontent.com","github-releases.githubusercontent.com","ghcr.io","pkg-containers.githubusercontent.com","registry.npmjs.org"];
       return {organizationId:org,computerId:state.computerId,settings:state.settings,image:this.env.HOSTED_IMAGE,archive:this.env.HOSTED_ARCHIVE??"",environment,allowedDomains:domains};
     }, async id=>{

@@ -1095,43 +1095,34 @@ test("owners can archive and delete hosted threads after the cloud computer slee
   }
 });
 
-test("Claude Code connect is an admin account action and never returns tokens", async () => {
+test("Claude Code and Codex account login are refused on cloud computers", async () => {
   const { sqlite, db } = database();
   const { createRouteHandler } = await import("./worker.js");
-  let role = "owner", clientKind = "web";
   const secret = "test-encryption-root-with-at-least-thirty-two-characters";
   const route = createRouteHandler({
     accountStore: () => ({}) as never,
-    accountService: () => ({ authenticate: async () => ({ userId: "user", sessionId: "session", clientKind }) }) as never,
+    accountService: () => ({ authenticate: async () => ({ userId: "user", sessionId: "session", clientKind: "web" }) }) as never,
     organizationStore: () => ({}) as never,
-    organizationService: () => ({ member: async () => ({ role }) }) as never,
+    organizationService: () => ({ member: async () => ({ role: "owner" }), workspace: async () => ({ id: "ws" }) }) as never,
   });
   const env = { DB: db, AUTH_SECRET: { get: async () => secret }, BETTER_AUTH_URL: "https://hub.example", COORDINATOR: { idFromName: () => ({}), get: () => ({ fetch: async () => Response.json({ ok: true }) }) } } as never;
-  const call = (path: string, method = "GET", input?: unknown, origin = "https://hub.example") =>
+  const call = (path: string, method = "GET", origin = "https://hub.example") =>
     route(new Request(`https://hub.example/api/organizations/org/${path}`, {
       method,
       headers: { authorization: "Bearer test", origin, "content-type": "application/json" },
-      ...(input ? { body: JSON.stringify(input) } : {}),
     }), env);
   try {
-    role = "member";
-    assert.equal((await call("claude-account/start", "POST")).status, 403);
-    role = "owner";
-    clientKind = "computer";
-    assert.equal((await call("claude-account/start", "POST")).status, 403);
-    clientKind = "web";
-    assert.equal((await call("claude-account/start", "POST", undefined, "https://foreign.example")).status, 403);
     const started = await call("claude-account/start", "POST");
-    assert.equal(started.status, 200);
-    const pending = await started.json() as { phase: string; verificationUrl?: string };
-    assert.equal(pending.phase, "pending");
-    assert.ok(pending.verificationUrl?.startsWith("https://claude.ai/oauth/authorize?"));
-    assert.ok(!JSON.stringify(pending).includes("codeVerifier"));
-    const listed = await (await call("model-access")).json() as { accounts?: { claude?: { phase: string } } };
-    assert.equal(listed.accounts?.claude?.phase, "pending");
-    assert.ok(!JSON.stringify(listed).includes("codeVerifier"));
-    assert.equal((await call("claude-account/cancel", "POST")).status, 200);
-    assert.equal(((await (await call("claude-account")).json()) as { phase: string }).phase, "signedOut");
+    assert.equal(started.status, 403);
+    assert.match(((await started.json()) as { error: string }).error, /computer you own/);
+    assert.equal((await call("claude-account")).status, 403);
+    const listed = await (await call("model-access")).json() as { providers: { id: string }[]; accounts?: { claude?: { phase: string } } };
+    assert.equal(listed.accounts?.claude, undefined);
+    assert.deepEqual(listed.providers.map((entry) => entry.id), ["anthropic", "openai", "router", "openrouter"]);
+    const codex = await call("hosted/ws/codex/start", "POST");
+    assert.equal(codex.status, 403);
+    assert.match(((await codex.json()) as { error: string }).error, /computer you own/);
+    assert.equal((await call("hosted/ws/codex")).status, 403);
   } finally {
     sqlite.close();
   }
