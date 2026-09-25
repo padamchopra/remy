@@ -3,6 +3,7 @@ import { ChevronRight, Square, SquareCheckBig } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { stripMarkdownHtmlComments } from "@/lib/markdown-html-comments";
 import { cn } from "@/lib/utils";
 
 /// Someone the text may name, and where clicking their name goes.
@@ -157,6 +158,9 @@ function remarkImages() {
 }
 
 const DETAILS_OPEN = /^<details(\s+open)?\s*>\s*<summary>([\s\S]*?)<\/summary>\s*(?:<p>\s*)?$/i;
+const DETAILS_START = /^<details(\s+open)?\s*>\s*$/i;
+const SUMMARY_TAG = /^<summary>([\s\S]*?)<\/summary>\s*$/i;
+const DETAILS_BLOCK = /^<details(\s+open)?\s*>\s*<summary>([\s\S]*?)<\/summary>\s*([\s\S]*?)<\/details>\s*$/i;
 const DETAILS_CLOSE = /^(?:<\/p>\s*)?<\/details>\s*$/i;
 const LINK_PARAGRAPH = /^<p>\s*<a\s+href="(https?:\/\/[^"\s]+)"[^>]*>([\s\S]*?)<\/a>\s*<\/p>$/i;
 const INLINE_LINK = /^<a\s+href="(https?:\/\/[^"\s]+)"[^>]*>([\s\S]*?)<\/a>$/i;
@@ -185,23 +189,50 @@ function remarkDetails() {
     if (!tree.children) return;
     const output: MarkdownNode[] = [];
     const stack: MarkdownNode[][] = [output];
-    for (const node of tree.children) {
-      const opening = node.type === "html" && node.value?.match(DETAILS_OPEN);
-      if (opening) {
+    const children = tree.children;
+    for (let index = 0; index < children.length; index++) {
+      const node = children[index];
+      const html = node.type === "html" ? node.value ?? "" : "";
+      const complete = html.match(DETAILS_BLOCK);
+      if (complete) {
+        const inner = complete[3].replace(/<\/?p>/gi, "").trim();
+        stack.at(-1)!.push({
+          type: "details",
+          data: {
+            hName: "details",
+            hProperties: complete[1] ? { open: true } : {},
+          },
+          children: [
+            {
+              type: "summary",
+              data: { hName: "summary" },
+              children: safeInline(complete[2]),
+            },
+            ...(inner ? [{ type: "paragraph", children: [{ type: "text", value: htmlText(inner) }] }] : []),
+          ],
+        });
+        continue;
+      }
+      const opening = html.match(DETAILS_OPEN);
+      const start = opening ? undefined : html.trim().match(DETAILS_START);
+      const nextHtml = children[index + 1]?.type === "html" ? children[index + 1].value ?? "" : "";
+      const splitSummary = start ? nextHtml.trim().match(SUMMARY_TAG) : undefined;
+      if (opening || (start && splitSummary)) {
         const details: MarkdownNode = {
           type: "details",
           data: {
             hName: "details",
-            hProperties: opening[1] ? { open: true } : {},
+            hProperties: (opening?.[1] || start?.[1]) ? { open: true } : {},
           },
           children: [{
             type: "summary",
             data: { hName: "summary" },
-            children: safeInline(opening[2]),
+            children: safeInline(opening?.[2] ?? splitSummary?.[1] ?? ""),
           }],
         };
         stack.at(-1)!.push(details);
         stack.push(details.children!);
+        if (splitSummary) index += 1;
         continue;
       }
       if (node.type === "html" && node.value && DETAILS_CLOSE.test(node.value) && stack.length > 1) {
@@ -323,10 +354,11 @@ export const Markdown = memo(function Markdown({
     () => withLinkHandler(mentions?.length ? withMentions(mentions) : COMPONENTS, onOpenLink),
     [mentions, onOpenLink],
   );
+  const source = useMemo(() => stripMarkdownHtmlComments(text), [text]);
   return (
     <div className={cn("flex flex-col gap-3 text-sm leading-relaxed", className)}>
       <ReactMarkdown remarkPlugins={[remarkGfm, remarkDetails, remarkImages]} components={components}>
-        {text}
+        {source}
       </ReactMarkdown>
     </div>
   );

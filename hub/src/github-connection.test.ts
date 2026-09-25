@@ -412,6 +412,7 @@ test("hosted pull requests stay on workspace origins, keep PAT-backed workspaces
   assert.ok(!listed.pullRequests.some((pullRequest) => pullRequest.repository === "ada/notes"));
   const graphqlCalls = calls.filter((call) => call.path === "/graphql").length;
   assert.equal((await service.openPullRequests("studio", "ada")).pullRequests.length, 1);
+  assert.deepEqual(listed.pullRequests[0]?.comments, []);
   assert.equal(calls.filter((call) => call.path === "/graphql").length, graphqlCalls);
   await service.openPullRequests("studio", "ada", true);
   assert.equal(calls.filter((call) => call.path === "/graphql").length, graphqlCalls + 1);
