@@ -6,7 +6,7 @@ Cloud settings contain provider connections and model access. Workspace creation
 
 ## Model access (unreleased)
 
-Computers → Model access lists Anthropic, OpenAI, Router.com, and OpenRouter API keys. Cloud threads use those keys. Sign in to Claude Code or Codex on a computer you own; do not start a ChatGPT or Claude account session on a Fly, Modal, or other hosted computer. Keys autosave after typing pauses; disabling a provider retains its encrypted key and excludes it from new cloud computers. Re-enable it without entering the key again. Keys are never returned to the browser. Pending unsaved edits are cancelled when the section is disabled.
+Computers → Model access lists Anthropic, OpenAI, Router.com, and OpenRouter API keys. Cloud Codex uses the OpenAI key; cloud Claude uses the Anthropic key. Sign in to Claude Code or Codex with a ChatGPT or Claude account on a computer you own — not on a Fly, Modal, or other hosted computer. Keys autosave after typing pauses; disabling a provider retains its encrypted key and excludes it from new cloud computers. Re-enable it without entering the key again. Keys are never returned to the browser. Pending unsaved edits are cancelled when the section is disabled.
 
 Choose the provider and model when starting a thread. Anthropic, OpenAI, Router.com and OpenRouter remain independent; gateway connections do not override one another. Model catalogs for gateways load when a key is saved. Cloud threads retain their explicit choice when resumed. Existing computers keep their startup credentials; newly allocated task computers receive the current enabled connections.
 

@@ -1021,10 +1021,15 @@ try {
         ]);
         assert.equal(await modelAccess.getByRole("button", { name: "Connect Claude Code", exact: true }).count(), 0);
         assert.equal(await modelAccess.getByRole("button", { name: "Connect Codex", exact: true }).count(), 0);
+        assert.equal(await modelAccess.getByRole("button", { name: "Connect ChatGPT", exact: true }).count(), 0);
         assert.equal(await modelAccess.getByRole("combobox", { name: "Workspace", exact: true }).count(), 0);
+        assert.equal(await modelAccess.getByRole("region", { name: "Claude Code model access", exact: true }).count(), 0);
+        assert.equal(await modelAccess.getByRole("region", { name: "Codex model access", exact: true }).count(), 0);
+        assert.equal(await modelAccess.getByText("Add a workspace", { exact: false }).count(), 0);
+        assert.equal(await modelAccess.getByText("Start your computer", { exact: false }).count(), 0);
         assert.ok(await modelAccess.getByRole("region", { name: "Anthropic model access", exact: true }).getByRole("img", { name: "Claude" }).count());
         assert.ok(await modelAccess.getByRole("region", { name: "OpenAI model access", exact: true }).getByRole("img", { name: "Codex" }).count());
-        await modelAccess.getByText("Cloud threads use these API keys.", { exact: false }).waitFor();
+        await modelAccess.getByText("Cloud threads use these API keys, with OpenAI for Codex and Anthropic for Claude.", { exact: true }).waitFor();
         for(const [id,label] of [["anthropic","Anthropic"],["openai","OpenAI"],["router","Router.com"],["openrouter","OpenRouter"]]) {
           const section=modelAccess.getByRole("region",{name:`${label} model access`,exact:true});
           const toggle=section.getByRole("switch",{name:label,exact:true});

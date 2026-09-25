@@ -30,11 +30,16 @@ try {
  await p.goto(`${info.hubUrl}/app/#/settings/devices?organization=${info.organizationId}`);
  const modelAccess=p.getByRole('region',{name:'Model access',exact:true});
  await modelAccess.waitFor();
- await modelAccess.getByText('Cloud threads use these API keys.',{exact:false}).waitFor();
+ await modelAccess.getByText('Cloud threads use these API keys, with OpenAI for Codex and Anthropic for Claude.',{exact:true}).waitFor();
  assert.equal(await p.getByRole('button',{name:'Connect Claude Code',exact:true}).count(),0);
  assert.equal(await p.getByRole('button',{name:'Connect Codex',exact:true}).count(),0);
+ assert.equal(await p.getByRole('button',{name:'Connect ChatGPT',exact:true}).count(),0);
  assert.equal(await p.getByRole('region',{name:'Claude Code model access',exact:true}).count(),0);
  assert.equal(await p.getByRole('region',{name:'Codex model access',exact:true}).count(),0);
+ assert.equal(await modelAccess.getByText('Add a workspace',{exact:false}).count(),0);
+ assert.equal(await modelAccess.getByText('Start your computer',{exact:false}).count(),0);
+ await modelAccess.getByRole('region',{name:'OpenAI model access',exact:true}).getByRole('switch',{name:'OpenAI',exact:true}).click();
+ await modelAccess.getByRole('textbox',{name:'OpenAI API key',exact:true}).waitFor();
  await modelAccess.evaluate(el=>el.scrollIntoView({behavior:'smooth',block:'center'}));
  await p.waitForTimeout(1500);
  await p.screenshot({path:out+'/model-access.png'});

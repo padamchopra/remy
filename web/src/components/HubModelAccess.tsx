@@ -17,7 +17,7 @@ export function HubModelAccess({organizationId}:{organizationId:string}) {
   return <section aria-label="Model access" className="min-w-0 space-y-4 border-t pt-6">
     <div className="space-y-1">
       <h2 className="text-sm font-medium">Model access</h2>
-      <p className="text-sm text-muted-foreground">Cloud threads use these API keys. Sign in to Claude Code or Codex on a computer you own.</p>
+      <p className="text-sm text-muted-foreground">Cloud threads use these API keys, with OpenAI for Codex and Anthropic for Claude.</p>
       {resource.error && <p role="alert" className="text-sm text-muted-foreground">{resource.error === "Not found" ? "Update your hosted service to configure model access." : resource.error}</p>}
     </div>
     {!resource.value && !resource.error && <div aria-label="Loading model access" role="status" className="space-y-4">{Object.keys(labels).map(id=><Skeleton key={id} className="h-[54px] w-full rounded-xl" />)}</div>}
