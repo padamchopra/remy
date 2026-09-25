@@ -908,8 +908,9 @@ try {
         await page.getByRole("navigation", { name: "Computer settings" }).getByRole("button", { name: "Connected", exact: true }).click();
         await page.getByText("No computers connected", { exact: true }).waitFor();
         assert.equal(await page.getByRole("button", { name: "Add computer", exact: true }).count(), 0);
-        await page.getByRole("button", { name: "Connect a Mac", exact: true }).click();
+        await page.getByRole("button", { name: "Connect a computer", exact: true }).click();
         await page.getByRole("region", { name: "General computer settings" }).waitFor();
+        await page.getByRole("button", { name: "Create a connection key", exact: true }).waitFor();
         const download = page.getByRole("link", { name: "Download for Mac", exact: true });
         const guide = page.getByRole("link", { name: "Read the setup guide", exact: true });
         const downloadBox = await download.boundingBox(), guideBox = await guide.boundingBox();
