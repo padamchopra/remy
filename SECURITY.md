@@ -12,8 +12,8 @@ security-relevant even though it's only meant to be reachable by its owner.
 - **Authentication:** a 256-bit random bearer token (`~/.remy/remy.db`,
   `chmod 600`), compared with `timingSafeEqual`, required on every request and
   on the WebSocket upgrade. Header only — never a query parameter — so it can't
-  leak into request logs. The Electron main process (and Vite in the browser
-  preview) injects that header; the page never sees the token.
+  leak into request logs. Vite injects that header in the
+  browser preview; the page never sees the token.
 - **No arbitrary execution:** there is no "run this command" endpoint. Git,
   `gh`, and `tmux` are invoked with `execFile`/`spawn` and argv arrays — never
   a shell — so input is never interpreted as a command. Agent SDK chats spawn

@@ -1,6 +1,6 @@
 # Remy
 
-Remy is a remote for [Claude Code](https://claude.com/claude-code), [Codex](https://developers.openai.com/codex), and [Cursor](https://cursor.com/docs/cli/acp) on your own machines. Point it at a folder, say what you want done, and the work runs on the Mac that actually holds the repo — while you watch from the desktop app, a browser tab, or the iPhone app on the couch.
+Remy is a remote for [Claude Code](https://claude.com/claude-code), [Codex](https://developers.openai.com/codex), and [Cursor](https://cursor.com/docs/cli/acp) on your own machines. Point it at a folder, say what you want done, and the work runs on the machine that actually holds the repo — while you watch from a browser tab or the iPhone app on the couch.
 
 <img src="docs/images/threads.png" alt="Remy showing four threads across two machines, with a composer for a new one" width="100%" />
 
@@ -8,17 +8,15 @@ Remy is a remote for [Claude Code](https://claude.com/claude-code), [Codex](http
 
 Nowhere. That is the whole point.
 
-Remy is a daemon on your machine plus a window onto it. Your repos are never uploaded, never cloned to a server, never sent through anybody's API but the one you picked the thread to run on — the same call Claude Code, Codex, or Cursor already makes when you run it in a terminal. The daemon listens on `127.0.0.1` and nothing else. When you want to reach it from another device, that goes over [Tailscale](https://tailscale.com), which is your own private network, not the public internet.
+Remy is a daemon on your machine plus a page onto it. Your repos are never uploaded, never cloned to a server, never sent through anybody's API but the one you picked the thread to run on — the same call Claude Code, Codex, or Cursor already makes when you run it in a terminal. The daemon listens on `127.0.0.1` and nothing else. When you want to reach it from another device, that goes over [Tailscale](https://tailscale.com), which is your own private network, not the public internet.
 
 There is no account, no sign-up, and no hosted anything. If this repo disappeared tomorrow your copy would keep working.
 
 ## Try it
 
-You need a Mac that can stay awake, with at least one provider installed: [Claude Code](https://claude.com/claude-code), [Codex](https://developers.openai.com/codex), or [Cursor Agent](https://cursor.com/docs/cli/installation). Those are what actually run your threads, so Remy is only as capable as the copy sitting next to it.
+You need a Mac or Linux machine that can stay awake, with Node 22.5+ (for `node:sqlite`) and at least one provider installed: [Claude Code](https://claude.com/claude-code), [Codex](https://developers.openai.com/codex), or [Cursor Agent](https://cursor.com/docs/cli/installation). Those are what actually run your threads, so Remy is only as capable as the copy sitting next to it.
 
-**Install the app.** Grab the newest DMG from [Releases](https://github.com/padamchopra/remy/releases) and drag it to Applications. It is signed and notarized, so it just opens. The DMG carries both the window and the daemon — opening Remy starts everything, quitting it stops everything, and it brings its own Node.
-
-**Or run it from a terminal.** A machine you reach over SSH has nowhere to open an approval page, so the CLI signs in with a key instead. Build the daemon, link the `remy` command, then create a connection key in Remy on the web under **Settings → Computers → Connected**:
+**Install the CLI.** A machine you reach over SSH has nowhere to open an approval page, so it signs in with a key instead. Build the daemon, link the `remy` command, then create a connection key in Remy on the web under **Settings → Computers → Connected**:
 
 ```sh
 npm --prefix server ci && npm --prefix server run build && npm --prefix server link
@@ -28,7 +26,7 @@ remy start          # keeps this computer available
 
 `remy status` says what it is connected to and `remy logout` disconnects it. The daemon still listens on `127.0.0.1`, and the iPhone app reaches it over your tailnet as before.
 
-**Or run it from source** (Node 22.5+, for `node:sqlite`):
+**Or run the window from source**, against the same daemon:
 
 ```sh
 git clone https://github.com/padamchopra/remy
@@ -91,8 +89,8 @@ When a window is open, notifications are banners. When none is, they go to your 
 
 This is early, and built for one person's setup first. Expect rough edges.
 
-- **macOS only** for now. The daemon is Node and would likely run elsewhere; nobody has tried.
-- **The iOS app** in `mobile/` is a React Native remote. It cannot run threads on its own — pair it with a Mac from Settings → Devices.
+- **The Mac app is off `main`.** Remy is the web app plus the CLI; the Electron window lives on the long-lived `padam/desktop-electron-9236` branch until that work comes back.
+- **The iOS app** in `mobile/` is a React Native remote. It cannot run threads on its own — pair it with a computer running Remy from Settings → Devices.
 - **Stay awake** prevents *idle* sleep. Closing a MacBook lid is a different thing and can still sleep the machine.
 - **Repos on an external drive** need Full Disk Access for Remy, in System Settings → Privacy & Security.
 - **Running a 1M context window?** Transcripts do not record the window size, so set `contextLimit` if the meter looks wrong.
@@ -100,6 +98,6 @@ This is early, and built for one person's setup first. Expect rough edges.
 ## Going further
 
 - **[AGENTS.md](AGENTS.md)** — how the code is laid out and how to work in it.
-- **[RELEASING.md](RELEASING.md)** — signing and notarizing a Mac build.
+- **[RELEASING.md](RELEASING.md)** — what a release publishes, and what decides one.
 - **[SECURITY.md](SECURITY.md)** — the security posture, and how to report something.
-- **`deploy/setup.sh`** — run the daemon as a login item, so it keeps working after you quit the app.
+- **`deploy/setup.sh`** — run the daemon as a login item, so it keeps working after you close the terminal.

@@ -11,7 +11,7 @@ The status is attached to the PR head, not the base or test-merge commit. API fa
 1. Merge the workflow and tests while the existing review rules still protect `main`.
 2. Run `Owner approval` from Actions and confirm statuses on current owner and contributor PRs.
 3. Replace the `Contributor changes require approval` ruleset's required-review rule with a required-status-check rule for `Owner approval`, restricted to GitHub Actions (integration ID `15368`). Keep its `main` target and active enforcement; the author policy needs no bypass actor.
-4. Preserve `Main changes require a pull request` and the existing `Build Mac app` required check. Confirm a contributor PR remains blocked while an owner PR with passing builds can merge normally from the phone.
+4. Preserve `Main changes require a pull request` and the existing `Build computer` required check. Confirm a contributor PR remains blocked while an owner PR with passing builds can merge normally from the phone.
 
 Do not remove the review requirement before the replacement status is published and required. This policy governs who may approve; it does not auto-merge PRs or skip build checks. Repository collaborators who can alter trusted workflows or repository settings remain trusted administrators of this mechanism.
 

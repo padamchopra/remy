@@ -1,6 +1,6 @@
 # Hosted web application
 
-Cloudflare serves the same Vite output that Electron packages. `/api/runtime` selects hosted mode before the window asks for local data. Electron and a local proxy remain local by default. Relative assets still work with `file://`; invitation links use the root URL, and legacy `/invite/:token` paths redirect there before serving the app.
+Cloudflare serves the same Vite output a computer's own page serves. `/api/runtime` selects hosted mode before the window asks for local data. A local proxy remains local by default. Invitation links use the root URL, and legacy `/invite/:token` paths redirect there before serving the app.
 
 Hosted requests carry the organization in their URL and the web session in an HTTP-only, same-origin cookie. No computer or daemon bearer credential reaches the page. Magic links and social/SSO callbacks exchange the temporary Better Auth session for a revocable Remy session. The original invitation survives sign-in. Account emails and invitations are delivered through the native `EMAIL` binding and `EMAIL_FROM` sender, with the `EMAILS` queue supported for other deployments; link invitations are returned only when no email recipient is supplied.
 
@@ -52,6 +52,6 @@ Organization thread launches choose Shared or Private visibility in the composer
 
 Cloud checkout supports repositories imported with GitHub OAuth or a personal access token. Each cloud task uses the initiating member’s connection after checking current workspace access. GitHub credentials remain in the hub; computers receive only short-lived capabilities limited to their assigned repository and allowed branches. Existing GitHub App installations remain supported.
 
-General settings reuse the Mac avatar picker, notification preference, appearance row, and permission selector. Your avatar belongs to your signed-in account; presets and resized raster pictures use the existing profile image field. Changes notify your open organization sessions and reload after reconnect. Browser notification permission remains local to each browser. Web updates ship automatically; the app information row links to the Mac download instead of offering an in-app installer.
+General settings reuse the Mac avatar picker, notification preference, appearance row, and permission selector. Your avatar belongs to your signed-in account; presets and resized raster pictures use the existing profile image field. Changes notify your open organization sessions and reload after reconnect. Browser notification permission remains local to each browser. Web updates ship automatically; the app information row links to the setup guide for installing Remy on a computer.
 
 Account permission defaults require migration 0023 and a computer package with the updated hosted thread creation handler. Existing threads retain their permission levels. No saved preference means Ask.

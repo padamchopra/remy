@@ -2,10 +2,12 @@
 
 This repository ships two products on one release train:
 
-- **Remy** is the complete, free remote for [Claude Code](https://claude.com/claude-code) on your own machines. A daemon runs on the Mac that holds the repos; the Electron window, the browser, and the iOS app are views onto it. Nothing is copied to a cloud.
+- **Remy** is the complete, free remote for [Claude Code](https://claude.com/claude-code) on your own machines. A daemon runs on the machine that holds the repos, installed with the `remy` CLI; the browser and the iOS app are views onto it. Nothing is copied to a cloud.
 - **Remy for Teams** is the optional hub under `hub/`. It connects people and computers without replacing or weakening local Remy.
 
-Local mode remains the default. Work for the hub must not make the local app, its daemon, or its DMG depend on a hosted service.
+Local mode remains the default. Work for the hub must not make the local app, its daemon, or its CLI depend on a hosted service.
+
+The Electron desktop app is off `main`. It lives on the long-lived `padam/desktop-electron-9236` branch; do not reintroduce `desktop/`, an Electron bridge in `web/`, or a DMG here. `main` is the web app, the daemon, the CLI, and the phone.
 
 `README.md` is the product story. This file is how to work in the code.
 
@@ -13,33 +15,32 @@ Local mode remains the default. Work for the hub must not make the local app, it
 
 ## Running it locally
 
-Once: `npm run install:all` — server, web, desktop, mobile.
+Once: `npm run install:all` — contract, hub, server, web, mobile.
 
 Choose the browser shell explicitly:
 
 | Request | Command | URL and data |
 | --- | --- | --- |
-| Mac app shell in a browser, local app UI | `npm run dev:mac-browser` | `http://127.0.0.1:5173`, real Mac daemon and local data |
+| Local app UI against this machine's daemon | `npm run dev:mac-browser` | `http://127.0.0.1:5173`, real local daemon and local data |
 | Hosted web app, web shell, or local changes to `app.tryremy.dev` | `npm run dev:hosted` | `http://127.0.0.1:5174`, local UI with your live hosted account |
-| Electron desktop window | Run `npm run dev:mac-browser`, then `npm run dev` in another terminal | Mac shell inside Electron |
 
-`npm run dev:web` is a legacy alias for the Mac/local browser shell. It does not launch the hosted shell. Match the user's requested shell; a browser can display either. For a generic preview request, use the shell affected by the current work and state which one you opened. Never substitute the production website or sample QA state for a requested local hosted preview with live data.
+`npm run dev:web` is a legacy alias for the local browser shell. It does not launch the hosted shell. Match the user's requested shell; a browser can display either. For a generic preview request, use the shell affected by the current work and state which one you opened. Never substitute the production website or sample QA state for a requested local hosted preview with live data.
 
 Hosted preview sign-in uses **Sign in with Remy → Approve in Remy → Finish signing in** when you are at the keyboard. Agent-driven hosted QA signs in with the production email and password from `REMY_QA_EMAIL` and `REMY_QA_PASSWORD` on `dev:hosted` and `app.tryremy.dev`. Create that password on `app.tryremy.dev` with **Create your account**; there is no reset form. Isolated `qa:web`, fixture data, and captured-mail hub sessions are not a substitute when testing hosted start, organizations, computers, or providers. If either secret is missing, fail with `set REMY_QA_EMAIL and REMY_QA_PASSWORD`. The production page is only the approval handoff for the device-code path; return to localhost to use the changed UI. Its actions affect the live account. Preview credentials stay in the local Vite process and are forgotten when it stops. The configured preview port is part of the backend's exact origin allowlist; do not rewrite Origin headers or turn off origin checks. `hub/docs/web.md` documents authentication and backend selection.
 
-Verify the opened shell, not only a responding port: the Mac shell shows local computers and workspace threads; the hosted shell shows account sign-in or personal/organization navigation. Keep the requested preview running for the user.
+Verify the opened shell, not only a responding port: the local shell shows this machine's computers and workspace threads; the hosted shell shows account sign-in or personal/organization navigation. Keep the requested preview running for the user.
 
 For a local daemon change, run `npm run qa:web` instead. For hosted backend changes, use the isolated hosted setup in `hub/docs/web.md` for QA; use `dev:hosted` when the user asks to try the live-account web shell. It builds the current checkout, starts its daemon and Vite on unused loopback ports, and prints the URL. Its database and sample workspace are temporary and removed when the command stops. Use `npm run qa:web -- --empty` when the empty state is what you need to inspect, or `npm run qa:web -- --check` for a non-interactive startup and proxy check.
 
 The iPhone app is `cd mobile && npx expo run:ios`. It talks to the same daemon over Tailscale after you pair it from Settings → Devices.
 
-The Mac-shell Vite preview talks to the same daemon as the DMG (`127.0.0.1:8420`) and the same database (`~/.remy/remy.db`), so threads, workspaces, settings and the token are the real ones. If Remy.app is already running, Vite attaches to that daemon rather than starting a second one.
+The local Vite preview talks to the same daemon as `remy start` (`127.0.0.1:8420`) and the same database (`~/.remy/remy.db`), so threads, workspaces, settings and the token are the real ones. If that daemon is already running, Vite attaches to it rather than starting a second one.
 
 The page does not live-reload. Refresh it to see a change: editing Remy while watching Remy meant every save yanked the window out from under whatever was on screen.
 
-**UI changes** — Remy.app can stay open; the page is your local `web/` either way.
+**UI changes** — the running daemon can stay up; the page is your local `web/` either way.
 
-**Server changes** — keep Remy.app open and use the isolated QA sidecar. Never stop the packaged daemon on port 8420 from a thread it is hosting. Stop only the `qa:web` command you started.
+**Server changes** — leave the daemon on port 8420 running and use the isolated QA sidecar. Never stop the daemon on 8420 from a thread it is hosting. Stop only the `qa:web` command you started.
 
 Skip `VITE_MC_FIXTURE=1`; that is fake data, not your real state.
 
@@ -49,12 +50,11 @@ Skip `VITE_MC_FIXTURE=1`; that is fake data, not your real state.
 |---|---|
 | `web/` | The UI. React 19, Tailwind v4, [shadcn/ui](https://ui.shadcn.com) in `web/src/components/ui` (still largely New York / Radix; **new work and redesigns use Base UI**), Zustand store in `web/src/state`. |
 | `server/` | The daemon. Node and TypeScript, binds `127.0.0.1` only, SQLite at `~/.remy/remy.db` through `node:sqlite`. Threads run on the Claude Agent SDK, Codex app-server, or Cursor ACP — see **Providers**. |
-| `desktop/` | The Electron shell (`me.padamchopra.Remy`). Owns the window and the tokens, and ships the `web/` build plus the daemon in the DMG. |
-| `mobile/` | The iPhone app (Expo / React Native). A remote for a Mac daemon — it cannot run standalone. |
+| `mobile/` | The iPhone app (Expo / React Native). A remote for a computer's daemon — it cannot run standalone. |
 | `deploy/` | Optional launchd login item, provider hooks, `tailscale serve`, pairing QR. |
 | `.agents/skills/` | House rules. Read the one that covers what you are about to change. |
 
-`web/vite.config.ts` selects the preview backend. The Mac shell starts a local daemon when needed and proxies `/api` with the token from `~/.remy/remy.db`. The hosted shell uses `web/hosted-preview.ts` to proxy its approved hosted session. Neither credential reaches the page.
+`web/vite.config.ts` selects the preview backend. The local shell starts a daemon when needed and proxies `/api` with the token from `~/.remy/remy.db`. The hosted shell uses `web/hosted-preview.ts` to proxy its approved hosted session. Neither credential reaches the page.
 
 ## Skills
 
@@ -119,14 +119,15 @@ Check removals and changed defaults for stale promises. Screenshots and demos mu
 ## Checks
 
 ```sh
-npm run typecheck    # web + desktop + mobile
-npm test             # server: tsc, then node --test on dist/*.test.js; then the phone's contract rules
+npm run typecheck    # contract + hub + web + mobile
+npm test             # contract; server: tsc, then node --test on dist/*.test.js; then the phone's contract rules
 npm run qa:web -- --check  # current server + UI, temporary state, alternate ports
-npm run shots        # Playwright PNGs of the window
-npm run live-check   # assert the window is showing threads
+npm run shots        # Playwright PNGs of the page
+npm run live-check   # assert the page is showing threads
 npm run perf         # what each pane costs to open, and how much of it waits on another device
 npm run bundle       # what a cold start downloads, and what waits for a first open
-npm run pack:mac     # web + daemon + Electron DMG → desktop/release/
+# npm run perf needs its fixture re-pointed at the proxy transport; it mocked the desktop bridge.
+npm run build        # the web app
 ```
 
 A server module opens its database at import time, so a test that touches state points `MC_CONFIG_DIR` (or `HOME`) at a `mkdtempSync` directory **before** the dynamic `await import(...)` of the module under test — see `server/src/chat-storage.test.ts`. A static import runs first and would open the real `~/.remy/remy.db`. `node:test` gives each file its own process, so the override cannot leak sideways.
@@ -138,7 +139,7 @@ A server module opens its database at import time, so a test that touches state 
 - **No shell strings.** The server reaches `git`, `gh`, and `tmux` through `execFile` with an argument array. Never build a command line, and never interpolate a path or a branch name into one.
 - **Loopback only.** The daemon binds `127.0.0.1` behind a bearer token; the way in from another device is `tailscale serve`. Do not widen the bind.
 - **Config lives in the database** — the `kv` table in `~/.remy/remy.db`, read through `server/src/config.ts`. A new setting is a key on `Config`, a line in `publicSettings`, and a validated branch in `patchSettings`; the client reads and writes it at `/server/settings`. `~/.mission-control` is the legacy directory, honoured when `~/.remy` is absent.
-- **Where the window is lives in the URL**, parsed and formatted by `web/src/lib/route.ts`. The hosted app uses clean paths with a server-side app-shell fallback; Electron keeps hash routes because its `file://` URL has no server to resolve a path. Shared navigation goes through `navigateLocation` so each surface uses its valid form. All is the default account view and adds no query parameter; a narrower account writes `organization` explicitly. A hosted thread is `/threads/<id>` only.
+- **Where the window is lives in the URL**, parsed and formatted by `web/src/lib/route.ts`. The hosted app uses clean paths with a server-side app-shell fallback; the local shell keeps hash routes so a reload never needs a server rule. Shared navigation goes through `navigateLocation` so each surface uses its valid form. All is the default account view and adds no query parameter; a narrower account writes `organization` explicitly. A hosted thread is `/threads/<id>` only.
 - **Worktrees** Remy creates go in a `.remy` folder, inside the workspace or under the `worktreeRoot` setting, hidden by a rule in the repo's `.git/info/exclude` — per-clone and never committed, so no tracked `.gitignore` changes. Worktrees already checked out elsewhere are left where they are.
 - **The words a person reads** are not always the words the code uses — see **Terminology** above, and check it before naming a label, an error or an empty state.
 - **Base UI for new work.** New UI surfaces and redesigns use Base UI (`@base-ui/react` / shadcn base style). Do not add new Radix-based primitives or redesign existing ones onto Radix. Migrating an existing Radix surface is a redesign — use Base UI and follow `.agents/skills/migrate-radix-to-base`. Existing Radix/shadcn New York surfaces may remain until they are redesigned.
@@ -178,7 +179,7 @@ A server module opens its database at import time, so a test that touches state 
 - **The `remy` MCP is a thread's control surface.** Claude gets the in-process server in `server/src/ticket-tools.ts`; Codex and Cursor get the STDIO server in `server/src/ticket-mcp.ts`. Every tool exists on both paths. A thread may orchestrate only the operations allowlisted by `isRemyToolRoute`; add each new capability to the smallest explicit route and method set, derive its thread, device and actor from the capability where relevant, and test both an allowed route and a neighbouring forbidden one. STDIO providers receive the HMAC capability from `remyToolToken` through inherited environment variable names, never `config.token` or another daemon-wide credential. "Work on REMY-1" is resolved and linked before the model sees the prompt; a key that does not exist in Remy's board is not invented.
 - **Every provider keeps a live conversation.** A Claude thread holds one SDK query process across turns; a Codex thread holds one `codex app-server` JSON-RPC connection; a Cursor thread holds one `agent acp` connection through the official Agent Client Protocol SDK. Hosted Cursor Cloud threads use the Cursor SDK cloud VM instead of ACP. They can stop mid-turn for approvals and questions, stream tool progress, interrupt the active turn, and resume their own provider transcript after a restart. Cursor models come from `agent --list-models`, and its current default comes from `agent about`; do not replace ACP with the older headless JSON stream. Never quietly grant what a person would have been asked about.
 - **Reusable environments are assigned to repositories.** Settings owns shared definitions and workspace assignments. Cloud and model-access keys on Computers follow the same rule: values are encrypted at rest and management APIs return names and configured state, never values; the `remy` MCP cannot manage them. An account can keep multiple named Fly.io, OpenRouter, and other integration keys; execution uses the active key. Authenticated computer channels deliver assigned environment values, and providers inherit them automatically for each task. Restart a provider session when its environment changes. Keep values out of arguments, prompts, logs and snapshots. Exact output redaction cannot recognise encoded or transformed values and cannot prevent a provider or command from reading its inherited environment; keep that limitation visible anywhere the guarantee is described.
-- **Computer pairing lives in the daemon**, in the `peers` table, so one pairing serves its desktop app and browser. Those clients reach a paired computer through `/peers/:id/api/...`; the native phone may use that authenticated route once to learn the computer's identity and keep its own direct credential in secure storage. `GET /server/identity` is how a computer introduces itself; `tailscale serve` is the only way in, so the daemon's bind stays on `127.0.0.1`, and `PATCH /server/identity {exposed}` is the switch for it.
+- **Computer pairing lives in the daemon**, in the `peers` table, so one pairing serves every client reading that computer. Those clients reach a paired computer through `/peers/:id/api/...`; the native phone may use that authenticated route once to learn the computer's identity and keep its own direct credential in secure storage. `GET /server/identity` is how a computer introduces itself; `tailscale serve` is the only way in, so the daemon's bind stays on `127.0.0.1`, and `PATCH /server/identity {exposed}` is the switch for it.
 - **The iPhone app is a fleet client**, never an execution daemon of its own. Its first `remy://configure?url=&token=` pairing bootstraps the fleet; as reachable paired computers introduce themselves, the phone stores a direct credential for each in secure storage and connects to them independently. Shared state can come from any computer that answers, while threads and workspaces remain owned by the computer that can run them.
 - **Pairing starts on the device you are using.** An authenticated client asks
   its computer to pair with another on the tailnet. The receiving computer can

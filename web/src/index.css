@@ -88,8 +88,7 @@
   --command-content-inset: 1rem;
   --floating-content-inset: 0.75rem;
   --workspace-topbar-height: 52px;
-  /* In the browser this matches the sidebar. Electron sets the 78px overlay
-     inset so the title clears the traffic lights under hiddenInset. */
+  /* The title lines up with the sidebar's own content inset. */
   --titlebar-traffic-light-inset: var(--sidebar-content-inset);
 
   /* Dark is the only scheme wired up today. Every token has a light value in
@@ -97,8 +96,7 @@
 
   /* Two surfaces. The chrome — title bar and sidebar — is the darkest thing in
      the window, and the pane sits on it as a lighter, bordered panel; card and
-     popover step up from the pane. The chrome keeps the old background value so
-     the Electron window's `backgroundColor` still matches it while loading. */
+     popover step up from the pane. */
   --background: oklch(19% 0 0);
   --foreground: oklch(97% 0 0);
   --card: color-mix(in srgb, var(--background) 97%, #fff);
@@ -152,10 +150,6 @@
   --sidebar-accent: oklch(100% 0 0 / 7%);
   --sidebar-accent-foreground: var(--foreground);
   --sidebar-ring: var(--ring);
-}
-
-html.electron {
-  --titlebar-traffic-light-inset: 78px;
 }
 
 .light {

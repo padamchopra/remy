@@ -1,9 +1,7 @@
 /// Taking a picture of the window.
 ///
-/// The desktop app captures itself and writes the file straight to the desktop,
-/// the way a screenshot arrives. A browser cannot do that unasked, so it goes
-/// through the picker the platform already provides and the file lands wherever
-/// downloads land.
+/// A browser cannot capture itself unasked, so it goes through the picker the
+/// platform already provides and the file lands wherever downloads land.
 
 function stamp(): string {
   const now = new Date();
@@ -13,12 +11,6 @@ function stamp(): string {
 
 /// Where the picture went, phrased for someone reading a toast.
 export async function takeSnapshot(): Promise<string> {
-  const bridge = window.remy ?? window.missionControl;
-  if (bridge?.snapshot) {
-    const path = await bridge.snapshot();
-    return path.replace(/^\/(?:Users|home)\/[^/]+/, "~");
-  }
-
   if (!navigator.mediaDevices?.getDisplayMedia) {
     throw new Error("This browser can't capture the screen.");
   }

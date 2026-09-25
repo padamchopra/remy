@@ -63,12 +63,12 @@ try {
   await click(p, "Set up a computer");
   await click(p, "Add computer");
   await p.getByText("Connect a computer", { exact: true }).waitFor();
-  assert.equal(await p.getByRole("link", { name: "Download for Mac" }).getAttribute("href"), "https://github.com/padamchopra/remy/releases/latest");
+  await p.getByRole("button", { name: "Create a connection key", exact: true }).waitFor();
   await click(p, "Cloud");
-  await p.getByText("Cloud computers are unavailable; connect your Mac or ask your Remy administrator to enable hosting.").waitFor();
+  await p.getByText("Cloud computers are unavailable; connect a computer or ask your Remy administrator to enable hosting.").waitFor();
   await click(p, "Check availability again");
-  await p.getByText("Cloud computers are unavailable; connect your Mac or ask your Remy administrator to enable hosting.").waitFor();
-  await p.screenshot({ path: `${out}/connect-mac.png` });
+  await p.getByText("Cloud computers are unavailable; connect a computer or ask your Remy administrator to enable hosting.").waitFor();
+  await p.screenshot({ path: `${out}/connect-computer.png` });
   await click(p, "Threads");
   await click(p, "Add a workspace");
   await click(p, "Add workspace");

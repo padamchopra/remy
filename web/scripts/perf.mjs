@@ -61,7 +61,7 @@ try {
       for (const threadCount of [25, 250]) {
         results.push(await repeated(() => runSidebar(target, threadCount)));
       }
-      if (target.name !== "packaged") results.push(await runSidebarBehavior(target));
+      results.push(await runSidebarBehavior(target));
       continue;
     }
     if (ONLY_SCENARIO === "surfaces") {
@@ -84,7 +84,7 @@ try {
     for (const threadCount of [25, 250]) {
       results.push(await repeated(() => runSidebar(target, threadCount)));
     }
-    if (target.name !== "packaged") results.push(await runSidebarBehavior(target));
+    results.push(await runSidebarBehavior(target));
     results.push(...await runRenderIsolation(target));
     results.push(...await repeatedGroup(() => runThreadLifecycle(target)));
     results.push(await runWarmOffline(target));
@@ -213,27 +213,16 @@ function performanceTargets() {
   }
 
   const requested = new Set(
-    (process.env.MC_PERF_TARGETS ?? "packaged,isolated")
+    (process.env.MC_PERF_TARGETS ?? "isolated")
       .split(",")
       .map((target) => target.trim())
       .filter(Boolean),
   );
-  const known = new Set(["packaged", "isolated"]);
+  const known = new Set(["isolated"]);
   const unknown = [...requested].filter((target) => !known.has(target));
   if (unknown.length > 0) throw new Error(`Unknown MC_PERF_TARGETS value: ${unknown.join(", ")}`);
 
   const selected = [];
-  if (requested.has("packaged")) {
-    const packagedIndex = process.env.MC_PACKAGED_WEB
-      ?? "/Applications/Remy.app/Contents/Resources/web/index.html";
-    if (!existsSync(packagedIndex)) {
-      throw new Error(
-        `The packaged Remy web bundle was not found at ${packagedIndex}. `
-        + "Set MC_PACKAGED_WEB or run with MC_PERF_TARGETS=isolated.",
-      );
-    }
-    selected.push({ name: "packaged", url: pathToFileURL(packagedIndex).href });
-  }
   if (requested.has("isolated")) {
     const isolatedIndex = resolve(webRoot, "dist/index.html");
     if (!existsSync(isolatedIndex)) {

@@ -51,7 +51,7 @@ try {
   await page.locator('.mobile-section').scrollIntoViewIfNeeded();
   await page.frameLocator('iframe[title="Remy browser demo in a narrow viewport"]').locator('.demo-banner').waitFor();
   await page.getByRole('button', { name: 'Is Remy free?', exact: true }).click();
-  await page.getByText('Local Remy is free and needs no Remy account.', { exact: false }).waitFor();
+  await page.getByText('Running Remy on your own computer is free and needs no Remy account.', { exact: false }).waitFor();
   await page.screenshot({ path: `${artifacts}/full.png`, fullPage: true });
 
   const phone = await browser.newPage({ ...devices['iPhone 13'], deviceScaleFactor: 1 });

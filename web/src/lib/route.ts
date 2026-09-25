@@ -4,7 +4,7 @@ import type { SettingsTab } from "@/lib/settings-sections";
 
 /// Where the window is, written down so a reload lands back on it.
 ///
-/// Electron keeps routes in the hash because it loads the build from `file://`.
+/// The local window keeps routes in the hash, so a reload never needs a server rule.
 /// The hosted app uses normal paths and its server returns the app shell for a
 /// direct route, so browser URLs stay clean without weakening desktop reloads.
 
