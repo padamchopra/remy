@@ -181,9 +181,9 @@ export function ModelPicker({
         title="Pick effort"
         description="Choose how much reasoning this model uses."
         showCloseButton={false}
-        className="top-[12%] translate-y-0 sm:max-w-[520px]"
+        className="top-[8%] translate-y-0 max-h-[min(36rem,85dvh)] sm:max-w-[520px]"
       >
-        <CommandList className="max-h-[440px]">
+        <CommandList className="max-h-[min(440px,60dvh)]">
           <CommandGroup>
             <CommandItem value="back to models" onSelect={() => setPending(undefined)}>
               <ArrowLeft />
@@ -226,12 +226,12 @@ export function ModelPicker({
       description={searchLabel}
       filter={match}
       showCloseButton={false}
-      className="top-[12%] translate-y-0 sm:max-w-[520px]"
+      className="top-[8%] translate-y-0 max-h-[min(36rem,85dvh)] sm:max-w-[520px]"
     >
       <CommandInput placeholder={searchLabel} />
       {/* A stable viewport for both short built-in catalogues and Cursor's live,
           searchable model list. */}
-      <CommandList className="max-h-[440px]">
+      <CommandList className="max-h-[min(440px,60dvh)]">
         <CommandEmpty>
           {shownProviders.some((provider) => provider.models.length > 0)
             ? "No model by that name."
@@ -395,7 +395,7 @@ export function ModelPickerButton({
 
   if (disabled && variant === "composer") {
     return (
-      <InputGroupText data-model-picker="" title={title} className="max-w-40 truncate">
+      <InputGroupText data-model-picker="" title={title} className="min-w-0 max-w-40 truncate">
         {mark}
         {label}
       </InputGroupText>
@@ -405,9 +405,9 @@ export function ModelPickerButton({
   return (
     <>
       {variant === "composer" ? (
-        <InputGroupButton data-model-picker="" aria-label="Model" title={title} onClick={() => setOpen(true)}>
+        <InputGroupButton data-model-picker="" aria-label="Model" title={title} className="min-w-0 shrink [@media(pointer:coarse)]:h-8" onClick={() => setOpen(true)}>
           {mark}
-          <span className="max-w-40 truncate">{label}</span>
+          <span className="min-w-0 max-w-40 truncate">{label}</span>
           <ChevronDown />
         </InputGroupButton>
       ) : (

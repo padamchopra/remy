@@ -20,15 +20,19 @@ export function ThreadComposerEditor({ textarea, controls, context, contextEnd, 
         event.preventDefault();
         if (canSend) event.currentTarget.form?.requestSubmit();
       }} />
-    <InputGroupAddon align="block-end">
-      {controls}
-      <InputGroupButton type="submit" variant="default" size="icon-sm" className="ml-auto rounded-full" disabled={!canSend} aria-label={sendLabel}>
+    <InputGroupAddon align="block-end" className="min-w-0 flex-wrap">
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+        {controls}
+      </div>
+      <InputGroupButton type="submit" variant="default" size="icon-sm" className="ml-auto shrink-0 rounded-full" disabled={!canSend} aria-label={sendLabel}>
         {busy ? <Spinner /> : <ArrowUp />}
       </InputGroupButton>
     </InputGroupAddon>
-    <InputGroupAddon align="block-end" className="border-t">
-      {context}
-      {contextEnd && <div className="ml-auto flex min-w-0 items-center gap-1">{contextEnd}</div>}
+    <InputGroupAddon align="block-end" className="min-w-0 flex-wrap border-t">
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+        {context}
+      </div>
+      {contextEnd ? <div className="flex min-w-0 flex-wrap items-center gap-1 sm:ml-auto">{contextEnd}</div> : null}
     </InputGroupAddon>
   </InputGroup>;
 }

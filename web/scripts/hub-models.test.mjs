@@ -97,6 +97,25 @@ test("hosted models put a connected Claude Code account on the catalogue without
   assert.equal(models[0].label, "Claude Code");
 });
 
+test("hosted models keep Claude Opus 5.5 choosable while OpenRouter is selected", () => {
+  const models = hostedModels(
+    [
+      { id: "anthropic", enabled: true, configured: true, models: [] },
+      { id: "openrouter", enabled: true, configured: true, models: ["openrouter/auto", "anthropic/claude-opus-5.5"] },
+    ],
+    false,
+    { provider: "openrouter", model: "openrouter/auto" },
+    true,
+  );
+  assert.deepEqual(models.map((entry) => entry.id), ["claude", "anthropic", "openrouter"]);
+  assert.ok(models.find((entry) => entry.id === "anthropic")?.models.some((model) => model.value === "claude-opus-5-5" && model.label === "Opus 5.5"));
+  assert.ok(models.find((entry) => entry.id === "claude")?.models.some((model) => model.value === "claude-opus-5-5" && model.label === "Opus 5.5"));
+  assert.equal(
+    models.find((entry) => entry.id === "openrouter")?.models.find((model) => model.value === "anthropic/claude-opus-5.5")?.label,
+    "Opus 5.5 (1M)",
+  );
+});
+
 test("hosted execution maps OpenRouter onto Codex without a double remy prefix", () => {
   assert.deepEqual(hostedExecutionChoice({ provider: "openrouter", model: "openrouter/auto" }), {
     provider: "codex",

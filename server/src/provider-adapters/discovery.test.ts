@@ -24,7 +24,13 @@ test("Claude's SDK names the installed generations and context windows", () => {
 });
 
 test("Claude generation decimals stay decimals", () => {
-  const [fable, haiku] = claudeModels([
+  const [opus, fable, haiku] = claudeModels([
+    {
+      value: "claude-opus-5-5",
+      resolvedModel: "claude-opus-5-5",
+      displayName: "Opus",
+      description: "Opus 5.5 · Long-running agentic coding",
+    },
     {
       value: "claude-fable-5-1[1m]",
       resolvedModel: "claude-fable-5-1",
@@ -38,6 +44,8 @@ test("Claude generation decimals stay decimals", () => {
       description: "Haiku 4.5 · Fastest for quick answers",
     },
   ]);
+  assert.equal(opus?.label, "Opus 5.5");
+  assert.equal(opus?.context, "1M");
   assert.equal(fable?.label, "Fable 5.1");
   assert.equal(fable?.context, "1M");
   assert.equal(haiku?.label, "Haiku 4.5");

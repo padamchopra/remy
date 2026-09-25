@@ -39,7 +39,7 @@ function claudeContext(model: ModelInfo): string | undefined {
   const text = `${model.value} ${model.resolvedModel ?? ""} ${model.displayName} ${model.description}`;
   if (/\b1m\b|1M context/i.test(text)) return "1M";
   if (/\b200k\b|200K context/i.test(text)) return "200K";
-  if (/fable-5|opus-5/i.test(text)) return "1M";
+  if (/fable-5|opus-5(?:-5)?/i.test(text)) return "1M";
   if (/sonnet-5|haiku-4-5/i.test(text)) return "200K";
   return undefined;
 }
