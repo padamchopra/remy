@@ -292,11 +292,13 @@ try {
           await page.getByRole("option",{name:/openrouter\/auto/}).waitFor();
           await page.getByRole("option",{name:/test\/model-a/}).waitFor();
           await page.getByPlaceholder("Search providers and models",{exact:true}).fill("Opus 5.5");
-          await page.getByRole("option",{name:/Opus 5.5/}).waitFor();
+          const opus=page.getByRole("option",{name:/Opus 5.5/});
+          await opus.first().waitFor();
+          assert.ok((await opus.count())>=2,"Opus 5.5 stays on Claude Code and Anthropic while OpenRouter is selected");
           assert.equal(await page.getByText("No model by that name.",{exact:true}).count(),0);
-          await page.getByPlaceholder("Search providers and models",{exact:true}).fill("");
           if(artifacts)await new Promise(resolve=>setTimeout(resolve,500));
           if(artifacts)await page.screenshot({path:`${artifacts}/composer-picker-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
+          await page.getByPlaceholder("Search providers and models",{exact:true}).fill("");
           await page.getByRole("option",{name:/test\/model-a/}).click();
           await model.getByText("test/model-a",{exact:true}).waitFor();
           await model.click();
