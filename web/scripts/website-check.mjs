@@ -69,7 +69,7 @@ try {
     }
   }
   const topTabs = phone.getByRole('tablist', { name: 'Explore Remy features', exact: true });
-  for (const [name, scene] of [['Worktrees', 'worktrees'], ['Review', 'review'], ['Agents', 'agents'], ['Threads', 'threads']]) {
+  for (const [name, scene] of [['Worktrees', 'worktrees'], ['Review', 'review'], ['Threads', 'threads']]) {
     await topTabs.getByRole('tab', { name, exact: true }).click();
     assert.equal(await topTabs.getByRole('tab', { name, exact: true }).getAttribute('aria-selected'), 'true');
     await phone.frameLocator(".hero-preview iframe").locator(`html[data-preview-scene="${scene}"]`).waitFor();

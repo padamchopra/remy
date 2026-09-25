@@ -12,8 +12,8 @@ if (window.remy || window.missionControl) {
   document.documentElement.classList.add("electron");
 }
 
-// Rewrite leftover `/app/inbox` before the hosted runtime fetch, so a full
-// navigation's load waiter already sees Settings → Agents.
+// Rewrite a retired address before the hosted runtime fetch, so a full
+// navigation's load waiter already sees where it landed.
 normalizeLocation();
 
 const LocalApp = lazy(() => import("./App").then((m) => ({ default: m.App })));

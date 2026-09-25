@@ -23,7 +23,6 @@ import {
   ChevronDown,
   CircleAlert,
   CircleStop,
-  Clock3,
   Copy,
   FileCode2,
   Folder,
@@ -133,7 +132,7 @@ import { workingToolGroupId } from "@/lib/working-tool";
 import { rowAt, virtualLayout, virtualRange, type VirtualLayout, type VirtualRange } from "@/lib/virtual-list";
 import { useStore } from "@/state/store";
 import { ThreadDiff as Diff } from "@/components/ThreadDiff";
-import type { Agent, ArchivedThread, Chat, ChatApproval, ChatCodeReference, ChatQuestionRequest, ConvArtifact, ConvEntry } from "@/state/types";
+import type { ArchivedThread, Chat, ChatApproval, ChatCodeReference, ChatQuestionRequest, ConvArtifact, ConvEntry } from "@/state/types";
 
 interface ThreadCheckpoint {
   id: string;
@@ -165,17 +164,15 @@ export function ChatView({
   onOpenTicket,
   onOpenThread,
   onOpenWorkspace,
-  onOpenRoutine,
   onRestored,
   crumbs,
-  persona,
   focused = true,
 }: {
   chat: Chat;
   archived?: ArchivedThread;
   /// Inside a workbench tab, where the tab strip is the header and the tools
-  /// are tabs of their own. On its own — an inbox conversation, an archived
-  /// thread — it draws its header.
+  /// are tabs of their own. On its own — an archived thread — it draws its
+  /// header.
   embedded?: boolean;
   /// Controls at the end of that header.
   headerEnd?: ReactNode;
@@ -191,16 +188,9 @@ export function ChatView({
   /// a workspace. Without these the card is still drawn; it just does not open.
   onOpenThread?: (id: string) => void;
   onOpenWorkspace?: (workspaceId: string) => void;
-  onOpenRoutine?: () => void;
   onRestored?: (id: string) => void;
-  /// Replaces the workspace-and-title trail. An inbox conversation is placed by
-  /// who you are talking to, not by the folder it happens to run in.
+  /// Replaces the workspace-and-title trail.
   crumbs?: Crumb[];
-  /// Who is answering, when that is somebody rather than a provider. In the
-  /// inbox you are talking to an agent, so the feed says its name and wears its
-  /// mark; which model is behind it is on the composer, where it is a setting.
-  /// It also has no work of its own, so it carries no ticket.
-  persona?: Agent;
   /// Only the tab in front takes composer focus.
   focused?: boolean;
 }) {
@@ -240,7 +230,6 @@ export function ChatView({
   const stableOpenTicket = useStableOptionalCallback(onOpenTicket);
   const stableOpenThread = useStableOptionalCallback(onOpenThread);
   const stableOpenWorkspace = useStableOptionalCallback(onOpenWorkspace);
-  const stableOpenRoutine = useStableOptionalCallback(onOpenRoutine);
   const stableOpenLink = useStableOptionalCallback(onOpenLink);
 
   useEffect(() => {
@@ -271,7 +260,7 @@ export function ChatView({
   // Which project this chat is in, so the breadcrumb reads as a place rather
   // than a path. A chat started in `~` belongs to no workspace and wears the
   // machine instead.
-  const conversational = chat.dm === true;
+  const conversational = false;
   const workspace = workspaces[workspaceForPath(chat.cwd, workspaces)];
   const server = servers.find((entry) => entry.id === chat.serverId);
   const cloud = server?.cloud === true;
@@ -294,7 +283,6 @@ export function ChatView({
     title: archived.title,
     cwd: archived.cwd,
     provider: archived.provider,
-    agentId: archived.agentId,
     model: archived.model,
     effort: archived.effort,
     permissionMode: archived.permissionMode,
@@ -416,7 +404,7 @@ export function ChatView({
           ),
         }]}
       >
-        {onOpenTicket && !persona && !archived && <ThreadTicket chatId={chat.id} onOpenTicket={onOpenTicket} />}
+        {onOpenTicket && !archived && <ThreadTicket chatId={chat.id} onOpenTicket={onOpenTicket} />}
         {headerEnd}
       </PaneHeader>}
 
@@ -436,9 +424,7 @@ export function ChatView({
           {loading && visibleEntries.length === 0 ? (
             <FeedSkeleton />
           ) : visibleEntries.length === 0 ? (
-            persona ? (
-              <AgentConversationStarter persona={persona} provider={provider?.id ?? "claude"} />
-            ) : (
+            (
               <Empty>
                 <EmptyHeader>
                   <EmptyMedia variant="icon">
@@ -474,14 +460,12 @@ export function ChatView({
                 turns={feedTurns}
                 workingToolId={workingToolId}
                 provider={provider?.id ?? "claude"}
-                name={persona?.name ?? provider?.label ?? "Claude"}
-                persona={persona}
+                name={provider?.label ?? "Claude"}
                 conversational={conversational}
                 archived={Boolean(archived)}
                 onOpenTicket={stableOpenTicket}
                 onOpenThread={stableOpenThread}
                 onOpenWorkspace={stableOpenWorkspace}
-                onOpenRoutine={stableOpenRoutine}
                 onOpenLink={stableOpenLink}
                 onActiveCheckpoint={setActiveCheckpoint}
               />
@@ -631,11 +615,7 @@ export function ChatView({
               ariaLabel="Message"
               initialText={initialDraft}
               placeholder={
-                archived
-                  ? "Unarchive to reply."
-                  : persona
-                    ? `Message ${persona.name}.`
-                    : "Reply, or ask for the next change."
+                archived ? "Unarchive to reply." : "Reply, or ask for the next change."
               }
               disabled={Boolean(archived)}
               onChange={setDraft}
@@ -1084,13 +1064,11 @@ interface TranscriptTurnProps {
   workingToolId?: string;
   provider: string;
   name: string;
-  persona?: Agent;
   conversational: boolean;
   archived: boolean;
   onOpenTicket?: (key: string) => void;
   onOpenThread?: (id: string) => void;
   onOpenWorkspace?: (workspaceId: string) => void;
-  onOpenRoutine?: () => void;
   onOpenLink?: (href: string) => void;
 }
 
@@ -1122,13 +1100,11 @@ const TranscriptTurn = memo(function TranscriptTurn({
   workingToolId,
   provider,
   name,
-  persona,
   conversational,
   archived,
   onOpenTicket,
   onOpenThread,
   onOpenWorkspace,
-  onOpenRoutine,
   onOpenLink,
 }: TranscriptTurnProps) {
   const renders = useRef(0);
@@ -1142,7 +1118,6 @@ const TranscriptTurn = memo(function TranscriptTurn({
       onOpenTicket={onOpenTicket}
       onOpenThread={onOpenThread}
       onOpenWorkspace={onOpenWorkspace}
-      onOpenRoutine={onOpenRoutine}
     />
   ) : (
     <Entry
@@ -1150,7 +1125,6 @@ const TranscriptTurn = memo(function TranscriptTurn({
       entry={item.entry}
       provider={provider}
       name={name}
-      persona={persona}
       lead={item.lead}
       checkpoint={sticky ? checkpoint?.id : undefined}
       onOpenLink={!conversational && !archived ? onOpenLink : undefined}
@@ -1185,13 +1159,11 @@ const TranscriptTurn = memo(function TranscriptTurn({
   && previous.workingToolId === next.workingToolId
   && previous.provider === next.provider
   && previous.name === next.name
-  && previous.persona === next.persona
   && previous.conversational === next.conversational
   && previous.archived === next.archived
   && previous.onOpenTicket === next.onOpenTicket
   && previous.onOpenThread === next.onOpenThread
   && previous.onOpenWorkspace === next.onOpenWorkspace
-  && previous.onOpenRoutine === next.onOpenRoutine
   && previous.onOpenLink === next.onOpenLink
 ));
 
@@ -1407,7 +1379,6 @@ function Entry({
   lead,
   provider,
   name,
-  persona,
   checkpoint,
   onOpenLink,
 }: {
@@ -1415,7 +1386,6 @@ function Entry({
   lead: boolean;
   provider: string;
   name: string;
-  persona?: Agent;
   checkpoint?: string;
   onOpenLink?: (href: string) => void;
 }) {
@@ -1513,7 +1483,7 @@ function Entry({
   if (entry.kind === "assistant") {
     return (
       <Message>
-        <AgentAvatar provider={provider} persona={persona} lead={lead} />
+        <AgentAvatar provider={provider} lead={lead} />
         <MessageContent>
           {/* The provider, not the model: which Claude or which Codex answered
               is a setting of the thread, and it is on the toolbar. */}
@@ -1531,7 +1501,7 @@ function Entry({
   if (entry.kind === "thinking") {
     return (
       <Message>
-        <AgentAvatar provider={provider} persona={persona} lead={lead} />
+        <AgentAvatar provider={provider} lead={lead} />
         <MessageContent>
           {lead && <MessageHeader>{name}</MessageHeader>}
           <Bubble variant="ghost">
@@ -1547,30 +1517,10 @@ function Entry({
   return null;
 }
 
-/// An agent's empty conversation already reads like the first exchange: they
-/// introduce themselves in the same column their real replies will use, and
-/// the composer immediately below is the answer.
-function AgentConversationStarter({ persona, provider }: { persona: Agent; provider: string }) {
-  return (
-    <Empty className="items-stretch justify-start p-0 text-left md:p-0">
-      <Message>
-        <AgentAvatar provider={provider} persona={persona} lead />
-        <MessageContent>
-          <MessageHeader>{persona.name}</MessageHeader>
-          <Bubble variant="ghost">
-            <BubbleContent>What are we working on?</BubbleContent>
-          </Bubble>
-        </MessageContent>
-      </Message>
-    </Empty>
-  );
-}
-
 const ARTIFACT_ICON = {
   ticket: SquareKanban,
   thread: MessagesSquare,
   workspace: Folder,
-  routine: Clock3,
 } as const;
 
 /// What a Remy tool just made, as a thing rather than a sentence.
@@ -1740,21 +1690,19 @@ function ToolGroup({
   onOpenTicket,
   onOpenThread,
   onOpenWorkspace,
-  onOpenRoutine,
 }: {
   entries: ConvEntry[];
   working: boolean;
   onOpenTicket?: (key: string) => void;
   onOpenThread?: (id: string) => void;
   onOpenWorkspace?: (workspaceId: string) => void;
-  onOpenRoutine?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const failed = entries.filter((entry) => toolStatus(entry) === "error").length;
   const stopped = entries.filter((entry) => toolStatus(entry) === "stopped").length;
 
   return (
-    // Tool work is the agent's too, so it stays under the agent's text column.
+    // Tool work belongs to the same turn, so it stays in that text column.
     <div className="flex flex-col gap-1.5">
       <Collapsible open={expanded} onOpenChange={setExpanded}>
         <Marker asChild className="w-fit">
@@ -1788,8 +1736,6 @@ function ToolGroup({
                 ? () => onOpenThread(artifact.id!)
                 : artifact.kind === "workspace" && artifact.id && onOpenWorkspace
                   ? () => onOpenWorkspace(artifact.id!)
-                  : artifact.kind === "routine" && onOpenRoutine
-                    ? onOpenRoutine
                   : undefined
           }
         />

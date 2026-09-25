@@ -17,7 +17,7 @@ export type Route = (
   | { name: "board"; scope?: string }
   | { name: "ticket"; key: string }
   | { name: "prs" }
-  | { name: "settings"; tab: SettingsTab; organizationTab?: "general" | "members" | "teams" | "computers"; analyticsTab?: AnalyticsTab; deviceId?: string; agent?: string; organizationId?: string }) & { organizationId?: string; ownerOrganizationId?: string };
+  | { name: "settings"; tab: SettingsTab; organizationTab?: "general" | "members" | "teams" | "computers"; analyticsTab?: AnalyticsTab; deviceId?: string; organizationId?: string }) & { organizationId?: string; ownerOrganizationId?: string };
 
 export interface AppLocation {
   route: Route;
@@ -26,11 +26,10 @@ export interface AppLocation {
 const SETTINGS_TABS: SettingsTab[] = [
   "organization",
   "general",
-  "agents",
   "version-control",
   "providers",
   "devices",
-  "environments", "analytics", "members", "teams", "routing", "connections",
+  "environments", "analytics", "members", "teams", "connections",
 ];
 
 /// The section a route belongs to, which is what the sidebar highlights.
@@ -49,21 +48,12 @@ function parseRoute(hash: string): AppLocation {
   const [head, tail] = trimmed.replace(/^\/+/, "").split("/");
   const rest = tail ? decodeURIComponent(tail) : undefined;
 
-  // Older Inbox links open Agents in Settings. The handle or id in the path
-  // is the same agent query Settings already uses.
-  if (head === "inbox") {
-    return {
-      route: {
-        name: "settings",
-        tab: "agents",
-        ...(rest ? { agent: rest } : {}),
-      },
-    };
-  }
+  // Inbox and Agents are gone, so an older link opens the threads it was
+  // always one click from.
+  if (head === "inbox" || head === "agents") return { route: { name: "threads" } };
   if (head === "workspaces") return { route: { name: "workspaces", workspaceId: rest } };
   if (head === "pull-requests") return { route: { name: "prs" } };
-  // Older links to recurring tickets land on the board now that routines live
-  // with agents instead of Tasks.
+  // Older links to recurring tickets land on the board.
   if (head === "recurring") return { route: { name: "board", scope: rest } };
   if (head === "board") return { route: { name: "board", scope: rest } };
   // Tickets are addressed by key rather than id, so a link someone pastes reads
@@ -75,7 +65,6 @@ function parseRoute(hash: string): AppLocation {
     const askedAnalyticsTab = params.get("tab");
     const analyticsTab: AnalyticsTab = askedAnalyticsTab === "usage" ? "usage" : "general";
     const deviceId = params.get("device") || undefined;
-    const agent = params.get("agent") || undefined;
     return {
       route: {
         name: "settings",
@@ -84,7 +73,6 @@ function parseRoute(hash: string): AppLocation {
         ...(tab === "organization" ? {organizationTab: params.get("section") === "members" ? "members" as const : params.get("section") === "teams" ? "teams" as const : params.get("section") === "computers" ? "computers" as const : "general" as const} : {}),
         ...(tab === "analytics" ? { analyticsTab } : {}),
         ...((tab === "providers" || tab === "devices") && deviceId ? { deviceId } : {}),
-        ...(tab === "agents" && agent ? { agent } : {}),
       },
     };
   }
@@ -121,7 +109,6 @@ export function formatPathLocation({ route }: AppLocation): string {
   if (route.name === "threads" && route.focus) params.set("focus", route.focus);
   if (route.name === "settings" && route.tab === "analytics" && route.analyticsTab === "usage") params.set("tab", "usage");
   if (route.name === "settings" && (route.tab === "providers" || route.tab === "devices") && route.deviceId) params.set("device", route.deviceId);
-  if (route.name === "settings" && route.tab === "agents" && route.agent) params.set("agent", route.agent);
   if (route.organizationId && route.organizationId !== "all" && !threadId) params.set("organization", route.organizationId);
   if (route.name === "settings" && route.tab === "organization" && route.organizationTab) params.set("section", route.organizationTab);
   if (route.ownerOrganizationId && !threadId) params.set("owner", route.ownerOrganizationId);
@@ -151,14 +138,16 @@ function pathInsideHostedBase(): string {
   return window.location.pathname.slice(hostedBasePath().length) || "/";
 }
 
-function leftoverInboxFromPath(): string | undefined {
+const RETIRED = /(?:^|\/)(?:inbox|agents)(?:\/|$)/;
+
+function retiredFromPath(): string | undefined {
   const path = pathInsideHostedBase();
-  if (/(?:^|\/)inbox(?:\/|$)/.test(path)) return `${path}${window.location.search}`;
+  if (RETIRED.test(path)) return `${path}${window.location.search}`;
 }
 
-function leftoverInboxFromHash(): string | undefined {
+function retiredFromHash(): string | undefined {
   const hash = window.location.hash.replace(/^#/, "");
-  if (/(?:^|\/)inbox(?:\/|$)/.test(hash)) return hash;
+  if (RETIRED.test(hash)) return hash;
 }
 
 export function currentLocation(): string {
@@ -168,15 +157,15 @@ export function currentLocation(): string {
 }
 
 export function normalizeLocation(): AppLocation {
-  const fromPath = leftoverInboxFromPath();
-  const fromHash = leftoverInboxFromHash();
+  const fromPath = retiredFromPath();
+  const fromHash = retiredFromHash();
   const legacyHash = window.location.hash.startsWith("#/");
   const search = new URLSearchParams(window.location.search);
   const redundantAll = search.get("organization") === "all";
   const location = parseLocation(fromPath ?? fromHash ?? currentLocation());
   const hostedThread = isHostedRuntime() && location.route.name === "threads" && location.route.threadId
     && (search.has("computer") || search.has("owner") || search.has("organization") || legacyHash);
-  // Path leftovers such as `/app/inbox` must rewrite before `/api/runtime`
+  // A retired path such as `/app/agents` must rewrite before `/api/runtime`
   // answers, or a load waiter sees the old address.
   if (fromPath || fromHash || (isHostedRuntime() && (legacyHash || redundantAll || hostedThread))) {
     const next = fromPath || isHostedRuntime() || hostedBasePath()

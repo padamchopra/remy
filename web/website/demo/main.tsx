@@ -4,8 +4,6 @@ import { Folder, MessagesSquare, SquareKanban, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { AppSidebar } from "@/components/sidebar/AppSidebar";
 import { useMacSidebar } from "@/components/sidebar/useMacSidebar";
-import { AgentRoutines } from "@/components/AgentRoutines";
-import { AgentMark } from "@/components/AgentAvatar";
 import { ThreadDiff } from "@/components/ThreadDiff";
 import { WorkspaceWorktrees } from "@/components/WorkspaceWorktrees";
 import { useWorkspaceWorktrees } from "@/hooks/use-workspace-worktrees";
@@ -19,7 +17,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useStore } from "@/state/store";
-import { resetDemo, scenes, workspace, sampleDiff, reviewDiff, sampleAgent } from "./state";
+import { resetDemo, scenes, workspace, sampleDiff, reviewDiff } from "./state";
 import "../ui.css";
 import "./style.css";
 
@@ -28,9 +26,6 @@ const explain = () => toast("Explore more in the installed app.");
 function WorkspacePreview() {
   const state = useWorkspaceWorktrees(workspace);
   return <div className="workspace-preview"><WorkspaceWorktrees state={state} /></div>;
-}
-function AgentPreview() {
-  return <div className="agent-preview"><div className="agent-preview-heading"><AgentMark agent={sampleAgent} /><div><h2>{sampleAgent.name}</h2><p>{sampleAgent.role}</p></div></div><AgentRoutines agent={sampleAgent} /></div>;
 }
 function DiffPreview({ review = false }: { review?: boolean }) {
   const lines = review ? reviewDiff : sampleDiff;
@@ -67,13 +62,13 @@ function Demo() {
   const compact = new URLSearchParams(location.search).has("compact") || mobile;
   return <TooltipProvider><AppActionsProvider context={{ hasProjects: true, addTicket: explain, registerWorkspace: explain, startThread: explain }}>
     <div className="demo-banner"><span>Remy · Sample workspace</span><Button variant="ghost" size="sm" onClick={() => { resetDemo(); select(initial); }}><RotateCcw />Reset</Button></div>
-    {surface ? (scene === "worktrees" ? <WorkspacePreview /> : scene === "review" ? <DiffPreview review /> : scene === "agents" ? <AgentPreview /> : <ChatView chat={chat} focused={false} />) : <SidebarProvider className="demo-app">
+    {surface ? (scene === "worktrees" ? <WorkspacePreview /> : scene === "review" ? <DiffPreview review /> : <ChatView chat={chat} focused={false} />) : <SidebarProvider className="demo-app">
       {!compact && <AppSidebar {...sidebar} />}
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         {compact && <div className="px-3 py-2"><Select value={chat.id} onValueChange={select}><SelectTrigger className="w-full" aria-label="Sample thread"><SelectValue /></SelectTrigger><SelectContent>{chats.map((entry) => <SelectItem key={entry.id} value={entry.id}>{entry.title}</SelectItem>)}</SelectContent></Select></div>}
         {compact ? <ChatView chat={chat} focused={false} /> : <ThreadWorkbench autoFocus={false} routeThread={chat} onOpenThread={select} onOpenTicket={explain} onOpenWorkspace={explain} onFocusThread={(_parent, id) => select(id)} />}
       </main>
-      {!compact && <div className="demo-support">{selected === "demo-worktrees" ? <WorkspacePreview /> : selected === "demo-agents" ? <AgentPreview /> : <DiffPreview review={selected === "demo-review"} />}</div>}
+      {!compact && <div className="demo-support">{selected === "demo-worktrees" ? <WorkspacePreview /> : <DiffPreview review={selected === "demo-review"} />}</div>}
     </SidebarProvider>}<Toaster />
   </AppActionsProvider></TooltipProvider>;
 }

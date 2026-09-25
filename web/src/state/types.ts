@@ -59,10 +59,8 @@ export interface Chat {
   title: string;
   cwd: string;
   state: ChatState;
-  /// Which agent this thread thinks with.
+  /// Which provider this thread thinks with.
   provider?: string;
-  /// The named persona running this thread, when it has one.
-  agentId?: string;
   model?: string;
   effort?: string;
   preview?: string;
@@ -73,10 +71,7 @@ export interface Chat {
   /// When the current run of work began. Absent once the chat settles, so a
   /// row only shows a clock while there is something to time.
   workingSince?: number;
-  /// True when this is an agent's conversation rather than work in a
-  /// repository. These live in Settings → Agents and never in the thread list.
-  dm?: boolean;
-  /// The agent has said something since you last opened this.
+  /// Something was said here since you last opened it.
   unread?: boolean;
   /// Pinned threads lead the active thread list.
   pinned?: boolean;
@@ -91,7 +86,6 @@ export interface ArchivedThread {
   title: string;
   cwd: string;
   provider?: string;
-  agentId?: string;
   model?: string;
   effort?: string;
   permissionMode?: string;
@@ -130,9 +124,8 @@ export interface Workspace {
   provider?: string | null;
   model?: string | null;
   effort?: string | null;
-  pullRequestMonitoring?: { enabled: boolean; agentId: string | null } | null;
   worktrees: GitWorktree[];
-  /// A device projection used for routing, hidden from the workspace list.
+  /// A device projection, hidden from the workspace list.
   virtual?: boolean;
 }
 
@@ -347,12 +340,12 @@ export interface PullRequestTimelineItem {
   line?: number | null;
 }
 
-/// Something a Remy tool made — a ticket, thread, workspace, or routine — with enough
+/// Something a Remy tool made — a ticket, thread, or workspace — with enough
 /// on it to draw a card and open the thing it names.
 export interface ConvArtifact {
   organizationId?: string;
   computerId?: string;
-  kind: "ticket" | "thread" | "workspace" | "routine";
+  kind: "ticket" | "thread" | "workspace";
   /// A ticket is addressed by key, a thread and a workspace by id.
   key?: string;
   id?: string;
@@ -425,10 +418,9 @@ export interface ChatDetail {
   title: string;
   cwd: string;
   parentChatId?: string;
-  /// Which agent this thread thinks with. Changeable, like the model: the feed
-  /// stays, and the new one arrives knowing only what it is told next.
+  /// Which provider this thread thinks with. Changeable, like the model: the
+  /// feed stays, and the new one arrives knowing only what it is told next.
   provider?: string;
-  agentId?: string;
   model?: string;
   effort?: string;
   /// How much this thread may do unasked. Changeable, unlike where it runs.
@@ -470,8 +462,6 @@ export interface ServerSettings {
   remyEffort: string;
   favoriteModels: string[];
   repoUpdate: "off" | "hourly" | "sixHourly" | "daily";
-  pullRequestMonitoringEnabled: boolean;
-  pullRequestMonitoringAgentId: string;
   notifySelf?: boolean;
   preventSleepSupported?: boolean;
   worktreeBranchPrefix: string;
@@ -483,14 +473,12 @@ export interface ServerSettings {
   /// Preferred devices for work that is not tied to a workspace.
   devicePreferenceOrder: string[];
   tailscaleServeEnabled: boolean;
-  /// What every agent set to Remy default signs with.
-  defaultGitIdentity: "off" | "author";
-  /// What a new thread and every inherited agent thinks with. It pairs with
-  /// `defaultModel`: a provider only ever holds one of its own models.
+  /// What a new thread thinks with. It pairs with `defaultModel`: a provider
+  /// only ever holds one of its own models.
   defaultProvider: string;
   enabledProviders: string[];
-  /// What a new thread may do without being asked. A workspace, an agent or the
-  /// thread itself can still say otherwise.
+  /// What a new thread may do without being asked. A workspace or the thread
+  /// itself can still say otherwise.
   defaultPermissionMode: string;
 }
 
@@ -534,33 +522,6 @@ export interface ProviderMcpStatus {
   configured: boolean;
 }
 
-/// A named persona a thread can run as. Mirrors `Agent` in `server/src/agents.ts`.
-export interface Agent {
-  id: string;
-  serverId: string;
-  name: string;
-  handle: string;
-  role?: string;
-  instructions: string;
-  provider: string;
-  model?: string;
-  effort?: string;
-  permissionMode: string;
-  avatar?: string;
-  tint?: string;
-  autoStart: boolean;
-  handoffTo: string[];
-  /// Who this agent's commits credit: `default` follows the machine, `off`
-  /// keeps your identity, and `author` credits the agent while you commit it.
-  gitIdentity: "default" | "off" | "author";
-  gitName?: string;
-  gitEmail?: string;
-  preset?: string;
-  /// Remy's own agent. Its name, role and instructions come from the copy of
-  /// Remy that is running, and it cannot be deleted.
-  builtIn?: boolean;
-}
-
 /// A repository, as the board knows it — what a ticket belongs to, rather than
 /// the folder holding it on any one machine.
 export interface Project {
@@ -591,7 +552,6 @@ export interface TicketThread {
   ticketId: string;
   deviceId: string;
   chatId: string;
-  agentId?: string;
   stage?: string;
   /// `runner` when the board started it, `you` when you attached it by hand.
   linkedBy: "runner" | "you";
@@ -610,13 +570,11 @@ export interface Ticket {
   body: string;
   status: TicketStatus;
   priority: number;
-  assigneeAgentId?: string;
   parentId?: string;
   rank: string;
   /// The machine that runs this ticket's work.
   deviceId?: string;
   branch?: string;
-  handoffs: number;
   createdAt: number;
   updatedAt: number;
   startedAt?: number;
@@ -624,39 +582,8 @@ export interface Ticket {
   threads: TicketThread[];
 }
 
-export type Cadence = "daily" | "weekdays" | "weekly" | "monthly";
-
-export interface Routine {
-  id: string;
-  serverId: string;
-  agentId: string;
-  name: string;
-  prompt: string;
-  cadence: Cadence;
-  hour: number;
-  minute: number;
-  weekday?: number;
-  day?: number;
-  enabled: boolean;
-  schedulerDeviceId: string;
-  runs: number;
-  lastRunAt?: number;
-  lastError?: string;
-  nextRunAt: number;
-  createdAt: number;
-  updatedAt: number;
-}
-
 /// One line of a ticket's story. The feed and the log the board syncs are the
 /// same record, so nothing here can drift from what actually happened.
-/// Who a comment named: the handle as it was typed, and who that turned out to
-/// be. Rendering reads the id, so renaming an agent renames every mention of it
-/// ever written.
-export interface TicketMention {
-  id: string;
-  handle: string;
-}
-
 export interface TicketActivity {
   id: string;
   at: number;
@@ -664,6 +591,5 @@ export interface TicketActivity {
   kind: string;
   body?: string;
   editedAt?: number;
-  mentions?: TicketMention[];
   detail?: Record<string, unknown>;
 }

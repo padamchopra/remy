@@ -46,7 +46,7 @@ thread frames to an older hub that lacks it.
 narrows it to one account. `/threads/:threadId` opens that thread and survives
 reload; computer, owner, and organization do not belong on that address. A
 narrowed account lists its threads and available workspace starts. The new-thread
-composer resolves the workspace preference and routing rules before it appears
+composer resolves the workspace preference and its computer choice before it appears
 ready, preselects the resulting concrete computer or cloud provider, and submits
 that explicit choice.
 Its picker contains only available execution choices; it has no automatic value.

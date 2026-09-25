@@ -79,9 +79,6 @@ export default function HubBoard({
   const members = useHubResource<{
     members: { userId: string; name: string }[];
   }>(organizationId, "/members");
-  const agents = useHubResource<{
-    agents: { id: string; fields: Record<string, unknown> }[];
-  }>(organizationId, "/agents", "/board/live");
   const [busy, setBusy] = useState(false);
   const [threads, setThreads] = useState<HubThread[]>([]);
   const workspaces = useHubResource<{ workspaces: HubWorkspace[] }>(
@@ -127,14 +124,11 @@ export default function HubBoard({
     setAssignee(
       item === "new"
         ? "none"
-        : item.fields.assigneeAgentId &&
-            !["you", "workspace"].includes(String(item.fields.assigneeAgentId))
-          ? `agent:${item.fields.assigneeAgentId}`
-          : item.fields.assigneeMemberId
-            ? `member:${item.fields.assigneeMemberId}`
-            : item.fields.assigneeName
-              ? "unknown"
-              : "none",
+        : item.fields.assigneeMemberId
+          ? `member:${item.fields.assigneeMemberId}`
+          : item.fields.assigneeName
+            ? "unknown"
+            : "none",
     );
     setTitle(item === "new" ? "" : String(item.fields.title));
     setBody(item === "new" ? "" : String(item.fields.body ?? ""));
@@ -479,9 +473,6 @@ export default function HubBoard({
                   ...(assignee === "unknown"
                     ? {}
                     : {
-                        assigneeAgentId: assignee.startsWith("agent:")
-                          ? assignee.slice(6)
-                          : "you",
                         assigneeMemberId: assignee.startsWith("member:")
                           ? assignee.slice(7)
                           : null,
@@ -489,13 +480,7 @@ export default function HubBoard({
                           ? (members.value?.members.find(
                               (m) => m.userId === assignee.slice(7),
                             )?.name ?? null)
-                          : assignee.startsWith("agent:")
-                            ? String(
-                                agents.value?.agents.find(
-                                  (a) => a.id === assignee.slice(6),
-                                )?.fields.name ?? "Agent",
-                              )
-                            : null,
+                          : null,
                       }),
                   projectId: workspace === "none" ? "" : workspace,
                 },
@@ -596,13 +581,6 @@ export default function HubBoard({
                         {m.name}
                       </SelectItem>
                     ))}
-                    {agents.value?.agents
-                      .filter((a) => a.fields.scope !== "personal")
-                      .map((a) => (
-                        <SelectItem key={a.id} value={`agent:${a.id}`}>
-                          {String(a.fields.name)}
-                        </SelectItem>
-                      ))}
                   </SelectContent>
                 </Select>
               </Field>

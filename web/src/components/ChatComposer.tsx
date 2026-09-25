@@ -40,7 +40,6 @@ import { CLOUD_MODES, cloudModeOf, PERMISSIONS, permissionOf, type PermissionVal
 import { apiError } from "@/lib/api-error";
 import { readComposerDraft, readNewThreadTarget, writeComposerDraft, writeNewThreadTarget } from "@/lib/composer-draft";
 import { deviceIcon } from "@/lib/devices";
-import { availableAgentServers } from "@/lib/inbox";
 import { devicesForWorkspace, workspaceGroups } from "@/lib/projects";
 import type { ModelChoice } from "@/lib/providers";
 import { transport } from "@/lib/transport";
@@ -573,8 +572,17 @@ function WorkspaceMenu({
   );
 }
 
+/// The computer a thread with no workspace starts on: the first available one
+/// in the order this machine was told to prefer.
 function preferredServer(servers: Server[], preferenceOrder: string[] = []): Server | undefined {
-  return availableAgentServers(servers, preferenceOrder)[0]
+  const ranked = servers
+    .filter((server) => server.online && !server.cloud)
+    .sort((a, b) => {
+      const left = preferenceOrder.indexOf(a.id);
+      const right = preferenceOrder.indexOf(b.id);
+      return (left < 0 ? preferenceOrder.length : left) - (right < 0 ? preferenceOrder.length : right);
+    });
+  return ranked[0]
     ?? servers.find((server) => server.local)
     ?? servers[0];
 }

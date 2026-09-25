@@ -325,7 +325,7 @@ function GroupView({ group, focused, bench }: { group: TabGroup; focused: boolea
         className="min-h-0 flex-1 gap-0"
       >
         <TabStrip
-          actions={activeTab?.kind === "thread" && activeChat && !activeChat.dm
+          actions={activeTab?.kind === "thread" && activeChat
             ? <ThreadTicket chatId={activeChat.id} onOpenTicket={bench.onOpenTicket} />
             : undefined}
         >
@@ -479,11 +479,10 @@ function TabTrigger({
 function AddMenu({ group, chat, bench }: { group: TabGroup; chat: Chat; bench: Bench }) {
   const servers = useStore((state) => state.servers);
   const server = servers.find((entry) => entry.id === chat.serverId);
-  const conversational = chat.dm === true;
-  const terminalAvailable = !conversational && server?.cloud !== true && Boolean(server);
+  const terminalAvailable = server?.cloud !== true && Boolean(server);
   const openTabs = groupsOf(bench.workbench.root).flatMap((entry) => entry.tabs);
   const hasBrowser = openTabs.some((tab) => tab.kind === "browser" && tab.threadId === chat.id);
-  const canAddBrowser = !conversational && (bench.browsers.supportsInstances || !hasBrowser);
+  const canAddBrowser = bench.browsers.supportsInstances || !hasBrowser;
   const closedThreads = bench.chats.filter((entry) => !openTabs.some((tab) => tab.kind === "thread" && tab.threadId === entry.id));
   const here: Placement = group.id === "all" ? { at: "focused" } : { at: "group", groupId: group.id };
   const tool = (kind: ToolKind) => bench.openTool(kind, chat.id, { at: "tool", threadId: chat.id });
@@ -510,19 +509,19 @@ function AddMenu({ group, chat, bench }: { group: TabGroup; chat: Chat; bench: B
             <Globe2 />
             Browser
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => tool("pull-request")} disabled={conversational}>
+          <DropdownMenuItem onSelect={() => tool("pull-request")}>
             <GitPullRequest />
             Pull request
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => tool("activity")} disabled={conversational}>
+          <DropdownMenuItem onSelect={() => tool("activity")}>
             <Activity />
             Running work
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => tool("analytics")} disabled={conversational}>
+          <DropdownMenuItem onSelect={() => tool("analytics")}>
             <ChartNoAxesCombined />
             Analytics
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => tool("performance")} disabled={conversational}>
+          <DropdownMenuItem onSelect={() => tool("performance")}>
             <Gauge />
             Performance
           </DropdownMenuItem>
@@ -541,15 +540,11 @@ function AddMenu({ group, chat, bench }: { group: TabGroup; chat: Chat; bench: B
             </DropdownMenuGroup>
           </>
         )}
-        {!conversational && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={bench.startSubthread}>
-              <GitFork />
-              Start subthread
-            </DropdownMenuItem>
-          </>
-        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={bench.startSubthread}>
+          <GitFork />
+          Start subthread
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -558,7 +553,6 @@ function AddMenu({ group, chat, bench }: { group: TabGroup; chat: Chat; bench: B
 /// The tab's content. Whatever is in it stays mounted while another tab is in
 /// front; `visible` tells the surfaces that poll or paint whether to bother.
 function Surface({ tab, visible, focused, bench }: { tab: WorkbenchTab; visible: boolean; focused: boolean; bench: Bench }) {
-  const agents = useStore((state) => state.agents);
   const workspaces = useStore((state) => state.workspaces);
   const chat = bench.chats.find((entry) => entry.id === tab.threadId);
   if (!chat) return null;
@@ -570,7 +564,6 @@ function Surface({ tab, visible, focused, bench }: { tab: WorkbenchTab; visible:
         chat={chat}
         embedded
         focused={focused && bench.autoFocus}
-        persona={agents.find((agent) => agent.id === chat.agentId && agent.serverId === chat.serverId)}
         codeReferences={bench.codeReferences[chat.id] ?? EMPTY_REFERENCES}
         onCodeReferencesChange={(references) => bench.setCodeReferences(chat.id, references)}
         onOpenLink={(href) => bench.openLink(chat.id, href)}

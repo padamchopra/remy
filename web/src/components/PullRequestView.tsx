@@ -478,10 +478,9 @@ export function PullRequestView({
           </span>
           <span className="flex shrink-0 items-center justify-end gap-1">
             {actions}
-            {chatId && pullRequest.workspaceId && (
+            {chatId && (
               <PullRequestMonitoringButton
                 serverId={serverId}
-                workspaceId={pullRequest.workspaceId}
                 repository={pullRequest.repository}
                 number={pullRequest.number}
                 chatId={chatId}

@@ -114,7 +114,7 @@ export function HubThreadComposer({
     let cancelled = false;
     setRecommendedVisibility(isPersonal ? "private" : undefined);
     if (!workspaceId || !selected || !preferenceLoaded || isPersonal) return;
-    void hubRequest<{ recommendedVisibility: "private" | "open" }>(`${base}/routing/resolve`, "POST", {
+    void hubRequest<{ recommendedVisibility: "private" | "open" }>(`${base}/computers/choice`, "POST", {
       workspaceId,
       trigger: "manual",
       computerId: selected,
@@ -180,12 +180,12 @@ export function HubThreadComposer({
     void (async () => {
       try {
         const preference = await hubRequest<{ computerId: string | null }>(
-          `${base}/routing/preference?workspaceId=${encodeURIComponent(workspaceId)}`,
+          `${base}/computers/preference?workspaceId=${encodeURIComponent(workspaceId)}`,
         );
         const options = [...cloudOptions.map(c => c.id), ...eligible.map(c => c.computerId)];
         let next = preference.computerId && options.includes(preference.computerId) ? preference.computerId : "";
         if (!next) {
-          const resolved = await hubRequest<{ computerId?: string; hostedProvider?: string }>(`${base}/routing/resolve`, "POST", {
+          const resolved = await hubRequest<{ computerId?: string; hostedProvider?: string }>(`${base}/computers/choice`, "POST", {
             workspaceId,
             trigger: "manual",
           });
@@ -307,7 +307,7 @@ export function HubThreadComposer({
             onChange={async v => {
               const previous = selected;
               select(v); setError("");
-              try { await hubRequest(`${base}/routing/preference`, "POST", { workspaceId, computerId: v }); }
+              try { await hubRequest(`${base}/computers/preference`, "POST", { workspaceId, computerId: v }); }
               catch { select(previous); toast.error("Your computer choice could not be saved. Try again."); }
             }} />
           {sharingControl ?? (!isPersonal && <ComposerMenu ariaLabel="Thread sharing" icon={visibility === "open" ? Users : Lock}

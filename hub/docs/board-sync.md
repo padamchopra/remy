@@ -13,7 +13,7 @@ An organization retains the authoritative shared log in its Durable Object. A tr
 | Recovery | A failed read keeps the cache and retries on heartbeat; healthy connections use push. Only one exchange runs at a time. |
 | Removal | Removing the computer or granting member removes the grant. Stopping synchronization preserves the existing offline copy; a grant cannot undo data already downloaded. |
 
-The initial import is a separate unchecked choice. It copies the existing board once, preserves log identities, and records the imported entity set. Later changes to those entities follow through; unrelated new private entities stay private. Repository paths are removed from imported workspace events. Imported routines are data in the replica and do not acquire a second local clock. Organization board events are attributed to the authenticated computer; member attribution for web changes is assigned at the hub.
+The initial import is a separate unchecked choice. It copies the existing board once, preserves log identities, and records the imported entity set. Later changes to those entities follow through; unrelated new private entities stay private. Repository paths are removed from imported workspace events. Organization board events are attributed to the authenticated computer; member attribution for web changes is assigned at the hub.
 
 Ticket links carry both thread and computer ids. A link to another computer never means a same-named local thread.
 
