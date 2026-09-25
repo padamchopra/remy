@@ -32,7 +32,6 @@ try {
       const errors = [], unexpected = [], requests = [];
       let available = true;
       const modelEntries=["anthropic","openai","router","openrouter"].map(id=>({id,enabled:false,configured:false,models:[],keys:[]}));
-      let claudeAccount={phase:"signedOut"};
       const savedKeys=new Map();
       const providerKeys={};
       const favorites = new Set();
@@ -169,12 +168,6 @@ try {
           for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot",cursor:1,thread:startedThread}));}catch{}
           return route.fulfill({json:{ok:true}});
         }
-        if(path === `${base}/claude-account` || path.startsWith(`${base}/claude-account/`)) {
-          if(route.request().method()==="POST" && path.endsWith("/start")) claudeAccount={phase:"pending",verificationUrl:"https://claude.ai/oauth/authorize?code=true"};
-          else if(route.request().method()==="POST" && (path.endsWith("/cancel") || path.endsWith("/logout"))) claudeAccount={phase:"signedOut"};
-          else if(route.request().method()==="POST" && path.endsWith("/complete")) claudeAccount={phase:"connected",subscription:"pro"};
-          return route.fulfill({json:claudeAccount});
-        }
         if(/\/hosted\/[^/]+$/.test(path) && path !== `${base}/hosted`) return route.fulfill({json:{state:null}});
         if(path.startsWith(`${base}/model-access/`)) {
           const parts=path.split("/");
@@ -207,7 +200,7 @@ try {
           return route.fulfill({ status: 201, json: { id: "invite-1", organizationId: org.id, role: input.role ?? "member", token: "invite-token" } });
         }
         const responses = {
-          [`${base}/model-access`]: {providers:modelEntries,accounts:{claude:claudeAccount}},
+          [`${base}/model-access`]: {providers:modelEntries},
           "/api/runtime": { mode: "hub", auth: { google: true } },
           "/api/profile": { id: "reader", name: "Reader" },
           "/api/personal": { personal },
@@ -241,7 +234,6 @@ try {
           holdComposerReads=true;
           const anthropic=modelEntries.find(p=>p.id==="anthropic");anthropic.enabled=true;anthropic.configured=true;
           const entry=modelEntries.find(p=>p.id==="openrouter");entry.enabled=true;entry.configured=true;entry.models=["openrouter/auto","test/model-a","test/model-b","anthropic/claude-opus-5.5"];
-          claudeAccount={phase:"connected",subscription:"pro"};
           remyDefault={provider:"openrouter",model:"openrouter/auto"};preference="cloud:fly-sprites";
         }
         if(process.env.QA_SCOPE_ONLY === "1") {
@@ -294,7 +286,7 @@ try {
           await page.getByPlaceholder("Search providers and models",{exact:true}).fill("Opus 5.5");
           const opus=page.getByRole("option",{name:/Opus 5.5/});
           await opus.first().waitFor();
-          assert.ok((await opus.count())>=2,"Opus 5.5 stays on Claude Code and Anthropic while OpenRouter is selected");
+          assert.ok((await opus.count())>=2,"Opus 5.5 stays on Anthropic and OpenRouter while OpenRouter is selected");
           assert.equal(await page.getByText("No model by that name.",{exact:true}).count(),0);
           if(artifacts)await new Promise(resolve=>setTimeout(resolve,500));
           if(artifacts)await page.screenshot({path:`${artifacts}/composer-picker-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
@@ -1022,20 +1014,17 @@ try {
         const modelAccess = page.getByRole("region", {name:"Model access",exact:true});
         const accessOrder = await modelAccess.evaluate((root) => [...root.querySelectorAll(":scope > section[aria-label$='model access']")].map((el) => el.getAttribute("aria-label")));
         assert.deepEqual(accessOrder, [
-          "Claude Code model access",
-          "Codex model access",
           "Anthropic model access",
           "OpenAI model access",
           "Router.com model access",
           "OpenRouter model access",
         ]);
-        assert.ok(await modelAccess.getByRole("region", { name: "Claude Code model access", exact: true }).getByRole("img", { name: "Claude" }).count());
-        assert.ok(await modelAccess.getByRole("region", { name: "Codex model access", exact: true }).getByRole("img", { name: "Codex" }).count());
-        await modelAccess.getByRole("button", { name: "Connect Claude Code", exact: true }).click();
-        await modelAccess.getByRole("link", { name: "Open Claude", exact: true }).waitFor();
-        assert.equal(await modelAccess.getByRole("link", { name: "Open Claude", exact: true }).getAttribute("href"), "https://claude.ai/oauth/authorize?code=true");
-        await modelAccess.getByRole("button", { name: "Cancel sign-in", exact: true }).click();
-        await modelAccess.getByRole("button", { name: "Connect Claude Code", exact: true }).waitFor();
+        assert.equal(await modelAccess.getByRole("button", { name: "Connect Claude Code", exact: true }).count(), 0);
+        assert.equal(await modelAccess.getByRole("button", { name: "Connect Codex", exact: true }).count(), 0);
+        assert.equal(await modelAccess.getByRole("combobox", { name: "Workspace", exact: true }).count(), 0);
+        assert.ok(await modelAccess.getByRole("region", { name: "Anthropic model access", exact: true }).getByRole("img", { name: "Claude" }).count());
+        assert.ok(await modelAccess.getByRole("region", { name: "OpenAI model access", exact: true }).getByRole("img", { name: "Codex" }).count());
+        await modelAccess.getByText("Cloud threads use these API keys.", { exact: false }).waitFor();
         for(const [id,label] of [["anthropic","Anthropic"],["openai","OpenAI"],["router","Router.com"],["openrouter","OpenRouter"]]) {
           const section=modelAccess.getByRole("region",{name:`${label} model access`,exact:true});
           const toggle=section.getByRole("switch",{name:label,exact:true});

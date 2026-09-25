@@ -10,7 +10,7 @@ import { InputGroupText } from "./ui/input-group";
 import { ModelPickerButton } from "./ModelPicker";
 import { ComposerMenu } from "./ComposerMenu";
 import { PERMISSIONS, permissionOf } from "@/lib/chat-options";
-import { claudeCodeConnected, hostedModels } from "@/lib/hub-models";
+import { hostedModels } from "@/lib/hub-models";
 import { useHubResource } from "@/lib/hub-organization";
 import type { ModelAccessResponse } from "./HubModelAccess";
 import { AvatarFrom } from "./UserAvatar";
@@ -185,7 +185,7 @@ export default function HubThreads({
   const runtimeModel = String(thread?.detail.model ?? pending?.model ?? "");
   const gateway = /^remy:(openrouter|router|openai):(.+)$/.exec(runtimeModel);
   const modelProvider = gateway?.[1] ?? (runtimeProvider === "claude" ? "anthropic" : runtimeProvider);
-  const providers = hostedModels(modelAccess.value?.providers ?? [], true, {provider: modelProvider, model: gateway?.[2] ?? runtimeModel}, claudeCodeConnected(modelAccess.value));
+  const providers = hostedModels(modelAccess.value?.providers ?? [], {provider: modelProvider, model: gateway?.[2] ?? runtimeModel});
   const permission = permissionOf(typeof thread?.detail.permissionMode === "string" ? thread.detail.permissionMode : undefined);
   const approval = thread?.detail.approval as Approval | undefined;
   const question = thread?.detail.question as Question | undefined;

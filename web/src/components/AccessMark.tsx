@@ -13,8 +13,7 @@ const marks: Record<string, { well: string; glyph: "claude" | "codex" | "network
   openrouter: { well: "bg-violet-500/20 text-violet-400", glyph: "network" },
 };
 
-/// Model Access wears each provider's mark in a tinted well so Claude Code,
-/// Codex, and the API-key rows stay distinct at a glance.
+/// Model Access wears each API-key provider's mark in a tinted well.
 export function AccessMark({ id, className }: { id: string; className?: string }) {
   const mark = marks[id] ?? { well: "bg-muted text-muted-foreground", glyph: "network" as const };
   return (

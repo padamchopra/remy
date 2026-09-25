@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -17,11 +17,8 @@ process.env.CLAUDE_CREDENTIALS_JSON = JSON.stringify({
 const { configureHostedClaude } = await import("./hosted-claude-account.js");
 test.after(() => rmSync(home, { recursive: true, force: true }));
 
-test("hosted Claude writes credentials and drops the environment copy", () => {
+test("hosted Claude drops injected credentials instead of writing an account file", () => {
   configureHostedClaude(home, process.env.CLAUDE_CREDENTIALS_JSON);
-  const written = JSON.parse(readFileSync(join(home, ".credentials.json"), "utf8")) as {
-    claudeAiOauth: { accessToken: string };
-  };
-  assert.equal(written.claudeAiOauth.accessToken, "private-access");
+  assert.equal(existsSync(join(home, ".credentials.json")), false);
   assert.equal(process.env.CLAUDE_CREDENTIALS_JSON, undefined);
 });

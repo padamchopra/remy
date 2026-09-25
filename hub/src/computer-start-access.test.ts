@@ -66,11 +66,14 @@ test("cloud model access advertises configured gateways, not the Codex runtime t
   assert.deepEqual(startGrantCandidates("codex", "remy:openrouter:openrouter/auto"), ["openrouter", "codex"]);
 });
 
-test("a connected Claude Code account advertises Claude without an Anthropic key", () => {
+test("cloud model access advertises Anthropic from an API key, not a Claude Code account", () => {
   assert.deepEqual(advertisedCloudStartProviders([
-    { id: "claude", enabled: true, configured: true },
+    { id: "anthropic", enabled: true, configured: true },
     { id: "openai", enabled: true, configured: true },
-  ]), ["openai", "claude"]);
+  ]), ["anthropic", "openai"]);
+  assert.deepEqual(advertisedCloudStartProviders([
+    { id: "openai", enabled: true, configured: true },
+  ]), ["openai"]);
 });
 
 test("Cursor Cloud advertises only Cursor regardless of model access", () => {

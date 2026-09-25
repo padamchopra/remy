@@ -471,12 +471,6 @@ export type HostedCodexAccount = {
   error?: string;
   apiKeyConfigured: boolean;
 };
-export type HostedClaudeAccount = {
-  phase: "signedOut" | "pending" | "connected" | "error";
-  verificationUrl?: string;
-  subscription?: string;
-  error?: string;
-};
 export type HostedComputerState = {
   taskId?: string;
   workspaceId: string; computerId: string; provider: HostedSettings["provider"];
