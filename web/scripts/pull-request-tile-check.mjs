@@ -150,10 +150,11 @@ try {
   await page.goto(new URL(`${appPrefix}/pull-requests`, origin).href);
   await page.locator("[data-slot='pane-header']").waitFor();
   const filter = page.getByLabel("Filter pull requests", { exact: true });
-  assert.equal(await filter.getByText("Yours", { exact: true }).count(), 1);
-  assert.equal(await filter.getByText("Review requested", { exact: true }).count(), 1);
-  assert.equal(await filter.getByText("Needs you", { exact: true }).count(), 0);
-  assert.equal(await filter.getByText("All", { exact: true }).count(), 0);
+  assert.equal(await filter.count(), 1);
+  assert.equal(await filter.getByText(/^Yours/).count(), 1);
+  assert.equal(await filter.getByText(/^Review requested/).count(), 1);
+  assert.equal(await filter.getByText(/Needs you/).count(), 0);
+  assert.equal(await filter.getByText(/^All$/).count(), 0);
 
   const stack = page.locator("[data-slot='pull-request-stack']");
   await stack.waitFor();
@@ -202,10 +203,10 @@ try {
   assert.ok(metrics.titleWidth > 280, "The title uses the remaining row instead of a narrow column");
   assert.ok(metrics.unused >= 8 && metrics.unused <= 24, `Title should meet the trailing columns; unused=${metrics.unused}`);
 
-  await filter.getByText("Review requested", { exact: true }).click();
+  await filter.getByText(/^Review requested/).click();
   await page.getByText("Please review the wallet sheet").waitFor();
   assert.equal(await page.locator("[data-slot='pull-request-tile']").count(), 1);
-  await filter.getByText("Yours", { exact: true }).click();
+  await filter.getByText(/^Yours/).click();
   await fileTile.waitFor();
 
   await fileTile.getByRole("button").first().click();
@@ -217,6 +218,8 @@ try {
   await page.getByRole("heading", { name: "What", exact: true }).waitFor();
   await page.locator("pre").filter({ hasText: "adb reverse" }).waitFor();
   await page.getByText("Notes", { exact: true }).waitFor();
+  assert.equal(await page.getByText("<details>", { exact: false }).count(), 0);
+  assert.equal(await page.getByText("<summary>", { exact: false }).count(), 0);
   await page.getByRole("heading", { name: "Comments", exact: true }).waitFor();
   await page.getByText("Please check").waitFor();
   assert.equal(await page.locator("strong").filter({ hasText: "details" }).count(), 1);

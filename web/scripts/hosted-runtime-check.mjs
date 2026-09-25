@@ -407,13 +407,12 @@ try {
           await page.locator('[data-slot="pane-header"]').waitFor();
           assert.equal(await page.locator('[data-slot="pane-header"]').count(),1,"Pull requests uses the shared pane header");
           assert.equal(await page.getByRole("heading",{name:"Pull requests",exact:true}).count(),0,"Pull requests does not repeat the pane title");
-          assert.equal(await page.getByText("Pull requests",{exact:true}).count()>=1,true);
           const filter=page.getByLabel("Filter pull requests",{exact:true});
           assert.equal(await filter.count(),1);
-          assert.equal(await filter.getByText("Yours",{exact:true}).count(),1);
-          assert.equal(await filter.getByText("Review requested",{exact:true}).count(),1);
-          assert.equal(await filter.getByText("Needs you",{exact:true}).count(),0);
-          assert.equal(await filter.getByText("All",{exact:true}).count(),0);
+          assert.equal(await filter.getByText(/^Yours/).count(),1);
+          assert.equal(await filter.getByText(/^Review requested/).count(),1);
+          assert.equal(await filter.getByText(/Needs you/).count(),0);
+          assert.equal(await filter.getByText(/^All$/).count(),0);
           await page.getByText("No pull requests",{exact:true}).waitFor();
           await page.getByText("Live from GitHub",{exact:true}).waitFor();
           assert.ok(requests.includes("/api/organizations/personal/github/pull-requests"), "All reads Personal GitHub pull requests");

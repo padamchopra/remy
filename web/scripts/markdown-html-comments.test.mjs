@@ -1,6 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { stripMarkdownHtmlComments } from "../src/lib/markdown-html-comments.ts";
+import { build } from "esbuild";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const bundled = await build({
+  absWorkingDir: root,
+  entryPoints: ["src/lib/markdown-html-comments.ts"],
+  bundle: true,
+  write: false,
+  platform: "node",
+  format: "esm",
+});
+const { stripMarkdownHtmlComments } = await import(
+  `data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString("base64")}`
+);
 
 test("strips GitHub and Cursor HTML comment markers without leaving the tags", () => {
   const text = `<!-- CURSOR_AGENT_PR_BODY_BEGIN -->
