@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "remy": "dist/cli.js"
+  },
   "scripts": {
     "build": "tsc",
     "test": "npm run build && node --test dist/*.test.js dist/provider-adapters/*.test.js",

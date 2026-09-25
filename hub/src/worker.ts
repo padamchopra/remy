@@ -13,6 +13,7 @@ import { allowedRequestOrigin } from "./request-origin.js";
 import { emailAvailable, sendAccountEmail, type AccountEmail } from "./email.js";
 import { EnvironmentStore } from "./environments.js";
 import { ComputerModelKeyStore, computerModelKeyName, computerModelKeyWrite, publicComputerModelKeys } from "./computer-model-keys.js";
+import { encodeComputerConnectionKey } from "@remy/contract";
 import { personalSpace } from "./personal-space.js";
 import {LinearBoard} from "./linear-board.js";
 import {linearFor} from "./linear-routes.js";
@@ -699,6 +700,25 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       if (tail === "computers/live" && request.method === "GET") {
         await organizations.member(organizationId, identity.userId);
         return board().fetch(new Request("https://internal/computers/live", { headers: { upgrade: request.headers.get("upgrade") ?? "", "x-organization-id": organizationId, "x-user-id": identity.userId, "x-session-id": identity.sessionId } }));
+      }
+      if (tail === "computers/connection-keys" && request.method === "POST") {
+        const member = await organizations.member(organizationId, identity.userId);
+        if (identity.clientKind !== "web") return jsonError("Create a connection key in Remy.", 403);
+        if (!allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Create a connection key in Remy.", 403);
+        const input = await body<{ ownership?: unknown; name?: unknown }>(request);
+        const ownership = input?.ownership === undefined ? "personal" : input.ownership;
+        if (ownership !== "personal" && ownership !== "organization") return jsonError("Choose who owns this computer.", 400);
+        if (ownership === "organization" && member.role === "member") return jsonError("Ask an admin to add a shared computer.", 403);
+        const name = typeof input?.name === "string" && input.name.trim() ? input.name.trim().slice(0, 120) : "Remy CLI";
+        // An approved authorization, so a machine with no browser needs only
+        // this one string. It is single-use, expiring, and can register a
+        // computer and nothing else.
+        const authorization = await service.startDeviceAuthorization("computer", name);
+        if (await service.approveDevice(identity.userId, authorization.userCode) !== "approved") return jsonError("Your connection key could not be created; try again.", 502);
+        return Response.json({
+          key: encodeComputerConnectionKey({ v: 1, url: url.origin, organizationId, ownership, key: authorization.deviceCode }),
+          expiresIn: authorization.expiresIn,
+        }, { headers: { "cache-control": "no-store" } });
       }
       const computerModelKeys = /^computers\/([^/]+)\/model-keys$/.exec(tail);
       if (computerModelKeys && ["GET", "PUT"].includes(request.method)) {

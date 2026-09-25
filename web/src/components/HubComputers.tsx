@@ -1,5 +1,6 @@
 import { HubModelDefault } from "./HubModelDefault";
 import { HubComputerModelKeys } from "./HubComputerModelKeys";
+import { HubComputerConnect } from "./HubComputerConnect";
 import { PROVIDERS } from "@/lib/providers";
 import { EmptyState } from "@/components/EmptyState";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
@@ -295,33 +296,34 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
           <div className="min-w-0">
             {!local && pane === "general" && <section aria-label="General computer settings" className="flex max-w-xl flex-col gap-6">
               <Field>
-                <FieldLabel>Connect a Mac</FieldLabel>
-                <FieldDescription>Add your Mac to run threads using its workspaces and providers.</FieldDescription>
+                <FieldLabel>Connect a computer</FieldLabel>
+                <FieldDescription>Add a Mac or Linux machine to run threads using its workspaces and providers.</FieldDescription>
               </Field>
+              <HubComputerConnect organizationId={org} ownership={isPersonal || options.role === "member" ? "personal" : "organization"} />
               <Field>
-                <FieldDescription>Install Remy on your Mac, then open Settings → Computers and choose Attach this Mac.</FieldDescription>
+                <FieldDescription>Or install the Mac app and choose Attach this Mac in its own Settings → Computers.</FieldDescription>
                 <div className="grid max-w-sm grid-cols-1 gap-2 sm:grid-cols-2">
-                  <Button asChild className="w-full"><a href="https://github.com/padamchopra/remy/releases/latest" target="_blank" rel="noreferrer">Download for Mac</a></Button>
+                  <Button asChild variant="outline" className="w-full"><a href="https://github.com/padamchopra/remy/releases/latest" target="_blank" rel="noreferrer">Download for Mac</a></Button>
                   <Button asChild variant="outline" className="w-full"><a href="https://tryremy.dev/docs/#web" target="_blank" rel="noreferrer">Read the setup guide</a></Button>
                 </div>
               </Field>
-              <FieldDescription>Your Mac appears in Computers after you connect it.</FieldDescription>
+              <FieldDescription>Your computer appears in Computers after you sign it in.</FieldDescription>
             </section>}
             {org && !local && <div className={pane === "cloud" ? "" : "hidden"}>
               <Deferred open={pane === "cloud"}>
                 <HostedComputers key={org} organizationId={org} admin={options.role !== "member"} />
               </Deferred>
             </div>}
-            {!local && computersLoaded && !["computers", "general", "cloud"].includes(pane) && !computers.some((c) => c.computerId === pane) && <EmptyState title="Computer unavailable" description="Choose another computer or add your Mac.">
+            {!local && computersLoaded && !["computers", "general", "cloud"].includes(pane) && !computers.some((c) => c.computerId === pane) && <EmptyState title="Computer unavailable" description="Choose another computer or connect one.">
               <Button variant="outline" data-link onClick={() => choosePane("computers")}>View computers</Button>
             </EmptyState>}
         {!local && pane === "computers" && !computersLoaded && !error && <p role="status" className="text-sm text-muted-foreground">Reading computers…</p>}
         {!local && pane === "computers" && computersLoaded && computers.length === 0 && !error && !stale && <Empty className="py-12">
           <EmptyHeader>
             <EmptyTitle>No computers connected</EmptyTitle>
-            <EmptyDescription>Connect your Mac to run threads using its workspaces and providers.</EmptyDescription>
+            <EmptyDescription>Sign a Mac or Linux machine in to run threads using its workspaces and providers.</EmptyDescription>
           </EmptyHeader>
-          <Button data-link onClick={() => choosePane("general")}>Connect a Mac</Button>
+          <Button data-link onClick={() => choosePane("general")}>Connect a computer</Button>
         </Empty>}
         {!local && pane === "computers" && computersLoaded && computers.length > 0 && <div className="mb-4 flex justify-end">
           <Button size="sm" variant="outline" data-link onClick={() => choosePane("general")}><Plus />Add computer</Button>
