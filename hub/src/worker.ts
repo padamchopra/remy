@@ -1613,7 +1613,6 @@ export class HubCoordinator {
         return;
       }
       const now = Date.now();
-      await this.retireThreads();
       if (organizationId) await this.computers.seen(organizationId, attachment.computerId, now, frame.capabilities, frame.daemonVersion);
       socket.serializeAttachment({ ...attachment, ready: true, boardSync: frame.boardSync === true, lastSeenAt: now });
       this.invalidateComputers();
@@ -1900,19 +1899,13 @@ export class HubCoordinator {
     return new ComputerService(this.computers, Date.now, this.env.MINIMUM_DAEMON_VERSION ?? "0.1.0", new D1OrganizationStore(this.env.DB));
   }
 
-  private async retireThreads() {
-    for(const [key,run] of await this.ctx.storage.list<{computerId:string}>({prefix:"thread-run:"})) {
-      const id=key.slice("thread-run:".length);
-      this.computerSocket(run.computerId)?.send(JSON.stringify({kind:"thread.retired",threadIds:[id]}));
-    }
-  }
   // Hub catalogue of a hosted thread. Archive and delete still succeed when
   // the computer cannot be reached, and a later snapshot must not restore it.
   private async retireHostedThread(computerId: string, threadId: string): Promise<void> {
     const ids = [threadId, ...(await this.threads.list()).filter((thread) => thread.computerId === computerId && thread.detail.parentChatId === threadId).map((thread) => thread.id)];
     for (const id of ids) await this.ctx.storage.put(`threads:retired:${computerId}:${id}`, true);
     await this.threads.removeGroup(computerId, threadId);
-    this.computerSocket(computerId)?.send(JSON.stringify({ kind: "agent.deleted", threadIds: ids }));
+    this.computerSocket(computerId)?.send(JSON.stringify({ kind: "thread.retired", threadIds: ids }));
   }
   private async pushRetiredHostedThreads(computerId: string, socket: WebSocket): Promise<void> {
     const prefix = `threads:retired:${computerId}:`;
