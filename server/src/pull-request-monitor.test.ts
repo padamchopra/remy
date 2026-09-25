@@ -33,6 +33,8 @@ const pullRequest: AuthoredPullRequest = {
   hasUnreadActivity: true,
   workspaceId: "workspace-1",
   workspaceName: "Control",
+  workspaceIcon: null,
+  workspaceTint: null,
   workspacePath: "/code/control",
   worktreePath: "/code/control/.remy/feature/flight-deck",
 };

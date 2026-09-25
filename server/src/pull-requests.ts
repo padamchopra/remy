@@ -54,6 +54,8 @@ export interface AuthoredPullRequest {
   hasUnreadActivity: boolean;
   workspaceId: string;
   workspaceName: string;
+  workspaceIcon: string | null;
+  workspaceTint: string | null;
   workspacePath: string;
   worktreePath: string | null;
 }
@@ -273,6 +275,8 @@ export function parseAuthoredPullRequests(
       hasUnreadActivity: unread.has(pullRequestKey(repository, numberValue(pr.number))),
       workspaceId: workspace.id,
       workspaceName: workspace.name,
+      workspaceIcon: workspace.icon,
+      workspaceTint: workspace.tint,
       workspacePath: workspace.path,
       worktreePath: workspace.worktrees.find((worktree) => worktree.branch === headRefName)?.path ?? null,
     }];

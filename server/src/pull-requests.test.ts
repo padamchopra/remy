@@ -147,6 +147,9 @@ test("pull request parsing resolves its branch worktree and attention state", ()
   assert.equal(result[0].authorLogin, "author");
   assert.equal(result[0].hasUnreadActivity, true);
   assert.equal(result[0].latestCommentAt, "2026-08-02T09:30:00Z");
+  assert.equal(result[0].workspaceName, "Control");
+  assert.equal(result[0].workspaceIcon, null);
+  assert.equal(result[0].workspaceTint, null);
   assert.deepEqual(result[0].checks.map((check) => check.state), ["pass", "fail", "pending"]);
 });
 
@@ -160,8 +163,10 @@ test("pull request parsing remains useful without a matching worktree", () => {
     isDraft: true,
     updatedAt: "2026-08-01T10:00:00Z",
   }]);
-  const [result] = parseAuthoredPullRequests(raw, workspace);
+  const [result] = parseAuthoredPullRequests(raw, { ...workspace, icon: "globe", tint: "orange" });
   assert.equal(result.worktreePath, null);
+  assert.equal(result.workspaceIcon, "globe");
+  assert.equal(result.workspaceTint, "orange");
   assert.equal(result.isDraft, true);
   assert.deepEqual(result.comments, []);
   assert.deepEqual(result.checks, []);

@@ -435,6 +435,16 @@ test("hosted pull requests include review-requested PRs from PAT-imported worksp
   assert.equal(listed.pullRequests[0]?.repository, "jup-ag/mobile");
   assert.equal(listed.pullRequests[0]?.number, 12);
   assert.equal(listed.pullRequests[0]?.workspaceName, "mobile");
+  assert.equal(listed.pullRequests[0]?.workspaceIcon, "folder");
+  assert.equal(listed.pullRequests[0]?.workspaceTint, "zinc");
+  await service.organizations.updateWorkspace("studio", "ada", listed.pullRequests[0]!.workspaceId, {
+    icon: "globe",
+    tint: "orange",
+  });
+  clearHostedPullRequestCache();
+  const branded = await service.openPullRequests("studio", "ada");
+  assert.equal(branded.pullRequests[0]?.workspaceIcon, "globe");
+  assert.equal(branded.pullRequests[0]?.workspaceTint, "orange");
   assert.ok(!listed.pullRequests.some((pullRequest) => pullRequest.repository === "ada/notes"));
   sqlite.close();
 });

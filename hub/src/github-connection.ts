@@ -750,6 +750,8 @@ type HostedListedPullRequest = {
   hasUnreadActivity: boolean;
   workspaceId: string;
   workspaceName: string;
+  workspaceIcon: string;
+  workspaceTint: string;
   workspacePath: string;
   worktreePath: string | null;
   mergeable: string;
@@ -760,7 +762,7 @@ type HostedListedPullRequest = {
 function hostedPullRequest(
   value: unknown,
   viewer: string,
-  workspaceByRepo: Map<string, { id: string; name: string }>,
+  workspaceByRepo: Map<string, { id: string; name: string; icon?: string; tint?: string }>,
 ): HostedListedPullRequest | undefined {
   if (!value || typeof value !== "object") return;
   const pr = value as Record<string, unknown>;
@@ -790,6 +792,8 @@ function hostedPullRequest(
     hasUnreadActivity: false,
     workspaceId: workspace.id,
     workspaceName: workspace.name,
+    workspaceIcon: workspace.icon ?? "folder",
+    workspaceTint: workspace.tint ?? "zinc",
     workspacePath: "",
     worktreePath: viewer && author.toLowerCase() === viewer.toLowerCase() ? "hosted" : null,
     mergeable: String(pr.mergeable ?? ""),

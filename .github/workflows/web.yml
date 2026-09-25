@@ -63,7 +63,7 @@ jobs:
           QA_COMPUTER_DEFAULTS_ONLY=1 node web/scripts/hosted-runtime-check.mjs
           QA_COMPOSER_ONLY=1 node web/scripts/hosted-runtime-check.mjs
           QA_SCOPE_ONLY=1 node web/scripts/hosted-runtime-check.mjs
-          node --test web/scripts/hosted-preview.test.mjs web/scripts/qa-hosted-account.test.mjs web/scripts/workspace-image-cache.test.mjs web/scripts/hub-workspace-cache.test.mjs web/scripts/hub-models.test.mjs web/scripts/thread-menu.test.mjs web/scripts/route.test.mjs web/scripts/thread-start-progress.test.mjs
+          node --test web/scripts/hosted-preview.test.mjs web/scripts/qa-hosted-account.test.mjs web/scripts/workspace-image-cache.test.mjs web/scripts/hub-workspace-cache.test.mjs web/scripts/hub-models.test.mjs web/scripts/thread-menu.test.mjs web/scripts/route.test.mjs web/scripts/thread-start-progress.test.mjs web/scripts/pull-request-workspace.test.mjs
       - name: Check the built website
         env:
           WEBSITE_URL: http://127.0.0.1:5181
