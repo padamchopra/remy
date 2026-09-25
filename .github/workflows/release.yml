@@ -86,6 +86,8 @@ jobs:
         run: npm run install:computer
 
       - name: Test the daemon and the CLI
+        env:
+          NODE_OPTIONS: --import=${{ github.workspace }}/contract/node_modules/tsx/dist/loader.mjs
         run: npm --prefix contract test && npm --prefix server test
 
       - name: Build the web app
