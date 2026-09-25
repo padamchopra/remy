@@ -11,7 +11,6 @@ import {
   BookOpenCheck,
   ChevronDown,
   CircleCheck,
-  CircleDot,
   CircleX,
   ExternalLink,
   Files,
@@ -24,6 +23,7 @@ import {
   X,
 } from "lucide-react";
 import { Markdown } from "@/components/Markdown";
+import { PullRequestChecks } from "@/components/PullRequestChecks";
 import { ModelPickerButton } from "@/components/ModelPicker";
 import { PullRequestMonitoringButton } from "@/components/PullRequestMonitoring";
 import { PullRequestMergeDialog } from "@/components/PullRequestMergeDialog";
@@ -945,7 +945,6 @@ function PullRequestSummary({
   onMerged: () => void;
 }) {
   const failed = pullRequest.checks.filter((check) => check.state === "fail");
-  const passed = pullRequest.checks.filter((check) => check.state === "pass" || check.state === "skipping").length;
   const askThread = () => {
     if (!chatId) return;
     const names = failed.map((check) => check.name).join(", ");
@@ -1003,18 +1002,7 @@ function PullRequestSummary({
           {pullRequest.state === "OPEN" && (
             <PullRequestMergeDialog serverId={serverId} pullRequest={pullRequest} onMerged={onMerged} />
           )}
-          <section>
-            <h2 className="text-xs font-medium tracking-wide text-muted-foreground">CHECKS</h2>
-            <p className="mt-1 text-xs text-muted-foreground">{passed}/{pullRequest.checks.length || 0}</p>
-            <div className="mt-2 flex flex-col gap-1.5">
-              {pullRequest.checks.map((check, index) => (
-                <div key={`${check.name}:${index}`} className="flex items-center gap-2 text-xs">
-                  {checkIcon(check.state)}
-                  <span className="min-w-0 flex-1 truncate">{check.name}</span>
-                </div>
-              ))}
-            </div>
-          </section>
+          <PullRequestChecks checks={pullRequest.checks} />
           {chatId && (
             <section>
               <h2 className="text-xs font-medium tracking-wide text-muted-foreground">WATCHED BY</h2>
@@ -1026,12 +1014,6 @@ function PullRequestSummary({
       </div>
     </ScrollArea>
   );
-}
-
-function checkIcon(state: PullRequestData["checks"][number]["state"]) {
-  if (state === "pass") return <CircleCheck className="size-3.5 text-success-foreground" />;
-  if (state === "fail") return <CircleX className="size-3.5 text-destructive" />;
-  return <CircleDot className="size-3.5 text-muted-foreground" />;
 }
 
 function PullRequestActivity({ timeline, error }: { timeline?: PullRequestTimelineItem[]; error: string }) {

@@ -141,26 +141,30 @@ GOOD
 
 ## One pane title
 
-The main pane names the section once. `PaneHeader` is that name when the shell draws it. A section that owns its chrome — Pull requests — draws the title itself, and the shell does not add another `PaneHeader`. Do not put an `h1` of the same section name under `PaneHeader`.
+The shared top bar is `PaneHeader` (`data-slot="pane-header"`). Every main pane uses it — the shell draws it, or a section that owns its chrome draws it itself so the shell does not add a second one. Do not hand-roll a `header` with `h-12`. Trailing actions such as Open on GitHub or Refresh sit in `children`. Do not put an `h1` of the same section name under `PaneHeader`.
 
 BAD
 ```tsx
-<PaneHeader crumbs={[{ label: "Pull requests" }]} />
-<main>
-  <h1>Pull requests</h1>
-</main>
+<header className="flex h-12 items-center gap-3 px-4">
+  <SidebarTrigger className="md:hidden" />
+  <Button variant="ghost" size="sm" onClick={back}>Pull requests</Button>
+  <a className="ml-auto" href={url}>Open on GitHub</a>
+</header>
 ```
 
 GOOD
 ```tsx
-// Pull requests: the section header is the title, on Mac and hosted.
-<main>
-  <header>
-    <h1>Pull requests</h1>
-  </header>
-</main>
+// Pull requests owns its chrome; the shell skips a second PaneHeader.
+<PaneHeader
+  sidebar
+  crumbs={[{ label: "Pull requests", onClick: back }, { label: title }]}
+>
+  <Button asChild variant="ghost" size="sm">
+    <a href={url} target="_blank" rel="noreferrer" data-link>Open on GitHub</a>
+  </Button>
+</PaneHeader>
 
-// Agents, Tasks, Workspaces, Threads: PaneHeader is the title.
+// Agents, Tasks, Workspaces, Threads: the shell's PaneHeader is the title.
 <PaneHeader crumbs={[{ label: "Settings" }, { label: "Agents" }]} />
 <section aria-label="Agents">{/* list, not another Agents heading */}</section>
 ```

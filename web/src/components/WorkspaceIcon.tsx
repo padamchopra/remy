@@ -1,14 +1,14 @@
 import { WorkspaceMarkFrame } from "./WorkspaceMarkFrame";
 import { useEffect, useState } from "react";
-import { Folder } from "lucide-react";
 import { isProjectIconFile, projectIcon } from "@/lib/projects";
 import { deviceIcon } from "@/lib/devices";
-import { loadHubWorkspaceImage } from "@/lib/hub-workspace-image";
+import { loadHubWorkspaceImage, peekHubWorkspaceImage } from "@/lib/hub-workspace-image";
+import { createWorkspaceImageCache } from "@/lib/workspace-image-cache";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
 import type { Server } from "@/state/types";
 
-const cache = new Map<string, string>();
+const localImages = createWorkspaceImageCache();
 
 export type WorkspaceIconSource = {
   id: string;
@@ -36,7 +36,6 @@ export function WorkspaceIcon({
         path={icon}
         organizationId={organizationId}
         className={fileClassName ?? className}
-        fallbackClassName={className}
       />
     );
   }
@@ -48,34 +47,34 @@ export function WorkspaceFileIcon({
   workspaceId,
   path,
   className,
-  fallbackClassName,
   organizationId,
 }: {
   workspaceId: string;
   path: string;
   className?: string;
-  fallbackClassName?: string;
   organizationId?: string;
 }) {
   const workspaceFile = useStore((s) => s.workspaceFile);
   const key = organizationId ? JSON.stringify([organizationId, workspaceId, path]) : `${workspaceId}:${path}`;
-  const [src, setSrc] = useState(cache.get(key));
+  const peeked = organizationId
+    ? peekHubWorkspaceImage(organizationId, workspaceId, path)
+    : localImages.peek(key);
+  const [loaded, setLoaded] = useState<{ key: string; src: string }>();
+  const src = peeked ?? (loaded?.key === key ? loaded.src : undefined);
 
   useEffect(() => {
-    const cached = cache.get(key);
-    setSrc(cached);
-    if (cached) return;
     let cancelled = false;
     const load = organizationId
       ? loadHubWorkspaceImage(organizationId, workspaceId, path)
-      : workspaceFile(workspaceId, path).then((file) =>
-          file ? `data:${file.mime};base64,${file.data}` : undefined,
-        );
+      : localImages.load(key, async () => {
+          const file = await workspaceFile(workspaceId, path);
+          if (!file) throw new Error("Workspace image is missing.");
+          return `data:${file.mime};base64,${file.data}`;
+        });
     void load
       .then((next) => {
         if (cancelled || !next) return;
-        cache.set(key, next);
-        setSrc(next);
+        setLoaded({ key, src: next });
       })
       .catch(() => {});
     return () => {
@@ -83,8 +82,11 @@ export function WorkspaceFileIcon({
     };
   }, [key, organizationId, path, workspaceFile, workspaceId]);
 
-  if (!src) return <Folder data-slot="workspace-icon" className={cn("size-4", fallbackClassName ?? className)} />;
-  return <img src={src} alt="" data-slot="workspace-icon" className={cn("block size-4 object-contain object-center", className)} />;
+  if (src) {
+    return <img src={src} alt="" data-slot="workspace-icon" className={cn("block size-4 object-contain object-center", className)} />;
+  }
+  // A file icon is already set; the folder glyph is the empty workspace mark.
+  return <span data-slot="workspace-icon" aria-hidden className={cn("block size-4", className)} />;
 }
 
 /// A workspace as it appears inline: its icon in its tint, or the machine's

@@ -13,6 +13,15 @@ test('navigation reuses loaded images and concurrent requests', async () => {
   assert.equal(calls, 1);
   assert.equal(cache.peek('other/workspace/icon'), undefined);
 });
+test('peek is empty until a load settles, then first paint can reuse it', async () => {
+  const cache = createWorkspaceImageCache();
+  let settle;
+  const pending = cache.load('org/workspace/icon', () => new Promise((resolve) => { settle = resolve; }));
+  assert.equal(cache.peek('org/workspace/icon'), undefined);
+  settle('image');
+  assert.equal(await pending, 'image');
+  assert.equal(cache.peek('org/workspace/icon'), 'image');
+});
 test('bounded cache refreshes stale images and retries failed loads', async () => {
   const cache = createWorkspaceImageCache(1, 0);
   await cache.load('a', async () => 'old');

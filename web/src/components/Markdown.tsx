@@ -3,6 +3,7 @@ import { ChevronRight, Square, SquareCheckBig } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { stripMarkdownHtmlComments } from "@/lib/markdown-html-comments";
 import { cn } from "@/lib/utils";
 
 /// Someone the text may name, and where clicking their name goes.
@@ -323,10 +324,11 @@ export const Markdown = memo(function Markdown({
     () => withLinkHandler(mentions?.length ? withMentions(mentions) : COMPONENTS, onOpenLink),
     [mentions, onOpenLink],
   );
+  const source = useMemo(() => stripMarkdownHtmlComments(text), [text]);
   return (
     <div className={cn("flex flex-col gap-3 text-sm leading-relaxed", className)}>
       <ReactMarkdown remarkPlugins={[remarkGfm, remarkDetails, remarkImages]} components={components}>
-        {text}
+        {source}
       </ReactMarkdown>
     </div>
   );

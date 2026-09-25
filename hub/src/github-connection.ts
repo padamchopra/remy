@@ -693,6 +693,7 @@ const HOSTED_PULL_REQUEST_FRAGMENT = `fragment HostedPullRequest on PullRequest 
   repository { nameWithOwner }
   assignees(first: 10) { nodes { login } }
   reviewRequests(first: 10) { nodes { requestedReviewer { ... on User { login } } } }
+  comments(first: 20) { nodes { author { login } body createdAt url } }
   commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 20) { nodes {
     ... on CheckRun { name conclusion status }
     ... on StatusContext { context state }
@@ -746,6 +747,7 @@ type HostedListedPullRequest = {
   deletions: number;
   changedFiles: number;
   checks: { name: string; state: "pass" | "fail" | "pending" | "skipping" }[];
+  comments: { author: string; body: string; createdAt: string; url: string }[];
   unreadComments: unknown[];
   hasUnreadActivity: boolean;
   workspaceId: string;
@@ -788,6 +790,7 @@ function hostedPullRequest(
     deletions: Number(pr.deletions ?? 0),
     changedFiles: Number(pr.changedFiles ?? 0),
     checks: pullRequestChecks(pr),
+    comments: pullRequestComments(pr),
     unreadComments: [] as unknown[],
     hasUnreadActivity: false,
     workspaceId: workspace.id,
@@ -800,6 +803,21 @@ function hostedPullRequest(
     mergeStateStatus: String(pr.mergeStateStatus ?? ""),
     state: "OPEN",
   };
+}
+
+function pullRequestComments(pr: Record<string, unknown>) {
+  return nodesOf(pr.comments as { nodes?: unknown[] } | undefined).flatMap((node) => {
+    if (!node || typeof node !== "object") return [];
+    const comment = node as { author?: unknown; body?: unknown; createdAt?: unknown; url?: unknown };
+    const body = String(comment.body ?? "");
+    if (!body.trim()) return [];
+    return [{
+      author: loginOf(comment.author) || "Comment",
+      body,
+      createdAt: String(comment.createdAt ?? ""),
+      url: String(comment.url ?? ""),
+    }];
+  });
 }
 
 function pullRequestChecks(pr: Record<string, unknown>) {
