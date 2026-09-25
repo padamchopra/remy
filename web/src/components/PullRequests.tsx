@@ -9,10 +9,14 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { PullRequestView } from "@/components/PullRequestView";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
+import { watchHubResource } from "@/lib/hub-computers";
+import type { HubWorkspace } from "@/lib/hub-organization";
+import { hubRequest, HubRequestError, hubThreadBase } from "@/lib/hub-threads";
+import { cacheHubWorkspaces, cachedHubWorkspaces, type CachedHubWorkspace } from "@/lib/hub-workspace-cache";
 import { workspaceGroups, type WorkspaceGroup } from "@/lib/projects";
 import { orderPullRequests } from "@/lib/pull-request-order";
+import { pullRequestTileWorkspace } from "@/lib/pull-request-workspace";
 import { relativeDate } from "@/lib/relative-date";
-import { hubRequest, HubRequestError, hubThreadBase } from "@/lib/hub-threads";
 import { transport } from "@/lib/transport";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
@@ -51,6 +55,8 @@ interface AuthoredPullRequest {
   hasUnreadActivity: boolean;
   workspaceId: string;
   workspaceName: string;
+  workspaceIcon?: string | null;
+  workspaceTint?: string | null;
   workspacePath: string;
   worktreePath: string | null;
   serverId: string;
@@ -87,6 +93,8 @@ function isCachedPullRequest(value: unknown): value is AuthoredPullRequest {
     && typeof pullRequest.workspaceId === "string"
     && associatedWithWorkspace(pullRequest)
     && typeof pullRequest.workspaceName === "string"
+    && (pullRequest.workspaceIcon === undefined || pullRequest.workspaceIcon === null || typeof pullRequest.workspaceIcon === "string")
+    && (pullRequest.workspaceTint === undefined || pullRequest.workspaceTint === null || typeof pullRequest.workspaceTint === "string")
     && typeof pullRequest.workspacePath === "string"
     && typeof pullRequest.serverId === "string";
 }
@@ -235,6 +243,8 @@ export function PullRequests({
   const [githubError, setGithubError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [selectedURL, setSelectedURL] = useState("");
+  const [hostedWorkspaces, setHostedWorkspaces] = useState(() =>
+    hostedIds.flatMap((organizationId) => cachedHubWorkspaces(organizationId)));
   const [collapsed, setCollapsed] = useState<Set<string>>(() => {
     try {
       const stored = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]");
@@ -357,6 +367,26 @@ export function PullRequests({
     const timer = window.setInterval(() => void load(), PULL_REQUEST_POLL_MS);
     return () => window.clearInterval(timer);
   }, [load, serverKey]);
+
+  useEffect(() => {
+    if (!hosted) {
+      setHostedWorkspaces([]);
+      return;
+    }
+    setHostedWorkspaces(hostedIdsRef.current.flatMap((organizationId) => cachedHubWorkspaces(organizationId)));
+    const stops = hostedIdsRef.current.map((organizationId) =>
+      watchHubResource<{ workspaces: HubWorkspace[] }>(
+        `${hubThreadBase(organizationId)}/workspaces`,
+        (value) => {
+          if (!value) return;
+          cacheHubWorkspaces(organizationId, value.workspaces);
+          setHostedWorkspaces(hostedIdsRef.current.flatMap((id) => cachedHubWorkspaces(id)));
+        },
+        () => {},
+        `${hubThreadBase(organizationId)}/live`,
+      ));
+    return () => stops.forEach((stop) => stop());
+  }, [hosted, serverKey]);
 
   useEffect(() => transport.subscribe((source, payload) => {
     if (!serversRef.current.some((server) => server.id === source) || !payload || typeof payload !== "object") return;
@@ -502,6 +532,7 @@ export function PullRequests({
       key={pullRequest.url}
       pullRequest={pullRequest}
       workspace={workspaces.find((entry) => entry.serverId === pullRequest.serverId && entry.id === pullRequest.workspaceId)}
+      hostedWorkspaces={hostedWorkspaces}
       server={servers.find((entry) => entry.id === pullRequest.serverId)}
       thread={linkedThread(pullRequest, chats)}
       onOpen={() => setSelectedURL(pullRequest.url)}
@@ -597,6 +628,7 @@ function linkedThread(pullRequest: AuthoredPullRequest, chats: Chat[]): Chat | u
 function PullRequestListItem({
   pullRequest,
   workspace,
+  hostedWorkspaces,
   server,
   thread,
   onOpen,
@@ -604,6 +636,7 @@ function PullRequestListItem({
 }: {
   pullRequest: AuthoredPullRequest;
   workspace?: Workspace;
+  hostedWorkspaces: CachedHubWorkspace[];
   server?: Server;
   thread?: Chat;
   onOpen: () => void;
@@ -612,17 +645,25 @@ function PullRequestListItem({
   const passed = pullRequest.checks.filter((check) => check.state === "pass" || check.state === "skipping").length;
   const failed = pullRequest.checks.some((check) => check.state === "fail");
   const total = pullRequest.checks.length;
+  const tile = pullRequestTileWorkspace(pullRequest, workspace ? [workspace] : [], hostedWorkspaces);
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_11rem_4.5rem_6.5rem_3rem] items-center gap-3 px-4 py-2 hover:bg-accent/60">
       <button type="button" data-link className="flex min-w-0 items-start gap-2 text-left" onClick={onOpen}>
         <GitPullRequest className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
         <span className="min-w-0">
           <span className="block truncate text-sm">{pullRequest.title}</span>
-          <span className="flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
+          <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
             <span className="shrink-0">#{pullRequest.number}</span>
-            {workspace ? <WorkspaceMark home={false} workspace={workspace} server={server} size="sm" /> : null}
-            <span className="truncate">{pullRequest.workspaceName}</span>
-            <span className="truncate font-mono">{pullRequest.headRefName}</span>
+            <span className="flex min-w-0 items-center gap-1">
+              <WorkspaceMark
+                home={false}
+                workspace={tile.workspace}
+                server={server}
+                size="sm"
+                organizationId={tile.organizationId}
+              />
+              <span className="truncate">{tile.name}</span>
+            </span>
             {pullRequest.stack ? (
               <span className="shrink-0">{pullRequest.stack.position} of {pullRequest.stack.size} in stack</span>
             ) : null}
