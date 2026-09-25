@@ -5,12 +5,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { WebSocketServer } from "ws";
 import { syncHubBoard, authorizedHubAccounts, beginHubComputerAuthorization, finishHubComputerAuthorization, detachHubComputer, hubComputerRegistration, registerHubComputerWithDeviceCode, startHubComputerConnection } from "./hub-computer.js";
-import { answerMentions } from "./mentions.js";
 import { config, patchSettings, publicSettings } from "./config.js";
 import { AgentStartupError, AgentUnavailableError, agentKind, inferAgent, type AgentKind } from "./agent.js";
-import { createAgent, deleteAgent, getAgent, listAgents, seedPresetAgents, seedRemyAgent, updateAgent } from "./agents.js";
-import { forgetMemory, listMemories, saveMemory } from "./agent-memories.js";
-import { deliverAnnouncements } from "./announcements.js";
 import { prepareServiceRestart, pendingChatStarts, automaticUpdateStatus, automaticUpdateAction, configureAutomaticUpdates, syncAutomaticUpdates, reportAutomaticUpdate, appUpdateStatus, reportAppUpdate, requestAppUpdate } from "./app-update.js";
 import { localAnalytics } from "./analytics.js";
 import { threadAnalytics, threadPerformance } from "./thread-metrics.js";
@@ -31,7 +27,6 @@ import {
   deleteTicket,
   editTicketComment,
   getTicket,
-  handoffTicket,
   linkThread,
   listTickets,
   moveTicket,
@@ -44,8 +39,6 @@ import {
   updateTicket,
 } from "./tickets.js";
 import {
-  reconcileAgentTickets,
-  reconcileTicket,
   resumeTicketFromComment,
   startTicketThread,
 } from "./ticket-runner.js";
@@ -56,17 +49,12 @@ import {
   createSubthread,
   deleteChat,
   deleteChatGroup,
-  dmChatFor,
   getChat,
   getChatWindow,
   interruptChat,
   listAllChats,
   listChats,
-  listDms,
   markChatRead,
-  pruneOrphanDms,
-  syncAgentDm,
-  syncAgentDms,
   respondToApproval,
   respondToQuestion,
   restoreArchivedChat,
@@ -184,17 +172,11 @@ import { validateChatCodeReferences } from "./chat-references.js";
 import { startPullRequestMonitor } from "./pull-request-monitor.js";
 import { startTicketPullRequestSync } from "./ticket-pull-requests.js";
 import {
-  clearAgentPullRequestMonitoring,
   clearThreadPullRequestMonitoring,
   pullRequestMonitoring,
   resetPullRequestMonitoring,
-  resetWorkspacePullRequestMonitoring,
   setPullRequestMonitoring,
-  setWorkspacePullRequestMonitoring,
-  workspacePullRequestMonitoring,
 } from "./pull-request-monitoring.js";
-import { createRoutine, deleteRoutine, listRoutines, updateRoutine } from "./routines.js";
-import { runRoutine, startRoutines } from "./routine-runner.js";
 import { setSleepBusyCheck, sleepSupported, syncSleepAssertion } from "./sleep.js";
 import { highlightedIndex, parsePanePrompt } from "./prompt.js";
 import { questionBroker } from "./questions.js";
@@ -403,12 +385,9 @@ const server = createServer(async (req, res) => {
     const scopedChat = scopedChatId ? getChat(scopedChatId) : undefined;
     if (scopedChatId && !scopedChat) return json(res, 401, { error: "unauthorized" });
     if ((scopedChatId || externalProvider) && !isRemyToolRoute(req.method, url.pathname)) {
-      return json(res, 403, { error: "that operation is not available to agents" });
+      return json(res, 403, { error: "that operation is not available to a thread" });
     }
-    const scopedAgentId = scopedChat?.agentId;
-    const ticketActor = (asked: unknown): string => scopedChatId || externalProvider
-      ? (scopedAgentId ? getAgent(scopedAgentId)?.handle : undefined) ?? "remy"
-      : typeof asked === "string" ? getAgent(asked)?.handle ?? "you" : "you";
+    const ticketActor = (): string => scopedChatId || externalProvider ? "remy" : "you";
 
     if (req.method === "POST" && url.pathname === "/server/hosted-checkpoint") {
       if (hubComputerRegistration()?.ownership !== "hosted") return json(res, 404, { error: "Computer not found." });
@@ -418,12 +397,8 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { ok: true });
     }
     if(req.method==="POST" && /^\/organization-tools\/[a-z_]+$/.test(url.pathname)) {
-      if(!scopedChatId)return json(res,403,{error:"Open your agent's conversation first."});
+      if(!scopedChatId)return json(res,403,{error:"Open a thread on this computer first."});
       return json(res,200,await hubAgentTool(scopedChatId,url.pathname.split("/")[2],await readJson(req)));
-    }
-    if (url.pathname === "/routing" && (req.method === "GET" || req.method === "PUT")) {
-      if(!scopedChatId)return json(res,403,{error:"Open this agent's conversation to change routing."});
-      return json(res,200,await hubAgentTool(scopedChatId,req.method==="GET"?"read_routing":"edit_routing",req.method==="PUT"?await readJson(req):{}));
     }
     if (req.method === "GET" && url.pathname === "/health") {
       return json(res, 200, { ok: true, release: serviceRelease, instance: serviceInstance });
@@ -452,8 +427,7 @@ const server = createServer(async (req, res) => {
         return json(res, 200, hubBoardState(org));
       }
       if (req.method === "POST" && url.pathname === "/server/hub/board/events") { const event = appendHubBoard(org, await readJson(req)); syncHubBoard(); return json(res, 201, event); }
-      const match = /^\/server\/hub\/board\/(tickets|agents|memories|routines)$/.exec(url.pathname);
-      if (req.method === "GET" && match) return json(res, 200, hubBoardList(org, match[1] as "tickets" | "agents" | "memories" | "routines"));
+      if (req.method === "GET" && url.pathname === "/server/hub/board/tickets") return json(res, 200, hubBoardList(org, "tickets"));
       return json(res, 404, { error: "Tasks not found." });
     }
     if (req.method === "POST" && url.pathname === "/server/hub/authorize") {
@@ -614,23 +588,12 @@ const server = createServer(async (req, res) => {
     }
     if (url.pathname === "/server/settings" && req.method === "PATCH") {
       const body = await readJson(req);
-      if (body.pullRequestMonitoringAgentId) {
-        const agent = getAgent(String(body.pullRequestMonitoringAgentId));
-        if (!agent) return json(res, 404, { error: "no such agent" });
-      }
       const settings = patchSettings(body);
       syncAutomaticUpdates();
       broadcast({ type: "settings", topics: ["settings"] });
       syncSleepAssertion();
       // Turning the schedule off has to stop the timer now, not at its next tick.
       syncRepoUpdateSchedule();
-      // Agents that follow the machine default follow it here too, so an inbox
-      // conversation is never left on the model the machine used to be on.
-      if (
-        body.defaultProvider !== undefined
-        || body.defaultModel !== undefined
-        || body.defaultEffort !== undefined
-      ) syncAgentDms();
       return json(res, 200, { ...settings, preventSleepSupported: sleepSupported() });
     }
 
@@ -1210,109 +1173,9 @@ const server = createServer(async (req, res) => {
     }
 
     // ── the board ───────────────────────────────────────────────────────────
-    // Tickets, agents and projects are folds of `board_log`, so every write
-    // here appends an event and reprojects rather than touching a row. The
-    // reply is always the projected shape, which is what a peer would compute.
-
-    if (req.method === "GET" && url.pathname === "/agents") {
-      return json(res, 200, { agents: listAgents() });
-    }
-    if (req.method === "POST" && url.pathname === "/agents") {
-      const body = await readJson(req);
-      try {
-        const agent = createAgent(body);
-        broadcast({ type: "board" });
-        return json(res, 200, { agent });
-      } catch (error) {
-        return json(res, 400, { error: (error as Error).message || "could not create that agent" });
-      }
-    }
-    if (parts[0] === "agents" && parts[1] && parts[2] === "memories") {
-      const agentId = decodeURIComponent(parts[1]);
-      if (!fullAccess && scopedAgentId !== agentId) {
-        return json(res, 403, { error: "an agent can change only its own memories" });
-      }
-      if (!getAgent(agentId)) return json(res, 404, { error: "no such agent" });
-      try {
-        if (parts.length === 3 && req.method === "GET") {
-          return json(res, 200, {
-            memories: listMemories(agentId, {
-              projectId: url.searchParams.get("project") ?? undefined,
-              query: url.searchParams.get("query") ?? undefined,
-            }),
-          });
-        }
-        if (parts.length === 3 && req.method === "POST") {
-          const body = await readJson(req);
-          const memory = saveMemory({
-            agentId,
-            content: body.content,
-            scope: body.scope,
-            projectId: body.projectId,
-          });
-          broadcast({ type: "board" });
-          return json(res, 201, { memory });
-        }
-        if (parts[3] && parts.length === 4 && req.method === "PATCH") {
-          const body = await readJson(req);
-          const memory = saveMemory({
-            agentId,
-            id: decodeURIComponent(parts[3]),
-            content: body.content,
-          });
-          broadcast({ type: "board" });
-          return json(res, 200, { memory });
-        }
-        if (parts[3] && parts.length === 4 && req.method === "DELETE") {
-          forgetMemory(agentId, decodeURIComponent(parts[3]));
-          broadcast({ type: "board" });
-          return json(res, 200, { ok: true });
-        }
-      } catch (error) {
-        const message = (error as Error).message || "could not change that memory";
-        return json(res, /no such/.test(message) ? 404 : 400, { error: message });
-      }
-    }
-    if (parts[0] === "agents" && parts[1] && parts.length === 2) {
-      const id = decodeURIComponent(parts[1]);
-      if (req.method === "GET") {
-        const agent = getAgent(id);
-        return agent ? json(res, 200, { agent }) : json(res, 404, { error: "no such agent" });
-      }
-      if (req.method === "PATCH") {
-        const body = await readJson(req);
-        try {
-          const agent = updateAgent(id, body);
-          broadcast({ type: "board" });
-          return json(res, 200, { agent });
-        } catch (error) {
-          const message = (error as Error).message || "could not save that agent";
-          return json(res, /no such agent/.test(message) ? 404 : 400, { error: message });
-        }
-      }
-      if (req.method === "DELETE") {
-        try {
-          deleteAgent(id);
-          clearAgentPullRequestMonitoring(id);
-          for (const routine of listRoutines(id)) deleteRoutine(routine.id);
-          broadcast({ type: "board" });
-          return json(res, 200, { ok: true });
-        } catch (error) {
-          const message = (error as Error).message || "no such agent";
-          return json(res, /no such agent/.test(message) ? 404 : 400, { error: message });
-        }
-      }
-    }
-    // Opening an agent in the inbox. The conversation is made on the first
-    // open rather than with the agent, so a roster nobody has spoken to holds
-    // no empty threads.
-    if (req.method === "POST" && parts[0] === "agents" && parts[1] && parts[2] === "dm" && parts.length === 3) {
-      try {
-        return json(res, 200, { chat: dmChatFor(decodeURIComponent(parts[1])) });
-      } catch (error) {
-        return json(res, 404, { error: (error as Error).message || "no such agent" });
-      }
-    }
+    // Tickets and projects are folds of `board_log`, so every write here
+    // appends an event and reprojects rather than touching a row. The reply is
+    // always the projected shape, which is what a peer would compute.
 
     if (req.method === "GET" && url.pathname === "/projects") {
       // Binding is cheap and idempotent, so a repo added from Workspaces turns
@@ -1415,69 +1278,14 @@ const server = createServer(async (req, res) => {
       return json(res, 200, {
         deviceId,
         projects: listProjects(),
-        agents: listAgents(),
         tickets: listTickets(projectId),
-        routines: listRoutines(),
       });
-    }
-
-    // A routine can be created conversationally only by the agent whose
-    // conversation is running. The full app token may manage existing routines
-    // in agent settings, but cannot create one outside that conversation.
-    if (req.method === "POST" && url.pathname === "/routines") {
-      if (externalProvider || !scopedChatId || !scopedChat?.dm || !scopedAgentId) {
-        return json(res, 403, { error: "routines can be created only in an agent conversation" });
-      }
-      const body = await readJson(req);
-      try {
-        const routine = createRoutine({
-          ...body,
-          ...(scopedAgentId ? { agentId: scopedAgentId } : {}),
-        });
-        broadcast({ type: "board" });
-        return json(res, 200, { routine });
-      } catch (error) {
-        return json(res, 400, { error: (error as Error).message || "could not create that routine" });
-      }
-    }
-    if (parts[0] === "routines" && parts[1]) {
-      const id = decodeURIComponent(parts[1]);
-      if (req.method === "PATCH" && parts.length === 2) {
-        const body = await readJson(req);
-        try {
-          const routine = updateRoutine(id, body);
-          broadcast({ type: "board" });
-          return json(res, 200, { routine });
-        } catch (error) {
-          const message = (error as Error).message || "could not save that routine";
-          return json(res, /no such/.test(message) ? 404 : 400, { error: message });
-        }
-      }
-      if (req.method === "DELETE" && parts.length === 2) {
-        try {
-          deleteRoutine(id);
-          broadcast({ type: "board" });
-          return json(res, 200, { ok: true });
-        } catch (error) {
-          return json(res, 404, { error: (error as Error).message || "no such routine" });
-        }
-      }
-      if (req.method === "POST" && parts[2] === "run") {
-        try {
-          const routine = await runRoutine(id);
-          broadcast({ type: "board" });
-          return json(res, 200, { routine });
-        } catch (error) {
-          const message = (error as Error).message || "could not run that routine";
-          return json(res, /no such/.test(message) ? 404 : 400, { error: message });
-        }
-      }
     }
 
     if (req.method === "POST" && url.pathname === "/tickets") {
       const body = await readJson(req);
       try {
-        const ticket = createTicket(body, ticketActor(body.actor));
+        const ticket = createTicket(body, ticketActor());
         broadcast({ type: "board" });
         return json(res, 200, { ticket });
       } catch (error) {
@@ -1566,7 +1374,7 @@ const server = createServer(async (req, res) => {
         }
         try {
           const ticket = setTicketStatus(id, body.status, {
-            actor: ticketActor(body.actor),
+            actor: ticketActor(),
             note: typeof body.note === "string" ? body.note : undefined,
           });
           broadcast({ type: "board" });
@@ -1578,17 +1386,13 @@ const server = createServer(async (req, res) => {
       if (req.method === "POST" && parts[2] === "comment") {
         const body = await readJson(req);
         try {
-          const actor = ticketActor(body.actor);
+          const actor = ticketActor();
           const ticket = commentOnTicket(id, String(body.body ?? ""), actor);
           broadcast({ type: "board" });
-          // Naming an agent asks it a question. The turn runs on its own and
-          // posts its reply as another comment, so the request does not wait
-          // on a model to think.
-          const said = ticketActivity(id).at(-1);
-          if (said?.mentions?.length) answerMentions(id, said.mentions, said.body ?? "", said.actor);
           // The comment is already durable board activity, so an unavailable
           // device cannot make posting it fail. A successful delivery appears
-          // in the linked thread as the same user turn and resumes its agent.
+          // in the linked thread as the same user turn and continues it.
+          const said = ticketActivity(id).at(-1);
           if (actor === "you" && said?.body) {
             void resumeTicketFromComment(id, said.body).catch((error) => {
               console.error(`could not continue ticket ${id} from its comment:`, error);
@@ -1607,17 +1411,10 @@ const server = createServer(async (req, res) => {
       ) {
         const commentId = decodeURIComponent(parts[3]);
         try {
-          const before = ticketActivity(id).find((entry) => entry.id === commentId);
           const ticket = req.method === "PATCH"
             ? editTicketComment(id, commentId, String((await readJson(req)).body ?? ""))
             : deleteTicketComment(id, commentId);
           broadcast({ type: "board" });
-          if (req.method === "PATCH") {
-            const after = ticketActivity(id).find((entry) => entry.id === commentId);
-            const known = new Set((before?.mentions ?? []).map((mention) => mention.id));
-            const added = (after?.mentions ?? []).filter((mention) => !known.has(mention.id));
-            if (after && added.length > 0) answerMentions(id, added, after.body ?? "", after.actor);
-          }
           return json(res, 200, { ticket });
         } catch (error) {
           const message = (error as Error).message || "could not change that comment";
@@ -1640,9 +1437,6 @@ const server = createServer(async (req, res) => {
           const ticket = linkThread(id, {
             chatId: linkedChatId,
             deviceId: linkedDeviceId,
-            agentId: scopedChatId
-              ? scopedAgentId
-              : typeof body.agentId === "string" ? body.agentId : undefined,
             stage: typeof body.stage === "string" ? body.stage : undefined,
             linkedBy: scopedChatId || body.linkedBy === "runner" ? "runner" : "you",
           });
@@ -1658,25 +1452,6 @@ const server = createServer(async (req, res) => {
         } catch (error) {
           const message = (error as Error).message || "could not attach that thread";
           return json(res, /no such/.test(message) ? 404 : 409, { error: message });
-        }
-      }
-      if (req.method === "POST" && parts[2] === "handoff") {
-        const body = await readJson(req);
-        try {
-          const next = getAgent(String(body.agentId ?? ""));
-          if (!next) return json(res, 404, { error: "no such agent" });
-          if (scopedChatId) {
-            const current = scopedAgentId ? getAgent(scopedAgentId) : undefined;
-            if (!current?.handoffTo.includes(next.handle)) {
-              return json(res, 403, { error: "that handoff is not configured" });
-            }
-          }
-          const actor = ticketActor(body.actor);
-          const ticket = handoffTicket(id, next.id, actor);
-          broadcast({ type: "board" });
-          return json(res, 200, { ticket });
-        } catch (error) {
-          return json(res, 404, { error: (error as Error).message || "could not hand off that ticket" });
         }
       }
       if (req.method === "DELETE" && parts[2] === "threads" && parts[3]) {
@@ -1701,11 +1476,8 @@ const server = createServer(async (req, res) => {
       // `unavailable` explains an empty list on a server that cannot store
       // chats — an older Node, or a database it could not open.
       const unavailable = chatsUnavailable();
-      // The inbox rides along rather than taking a route of its own: a client
-      // that shows both would otherwise ask twice on every refresh.
       return json(res, 200, {
         chats: listChats(),
-        dms: listDms(),
         sequence: notificationSequence(),
         projection: true,
         ...(unavailable ? { unavailable } : {}),
@@ -1737,7 +1509,6 @@ const server = createServer(async (req, res) => {
           model: typeof body.model === "string" ? body.model : undefined,
           effort: typeof body.effort === "string" ? body.effort : undefined,
           permissionMode: scopedChatId || externalProvider ? undefined : body.permissionMode,
-          agentId: typeof body.agentId === "string" && body.agentId ? body.agentId : undefined,
           ...(holder?.provider
             ? { workspaceDefault: { provider: holder.provider, model: holder.model, effort: holder.effort } }
             : {}),
@@ -1958,7 +1729,7 @@ const server = createServer(async (req, res) => {
       }
       if (req.method === "POST" && parts[2] === "message") {
         if (scopedChatId === id) {
-          return json(res, 403, { error: "an agent cannot message its own running thread" });
+          return json(res, 403, { error: "a thread cannot message itself" });
         }
         const body = await readJson(req);
         try {
@@ -2001,7 +1772,7 @@ const server = createServer(async (req, res) => {
       }
       if (req.method === "POST" && parts[2] === "stop") {
         if (scopedChatId === id) {
-          return json(res, 403, { error: "an agent cannot stop its own running thread" });
+          return json(res, 403, { error: "a thread cannot stop itself" });
         }
         try {
           stopChat(id);
@@ -2092,11 +1863,10 @@ const server = createServer(async (req, res) => {
             title: typeof body.title === "string" && body.title.trim() ? body.title : chat.title,
             body: typeof body.body === "string" ? body.body : "",
             ...(info.branch ? { branch: info.branch } : {}),
-            ...(chat.agentId ? { assigneeAgentId: chat.agentId } : {}),
           });
           // Link before status: a ticket that is already being worked on must
           // never be seen as one nobody has picked up.
-          ticket = linkThread(ticket.id, { chatId: id, agentId: chat.agentId });
+          ticket = linkThread(ticket.id, { chatId: id });
           const live = chat.state === "working" || chat.state === "needs_input";
           ticket = setTicketStatus(ticket.id, live ? "in_progress" : "todo");
           broadcast({ type: "board" });
@@ -2124,34 +1894,25 @@ const server = createServer(async (req, res) => {
     }
 
     if (url.pathname === "/pull-request-monitoring") {
-      const workspaceId = url.searchParams.get("workspaceId") ?? "";
       const repository = url.searchParams.get("repository") ?? "";
       const number = Number(url.searchParams.get("number") ?? "0");
-      const isPullRequest = Boolean(repository && Number.isInteger(number) && number > 0);
+      if (!repository || !Number.isInteger(number) || number <= 0) {
+        return json(res, 400, { error: "name the pull request to follow" });
+      }
       try {
         if (req.method === "GET") {
-          const policy = isPullRequest
-            ? pullRequestMonitoring(workspaceId, repository, number)
-            : workspacePullRequestMonitoring(workspaceId);
-          return json(res, 200, { policy });
+          return json(res, 200, { policy: pullRequestMonitoring(repository, number) });
         }
         if (req.method === "PATCH") {
           const body = await readJson(req);
-          const value = {
+          const policy = setPullRequestMonitoring(repository, number, {
             enabled: body.enabled === true,
-            agentId: String(body.agentId ?? "") || null,
             chatId: String(body.chatId ?? "") || null,
-          };
-          const policy = isPullRequest
-            ? setPullRequestMonitoring(workspaceId, repository, number, value)
-            : await setWorkspacePullRequestMonitoring(workspaceId, value);
+          });
           return json(res, 200, { policy });
         }
         if (req.method === "DELETE") {
-          const policy = isPullRequest
-            ? resetPullRequestMonitoring(workspaceId, repository, number)
-            : await resetWorkspacePullRequestMonitoring(workspaceId);
-          return json(res, 200, { policy });
+          return json(res, 200, { policy: resetPullRequestMonitoring(repository, number) });
         }
       } catch (error) {
         const message = (error as Error).message || "could not change pull request monitoring";
@@ -2765,38 +2526,21 @@ setSleepBusyCheck(() =>
 syncSleepAssertion();
 syncRepoUpdateSchedule();
 
-// The built-in agents are ordinary rows once seeded. The seeder also upgrades
-// untouched legacy defaults while preserving anything the user edited.
-seedPresetAgents();
-// Remy's own agent is seeded separately: its name and instructions come from
-// this build rather than from the row, so they are re-synced on every boot.
-seedRemyAgent();
-// GitHub state belongs to registered workspaces. The monitor nudges the thread
-// already working on a PR, or lets the default GitHub agent open one there.
+// GitHub state belongs to registered workspaces. The monitor sends what changed
+// to the thread that asked to follow that pull request.
 startPullRequestMonitor();
 // And what GitHub says about a ticket's own pull request: ready for review, or
 // merged. Only this machine can ask about the repositories it holds.
 startTicketPullRequestSync();
-// Then whatever this release gave Remy to say, said once.
-deliverAnnouncements();
-// An agent deleted while this machine was shut leaves its conversation behind.
-pruneOrphanDms();
 
 // Board changes can originate outside an HTTP handler: a thread changes its
-// ticket status, a routine runs, or an agent uses a ticket tool. Keep every
-// open window live without making each writer remember to send its own frame.
+// ticket status, or a thread uses a ticket tool. Keep every open window live
+// without making each writer remember to send its own frame.
 function reconcileBoardEvent(event: LogEvent): void {
   if (event.entity === "ticket") {
-    void reconcileTicket(event.entityId);
     // A sub-ticket moving is also its parent moving. Here rather than in the
     // writer so a sub-ticket a paired machine moved rolls its parent up too.
     syncParentTicket(event.entityId);
-  }
-  if (event.entity === "agent") {
-    void reconcileAgentTickets(event.entityId);
-    // What an agent thinks with is what its inbox conversation thinks with,
-    // including when the change was made on another machine.
-    syncAgentDm(event.entityId);
   }
 }
 
@@ -2807,8 +2551,8 @@ onLocalAppend((event) => {
 onRemoteMerge(reconcileBoardEvent);
 
 // Who this machine is signed in as, asked once. It names the branches Remy
-// creates and the address on an agent's commits; Remy names itself when `gh`
-// cannot say, so a branch always carries a prefix.
+// creates; Remy names itself when `gh` cannot say, so a branch always carries
+// a prefix.
 if (!config.worktreeBranchPrefix || !config.githubLogin) {
   void githubLogin().then((login) => {
     patchSettings({
@@ -2817,10 +2561,6 @@ if (!config.worktreeBranchPrefix || !config.githubLogin) {
     });
   });
 }
-// The routine's owning machine keeps its clock in the daemon rather than in a
-// window that may be shut.
-startRoutines(() => broadcast({ type: "board" }));
-
 // Board events flow between paired machines whether or not a window is open —
 // the daemon is what is paired, so the sync runs here rather than in a client.
 startPeerSync(() => {

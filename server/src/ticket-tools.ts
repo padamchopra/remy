@@ -1,17 +1,12 @@
 import {hubLinearResolveInput,hubTicketCommentInput} from "./hub-linear-input.js";
 import {hubGitHubInput} from "./hub-github-input.js";
-import {getKv} from "./db.js";
-import {hubRoutineInput} from "./hub-routine-input.js";
 import {hubAgentTool} from "./hub-agent-tools.js";
 import { createSdkMcpServer, tool } from "./provider-adapters/claude.js";
 import { basename } from "node:path";
 import { homedir } from "node:os";
 import { z } from "zod";
-import { agentByHandle, getAgent, listAgents } from "./agents.js";
-import { forgetMemory, listMemories, projectIdForCwd, saveMemory } from "./agent-memories.js";
 import { listProjects, projectForWorkspace } from "./projects.js";
 import { artifactMarker, type ConvArtifact } from "./remy-artifacts.js";
-import { createRoutine } from "./routines.js";
 import {
   explicitlyRequestedTicketStatus,
   REMY_TOOL_INSTRUCTIONS,
@@ -34,7 +29,6 @@ import {
   commentOnTicket,
   createTicket,
   getTicket,
-  handoffTicket,
   linkThread,
   listTickets,
   setTicketStatus,
@@ -53,7 +47,6 @@ interface ThreadSummary {
   state: string;
   provider: string;
   model?: string;
-  agentId?: string;
   preview?: string;
 }
 
@@ -76,7 +69,6 @@ export interface RemyThreadControl {
     cwd: string;
     prompt: string;
     title?: string;
-    agentId?: string;
     provider?: string;
     model?: string;
   }): Promise<ThreadSummary>;
@@ -105,7 +97,6 @@ function describe(ticket: TicketView): string {
     `Workspace: ${project?.name ?? "Unknown"}`,
     `Status: ${ticket.status}`,
     `Priority: ${ticket.priority}`,
-    ticket.assigneeAgentId ? `Assignee: ${getAgent(ticket.assigneeAgentId)?.name ?? ticket.assigneeAgentId}` : "Assignee: Nobody",
     ticket.branch ? `Branch: ${ticket.branch}` : "",
     ticket.body ? `\nDescription:\n${ticket.body}` : "\nNo description.",
     children.length
@@ -157,7 +148,6 @@ async function workspacePath(reference: string | undefined, currentCwd: string):
 }
 
 function describeThread(thread: ThreadDetail): string {
-  const agent = thread.agentId ? getAgent(thread.agentId) : undefined;
   const recent = thread.entries.slice(-20).map((entry) => {
     if (entry.text) return `- ${entry.kind}: ${entry.text}`;
     return `- ${entry.kind}: ${[entry.verb, entry.arg, entry.status].filter(Boolean).join(" ")}`;
@@ -167,7 +157,6 @@ function describeThread(thread: ThreadDetail): string {
     `State: ${thread.state}`,
     `Workspace folder: ${thread.cwd}`,
     `Provider: ${thread.provider}${thread.model ? ` / ${thread.model}` : ""}`,
-    agent ? `Agent: @${agent.handle}` : "Agent: Workspace agent",
     thread.preview ? `Latest: ${thread.preview}` : "",
     recent.length ? `\nRecent thread activity:\n${recent.join("\n")}` : "",
   ].filter(Boolean).join("\n");
@@ -175,8 +164,6 @@ function describeThread(thread: ThreadDetail): string {
 
 export function inProcessTicketMcpServer(
   chatId: string,
-  agentId: string | undefined,
-  dm: boolean,
   threads: RemyThreadControl,
 ) {
   const key = z.string().optional().describe("Ticket key. Omit it for this thread's linked ticket.");
@@ -185,15 +172,11 @@ export function inProcessTicketMcpServer(
     version: "1",
     instructions: REMY_TOOL_INSTRUCTIONS,
     tools: [
-      ...(getKv<boolean>(`hubInbox:${chatId}`)?[tool("create_organization_routine","Create repeated work when the person asks this agent for it.",hubRoutineInput,async input=>{const result=await hubAgentTool(chatId,"create_organization_routine",input) as {artifact?:ConvArtifact};return ok(JSON.stringify(result),result.artifact);})]:[]),
       tool("resolve_linear_ticket","Resolve a Linear ticket in this workspace.",hubLinearResolveInput,async input=>{const result=await hubAgentTool(chatId,"resolve_linear_ticket",input) as {artifact?:ConvArtifact};return ok(JSON.stringify(result),result.artifact);}),
       tool("comment_organization_ticket","Comment on a shared ticket with a link to this thread.",hubTicketCommentInput,async input=>ok(JSON.stringify(await hubAgentTool(chatId,"comment_organization_ticket",input)))),
       tool("github_action","Create a pull request, comment or review using the linked member account.",hubGitHubInput,async input=>ok(JSON.stringify(await hubAgentTool(chatId,"github_action",input)))),
       ...["list_organization_computers","list_organization_workspaces"].map(action=>tool(action,"List organization resources visible to the person.",{},async()=>ok(JSON.stringify(await hubAgentTool(chatId,action))))),
-      ...["explain_routing","start_organization_thread","create_organization_ticket","handoff_organization_ticket","move_organization_thread"].map(action=>tool(action,"Act within the person's visible organization workspaces.",{workspaceId:z.string(),prompt:z.string().optional(),title:z.string().optional(),ticketId:z.string().optional(),agentId:z.string().optional(),threadId:z.string().optional(),computerId:z.string().optional()},async input=>{const result=await hubAgentTool(chatId,action,input) as {artifact?:ConvArtifact};return ok(JSON.stringify(result),result.artifact);})),
-
-      tool("read_routing", "Read your organization’s routing rules.", {}, async () => ok(JSON.stringify(await hubAgentTool(chatId,"read_routing")))),
-      tool("edit_routing", "Replace your organization’s ordered routing rules.", {rules:z.array(z.object({id:z.string(),name:z.string(),workspaceId:z.string().optional(),teamId:z.string().optional(),trigger:z.enum(["manual","ticket","routine","agent"]).optional(),target:z.object({computerId:z.string().optional(),class:z.enum(["hosted","darwin","linux"]).optional(),emulator:z.boolean().optional()})})).max(100)}, async (input) => ok(JSON.stringify(await hubAgentTool(chatId,"edit_routing",input)))),
+      ...["start_organization_thread","create_organization_ticket","move_organization_thread"].map(action=>tool(action,"Act within the person's visible organization workspaces.",{workspaceId:z.string(),prompt:z.string().optional(),title:z.string().optional(),ticketId:z.string().optional(),threadId:z.string().optional(),computerId:z.string().optional()},async input=>{const result=await hubAgentTool(chatId,action,input) as {artifact?:ConvArtifact};return ok(JSON.stringify(result),result.artifact);})),
       tool(
         "list_workspaces",
         "List the workspace folders registered on this machine.",
@@ -356,81 +339,12 @@ export function inProcessTicketMcpServer(
         { annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true } },
       ),
       tool(
-        "list_agents",
-        "List the agents available when starting a thread.",
-        {},
-        async () => {
-          const agents = listAgents();
-          return ok(agents.length
-            ? agents.map((agent) => `@${agent.handle}: ${agent.role || agent.name}`).join("\n")
-            : "No custom agents are available. Use the workspace agent.");
-        },
-        { annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false } },
-      ),
-      tool(
-        "list_memories",
-        "Read this agent's durable memories for the current workspace.",
-        { query: z.string().max(500).optional() },
-        async ({ query }) => {
-          if (!agentId) throw new Error("This thread has no agent memory.");
-          const memories = listMemories(agentId, {
-            projectId: await projectIdForCwd(threads.currentCwd),
-            query,
-          });
-          return ok(memories.length
-            ? memories.map((memory) => `${memory.id} [${memory.scope}]\n${memory.content}`).join("\n\n")
-            : "You have no matching memories.");
-        },
-        { annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false } },
-      ),
-      tool(
-        "save_memory",
-        "Save or replace a durable fact that should follow this agent between devices.",
-        {
-          content: z.string().min(1).max(4000),
-          scope: z.enum(["global", "workspace"]).optional(),
-          workspace: z.string().optional().describe("Registered workspace name, id, path, or origin. Required only when this thread is not already in that workspace."),
-          memory_id: z.string().optional().describe("Existing memory id to replace."),
-        },
-        async ({ content, scope, workspace, memory_id }) => {
-          if (!agentId) throw new Error("This thread has no agent memory.");
-          let projectId: string | undefined;
-          if (scope === "workspace") {
-            const path = await workspacePath(workspace, threads.currentCwd);
-            const held = (await listWorkspaces()).find((entry) =>
-              entry.path === path || entry.worktrees.some((worktree) => worktree.path === path));
-            projectId = held ? projectForWorkspace(held.id)?.id : undefined;
-          }
-          const memory = saveMemory({
-            agentId,
-            content,
-            scope,
-            projectId,
-            ...(memory_id ? { id: memory_id } : {}),
-          });
-          return ok(`${memory_id ? "Updated" : "Saved"} memory ${memory.id}.`);
-        },
-        { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-      ),
-      tool(
-        "forget_memory",
-        "Forget one of this agent's durable memories.",
-        { memory_id: z.string() },
-        async ({ memory_id }) => {
-          if (!agentId) throw new Error("This thread has no agent memory.");
-          forgetMemory(agentId, memory_id);
-          return ok(`Forgot memory ${memory_id}.`);
-        },
-        { annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false } },
-      ),
-      tool(
         "list_threads",
         "List recent Remy threads and their current state.",
         {},
-        async () => ok(threads.list().slice(0, 50).map((thread) => {
-          const owner = thread.agentId ? getAgent(thread.agentId)?.handle : undefined;
-          return `${thread.id} [${thread.state}] ${thread.title}\n${thread.cwd}${owner ? `\n@${owner}` : ""}`;
-        }).join("\n\n") || "There are no threads on this machine."),
+        async () => ok(threads.list().slice(0, 50).map((thread) =>
+          `${thread.id} [${thread.state}] ${thread.title}\n${thread.cwd}`,
+        ).join("\n\n") || "There are no threads on this machine."),
         { annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false } },
       ),
       tool(
@@ -450,19 +364,15 @@ export function inProcessTicketMcpServer(
         {
           prompt: z.string().min(1).max(20000).describe("The complete task for the new thread"),
           workspace: z.string().optional().describe("Registered workspace name, id, path, or origin. Omit it to use this thread's folder."),
-          agent: z.string().optional().describe("Agent handle. Omit it to use the workspace agent."),
           title: z.string().max(120).optional(),
           provider: z.enum(["claude", "codex", "cursor"]).optional(),
           model: z.string().optional(),
         },
-        async ({ prompt, workspace, agent, title, provider, model }) => {
-          const selected = agent ? agentByHandle(agent.replace(/^@/, "")) : undefined;
-          if (agent && !selected) throw new Error(`No agent called ${agent}.`);
+        async ({ prompt, workspace, title, provider, model }) => {
           const thread = await threads.start({
             cwd: await workspacePath(workspace, threads.currentCwd),
             prompt,
             ...(title ? { title } : {}),
-            ...(selected ? { agentId: selected.id } : {}),
             ...(provider ? { provider } : {}),
             ...(model ? { model } : {}),
           });
@@ -470,7 +380,7 @@ export function inProcessTicketMcpServer(
             kind: "thread",
             id: thread.id,
             title: thread.title,
-            detail: selected ? `@${selected.handle}` : "Workspace agent",
+            detail: thread.cwd,
           });
         },
         { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
@@ -500,24 +410,6 @@ export function inProcessTicketMcpServer(
         },
         { annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
       ),
-      ...(dm && agentId ? [tool(
-        "create_routine",
-        "Create a routine for this agent when the person asks for work to happen repeatedly.",
-        {
-          name: z.string().min(1).max(200).describe("A short name for the routine"),
-          prompt: z.string().min(1).max(20000).describe("The complete instruction to send this agent each time"),
-          cadence: z.enum(["daily", "weekdays", "weekly", "monthly"]),
-          hour: z.number().int().min(0).max(23).describe("Local hour on the routine's clock device"),
-          minute: z.number().int().min(0).max(59).default(0),
-          weekday: z.number().int().min(0).max(6).optional().describe("Sunday is 0; required for weekly routines"),
-          day: z.number().int().min(1).max(28).optional().describe("Day of month; required for monthly routines"),
-        },
-        async ({ name, prompt, cadence, hour, minute, weekday, day }) => {
-          const routine = createRoutine({ agentId, name, prompt, cadence, hour, minute, weekday, day });
-          return ok(`Created ${routine.name}.`, { kind: "routine", id: routine.id, title: routine.name });
-        },
-        { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
-      )] : []),
       tool(
         "create_ticket",
         "Write a new ticket on a workspace's board.",
@@ -533,13 +425,12 @@ export function inProcessTicketMcpServer(
             entry.path === path || entry.worktrees.some((worktree) => worktree.path === path));
           const project = held ? projectForWorkspace(held.id) : undefined;
           if (!project) throw new Error("That folder has no board yet. Register it as a workspace first.");
-          const actor = agentId ? getAgent(agentId)?.handle ?? "remy" : "remy";
           const ticket = createTicket({
             projectId: project.id,
             title,
             ...(body ? { body } : {}),
             ...(status ? { status } : {}),
-          }, actor);
+          }, "remy");
           return ok(`Created ${ticket.key} in ${project.name}.`, ticketCard(ticket));
         },
         { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
@@ -559,7 +450,7 @@ export function inProcessTicketMcpServer(
           const ticket = ticketFor(asked, chatId);
           const existing = ticketForChat(chatId);
           if (existing && existing.id !== ticket.id) throw new Error(`This thread is already linked to ${existing.key}.`);
-          const linked = existing ?? linkThread(ticket.id, { chatId, agentId, linkedBy: "runner" });
+          const linked = existing ?? linkThread(ticket.id, { chatId, linkedBy: "runner" });
           syncTicketFromThread(chatId, "working");
           return ok(`Linked this thread to ${linked.key}.`, ticketCard(linked));
         },
@@ -601,8 +492,7 @@ export function inProcessTicketMcpServer(
             throw new Error("Change a ticket's status only when the person explicitly asks.");
           }
           const ticket = ticketFor(asked, chatId);
-          const actor = agentId ? getAgent(agentId)?.handle ?? "remy" : "remy";
-          const moved = setTicketStatus(ticket.id, status, { actor, note });
+          const moved = setTicketStatus(ticket.id, status, { actor: "remy", note });
           return ok(`Moved ${moved.key} to ${status}.`, ticketCard(moved));
         },
         { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
@@ -613,8 +503,7 @@ export function inProcessTicketMcpServer(
         { key, body: z.string().max(10000) },
         async ({ key: asked, body }) => {
           const ticket = ticketFor(asked, chatId);
-          const actor = agentId ? getAgent(agentId)?.handle ?? "remy" : "remy";
-          const commented = commentOnTicket(ticket.id, body, actor);
+          const commented = commentOnTicket(ticket.id, body, "remy");
           return ok(`Commented on ${commented.key}.`, ticketCard(commented));
         },
         { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
@@ -638,21 +527,6 @@ export function inProcessTicketMcpServer(
           return ok(`Created ${child.key} under ${parent.key}.`, ticketCard(child));
         },
         { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
-      ),
-      tool(
-        "handoff_ticket",
-        "Assign a ticket to one of this agent's configured handoff targets.",
-        { key, handle: z.string().describe("The next agent's handle") },
-        async ({ key: asked, handle }) => {
-          const ticket = ticketFor(asked, chatId);
-          const current = agentId ? getAgent(agentId) : undefined;
-          const next = agentByHandle(handle);
-          if (!next) throw new Error(`No agent called @${handle}.`);
-          if (!current?.handoffTo.includes(next.handle)) throw new Error(`@${current?.handle ?? "workspace"} cannot hand tickets to @${next.handle}.`);
-          const handed = handoffTicket(ticket.id, next.id, current.handle);
-          return ok(`Handed ${handed.key} to @${next.handle}.`, ticketCard(handed));
-        },
-        { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
       ),
     ],
   });

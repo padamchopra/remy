@@ -1,4 +1,3 @@
-import { resetAgentsUsingProvider } from "./agents.js";
 import { setProviderEnabled as setConfigProviderEnabled, type PublicSettings } from "./config.js";
 import { provider } from "./providers.js";
 import { resetWorkspacesUsingProvider } from "./workspaces.js";
@@ -9,7 +8,6 @@ export function setProviderEnabled(value: unknown, enabled: unknown): PublicSett
   if (typeof enabled !== "boolean") throw new Error("enabled must be true or false");
   const settings = setConfigProviderEnabled(selected.id, enabled);
   if (!enabled) {
-    resetAgentsUsingProvider(selected.id);
     resetWorkspacesUsingProvider(selected.id);
   }
   return settings;
