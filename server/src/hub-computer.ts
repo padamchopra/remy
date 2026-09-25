@@ -193,6 +193,7 @@ export class HubComputerConnection {
     socket.send(JSON.stringify({ kind: "hello", boardSync: true, protocolVersion: COMPUTER_PROTOCOL_VERSION, daemonVersion: DAEMON_VERSION, capabilities }));
     this.introduced = true;
     void this.syncEnvironments().catch(()=>{});
+    void this.syncModelKeys().catch(()=>{});
     void this.boardSync?.sync();
     this.syncThreads(socket);
     this.flushNotifications();
@@ -214,6 +215,18 @@ export class HubComputerConnection {
     })();this.environmentSync=work;
     try{await work;}finally{if(this.environmentSync===work)this.environmentSync=undefined;}
   }
+  /// Provider keys are pulled rather than pushed: the hub only says they moved,
+  /// so a computer that was asleep still comes back with the current ones.
+  private async syncModelKeys(): Promise<void> {
+    const response = await fetch(new URL(`/api/organizations/${encodeURIComponent(this.registration.organizationId)}/computers/model-keys`, this.registration.hubUrl), { method: "POST", headers: { authorization: connectionAuthorization(this.registration.organizationId, this.registration.computerId, privateKey().privateKey) }, signal: AbortSignal.timeout(10_000), redirect: "error" });
+    if (response.status === 403) return;
+    if (!response.ok) throw new Error("Your provider keys could not be read.");
+    const { applyHubModelKeys } = await import("./hub-model-keys.js");
+    if (!applyHubModelKeys(await response.json())) return;
+    const { broadcast } = await import("./notify.js");
+    broadcast({ type: "settings", topics: ["settings"] });
+  }
+
   private syncThreads(socket: WebSocket): void {
     if (!this.introduced || !this.threadRelay || this.syncingThreads) return;
     this.syncingThreads = true;
@@ -270,7 +283,7 @@ export class HubComputerConnection {
       this.sharedOrganizationIds = next;
       this.syncThreads(socket);
     }
-    if (parsed.data.kind === "board.changed") {void this.boardSync?.sync();void this.syncEnvironments().catch(()=>{});}
+    if (parsed.data.kind === "board.changed") {void this.boardSync?.sync();void this.syncEnvironments().catch(()=>{});void this.syncModelKeys().catch(()=>{});}
     if (parsed.data.kind === "notification.ack") { const id = parsed.data.id; setKv(NOTIFICATION_OUTBOX, (getKv<QueuedHubNotification[]>(NOTIFICATION_OUTBOX) ?? []).filter((n) => n.id !== id)); }
     if (parsed.data.kind === "update_required") { this.stopped = true; socket.close(1008, "Update Remy to reconnect."); return; }
     if (parsed.data.kind === "agent.deleted") { const {deleteChat}=await import("./chat.js");const shared=new Set(hubThreadIds(this.registration.organizationId));for(const id of parsed.data.threadIds)if(shared.has(id))deleteChat(id); }
@@ -342,6 +355,7 @@ export function stopHubComputerConnection(): void {
 export function startHubComputerConnection(): void {
   const registration = getKv<HubComputerRegistration>(REGISTRATION_KEY);
   if (!registration || !config.hubMode) return;
+  void import("./hub-model-keys.js").then(({ restoreHubModelKeys }) => restoreHubModelKeys()).catch(() => {});
   restartHubComputerConnection(registration);
 }
 
@@ -360,6 +374,8 @@ export async function detachHubComputer(): Promise<void> {
     if (!response.ok && response.status !== 401) throw new Error("This computer could not be removed; try again when your organization reconnects.");
   }
   stopHubComputerConnection();
+  const { forgetHubModelKeys } = await import("./hub-model-keys.js");
+  forgetHubModelKeys();
   setKv(REGISTRATION_KEY, null);
   setKv(NOTIFICATION_OUTBOX, []);
   patchSettings({ hubMode: false });

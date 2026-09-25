@@ -128,6 +128,21 @@ function encrypt(value: string): { ciphertext: string; iv: string; tag: string }
   };
 }
 
+/// Seals a value with this machine's environment key, so a credential Remy is
+/// handed rests the same way a workspace value does.
+export function sealSecret(value: string): { ciphertext: string; iv: string; tag: string } {
+  return encrypt(value);
+}
+
+export function openSecret(sealed: { ciphertext: string; iv: string; tag: string }): string {
+  return decrypt(sealed);
+}
+
+/// Keeps values out of anything Remy writes down, alongside workspace values.
+export function rememberSecrets(scope: string, values: Iterable<string>): void {
+  cleartextCache.set(scope, [...new Set([...values].filter(Boolean))]);
+}
+
 function decrypt(row: Pick<ValueRow, "ciphertext" | "iv" | "tag">): string {
   if (!row.ciphertext || !row.iv || !row.tag) return "";
   const decipher = createDecipheriv("aes-256-gcm", machineKey(), Buffer.from(row.iv, "base64"));
@@ -775,17 +790,19 @@ export function mergeEnvironmentSync(input: unknown): number {
 
 /// Supplies the assigned workspace values to a task on its execution computer.
 export async function taskEnvironment(cwd: string, chatId?: string): Promise<Record<string,string>> {
+  const { hubModelKeys } = await import("./hub-model-keys.js");
+  const machine = hubModelKeys();
   if (chatId) {
     const stored=getKv<ReturnType<typeof encrypt>>(`taskEnvironment:${chatId}`);
     if(stored) {
       const values=JSON.parse(decrypt(stored)) as Record<string,string>;
       cleartextCache.set(`task:${chatId}`,[...new Set([...(cleartextCache.get(`task:${chatId}`)??[]),...Object.values(values).filter(Boolean)])]);
-      return values;
+      return { ...machine, ...values };
     }
   }
-  try { return (await environmentForCwd(cwd)).values; }
+  try { return { ...machine, ...(await environmentForCwd(cwd)).values }; }
   catch (error) {
-    if (error instanceof Error && ["this workspace has no active environment", "this thread is not in a registered workspace"].includes(error.message)) return {};
+    if (error instanceof Error && ["this workspace has no active environment", "this thread is not in a registered workspace"].includes(error.message)) return machine;
     throw error;
   }
 }
