@@ -47,7 +47,7 @@ export function HubComputerConnect({ organizationId, ownership }: { organization
           <FieldDescription>This key works once, within fifteen minutes.</FieldDescription>
         </div>
       ) : (
-        <Button type="button" className="self-start" disabled={busy} onClick={() => void create()}>
+        <Button type="button" className="w-full max-w-sm" disabled={busy} onClick={() => void create()}>
           {busy && <Spinner data-icon="inline-start" />}
           Create a connection key
         </Button>
