@@ -103,7 +103,6 @@ try {
 
 async function runRenderIsolation(target) {
   const local = createFixture({ threadCount: 25, entryCount: 10 });
-  const inbox = createFixture({ threadCount: 25, entryCount: 10, agentCount: 25 });
   const remote = createFixture({ threadCount: 25, entryCount: 10, serverId: "peer-device" });
   return [
     await profileIsolatedRow({
@@ -113,15 +112,6 @@ async function runRenderIsolation(target) {
       hash: `#/threads/${local.primaryThreadId}`,
       rowSurface: "thread-row",
       rowId: local.primaryThreadId,
-    }),
-    await profileIsolatedRow({
-      target,
-      fixture: inbox,
-      scenario: "render-isolation-inbox",
-      hash: `#/settings/agents?agent=${inbox.primaryAgentHandle}`,
-      rowSurface: "agent-row",
-      rowId: "agent-1",
-      chatId: inbox.primaryDmId,
     }),
     await profileIsolatedRow({
       target,

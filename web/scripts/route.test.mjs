@@ -80,26 +80,15 @@ test("old thread query links still parse, then format clean", () => {
   assert.equal(formatPathLocation(parsed), "/threads/thread-1");
 });
 
-test("old Inbox links open Settings → Agents", () => {
-  const list = parseLocation("/inbox");
-  assert.equal(list.route.name, "settings");
-  assert.equal(list.route.tab, "agents");
-  assert.equal(formatPathLocation(list), "/settings/agents");
-  const named = parseLocation("/inbox/remy");
-  assert.equal(named.route.name, "settings");
-  assert.equal(named.route.tab, "agents");
-  assert.equal(named.route.agent, "remy");
-  assert.equal(formatPathLocation(named), "/settings/agents?agent=remy");
-  const app = parseLocation("/app/inbox");
-  assert.equal(app.route.name, "settings");
-  assert.equal(app.route.tab, "agents");
-  assert.equal(formatPathLocation(app), "/settings/agents");
-  const appNamed = parseLocation("/app/inbox/remy");
-  assert.equal(appNamed.route.agent, "remy");
-  assert.equal(formatPathLocation(appNamed), "/settings/agents?agent=remy");
+test("a retired Inbox or Agents link opens threads", () => {
+  for (const path of ["/inbox", "/inbox/remy", "/app/inbox", "/agents", "/agents/remy", "/app/agents"]) {
+    const parsed = parseLocation(path);
+    assert.equal(parsed.route.name, "threads", path);
+    assert.equal(formatPathLocation(parsed), "/threads", path);
+  }
 });
 
-test("a hosted /app/inbox path rewrites before runtime is known", () => {
+test("a hosted retired path rewrites before runtime is known", () => {
   const href = { current: "https://app.tryremy.dev/app/inbox" };
   globalThis.window = {
     location: {
@@ -115,7 +104,6 @@ test("a hosted /app/inbox path rewrites before runtime is known", () => {
     },
   };
   const location = normalizeLocation();
-  assert.equal(location.route.name, "settings");
-  assert.equal(location.route.tab, "agents");
-  assert.equal(new URL(href.current).pathname, "/app/settings/agents");
+  assert.equal(location.route.name, "threads");
+  assert.equal(new URL(href.current).pathname, "/app/threads");
 });

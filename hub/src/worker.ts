@@ -1397,16 +1397,6 @@ export class HubCoordinator {
       await this.scheduleAlarm(Date.now() + COMPUTER_HEARTBEAT_TIMEOUT_MS);
       return new Response(null, { status: 101, webSocket: client });
     }
-    if(url.pathname.startsWith("/github/") && org && user && request.method==="POST") {
-      try {
-        const input=await request.json() as Record<string,unknown>;
-        if(url.pathname==="/github/monitoring") {
-          if(input.inherit===true){await githubFor(this.env).inherit(org,user,String(input.workspaceId),Number(input.pullNumber));return Response.json({ok:true});}
-          if(typeof input.enabled!=="boolean")return jsonError("Choose a monitoring preference.",400);
-          await githubFor(this.env).configure(org,user,String(input.workspaceId),Number(input.pullNumber??0),input.enabled,null);return Response.json({ok:true});
-        }
-      }catch{return jsonError("This GitHub action is unavailable.",400);}
-    }
     if(url.pathname==="/linear/wake" && org){await this.scheduleAlarm(Date.now()+1000);return Response.json({ok:true});}
     if(url.pathname==="/linear/board" && org && user) {
       try {
@@ -1665,7 +1655,6 @@ export class HubCoordinator {
 
       if(!["working","running","busy","needs_input"].includes(String(frame.snapshot.detail.state))) {
         const text=frame.snapshot.detail.entries.filter(e=>e.kind==="assistant"&&e.text).map(e=>e.text).join("\n\n");
-        this.ctx.waitUntil(this.replyOnGitHub(organizationId,attachment.computerId,frame.snapshot.id,text));
         this.ctx.waitUntil(this.withLinear(async()=>{try{const service=this.linearBoard(organizationId);const artifacts=await service.artifacts(frame.snapshot.id,frame.snapshot.detail.entries.flatMap(e=>Array.isArray(e.artifacts)?e.artifacts:[]));await service.reply(attachment.computerId!,frame.snapshot.id,`${text}${artifacts?`\n\n${artifacts}`:''}`);}catch{await this.scheduleAlarm(Date.now()+60_000);}}));
       }
       return;
@@ -2271,15 +2260,6 @@ export class HubCoordinator {
   private async withLinear<T>(work:()=>Promise<T>):Promise<T> {const before=this.linearWork,job=(async()=>{await before?.catch(()=>undefined);return work();})();this.linearWork=job;try{return await job;}finally{if(this.linearWork===job)this.linearWork=undefined;}}
   private linearBoard(org:string){return new LinearBoard(org,linearFor(this.env),this.board,new DurableBoardStorage(this.ctx.storage),new URL(this.env.WEB_APP_URL ?? this.env.BETTER_AUTH_URL).origin);}
 
-  private readonly githubReplies=new Map<string,Promise<void>>();
-  private async replyOnGitHub(org:string,computer:string,thread:string,text:string) {
-    if(this.githubReplies.has(thread))return this.githubReplies.get(thread);
-    const work=(async()=>{
-      const activity=await this.env.DB.prepare("SELECT computer_id FROM github_activity WHERE organization_id=? AND thread_id=? AND phase='running'").bind(org,thread).first<{computer_id:string}>();if(activity?.computer_id!==computer)return;
-      try{await githubFor(this.env).reply(org,thread,text);}catch{await this.scheduleAlarm(Date.now()+60_000);}
-    })();this.githubReplies.set(thread,work);try{await work;}finally{this.githubReplies.delete(thread);}
-  }
-
   async alarm(): Promise<void> {
     const linearOrg=await this.ctx.storage.get<string>("organizationId");
     if(linearOrg) await this.withLinear(async()=>{
@@ -2294,10 +2274,6 @@ export class HubCoordinator {
 
     const notificationOrg = await this.ctx.storage.get<string>("organizationId");
     if (notificationOrg) await this.notifications.deliver(notificationOrg, this.env);
-    if(notificationOrg) {
-      const pending=(await this.env.DB.prepare("SELECT thread_id,computer_id FROM github_activity WHERE organization_id=? AND phase='running' LIMIT 100").bind(notificationOrg).all<{thread_id:string;computer_id:string}>()).results;
-      for(const run of pending){const thread=await this.threads.get(run.computer_id,run.thread_id);if(thread && !["working","running","busy","needs_input"].includes(String(thread.detail.state)))await this.replyOnGitHub(notificationOrg,run.computer_id,run.thread_id,thread.detail.entries.filter(e=>e.kind==="assistant"&&e.text).map(e=>e.text).join("\n\n"));}
-    }
     const now = Date.now();
     const pushDue = notificationOrg ? await this.env.DB.prepare("SELECT MIN(next_attempt_at) AS due FROM notification_pushes WHERE organization_id=?").bind(notificationOrg).first<{ due: number | null }>() : null;
     let next: number | undefined = pushDue?.due ? Math.max(Date.now() + 1000, pushDue.due) : undefined;
