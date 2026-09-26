@@ -22,3 +22,6 @@ mobile/.expo/
 mobile/ios/
 mobile/android/
 mobile/dist/
+
+# Staged npm package for @padamchopra/remy
+.npm-package/
