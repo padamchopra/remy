@@ -22,7 +22,7 @@ function fixture() {
       .join("\n"),
   );
   sqlite.exec(
-    "INSERT INTO user(id,name,email,createdAt,updatedAt) VALUES('ada','Ada','ada@example.test',1,1),('grace','Grace','grace@example.test',1,1); INSERT INTO organizations(id,name,createdAt,updatedAt) VALUES('studio','Studio',1,1),('personal','Personal',1,1); INSERT INTO memberships(id,organization_id,user_id,role,createdAt,updatedAt) VALUES('m1','studio','ada','owner',1,1),('m2','studio','grace','member',1,1),('m3','personal','ada','owner',1,1);",
+    "INSERT INTO user(id,name,email,createdAt,updatedAt) VALUES('ada','Ada','ada@example.test',1,1),('grace','Grace','grace@example.test',1,1); INSERT INTO organizations(id,name,createdAt,updatedAt,personal_owner_id) VALUES('studio','Studio',1,1,NULL),('personal','Personal',1,1,'ada'); INSERT INTO memberships(id,organization_id,user_id,role,createdAt,updatedAt) VALUES('m1','studio','ada','owner',1,1),('m2','studio','grace','member',1,1),('m3','personal','ada','owner',1,1);",
   );
   const changes: string[] = [];
   const auth = {
@@ -81,6 +81,19 @@ test("a member sees only their Linear accounts", async () => {
   assert.deepEqual(ada.map((row) => row.externalId), ["linear-studio"]);
   assert.deepEqual(grace.map((row) => row.externalId), ["linear-grace"]);
   await assert.rejects(accounts.setLink("studio", "grace", ada[0].id));
+});
+
+test("a Personal Linear choice is the organization fallback", async () => {
+  const { accounts, save } = fixture();
+  const accountId = await save("ada", "linear-studio", "secret-ada");
+  await accounts.setLink("personal", "ada", accountId);
+  assert.deepEqual(await accounts.view("studio", "ada").then((value) => value.link), {
+    externalId: "linear-studio",
+    label: "linear-studio",
+  });
+  const listed = await accounts.list("ada");
+  assert.equal(listed[0].general, true);
+  assert.deepEqual(listed[0].organizationIds, []);
 });
 
 test("leaving drops that person's sign-in and clears the workspace when nobody else has it", async () => {

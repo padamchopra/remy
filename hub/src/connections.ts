@@ -143,10 +143,10 @@ export class Connections {
     const member = await this.organizations.member(org, user);
     const rows = await this.db
       .prepare(
-        "SELECT id,provider,subject,external_id,label,status,updated_at FROM connections WHERE organization_id=? AND (subject='' OR subject=?)",
+        "SELECT c.id,c.organization_id,c.provider,c.subject,c.external_id,c.label,c.status,c.updated_at,o.personal_owner_id FROM connections c JOIN organizations o ON o.id=c.organization_id WHERE (c.organization_id=? OR o.personal_owner_id=?) AND (c.subject='' OR c.subject=?) ORDER BY c.updated_at,c.id",
       )
-      .bind(org, user)
-      .all();
+      .bind(org, user, user)
+      .all<Pick<Connection, "id" | "organization_id" | "provider" | "subject" | "external_id" | "label" | "status" | "updated_at"> & { personal_owner_id: string | null }>();
     return {
       canManage: member.role !== "member",
       providers: this.providers.map((p) => ({
@@ -155,7 +155,10 @@ export class Connections {
         subjects: p.subjects,
         configured: !!p.clientId && !!p.clientSecret,
       })),
-      connections: rows.results,
+      connections: rows.results.map(({ personal_owner_id, ...row }) => ({
+        ...row,
+        availability: personal_owner_id === user ? "all" : row.organization_id,
+      })),
       linearAccounts: await this.linearAccounts().then((accounts) => accounts.list(user)),
     };
   }
@@ -165,12 +168,36 @@ export class Connections {
         new LinearAccounts(this.db, this.vault, this.organizations, this.changed, this.now),
     );
   }
+  private async notifyAvailability(org: string, user?: string) {
+    await this.changed(org);
+    if (!user) return;
+    const personal = await this.db
+      .prepare("SELECT 1 FROM organizations WHERE id=? AND personal_owner_id=?")
+      .bind(org, user)
+      .first();
+    if (!personal) return;
+    const memberships = await this.db
+      .prepare("SELECT organization_id FROM memberships WHERE user_id=? AND organization_id<>?")
+      .bind(user, org)
+      .all<{ organization_id: string }>();
+    for (const membership of memberships.results) await this.changed(membership.organization_id);
+  }
   async get(org: string, provider: string, subject = "") {
     return this.db
       .prepare(
         "SELECT * FROM connections WHERE organization_id=? AND provider=? AND subject=?",
       )
       .bind(org, provider, subject)
+      .first<Connection>();
+  }
+  private async resolve(org: string, provider: string, subject: string) {
+    const direct = await this.get(org, provider, subject);
+    if (direct || !subject) return direct;
+    return this.db
+      .prepare(
+        "SELECT c.* FROM connections c JOIN organizations o ON o.id=c.organization_id WHERE o.personal_owner_id=? AND c.provider=? AND c.subject=? ORDER BY c.updated_at DESC LIMIT 1",
+      )
+      .bind(subject, provider, subject)
       .first<Connection>();
   }
   private async epoch(org: string, provider: string, subject: string) {
@@ -283,8 +310,9 @@ export class Connections {
     const identity = await provider.identity(tokens.access_token, this.send);
     await this.authorize(saved.organization_id, user, saved.subject);
     if (providerId === "linear") {
-      await (await this.linearAccounts()).save(user, tokens, identity);
-      await this.changed(saved.organization_id);
+      const accounts = await this.linearAccounts();
+      const accountId = await accounts.save(user, tokens, identity);
+      await accounts.setLink(saved.organization_id, user, accountId);
       return saved.organization_id;
     }
     const existing = await this.get(
@@ -346,7 +374,7 @@ export class Connections {
     const result = await this.db.batch(statements);
     if (!result[0]?.meta.changes)
       throw new ConnectionError("This connection changed; connect again.", 409);
-    await this.changed(saved.organization_id);
+    await this.notifyAvailability(saved.organization_id, saved.subject || undefined);
     return saved.organization_id;
   }
   private async exchange(
@@ -393,10 +421,10 @@ export class Connections {
   }
   async token(org: string, providerId: string, subject = "") {
     if (subject) await this.organizations.member(org, subject);
-    const row = await this.get(org, providerId, subject);
+    const row = await this.resolve(org, providerId, subject);
     if (!row || row.status !== "connected")
       throw new ConnectionError("Reconnect your account to continue.", 409);
-    const context = `${org}:${providerId}:${row.id}`,
+    const context = `${row.organization_id}:${providerId}:${row.id}`,
       tokens = await this.vault.open<ConnectionTokens>(
         row.credentials,
         context,
@@ -443,7 +471,8 @@ export class Connections {
         )
         .bind(this.now(), row.id, row.generation, lease)
         .run();
-      await this.changed(org);
+      await this.notifyAvailability(row.organization_id, subject || undefined);
+      if (row.organization_id !== org) await this.changed(org);
       throw new ConnectionError("Reconnect your account to continue.", 409);
     }
   }
@@ -458,7 +487,6 @@ export class Connections {
       await this.authorize(org, user, user);
       if (!accountId) throw new ConnectionError("Choose a Linear account.");
       await (await this.linearAccounts()).disconnect(user, accountId);
-      await this.changed(org);
       return;
     }
     await this.authorize(org, user, subject);
@@ -480,7 +508,7 @@ export class Connections {
         )
         .bind(org, provider, subject),
     ]);
-    await this.changed(org);
+    await this.notifyAvailability(org, subject || undefined);
   }
 }
 

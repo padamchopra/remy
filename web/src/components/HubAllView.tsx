@@ -34,15 +34,30 @@ import {
 } from "./ui/select";
 import {
   Circle,
+  Github,
   Laptop,
+  ListTodo,
   Lock,
   Plug,
+  Plus,
   Users,
 } from "lucide-react";
 import { HubAccountPickerDialog } from "./HubAccountPickerDialog";
 import type { ConnectionsState } from "./HubConnections";
 import { ComposerMenu } from "./ComposerMenu";
 import type { HubThreadWorkspaceOption } from "./HubThreadComposer";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog-base";
+import { Field, FieldLabel } from "./ui/field";
+import { toast } from "sonner";
+import { apiError } from "@/lib/api-error";
 
 const Threads = lazy(() => import("./HubThreads"));
 const Board = lazy(() => import("./HubBoard"));
@@ -391,6 +406,157 @@ type SummaryResource = {
   connections?: ConnectionsState["connections"];
 };
 
+type ProviderConnection = {
+  key: string;
+  id: string;
+  provider: "github" | "linear";
+  label: string;
+  status: string;
+  availability: "all" | string;
+  organizationId: string;
+};
+
+function ConnectionsSummary({ organizations, navigate }: { organizations: Organization[]; navigate: (route: Route) => void }) {
+  const resources = useOwnedResources<ConnectionsState>(organizations, "/connections");
+  const personal = organizations.find((organization) => organization.personal) ?? organizations[0];
+  const [adding, setAdding] = useState<"github" | "linear">();
+  const [availability, setAvailability] = useState("all");
+  const [busy, setBusy] = useState(false);
+  const names = new Map(organizations.map((organization) => [organization.id, organization.personal ? "Personal" : organization.name]));
+  const rows = new Map<string, ProviderConnection>();
+  for (const resource of resources) {
+    for (const connection of resource.value?.connections ?? []) {
+      if (connection.provider !== "github" || !connection.subject) continue;
+      rows.set(connection.id, {
+        key: connection.id,
+        id: connection.id,
+        provider: "github",
+        label: connection.label,
+        status: connection.status,
+        availability: connection.availability,
+        organizationId: connection.availability === "all" ? personal?.id ?? resource.organization.id : connection.organization_id,
+      });
+    }
+    for (const account of resource.value?.linearAccounts ?? []) {
+      const scopes = account.general ? ["all"] : account.organizationIds ?? [];
+      for (const scope of scopes) {
+        const key = `${account.id}:${scope}`;
+        rows.set(key, {
+          key,
+          id: account.id,
+          provider: "linear",
+          label: account.label,
+          status: account.status,
+          availability: scope,
+          organizationId: scope === "all" ? personal?.id ?? resource.organization.id : scope,
+        });
+      }
+    }
+  }
+  const loaded = resources.every((resource) => resource.value || resource.error);
+  const error = resources.find((resource) => resource.error)?.error;
+  const availableScopes = (provider: "github" | "linear") => {
+    const used = new Set(
+      [...rows.values()]
+        .filter((row) => row.provider === provider)
+        .map((row) => row.availability),
+    );
+    return [
+      { id: "all", label: "All organizations" },
+      ...organizations
+        .filter((organization) => !organization.personal)
+        .map((organization) => ({ id: organization.id, label: organization.name })),
+    ].filter((scope) => !used.has(scope.id));
+  };
+  const scopes = adding ? availableScopes(adding) : [];
+  const connect = async () => {
+    if (!adding || !personal) return;
+    const owner = availability === "all" ? personal.id : availability;
+    setBusy(true);
+    try {
+      const result = await hubRequest<{ url: string }>(`${hubThreadBase(owner)}/connections/${adding}`, "POST", { scope: "member" });
+      window.location.assign(result.url);
+    } catch (cause) {
+      toast.error(`Couldn't connect ${adding === "github" ? "GitHub" : "Linear"}`, { description: apiError(cause) });
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-6" aria-label="Connection settings">
+      {error && <p role="alert">{error}</p>}
+      {!loaded ? <Spinner aria-label="Loading connections" /> : (["github", "linear"] as const).map((provider) => {
+        const providerRows = [...rows.values()].filter((row) => row.provider === provider);
+        const nextScopes = availableScopes(provider);
+        const label = provider === "github" ? "GitHub" : "Linear";
+        const Icon = provider === "github" ? Github : ListTodo;
+        return (
+          <Card key={provider} className="min-w-0">
+            <CardHeader className="flex flex-row items-center gap-3">
+              <Icon className="size-5 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <CardTitle role="heading" aria-level={2}>{label}</CardTitle>
+                <CardDescription>{providerRows.length ? `${providerRows.length} ${providerRows.length === 1 ? "connection" : "connections"}` : `Connect ${label} to use it in Remy.`}</CardDescription>
+              </div>
+              <Button
+                size={providerRows.length ? "icon-sm" : "sm"}
+                variant={providerRows.length ? "outline" : "default"}
+                aria-label={providerRows.length ? `Add ${label} connection` : undefined}
+                disabled={!nextScopes.length}
+                onClick={() => {
+                  setAvailability(nextScopes[0]?.id ?? "all");
+                  setAdding(provider);
+                }}
+              >
+                {providerRows.length ? <Plus /> : `Connect ${label}`}
+              </Button>
+            </CardHeader>
+            {providerRows.length ? <CardContent>
+              <ItemGroup className="gap-2">
+                {providerRows.map((row) => (
+                  <Item key={row.key} variant="outline" asChild>
+                    <Button
+                      variant="ghost"
+                      className="h-auto w-full justify-start whitespace-normal text-left"
+                      data-link
+                      onClick={() => navigate({ name: "settings", tab: "connections", organizationId: "all", ownerOrganizationId: row.organizationId })}
+                    >
+                      <ItemContent className="min-w-0">
+                        <ItemTitle className="w-full whitespace-normal break-words">{row.label}</ItemTitle>
+                        <ItemDescription>{row.availability === "all" ? "All organizations" : names.get(row.availability) ?? "Organization"} · {row.status === "reauth" ? "Reconnect your account" : "Connected"}</ItemDescription>
+                      </ItemContent>
+                    </Button>
+                  </Item>
+                ))}
+              </ItemGroup>
+            </CardContent> : null}
+          </Card>
+        );
+      })}
+      <Dialog open={!!adding} onOpenChange={(open) => { if (!open && !busy) setAdding(undefined); }}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Connect {adding === "github" ? "GitHub" : "Linear"}</DialogTitle>
+            <DialogDescription>Choose where this account is available.</DialogDescription>
+          </DialogHeader>
+          <Field>
+            <FieldLabel>Available to</FieldLabel>
+            <Select value={availability} onValueChange={setAvailability} disabled={busy}>
+              <SelectTrigger aria-label="Available to"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {scopes.map((scope) => <SelectItem key={scope.id} value={scope.id}>{scope.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </Field>
+          <DialogFooter>
+            <Button variant="outline" disabled={busy} onClick={() => setAdding(undefined)}>Cancel</Button>
+            <Button disabled={busy} onClick={() => void connect()}>Connect account</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </section>
+  );
+}
+
 function SettingsSummary({
   organizations,
   kind,
@@ -699,11 +865,13 @@ export default function HubAllView({
       <EmptyState title="Your account is unavailable" />
     );
   }
-  if (route.name === "settings" && ["environments", "connections"].includes(route.tab))
+  if (route.name === "settings" && route.tab === "connections")
+    return <ConnectionsSummary organizations={organizations} navigate={navigate} />;
+  if (route.name === "settings" && route.tab === "environments")
     return (
       <SettingsSummary
         organizations={organizations}
-        kind={route.tab as "devices" | "environments" | "connections"}
+        kind="environments"
         navigate={navigate}
       />
     );

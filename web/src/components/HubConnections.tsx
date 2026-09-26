@@ -7,7 +7,7 @@ import { useHubResource } from "@/lib/hub-organization";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { toast } from "sonner";
 import { apiError } from "@/lib/api-error";
-import { LinearAccountsCard } from "./LinearConnection";
+import { HubLinearWorkspace, LinearAccountsCard } from "./LinearConnection";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -29,12 +29,14 @@ import {
 
 export type ConnectionSummary = {
   id: string;
+  organization_id: string;
   provider: string;
   subject: string;
   external_id: string;
   label: string;
   status: string;
   updated_at: number;
+  availability: "all" | string;
 };
 export type ConnectionsState = {
   canManage: boolean;
@@ -51,6 +53,8 @@ export type ConnectionsState = {
     label: string;
     status: string;
     updatedAt: number;
+    general?: boolean;
+    organizationIds?: string[];
   }[];
 };
 
@@ -117,6 +121,7 @@ export function HubConnections({ organizationId }: { organizationId: string }) {
           }}
         />
       )}
+      <HubLinearWorkspace organizationId={organizationId} personal={isPersonal} />
       {value?.providers.filter((provider) => provider.id !== "linear").map((provider) => (
         <Card key={provider.id} className="min-w-0">
           <CardHeader>

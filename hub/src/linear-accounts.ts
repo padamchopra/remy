@@ -8,7 +8,7 @@ import type { OrganizationService } from "./organizations.js";
 
 export const LINEAR_MCP_URL = "https://mcp.linear.app/mcp";
 export const LINEAR_MISSING_NOTICE =
-  "Connect your Linear account in Connections, or choose it in Organization.";
+  "Connect your Linear account in Connections.";
 export const LINEAR_REAUTH_NOTICE = "Reconnect your account in Connections.";
 
 export type LinearAccountView = {
@@ -17,6 +17,8 @@ export type LinearAccountView = {
   label: string;
   status: string;
   updatedAt: number;
+  general: boolean;
+  organizationIds: string[];
 };
 export type LinearLinkView = { externalId: string; label: string } | null;
 export type LinearThreadAccess =
@@ -56,7 +58,7 @@ export class LinearAccounts {
   ) {}
 
   async list(user: string): Promise<LinearAccountView[]> {
-    const rows = await this.db
+    const [rows, links] = await Promise.all([this.db
       .prepare(
         "SELECT id,external_id,label,status,updated_at FROM linear_accounts WHERE user_id=? ORDER BY updated_at,external_id",
       )
@@ -67,13 +69,20 @@ export class LinearAccounts {
         label: string;
         status: string;
         updated_at: number;
-      }>();
+      }>(), this.db
+        .prepare(
+          "SELECT l.external_id,l.organization_id,o.personal_owner_id FROM organization_linear_links l JOIN organizations o ON o.id=l.organization_id WHERE o.personal_owner_id=? OR EXISTS(SELECT 1 FROM memberships m WHERE m.organization_id=l.organization_id AND m.user_id=?)",
+        )
+        .bind(user, user)
+        .all<{ external_id: string; organization_id: string; personal_owner_id: string | null }>()]);
     return rows.results.map((row) => ({
       id: row.id,
       externalId: row.external_id,
       label: row.label,
       status: row.status,
       updatedAt: row.updated_at,
+      general: links.results.some((link) => link.external_id === row.external_id && link.personal_owner_id === user),
+      organizationIds: links.results.filter((link) => link.external_id === row.external_id && !link.personal_owner_id).map((link) => link.organization_id),
     }));
   }
 
@@ -92,6 +101,7 @@ export class LinearAccounts {
       )
       .bind(id, user, identity.id, identity.label, credentials, expires, this.now())
       .run();
+    return id;
   }
 
   async disconnect(user: string, accountId: string) {
@@ -107,6 +117,7 @@ export class LinearAccounts {
     // A second Linear workspace can still be mid-consent. Disconnecting this
     // row must not burn that state or the shared OAuth epoch.
     await this.clearOrphanLinks(row.external_id);
+    await this.notifyAvailability(user);
   }
 
   async link(org: string): Promise<LinearLinkView> {
@@ -120,7 +131,7 @@ export class LinearAccounts {
   async view(org: string, user: string) {
     if (!(await this.isMember(org, user)))
       throw new ConnectionError("This connection action is unavailable.", 403);
-    return { accounts: await this.list(user), link: await this.link(org) };
+    return { accounts: await this.list(user), link: await this.effectiveLink(org, user) };
   }
 
   async setLink(org: string, user: string, accountId: string | null) {
@@ -131,7 +142,7 @@ export class LinearAccounts {
         .prepare("DELETE FROM organization_linear_links WHERE organization_id=?")
         .bind(org)
         .run();
-      await this.changed(org);
+      await this.notifyLink(org, user);
       return this.view(org, user);
     }
     const account = await this.db
@@ -145,14 +156,14 @@ export class LinearAccounts {
       )
       .bind(org, account.external_id, account.label, this.now())
       .run();
-    await this.changed(org);
+    await this.notifyLink(org, user);
     return this.view(org, user);
   }
 
   /// Sync may use the acting member, or the latest remaining member who still
   /// has this workspace. It never reads a token stored on the organization.
   async accessToken(org: string, user?: string) {
-    const current = await this.link(org);
+    const current = user ? await this.effectiveLink(org, user) : await this.link(org);
     if (!current) throw new ConnectionError("Choose a Linear account for this organization.");
     const row = user
       ? await this.memberAccount(org, user, current.externalId)
@@ -168,7 +179,7 @@ export class LinearAccounts {
   }
 
   async forThread(org: string, user: string): Promise<LinearThreadAccess> {
-    const current = await this.link(org);
+    const current = await this.effectiveLink(org, user);
     if (!current || !(await this.isMember(org, user))) return { kind: "off" };
     const row = await this.db
       .prepare("SELECT * FROM linear_accounts WHERE user_id=? AND external_id=?")
@@ -213,6 +224,34 @@ export class LinearAccounts {
       .prepare("SELECT * FROM linear_accounts WHERE user_id=? AND external_id=?")
       .bind(user, externalId)
       .first<AccountRow>();
+  }
+
+  private async effectiveLink(org: string, user: string) {
+    const direct = await this.link(org);
+    if (direct) return direct;
+    const personal = await this.db
+      .prepare("SELECT id FROM organizations WHERE personal_owner_id=?")
+      .bind(user)
+      .first<{ id: string }>();
+    return personal ? this.link(personal.id) : null;
+  }
+
+  private async notifyLink(org: string, user: string) {
+    await this.changed(org);
+    const personal = await this.db
+      .prepare("SELECT 1 FROM organizations WHERE id=? AND personal_owner_id=?")
+      .bind(org, user)
+      .first();
+    if (personal) await this.notifyAvailability(user, org);
+  }
+
+  private async notifyAvailability(user: string, except?: string) {
+    const memberships = await this.db
+      .prepare("SELECT organization_id FROM memberships WHERE user_id=?")
+      .bind(user)
+      .all<{ organization_id: string }>();
+    for (const membership of memberships.results)
+      if (membership.organization_id !== except) await this.changed(membership.organization_id);
   }
 
   private async isMember(org: string, user: string) {
@@ -289,13 +328,7 @@ export class LinearAccounts {
       )
       .bind(this.now(), row.id, row.generation, lease)
       .run();
-    const orgs = await this.db
-      .prepare(
-        "SELECT l.organization_id FROM organization_linear_links l JOIN memberships m ON m.organization_id=l.organization_id AND m.user_id=? WHERE l.external_id=?",
-      )
-      .bind(row.user_id, row.external_id)
-      .all<{ organization_id: string }>();
-    for (const org of orgs.results) await this.changed(org.organization_id);
+    await this.notifyAvailability(row.user_id);
   }
 
   private async refresh(refreshToken: string): Promise<ConnectionTokens> {

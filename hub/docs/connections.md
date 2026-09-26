@@ -1,6 +1,6 @@
-# Organization connections
+# Connections
 
-WRK-21 and WRK-133–136 provide the shared connection broker. Settings → Connections belongs to the organization. Organization connections require an administrator; member identities can be connected and disconnected only by that member. Workspace behavior belongs to the later integration's workspace policy, rather than a second copy of its credential.
+WRK-21 and WRK-133–136 provide the shared connection broker. Settings → Connections is one account-wide list grouped by provider. A member connects and disconnects only their own identity. Each connection is available either to every organization through Personal or only to one selected organization. An organization-specific connection overrides the Personal fallback without copying its credential. Workspace behavior belongs to the later integration's workspace policy, rather than a second copy of its credential.
 
 Apply migration 0012. The hub uses its existing JOBS queue and scheduled trigger. Register provider client IDs as variables and client secrets/webhook secrets through Secret Store bindings:
 
@@ -13,7 +13,7 @@ Provider definitions live in connection-providers.ts. Adding a provider supplies
 
 Credentials and PKCE verifiers are encrypted using AUTH_SECRET-derived AES-GCM keys with organization/provider/record context. Public reads return identity labels and connection state, never credentials. State is single-use, expires after ten minutes and is bound to the signed-in member. A disconnect advances an epoch so an already-running callback cannot reconnect it. Member departure removes the member credential. Organization credentials survive their original installer's departure and disappear with the organization.
 
-Linear is the exception. Each person connects their own Linear account, and a second workspace adds a row instead of replacing the first. The organization stores only which Linear workspace it uses. Leaving removes that person's sign-in from the organization immediately and does not copy the token. If no remaining member has a sign-in for that workspace, the organization's link is cleared. Disconnecting one account does not advance the shared epoch, so another Linear consent can still finish.
+Linear keeps each person's sign-in, and a second workspace adds a row instead of replacing the first. The organization stores only which Linear workspace it uses. A Personal choice is the fallback for organizations without their own choice. Leaving removes that person's sign-in from the organization immediately and does not copy the token. If no remaining member has a sign-in for that workspace, the organization's link is cleared. Disconnecting one account does not advance the shared epoch, so another Linear consent can still finish.
 
 Refresh uses a D1 lease and generation check. A failed refresh asks the owner to reconnect. Signed webhook bodies are bounded to 1 MB, persist before acknowledgement and are deduplicated by both provider delivery ID and signed-body digest. The queue contains only a receipt ID. A coordinator serializes a receipt's processing; handlers must additionally use stable operation IDs for external writes that can succeed before a process restart. Pending receipts are requeued every five minutes after queue retries are exhausted. Connection changes notify open settings; reconnect reloads authoritative state.
 

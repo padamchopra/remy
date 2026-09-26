@@ -28,6 +28,8 @@ export type LinearAccountRow = {
   label: string;
   status: string;
   updatedAt: number;
+  general?: boolean;
+  organizationIds?: string[];
 };
 export type LinearLinkRow = { externalId: string; label: string } | null;
 export type LinearConnectionView = { accounts: LinearAccountRow[]; link: LinearLinkRow };
@@ -141,7 +143,6 @@ export function LinearWorkspaceLink({
   busy,
   description,
   saved,
-  onConnect,
   onChoose,
   organizationId,
 }: {
@@ -150,7 +151,6 @@ export function LinearWorkspaceLink({
   busy: boolean;
   description: string;
   saved: string;
-  onConnect: () => void;
   onChoose: (accountId: string | null) => Promise<void>;
   organizationId?: string;
 }) {
@@ -197,9 +197,6 @@ export function LinearWorkspaceLink({
             </SelectContent>
           </Select>
         </Field>
-        <Button variant="outline" disabled={busy} onClick={onConnect}>
-          {accounts.length ? "Connect another account" : "Connect Linear"}
-        </Button>
       </CardContent>
     </Card>
   );
@@ -238,15 +235,6 @@ export function HubLinearWorkspace({ organizationId, personal = false }: { organ
       description={description}
       saved={description}
       organizationId={organizationId}
-      onConnect={() => {
-        setBusy(true);
-        void hubRequest<{ url: string }>(`${hubThreadBase(organizationId)}/connections/linear`, "POST", { scope: "member" })
-          .then((result) => window.location.assign(result.url))
-          .catch((error) => {
-            toast.error("Couldn't connect Linear", { description: apiError(error) });
-            setBusy(false);
-          });
-      }}
       onChoose={async (accountId) => {
         setBusy(true);
         try {
@@ -301,7 +289,6 @@ export function LocalLinearSettings() {
         busy={busy}
         description="Threads you start in Personal use this account."
         saved="Threads you start in Personal use this account."
-        onConnect={() => openKey()}
         onChoose={async (accountId) => {
           setBusy(true);
           try {
