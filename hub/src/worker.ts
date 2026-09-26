@@ -448,8 +448,8 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
   if (attachmentDownload && request.method === "GET") {
     const [, org, computerId, threadId, attachmentId] = attachmentDownload;
     const organizationId = decodeURIComponent(org), decodedComputerId = decodeURIComponent(computerId);
-    const share = await env.DB.prepare("SELECT source_organization_id FROM organization_computer_shares WHERE organization_id=? AND computer_id=?").bind(organizationId, decodedComputerId).first<{source_organization_id:string}>();
-    const computer = await authenticateComputer(request, share?.source_organization_id ?? organizationId, computerStore);
+    const stored = await computerStore.computer(organizationId, decodedComputerId);
+    const computer = await authenticateComputer(request, stored?.organizationId ?? organizationId, computerStore);
     if (!computer || computer.computerId !== decodeURIComponent(computerId)) return jsonError("Image not found.", 404);
     const object = await env.OBJECTS.get(`thread-attachments/${encodeURIComponent(organizationId)}/${encodeURIComponent(computer.computerId)}/${threadId}/${attachmentId}`);
     if (!object) return jsonError("Image not found.", 404);
@@ -1304,37 +1304,33 @@ export class HubCoordinator {
     if (url.pathname === "/shared-computers/request" && request.method === "POST" && org) {
       const targetOrganizationId = request.headers.get("x-target-organization-id") ?? "";
       const computerId = request.headers.get("x-computer-id") ?? "";
-      const grant = await this.env.DB.prepare("SELECT 1 FROM organization_computer_shares WHERE organization_id=? AND source_organization_id=? AND computer_id=?").bind(targetOrganizationId, org, computerId).first();
-      if (!grant) return jsonError("This computer is no longer shared.", 403);
       const input = await body<{ actor?: unknown; method?: unknown; path?: unknown; input?: unknown }>(request);
       const actor = threadMemberSchema.safeParse(input?.actor);
       if (!actor.success || typeof input?.method !== "string" || typeof input.path !== "string" || !input.path.startsWith("/")) return jsonError("This computer request is invalid.", 400);
+      if (!await this.canRelayComputer(org, targetOrganizationId, computerId, actor.data.id)) return jsonError("This computer is no longer shared.", 403);
       return this.sendComputerRequest(computerId, targetOrganizationId, actor.data, input.method, input.path, input.input);
     }
     if (url.pathname === "/shared-threads/snapshot" && request.method === "POST" && org) {
       const sourceOrganizationId = request.headers.get("x-source-organization-id") ?? "";
       const computerId = request.headers.get("x-computer-id") ?? "";
-      const grant = await this.env.DB.prepare("SELECT 1 FROM organization_computer_shares WHERE organization_id=? AND source_organization_id=? AND computer_id=?").bind(org, sourceOrganizationId, computerId).first();
       const parsed = threadSnapshotSchema.safeParse(await request.json());
-      if (!grant || !parsed.success || parsed.data.access.organizationId !== org) return jsonError("This shared thread is unavailable.", 403);
+      if (!await this.canRelayComputer(sourceOrganizationId, org, computerId) || !parsed.success || parsed.data.access.organizationId !== org) return jsonError("This shared thread is unavailable.", 403);
       await this.threads.snapshot(computerId, parsed.data);
       return Response.json({ ok: true });
     }
     if (url.pathname === "/shared-threads/manifest" && request.method === "POST" && org) {
       const sourceOrganizationId = request.headers.get("x-source-organization-id") ?? "";
       const computerId = request.headers.get("x-computer-id") ?? "";
-      const grant = await this.env.DB.prepare("SELECT 1 FROM organization_computer_shares WHERE organization_id=? AND source_organization_id=? AND computer_id=?").bind(org, sourceOrganizationId, computerId).first();
       const input = await body<{ ids?: unknown }>(request);
-      if (!grant || !Array.isArray(input?.ids) || !input.ids.every(id => typeof id === "string")) return jsonError("This shared thread list is unavailable.", 403);
+      if (!await this.canRelayComputer(sourceOrganizationId, org, computerId) || !Array.isArray(input?.ids) || !input.ids.every(id => typeof id === "string")) return jsonError("This shared thread list is unavailable.", 403);
       await this.threads.manifest(computerId, input.ids);
       return Response.json({ ok: true });
     }
     if (url.pathname === "/shared-notification" && request.method === "POST" && org) {
       const sourceOrganizationId = request.headers.get("x-source-organization-id") ?? "";
       const computerId = request.headers.get("x-computer-id") ?? "";
-      const grant = await this.env.DB.prepare("SELECT 1 FROM organization_computer_shares WHERE organization_id=? AND source_organization_id=? AND computer_id=?").bind(org, sourceOrganizationId, computerId).first();
       const input = await body<import("@remy/contract").HubNotificationInput>(request);
-      if (!grant || !input) return jsonError("This shared notification is unavailable.", 403);
+      if (!await this.canRelayComputer(sourceOrganizationId, org, computerId) || !input) return jsonError("This shared notification is unavailable.", 403);
       const recipients = await this.notifications.raise(org, computerId, input);
       for (const userId of recipients ?? []) this.invalidateNotifications(userId);
       if (recipients) await this.scheduleAlarm(Date.now() + 1_000);
@@ -1698,8 +1694,7 @@ export class HubCoordinator {
       }
       if (frame.snapshot.access.organizationId !== organizationId) {
         const targetOrganizationId = frame.snapshot.access.organizationId;
-        const grant = await this.env.DB.prepare("SELECT 1 FROM organization_computer_shares WHERE organization_id=? AND source_organization_id=? AND computer_id=?").bind(targetOrganizationId, organizationId, attachment.computerId).first();
-        if (!grant) return;
+        if (!await this.canRelayComputer(organizationId, targetOrganizationId, attachment.computerId)) return;
         await this.env.COORDINATOR.get(this.env.COORDINATOR.idFromName(`organization:${targetOrganizationId}`)).fetch(new Request("https://internal/shared-threads/snapshot", { method: "POST", headers: { "content-type": "application/json", "x-organization-id": targetOrganizationId, "x-source-organization-id": organizationId, "x-computer-id": attachment.computerId }, body: JSON.stringify(frame.snapshot) }));
         return;
       }
@@ -1717,8 +1712,7 @@ export class HubCoordinator {
       const targetOrganizationId = frame.organizationId ?? organizationId;
       if (targetOrganizationId === organizationId) await this.threads.manifest(attachment.computerId, frame.ids);
       else {
-        const grant = await this.env.DB.prepare("SELECT 1 FROM organization_computer_shares WHERE organization_id=? AND source_organization_id=? AND computer_id=?").bind(targetOrganizationId, organizationId, attachment.computerId).first();
-        if (!grant) return;
+        if (!await this.canRelayComputer(organizationId, targetOrganizationId, attachment.computerId)) return;
         await this.env.COORDINATOR.get(this.env.COORDINATOR.idFromName(`organization:${targetOrganizationId}`)).fetch(new Request("https://internal/shared-threads/manifest", { method: "POST", headers: { "content-type": "application/json", "x-organization-id": targetOrganizationId, "x-source-organization-id": organizationId, "x-computer-id": attachment.computerId }, body: JSON.stringify({ ids: frame.ids }) }));
       }
       return;
@@ -1955,6 +1949,11 @@ export class HubCoordinator {
 
   private computerService(): ComputerService {
     return new ComputerService(this.computers, Date.now, this.env.MINIMUM_DAEMON_VERSION ?? "0.1.0", new D1OrganizationStore(this.env.DB));
+  }
+
+  private async canRelayComputer(sourceOrganizationId: string, targetOrganizationId: string, computerId: string, userId?: string) {
+    const computer = await this.computers.computer(sourceOrganizationId, computerId) ?? await this.computers.computer(targetOrganizationId, computerId);
+    return !!computer && await this.computerService().canRelayTo(computer, targetOrganizationId, userId);
   }
 
   // Hub catalogue of a hosted thread. Archive and delete still succeed when

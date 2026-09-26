@@ -180,6 +180,68 @@ test("a personal computer grant gives every organization member use without mana
     await assert.rejects(service.update("org", computerId, "ada", { name: "Changed through the organization" }));
     sqlite.prepare("DELETE FROM organization_computer_shares WHERE organization_id=? AND computer_id=?").run("org", computerId);
     assert.deepEqual(await service.list("org", "grace"), []);
+    const ownerView = await service.list("org", "ada");
+    assert.equal(ownerView.some((computer) => computer.computerId === computerId && computer.canUse && computer.shared === false), true);
+    await service.requireUse("org", computerId, "ada");
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("the owner still sees a personal computer in an organization workspace when share is off", async () => {
+  const { sqlite, db, computers, organizations, service } = database();
+  const { createRouteHandler } = await import("./worker.js");
+  const { OrganizationService } = await import("./organizations.js");
+  const { personalSpace } = await import("./personal-space.js");
+  const { chooseComputer } = await import("./computer-choice.js");
+  let userId = "ada";
+  const computerId = crypto.randomUUID();
+  try {
+    const personal = await personalSpace(db, userId);
+    await service.register(personal.id, userId, {
+      ...input,
+      computerId,
+      name: "Apollo",
+      capabilities: {
+        ...input.capabilities,
+        providers: [{ id: "claude", models: [""] }],
+        workspaces: [{ id: "jupiter", name: "Jupiter Mobile", path: "/src/jupiter-mobile", origin: "github.com/studio/jupiter-mobile" }],
+      },
+    });
+    await computers.seen(personal.id, computerId, Date.now(), undefined, "1.0.0");
+    sqlite.prepare("INSERT INTO organization_workspaces(id,organization_id,name,origin,created_at,updated_at) VALUES(?,?,?,?,?,?)").run("org-jupiter", "org", "Jupiter Mobile", "github.com/studio/jupiter-mobile", 1, 1);
+    const ownerView = await service.list("org", "ada");
+    const apollo = ownerView.find((computer) => computer.computerId === computerId);
+    assert.ok(apollo);
+    assert.equal(apollo.canUse, true);
+    assert.equal(apollo.shared, false);
+    assert.equal(apollo.availability, "available");
+    assert.equal(apollo.access.mode, "owner");
+    assert.deepEqual(apollo.capabilities.workspaces.map((workspace) => workspace.origin), ["github.com/studio/jupiter-mobile"]);
+    await service.requireUse("org", computerId, "ada");
+    assert.equal(await service.canRelayTo((await computers.computer("org", computerId))!, "org", "ada"), true);
+    assert.deepEqual(await computers.sharedOrganizationIds(personal.id, computerId), ["org"]);
+    const picked = chooseComputer(ownerView, { workspaceId: "org-jupiter", origin: "github.com/studio/jupiter-mobile", override: computerId });
+    assert.equal(picked.computerId, computerId);
+    assert.deepEqual(await service.list("org", "grace"), []);
+    await assert.rejects(service.requireUse("org", computerId, "grace"), /not available/);
+    assert.equal(await service.canRelayTo((await computers.computer("org", computerId))!, "org", "grace"), false);
+
+    const route = createRouteHandler({
+      accountService: () => ({ authenticate: async () => ({ userId, sessionId: "session", clientKind: "web" }) }) as never,
+      computerStore: () => computers,
+      organizationStore: () => organizations,
+      organizationService: () => new OrganizationService(organizations),
+    });
+    const env = { DB: db, AUTH_SECRET: { get: async () => "test-encryption-root-with-at-least-thirty-two-characters" }, BETTER_AUTH_URL: "https://hub.example", COORDINATOR: { idFromName: (id: string) => id, get: () => ({ fetch: async () => Response.json({ ok: true }) }) } } as never;
+    const listed = await route(new Request("https://hub.example/api/organizations/org/computers", { headers: { authorization: "Bearer session" } }), env);
+    assert.equal(listed.status, 200);
+    const payload = await listed.json() as { computers: { computerId: string; canUse: boolean; shared: boolean }[] };
+    assert.ok(payload.computers.some((computer) => computer.computerId === computerId && computer.canUse && computer.shared === false));
+    userId = "grace";
+    const memberListed = await route(new Request("https://hub.example/api/organizations/org/computers", { headers: { authorization: "Bearer session" } }), env);
+    const memberPayload = await memberListed.json() as { computers: { computerId: string }[] };
+    assert.equal(memberPayload.computers.some((computer) => computer.computerId === computerId), false);
   } finally {
     sqlite.close();
   }
