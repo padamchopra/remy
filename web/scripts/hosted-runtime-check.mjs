@@ -446,7 +446,7 @@ try {
           assert.equal(await filter.getByText(/^Review requested/).count(),1);
           assert.equal(await filter.getByText(/Needs you/).count(),0);
           assert.equal(await filter.getByText(/^All$/).count(),0);
-          await page.getByText("No pull requests",{exact:true}).waitFor();
+          await page.getByText("No open pull requests",{exact:true}).waitFor();
           await page.getByText("Live from GitHub",{exact:true}).waitFor();
           assert.ok(requests.includes("/api/organizations/personal/github/pull-requests"), "All reads Personal GitHub pull requests");
           assert.ok(requests.includes("/api/organizations/team/github/pull-requests"), "All reads organization GitHub pull requests");

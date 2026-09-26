@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { ArrowRight, ExternalLink, GitMerge, GitPullRequest, GitPullRequestClosed } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,22 @@ function useSignedImages(organizationId: string, repository: string, number: num
   return images;
 }
 
+const WIDE = "(min-width: 1024px)";
+
+/// Checks sit in their own column when there is room and in the reading column
+/// when there is not. Only one is mounted, so the page has one Checks region.
+function useWide() {
+  return useSyncExternalStore(
+    (changed) => {
+      const query = window.matchMedia(WIDE);
+      query.addEventListener("change", changed);
+      return () => query.removeEventListener("change", changed);
+    },
+    () => window.matchMedia(WIDE).matches,
+    () => true,
+  );
+}
+
 export function PullRequestHostedDetail({
   pullRequest,
   organizationId,
@@ -47,6 +63,7 @@ export function PullRequestHostedDetail({
 }) {
   const images = useSignedImages(organizationId, pullRequest.repository, pullRequest.number);
   const stack = pullRequest.stack;
+  const wide = useWide();
   const checks = <PullRequestChecks checks={pullRequest.checks} />;
   return (
     <main className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -128,7 +145,7 @@ export function PullRequestHostedDetail({
                 </ItemGroup>
               </section>
             )}
-            <div className="mt-8 lg:hidden">{checks}</div>
+            {!wide && <div className="mt-8">{checks}</div>}
             <section className="mt-8">
               <h2 className="text-sm font-medium">Description</h2>
               <div className="mt-3 min-w-0">
@@ -154,11 +171,13 @@ export function PullRequestHostedDetail({
             )}
           </article>
         </ScrollArea>
-        <aside className="hidden w-72 shrink-0 border-l border-border lg:block">
-          <ScrollArea data-slot="pull-request-detail-aside" className="h-full">
-            <div className="px-5 py-6">{checks}</div>
-          </ScrollArea>
-        </aside>
+        {wide && (
+          <aside className="w-72 shrink-0 border-l border-border">
+            <ScrollArea data-slot="pull-request-detail-aside" className="h-full">
+              <div className="px-5 py-6">{checks}</div>
+            </ScrollArea>
+          </aside>
+        )}
       </div>
     </main>
   );

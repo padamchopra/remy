@@ -839,7 +839,7 @@ async function runPaneRoutes(target) {
     ["threads", "#/threads", fixture.primaryTitle],
     ["workspaces", "#/workspaces", "Performance workspace"],
     ["tasks", "#/board", "Tasks"],
-    ["pull-requests", "#/pull-requests", "No pull requests"],
+    ["pull-requests", "#/pull-requests", "No open pull requests"],
     ["devices", "#/settings/devices", "This machine"],
   ];
   const paneResults = [];
