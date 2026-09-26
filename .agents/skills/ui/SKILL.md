@@ -45,6 +45,7 @@ GOOD
 | App chrome | `Sidebar` |
 | Searchable, keyboard-driven list | `Command` |
 | ⌘K | `CommandDialog` |
+| A picker opened from a button | `Popover` from `ui/popover-base.tsx`, anchored to that button, holding a `Command` |
 | A row with icon, title, description, trailing action | `Item` |
 | A message in a thread | `Message` + `Bubble` |
 | Empty panel | `Empty` |
@@ -73,6 +74,24 @@ Resolve the tokens in index.css, design against those values, and say so when th
 ```
 
 When a Paper file already holds the design for a surface, a change to that surface updates the file in the same change. A design that no longer matches what shipped is worse than no design, because the next person trusts it.
+
+## Pickers open beside their trigger
+
+A choice made from a button on the page opens as a Base UI popover next to that button. It flips and shifts to stay on screen and fills the width on a phone. A centred `CommandDialog` is for ⌘K, which has no trigger to sit beside. Escape closes the popover and returns focus to the button.
+
+Choosing a model is one component everywhere: `ModelPickerButton` in `web/src/components/ModelPicker.tsx`. A composer, a thread, a settings row, and a workspace default all render it with props, such as `onlyProvider`, `allowDefault`, or `catalogue`. Do not build a second model list, provider select, or picker dialog.
+
+BAD
+```tsx
+<CommandDialog open={open} onOpenChange={setOpen} title="Pick a model">
+  {providers.map((provider) => <CommandGroup heading={provider.label}>…</CommandGroup>)}
+</CommandDialog>
+```
+
+GOOD
+```tsx
+<ModelPickerButton value={choice} onPick={save} catalogue={models} allowDefault />
+```
 
 ## Transient status
 
