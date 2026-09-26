@@ -219,7 +219,10 @@ try {
           [`${base}/environments`]: { environments: [], assignments: [], workspaces: [] },
           [`${base}/board/tickets`]: {items:process.env.QA_SCOPE_ONLY === "1"?[{id:`${org.id}-ticket`,entity:"ticket",fields:{title:org.personal?"Personal ticket":"Studio ticket",status:"todo",number:1,keyPrefix:org.personal?"PER":"STD"},lastActor:{id:"reader",label:"Reader"},activity:[]}]:[]},
           [`${base}/github/pull-requests`]: {pullRequests:[]},
-          [`${base}/connections`]: {canManage:true,providers:[],connections:[]},
+          [`${base}/connections`]: {canManage:true,providers:[],connections:process.env.QA_SCOPE_ONLY === "1"?[{id:"github-general",organization_id:"personal",provider:"github",subject:"reader",external_id:"padamchopra",label:"padamchopra",status:"connected",updated_at:1,availability:"all"}]:[],linearAccounts:process.env.QA_SCOPE_ONLY === "1"?[{id:"linear-general",externalId:"linear-remy",label:"Remy",status:"connected",updatedAt:1,general:true,organizationIds:[]}]:[]},
+          [`${base}/github`]: {repositories:[],activity:[]},
+          [`${base}/linear`]: {canManage:true,connected:false,catalog:{teams:[],projects:[],users:[]},mappings:[],matches:[],members:[],workspaces:[],teams:[],columns:[]},
+          [`${base}/linear-board`]: {settings:[],labels:{},rule:""},
           [`${base}/linear-workspace`]: {accounts:[],link:null},
           [`${base}/linear-access`]: {notice:null},
           [`${base}/compute-shares`]: {canManage:true,computers:[{id:"personal-mac",name:"Personal Mac",icon:"laptop",platform:"darwin",shared:sharedComputer,available:true,sharedBy:sharedComputer?"Reader":null,canShare:true,canRevoke:true,providers:sharedComputer?[{id:"claude",label:"Claude",allowed:true},{id:"codex",label:"Codex",allowed:true}]:[]}],cloudConnections:[{provider:"fly-sprites",shared:true,available:true,sharedBy:"Reader",canShare:true,canRevoke:true,providers:[{id:"openrouter",label:"OpenRouter",allowed:true}]},{provider:"modal",shared:sharedCloud,available:true,sharedBy:sharedCloud?"Reader":null,canShare:true,canRevoke:true,providers:sharedCloud?[{id:"anthropic",label:"Anthropic",allowed:true},{id:"openrouter",label:"OpenRouter",allowed:true}]:[]}]},
@@ -551,6 +554,25 @@ try {
           assert.equal(await page.getByText("Personal default model",{exact:true}).count(),0);
           assert.equal(await page.getByText("Studio default model",{exact:true}).count(),0);
           assert.equal(await page.getByRole("region",{name:"Account defaults",exact:true}).count(),0);
+          assert.equal(await generalSettings.getByText("Linear",{exact:true}).count(),0,"General does not contain Linear settings");
+          await page.goto(clean("/settings/connections"));
+          const allConnections=page.getByRole("region",{name:"Connection settings",exact:true});
+          await allConnections.getByRole("heading",{name:"GitHub",exact:true}).waitFor();
+          assert.equal(await allConnections.getByRole("heading",{name:"GitHub",exact:true}).count(),1,"Connections has one GitHub block");
+          assert.equal(await allConnections.getByRole("heading",{name:"Linear",exact:true}).count(),1,"Connections has one Linear block");
+          await allConnections.getByText("All organizations · Connected",{exact:true}).first().waitFor();
+          if(artifacts && !returning && !mobile) await page.screenshot({path:`${artifacts}/connections-by-provider.png`});
+          await allConnections.getByRole("button",{name:"Add GitHub connection",exact:true}).click();
+          const availability=page.getByRole("combobox",{name:"Available to",exact:true});
+          await availability.click();
+          await page.getByRole("option",{name:"Studio",exact:true}).click();
+          await availability.getByText("Studio",{exact:true}).waitFor();
+          if(artifacts && !returning && !mobile) await page.screenshot({path:`${artifacts}/connection-availability.png`});
+          await page.keyboard.press("Escape");
+          await page.goto(clean("/settings/connections?owner=personal"));
+          const connectionSettings=page.getByRole("region",{name:"Connections",exact:true});
+          await connectionSettings.getByText("Your Linear account",{exact:true}).waitFor();
+          assert.equal(await connectionSettings.getByRole("button",{name:"Connect another account",exact:true}).count(),1,"Connections has one Linear add action");
           await page.goto(clean("/settings/general?organization=team"));
           await page.getByRole("region",{name:"General settings",exact:true}).waitFor();
           assert.equal(await page.getByText("Default model",{exact:true}).count(),0,"Organization-filtered General does not duplicate the organization default");
@@ -559,6 +581,7 @@ try {
           await organizationGeneral.getByText("Default model",{exact:true}).waitFor();
           assert.equal(await page.locator('[data-slot="pane-header"]').count(),1,"Organization settings uses the shared pane header");
           assert.equal(await organizationGeneral.getByText("Default model",{exact:true}).count(),1,"Organization settings owns its default model");
+          assert.equal(await organizationGeneral.getByText("Linear",{exact:true}).count(),0,"Organization General does not contain Linear settings");
           await page.reload();
           await organizationGeneral.getByText("Default model",{exact:true}).waitFor();
           await page.goto(clean("/settings/devices"));

@@ -17,7 +17,7 @@ import { sqliteD1 } from "../test/sqlite-d1.js";
 
 function fixture() {
   const { db, sqlite } = sqliteD1(
-    `CREATE TABLE organizations(id TEXT PRIMARY KEY);CREATE TABLE user(id TEXT PRIMARY KEY);CREATE TABLE memberships(organization_id TEXT,user_id TEXT,PRIMARY KEY(organization_id,user_id));INSERT INTO organizations VALUES('studio'),('other');INSERT INTO memberships VALUES('studio','ada'),('studio','grace');${readFileSync(new URL("../migrations/0012_connections.sql", import.meta.url), "utf8")}${readFileSync(new URL("../migrations/0029_linear_accounts.sql", import.meta.url), "utf8")}`,
+    `CREATE TABLE organizations(id TEXT PRIMARY KEY,personal_owner_id TEXT);CREATE TABLE user(id TEXT PRIMARY KEY);CREATE TABLE memberships(organization_id TEXT,user_id TEXT,PRIMARY KEY(organization_id,user_id));INSERT INTO organizations VALUES('studio',NULL),('other',NULL),('personal','ada');INSERT INTO memberships VALUES('studio','ada'),('studio','grace'),('personal','ada');${readFileSync(new URL("../migrations/0012_connections.sql", import.meta.url), "utf8")}${readFileSync(new URL("../migrations/0029_linear_accounts.sql", import.meta.url), "utf8")}`,
   );
   let now = 1_000_000,
     fail = false,
@@ -73,11 +73,11 @@ function fixture() {
     send,
     () => now,
   );
-  const begin = async (subject = "") =>
+  const begin = async (subject = "", org = "studio") =>
     new URL(
       (
         await service.begin(
-          "studio",
+          org,
           "ada",
           "sample",
           subject,
@@ -197,6 +197,23 @@ test("member connections are private and leaving removes their stored credential
     .prepare("DELETE FROM memberships WHERE organization_id=? AND user_id=?")
     .run("studio", "ada");
   assert.equal(await f.service.get("studio", "sample", "ada"), null);
+});
+
+test("a Personal member connection is available to organizations unless they have their own", async () => {
+  const f = fixture();
+  await f.finish(await f.begin("ada", "personal"));
+  assert.equal(await f.service.token("studio", "sample", "ada"), "secret-access");
+  assert.deepEqual(
+    (await f.service.list("studio", "ada")).connections.map((connection) => connection.availability),
+    ["all"],
+  );
+  await f.finish(await f.begin("ada", "studio"));
+  assert.deepEqual(
+    (await f.service.list("studio", "ada")).connections
+      .map((connection) => connection.availability)
+      .sort(),
+    ["all", "studio"],
+  );
 });
 
 test("webhook signatures, timestamp bounds, durable receipt and queue retry retain a single delivery", async () => {

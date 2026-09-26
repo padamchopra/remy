@@ -99,6 +99,30 @@ Keep the token reachable after connecting, and say there what it is for: reposit
 
 Say what an alternative costs. When it replaces a credential, a setting, or a connection rather than adding to it, the surface that offers it says so in a sentence.
 
+## Connections are grouped by provider
+
+Connections is one account-wide list, like Computers. Show one block for each provider and put every connected account inside it. Once a provider has an account, its add action becomes a `+` in that block instead of creating another provider section.
+
+Availability is part of connecting an account. A Personal connection is available to every organization the person belongs to. An organization connection is available only there and overrides the Personal connection for that organization. Keep credentials on the person who connected them; availability never copies a secret into an organization.
+
+BAD
+```text
+Connections
+padamchopra · Personal
+padamchopra · Jupiter Global
+padamchopra · Remy
+```
+
+GOOD
+```text
+GitHub                                      [+]
+padamchopra              All organizations
+release-bot              Jupiter Global
+
+Linear                                      [+]
+Remy workspace            Remy
+```
+
 ## Model the capability first
 
 Name the capability, its durable owner, the actor that performs it, the event that triggers it, and what happens when either owner or actor disappears before choosing a screen or schema.
