@@ -1,4 +1,4 @@
-import { lazy, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import type {
   BoardProjection,
   ComputerSummary,
@@ -9,8 +9,10 @@ import type { Route } from "@/lib/route";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { useThreadStarts } from "@/lib/hub-thread-start";
 import { watchHubResource } from "@/lib/hub-computers";
+import { cacheHubWorkspaces, cachedHubWorkspaces, hasCachedHubWorkspaces } from "@/lib/hub-workspace-cache";
 import { HubPersonalContext } from "@/lib/hub-scope";
 import { HubModelFavorites } from "./HubModelFavorites";
+import { hubThreads } from "./hub-surfaces";
 import { Deferred } from "./Deferred";
 import { PaneHeader } from "./PaneHeader";
 import { Button } from "./ui/button";
@@ -59,7 +61,7 @@ import { Field, FieldLabel } from "./ui/field";
 import { toast } from "sonner";
 import { apiError } from "@/lib/api-error";
 
-const Threads = lazy(() => import("./HubThreads"));
+const Threads = hubThreads.Surface;
 const Board = lazy(() => import("./HubBoard"));
 const Computers = lazy(() =>
   import("./HubComputers").then((module) => ({ default: module.HubComputers })),
@@ -82,10 +84,15 @@ type Owned<T> = {
   error: string;
 };
 
+function rememberWorkspaces(organizationId: string, value: { workspaces: Omit<HubThreadWorkspaceOption, "key" | "organizationId" | "label">[] }) {
+  cacheHubWorkspaces(organizationId, value.workspaces.map((workspace) => ({ ...workspace, organizationId })));
+}
+
 function useOwnedResources<T>(
   organizations: Organization[],
   path: string,
   livePath = "/live",
+  remember?: (organizationId: string, value: T) => void,
 ) {
   const key = organizations.map((organization) => organization.id).join(",");
   const [resources, setResources] = useState<Map<string, Owned<T>>>(new Map());
@@ -103,6 +110,7 @@ function useOwnedResources<T>(
       return watchHubResource<T>(
         `${base}${path}`,
         (value, stale) => {
+          if (value && !stale) remember?.(organization.id, value);
           setResources((current) => {
             const next = new Map(current);
             next.set(organization.id, {
@@ -197,8 +205,17 @@ function AllThreads({
   organizations: Organization[];
   navigate: (route: Route) => void;
 }) {
-  const resources = useOwnedResources<{ workspaces: Omit<HubThreadWorkspaceOption, "key" | "organizationId" | "label">[] }>(organizations, "/workspaces");
-  const workspaceOptions = resources.flatMap(({ organization, value }) => (value?.workspaces ?? []).map((workspace) => ({
+  const resources = useOwnedResources<{ workspaces: Omit<HubThreadWorkspaceOption, "key" | "organizationId" | "label">[] }>(organizations, "/workspaces", "/live", rememberWorkspaces);
+  // An account still answering lends the list this device last saw for it, so
+  // the composer draws its workspace on the first frame instead of waiting for
+  // every account's catalogue. The fresh read replaces it.
+  const lists = resources.map(({ organization, value, error }) => ({
+    organization,
+    settled: !!value || !!error,
+    workspaces: value?.workspaces ?? (error ? [] : cachedHubWorkspaces(organization.id)),
+    known: !!value || !!error || hasCachedHubWorkspaces(organization.id),
+  }));
+  const workspaceOptions = lists.flatMap(({ organization, workspaces }) => workspaces.map((workspace) => ({
     ...workspace,
     key: `${organization.id}:${workspace.id}`,
     organizationId: organization.id,
@@ -207,12 +224,22 @@ function AllThreads({
   const [workspaceKey, setWorkspaceKey] = useState("");
   const [message, setMessage] = useState("");
   const [visibility, setVisibility] = useState<"private" | "open">("private");
+  // The default is the first workspace of the first account that has one. It
+  // is known once every account before it has answered, or has a saved list.
+  const firstWithWorkspaces = lists.findIndex(({ workspaces }) => workspaces.length > 0);
+  const defaultKnown = firstWithWorkspaces >= 0
+    ? lists.slice(0, firstWithWorkspaces + 1).every(({ known }) => known)
+    : lists.every(({ settled }) => settled);
   const selectedWorkspace = workspaceOptions.find((workspace) => workspace.key === workspaceKey) ?? workspaceOptions[0];
   const owner = organizations.find((organization) => organization.id === selectedWorkspace?.organizationId) ?? organizations.find((organization) => organization.personal) ?? organizations[0];
-  const loaded = resources.every((resource) => resource.value || resource.error);
+  const loaded = defaultKnown;
+  // Hold the default once the accounts before it have answered for real, so a
+  // workspace added later does not move the composer. A default drawn from a
+  // saved list is not held: the fresh one may disagree.
+  const defaultSettled = firstWithWorkspaces >= 0 && lists.slice(0, firstWithWorkspaces + 1).every(({ settled }) => settled);
   useEffect(() => {
-    if (selectedWorkspace && selectedWorkspace.key !== workspaceKey) setWorkspaceKey(selectedWorkspace.key);
-  }, [selectedWorkspace, workspaceKey]);
+    if (defaultSettled && selectedWorkspace && selectedWorkspace.key !== workspaceKey) setWorkspaceKey(selectedWorkspace.key);
+  }, [defaultSettled, selectedWorkspace, workspaceKey]);
   if (!owner) return <EmptyState title="Your account is unavailable" />;
   if (!loaded) return <div className="flex min-h-0 flex-1 items-center justify-center"><Spinner aria-label="Loading workspaces" /></div>;
   const scoped = (next: Route) => navigate({
@@ -223,6 +250,9 @@ function AllThreads({
   return (
     <HubPersonalContext value={owner.personal === true}>
       <HubModelFavorites organizationId={owner.id}>
+        {/* Its own boundary, so the thread pane arriving never hides and
+            remounts the catalogue reads above it. */}
+        <Suspense fallback={<div className="flex min-h-0 flex-1 items-center justify-center"><Spinner aria-label="Loading workspaces" /></div>}>
         <Threads
           key={owner.id}
           organizationId={owner.id}
@@ -244,6 +274,7 @@ function AllThreads({
           newThreadWorkspaceId={selectedWorkspace?.id}
           onNewThreadWorkspaceChange={workspace => setWorkspaceKey(workspace.key)}
         />
+        </Suspense>
       </HubModelFavorites>
     </HubPersonalContext>
   );

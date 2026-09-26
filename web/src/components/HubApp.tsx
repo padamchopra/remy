@@ -60,12 +60,13 @@ import { HubComputerApproval } from "./HubComputerApproval";
 import { HubInvitation } from "./HubInvitation";
 import { HubSignIn } from "./HubSignIn";
 import { HubNotifications } from "./HubNotifications";
+import { hubAllView, hubThreads } from "./hub-surfaces";
 const WorkspacesList = lazy(() => import("./HubWorkspaces"));
 const PullRequests = lazy(() => import("./PullRequests").then((module) => ({ default: module.PullRequests })));
 const OrganizationAdmin = lazy(() => import("./HubOrganizationAdmin"));
-const AllView = lazy(() => import("./HubAllView"));
+const AllView = hubAllView.Surface;
 const GeneralSettings = lazy(() => import("./HubGeneralSettings"));
-const Threads = lazy(() => import("./HubThreads"));
+const Threads = hubThreads.Surface;
 const Board = lazy(() => import("./HubBoard"));
 const Computers = lazy(() =>
   import("./HubComputers").then((m) => ({ default: m.HubComputers })),
@@ -224,6 +225,14 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
       ? { name: "workspaces", workspaceId, organizationId: "all", ownerOrganizationId: thread.access.organizationId }
       : { name: "workspaces", workspaceId, organizationId }),
   });
+  // Threads is the surface a person opens on, so its code starts downloading
+  // with the account list rather than after it: waiting for the accounts, then
+  // the view, then the thread pane, then the composer's reads made each one a
+  // separate round trip before the composer could draw.
+  if (route.name === "threads") {
+    if (isAll) void hubAllView.preload();
+    void hubThreads.preload();
+  }
   if (!loaded && !(profile && organization)) return <AppLoading />;
   if (signedOut) return <HubSignIn runtime={runtime} />;
   const requestedSection =

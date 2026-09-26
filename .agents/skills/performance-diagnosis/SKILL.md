@@ -22,6 +22,8 @@ Capture these milestones when they apply:
 
 Record every request's method, path, start, finish, and count. Separate network wait, payload processing, React work, and paint rather than assigning the whole duration to the slowest visible component.
 
+The hosted preview on `127.0.0.1:5174` speaks HTTP/1.1, so the browser runs at most six requests to it at once and queues the rest. Read `requestStart - startTime` before blaming the hub: a read that waited two seconds in that queue is a request-count problem there, not server time, and production over HTTP/2 will not show it.
+
 Use `npm run perf` for the panes it covers. Extend the measurement or run a focused browser trace when the reported interaction is absent from that harness.
 
 ## Do not put one read behind another
@@ -45,6 +47,8 @@ useEffect(() => {
   void load(1);                     // starts with everything else
 }, [root]);                         // a 409 means "not connected"
 ```
+
+Hosted resources go through `watchHubResource`, which shares one read and one value per path and live channel. Watch the resource through it rather than calling `hubRequest` in an effect, and key effects on the ids they need rather than on objects rebuilt every render. The hub greets every live socket with a `reset`; that greeting is not a change.
 
 A subscription's first open is not a reason to read again. The read issued when the watcher was created already covers it; only a reconnect has missed messages. Refreshing on every open asks for every resource twice.
 

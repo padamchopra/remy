@@ -365,6 +365,7 @@ export function ModelPickerButton({
   className,
   catalogue,
   cataloguePending,
+  pending,
 }: {
   value: ModelChoice;
   onPick: (choice: ModelChoice) => void;
@@ -381,6 +382,9 @@ export function ModelPickerButton({
   catalogue?: Provider[];
   /// Hosted access is still arriving; keep the current name instead of Unavailable.
   cataloguePending?: boolean;
+  /// Showing the last value this device saw while the real one is read. The
+  /// button keeps its shape and cannot be opened.
+  pending?: boolean;
 }) {
   const providers = useProviders(catalogue);
   const [open, setOpen] = useState(false);
@@ -405,7 +409,7 @@ export function ModelPickerButton({
   return (
     <>
       {variant === "composer" ? (
-        <InputGroupButton data-model-picker="" aria-label="Model" title={title} className="min-w-0 shrink [@media(pointer:coarse)]:h-8" onClick={() => setOpen(true)}>
+        <InputGroupButton data-model-picker="" aria-label="Model" title={title} disabled={pending} aria-busy={pending || undefined} className="min-w-0 shrink disabled:opacity-100 [@media(pointer:coarse)]:h-8" onClick={() => setOpen(true)}>
           {mark}
           <span className="min-w-0 max-w-40 truncate">{label}</span>
           <ChevronDown />
