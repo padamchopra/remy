@@ -36,7 +36,7 @@ export function HubComputerConnect({ organizationId, ownership }: { organization
   return (
     <Field>
       <FieldLabel>Sign a computer in</FieldLabel>
-      <FieldDescription>Install the Remy CLI on that Mac or Linux machine, then run this command on it.</FieldDescription>
+      <FieldDescription>Install the Remy CLI with npm i -g @padamchopra/remy, then run this command on that machine.</FieldDescription>
       {command ? (
         <div className="flex min-w-0 flex-col gap-2">
           <code aria-label="Connection command" className="min-w-0 overflow-x-auto rounded-lg border bg-muted/40 px-3 py-2 font-mono text-xs break-all">{command}</code>

@@ -8,7 +8,6 @@
 /// tailnet is unchanged.
 import { readFileSync } from "node:fs";
 import { hostname } from "node:os";
-import { decodeComputerConnectionKey } from "@remy/contract";
 
 const VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version as string;
 
@@ -19,6 +18,8 @@ Usage
   remy start          Run this computer, so your threads can use it
   remy status         Show what this computer is connected to
   remy logout         Disconnect this computer from your account
+  remy update         Install the latest published CLI
+  remy update --yes   Install it without asking
   remy --version      Print the version
 
 Create a key in Remy on the web, under Settings → Computers → Connected.
@@ -57,6 +58,7 @@ async function ask(port: number, token: string, method: string, path: string, in
 }
 
 async function login(argv: string[]): Promise<void> {
+  const { decodeComputerConnectionKey } = await import("@remy/contract");
   const value = argv.find((entry) => !entry.startsWith("-"));
   if (!value) fail("Paste your connection key: remy login <key>");
   let connection;
@@ -115,6 +117,11 @@ try {
   if (command === "login") { await login(rest); process.exit(0); }
   else if (command === "status") { await status(); process.exit(0); }
   else if (command === "logout") { await logout(); process.exit(0); }
+  else if (command === "update") {
+    const { runUpdate, defaultPackageRoot } = await import("./cli-update.js");
+    await runUpdate(rest, { packageRoot: defaultPackageRoot(), currentVersion: VERSION });
+    process.exit(0);
+  }
   else if (command === "start") await start();
   else if (command === "--version" || command === "-v") say(VERSION);
   else if (command === "" || command === "help" || command === "--help" || command === "-h") process.stdout.write(USAGE);

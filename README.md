@@ -16,15 +16,15 @@ There is no account, no sign-up, and no hosted anything. If this repo disappeare
 
 You need a Mac or Linux machine that can stay awake, with Node 22.5+ (for `node:sqlite`) and at least one provider installed: [Claude Code](https://claude.com/claude-code), [Codex](https://developers.openai.com/codex), or [Cursor Agent](https://cursor.com/docs/cli/installation). Those are what actually run your threads, so Remy is only as capable as the copy sitting next to it.
 
-**Install the CLI.** A machine you reach over SSH has nowhere to open an approval page, so it signs in with a key instead. Build the daemon, link the `remy` command, then create a connection key in Remy on the web under **Settings → Computers → Connected**:
+**Install the CLI.** A machine you reach over SSH has nowhere to open an approval page, so it signs in with a key instead. Install the `remy` command, then create a connection key in Remy on the web under **Settings → Computers → Connected**:
 
 ```sh
-npm --prefix server ci && npm --prefix server run build && npm --prefix server link
+npm i -g @padamchopra/remy
 remy login remy_…   # the command that page gives you
 remy start          # keeps this computer available
 ```
 
-`remy status` says what it is connected to and `remy logout` disconnects it. The daemon still listens on `127.0.0.1`, and another device reaches it over your tailnet.
+`npx @padamchopra/remy` runs the same command without a global install. `remy update` (or `remy update --yes`) installs the latest published CLI. `remy status` says what it is connected to and `remy logout` disconnects it. Remy still listens on `127.0.0.1`, and another device reaches it over your tailnet.
 
 **Or run the window from source**, against the same daemon:
 

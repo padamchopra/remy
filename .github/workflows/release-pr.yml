@@ -27,7 +27,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           if git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- \
-            'contract/**' 'server/**' 'web/**' package.json \
+            'contract/**' 'server/**' 'web/**' package.json 'scripts/**' \
             .github/workflows/release.yml .github/workflows/release-pr.yml '.github/actions/**' \
             ':(exclude,glob)**/*.md'; then
             echo "build=false" >> "$GITHUB_OUTPUT"
@@ -55,7 +55,7 @@ jobs:
         if: steps.paths.outputs.build == 'true'
         env:
           NODE_OPTIONS: --import=${{ github.workspace }}/contract/node_modules/tsx/dist/loader.mjs
-        run: npm --prefix contract test && npm --prefix server test
+        run: npm --prefix contract test && npm --prefix server test && node --test scripts/cli-package.test.mjs
 
       - name: Build the web app
         if: steps.paths.outputs.build == 'true'

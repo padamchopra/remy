@@ -6,6 +6,14 @@ The `Release` workflow publishes what a computer runs: the Linux computer image
 on GHCR and its archive on a GitHub release, so a cloud computer and a machine
 you install by hand come from the same build.
 
+It also publishes the Remy CLI to npm as `@padamchopra/remy`, so a machine can
+install with `npm i -g @padamchopra/remy` instead of cloning this repository.
+That step needs the `NPM_TOKEN` secret (an npm automation token with permission
+to publish `@padamchopra/remy`). If the secret is missing, the computer image
+and GitHub release still ship, and the workflow skips npm until the token is
+set. It publishes only when this workflow actually builds — not on docs-only
+merges.
+
 It runs when a merge to main changes `contract/`, `server/`, `web/`, the
 computer image, or the workflow itself, at 00:05 UTC nightly, and on demand from
 the Actions tab. A merge that only touches the phone app or the docs ships
@@ -53,11 +61,17 @@ npm run build              # the web app
 
 ## Updating a computer
 
-Pull and rebuild on that machine, then `remy start` again:
+If you installed the CLI from npm, run `remy update` (or `remy update --yes`).
+That installs the latest `@padamchopra/remy` in place. Start it again to use
+the new version.
+
+A git checkout still updates by pulling and rebuilding, then `remy start`
+again:
 
 ```sh
 git pull && npm --prefix server ci && npm --prefix server run build
 ```
 
-A daemon installed as a login item by `deploy/setup.sh` can use the
-authenticated update endpoint after one manual `git pull` and rebuild.
+`remy update` on a checkout does that pull and rebuild for you. A daemon
+installed as a login item by `deploy/setup.sh` can use the authenticated update
+endpoint after one manual `git pull` and rebuild.
