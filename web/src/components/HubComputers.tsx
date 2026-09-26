@@ -1,5 +1,6 @@
 import { HubModelDefault } from "./HubModelDefault";
 import { HubComputerModelKeys } from "./HubComputerModelKeys";
+import { HubComputerAccounts } from "./HubComputerAccounts";
 import { HubComputerConnect } from "./HubComputerConnect";
 import { PROVIDERS } from "@/lib/providers";
 import { EmptyState } from "@/components/EmptyState";
@@ -365,6 +366,7 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
                         : "Everyone in your organization"}
                   </ItemDescription>
                   {!local && pane === computer.computerId && computer.canUse && <HubModelDefault organizationId={org} computerId={computer.computerId} catalogue={computer.capabilities.providers.map(p=>({...PROVIDERS.find(v=>v.id===p.id)!,models:p.models.map(value=>({value,label:value || "Default"}))}))} />}
+                  {!local && pane === computer.computerId && computer.canManage && computer.ownership !== "hosted" && <HubComputerAccounts organizationId={org} computerId={computer.computerId} />}
                   {!local && pane === computer.computerId && computer.canManage && computer.ownership !== "hosted" && <HubComputerModelKeys organizationId={org} computerId={computer.computerId} />}
                   {running.map((thread) => (
                     <Button

@@ -1,7 +1,8 @@
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { CodexAccount } from "./codex-account.js";
-import { agentCommand } from "./agent.js";
+import { AgentUnavailableError, agentCommand } from "./agent.js";
 import { getKv, setKv } from "./db.js";
 
 export function configureHostedCodex(home: string, connected: boolean) {
@@ -22,6 +23,16 @@ export function configureHostedCodex(home: string, connected: boolean) {
   }
 }
 
+function accountHome() {
+  const hosted = Boolean(getKv("hostedWorkspaceId"));
+  const connected = Boolean(getKv("hubComputerRegistration")) && !hosted;
+  if (hosted) return process.env.CODEX_HOME;
+  if (!connected) return;
+  const home = process.env.CODEX_HOME || join(homedir(), ".codex");
+  mkdirSync(home, { recursive: true });
+  return home;
+}
+
 let account: CodexAccount | undefined;
 export async function hostedCodexAccountRequest(
   method: string,
@@ -29,7 +40,8 @@ export async function hostedCodexAccountRequest(
   changed: () => void,
 ): Promise<Response> {
   const headers = { "cache-control": "no-store" };
-  if (!getKv("hostedWorkspaceId") || !process.env.CODEX_HOME)
+  const home = accountHome();
+  if (!home)
     return Response.json(
       { error: "Choose a hosted computer." },
       { status: 403, headers },
@@ -50,31 +62,36 @@ export async function hostedCodexAccountRequest(
       { status: 404, headers },
     );
   try {
-    if (!account)
+    if (!account) {
+      const hosted = Boolean(getKv("hostedWorkspaceId"));
       account = new CodexAccount({
         command: agentCommand("codex")!,
-        cwd: process.env.CODEX_HOME,
+        cwd: home,
         env: { ...process.env },
         changed,
         connected: async (connected) => {
-          if (getKv<boolean>("hostedCodexConnected") === connected) return;
-          configureHostedCodex(process.env.CODEX_HOME!, connected);
-          setKv("hostedCodexConnected", connected);
+          if (hosted) {
+            if (getKv<boolean>("hostedCodexConnected") === connected) return;
+            configureHostedCodex(process.env.CODEX_HOME!, connected);
+            setKv("hostedCodexConnected", connected);
+          }
           const { refreshProviderSessions } = await import("./chat.js");
           refreshProviderSessions("codex");
         },
       });
+    }
     return Response.json(
       action === "status"
         ? await account.status()
         : await account.change(action),
       { headers },
     );
-  } catch {
+  } catch (error) {
     return Response.json(
       {
-        error:
-          "Codex could not connect; enable device code login in ChatGPT settings and try again.",
+        error: error instanceof AgentUnavailableError
+          ? error.message
+          : "Codex could not connect; enable device code login in ChatGPT settings and try again.",
       },
       { status: 502, headers },
     );

@@ -221,8 +221,19 @@ export class HubComputerConnection {
     const response = await fetch(new URL(`/api/organizations/${encodeURIComponent(this.registration.organizationId)}/computers/model-keys`, this.registration.hubUrl), { method: "POST", headers: { authorization: connectionAuthorization(this.registration.organizationId, this.registration.computerId, privateKey().privateKey) }, signal: AbortSignal.timeout(10_000), redirect: "error" });
     if (response.status === 403) return;
     if (!response.ok) throw new Error("Your provider keys could not be read.");
+    const payload = await response.json();
     const { applyHubModelKeys } = await import("./hub-model-keys.js");
-    if (!applyHubModelKeys(await response.json())) return;
+    const keysChanged = applyHubModelKeys(payload);
+    let claudeChanged = false;
+    if (this.registration.ownership !== "hosted") {
+      const { applyHubClaudeAccount } = await import("./hub-claude-account.js");
+      claudeChanged = applyHubClaudeAccount(payload);
+      if (claudeChanged) {
+        const { refreshProviderSessions } = await import("./chat.js");
+        refreshProviderSessions("claude");
+      }
+    }
+    if (!keysChanged && !claudeChanged) return;
     const { broadcast } = await import("./notify.js");
     broadcast({ type: "settings", topics: ["settings"] });
   }
@@ -356,6 +367,7 @@ export function startHubComputerConnection(): void {
   const registration = getKv<HubComputerRegistration>(REGISTRATION_KEY);
   if (!registration || !config.hubMode) return;
   void import("./hub-model-keys.js").then(({ restoreHubModelKeys }) => restoreHubModelKeys()).catch(() => {});
+  if (registration.ownership !== "hosted") void import("./hub-claude-account.js").then(({ restoreHubClaudeAccount }) => restoreHubClaudeAccount()).catch(() => {});
   restartHubComputerConnection(registration);
 }
 
@@ -376,6 +388,8 @@ export async function detachHubComputer(): Promise<void> {
   stopHubComputerConnection();
   const { forgetHubModelKeys } = await import("./hub-model-keys.js");
   forgetHubModelKeys();
+  const { forgetHubClaudeAccount } = await import("./hub-claude-account.js");
+  forgetHubClaudeAccount();
   setKv(REGISTRATION_KEY, null);
   setKv(NOTIFICATION_OUTBOX, []);
   patchSettings({ hubMode: false });

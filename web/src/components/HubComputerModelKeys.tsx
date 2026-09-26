@@ -40,7 +40,7 @@ export function HubComputerModelKeys({ organizationId, computerId }: { organizat
     <section aria-label="Provider keys" className="mt-2 min-w-0 space-y-3">
       <Field>
         <FieldLabel>Provider keys</FieldLabel>
-        <FieldDescription>Give this computer a key instead of signing Claude Code or Codex in on the machine itself.</FieldDescription>
+        <FieldDescription>Give this computer a key instead of connecting Claude Code or Codex.</FieldDescription>
       </Field>
       {resource.error && <p role="alert" className="text-sm text-muted-foreground">{resource.error}</p>}
       {!resource.value && !resource.error && (

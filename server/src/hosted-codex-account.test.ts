@@ -48,6 +48,25 @@ test("account management is unavailable outside a hosted workspace and only allo
   }
 });
 
+test("a connected computer can start Codex account when the CLI is missing", async () => {
+  const previousPath = process.env.PATH;
+  const previousHome = process.env.HOME;
+  try {
+    process.env.PATH = home;
+    process.env.HOME = home;
+    setKv("hostedWorkspaceId", null);
+    setKv("hubComputerRegistration", { computerId: "mac", ownership: "personal" });
+    const response = await hostedCodexAccountRequest("GET", "/hub/codex-account", () => {});
+    assert.equal(response.status, 502);
+    assert.match(((await response.json()) as { error: string }).error, /not installed/);
+  } finally {
+    process.env.PATH = previousPath;
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    setKv("hubComputerRegistration", null);
+  }
+});
+
 test("Router uses its own endpoint and environment key", () => {
   const previousKey=process.env.RAMP_ROUTER_API_KEY,previousModel=process.env.RAMP_ROUTER_MODEL;
   try {

@@ -477,6 +477,12 @@ export const hostedSettingsSchema = z.object({
   idleMinutes: z.number().int().min(10).max(15).default(12),
 });
 export type HostedSettings = z.infer<typeof hostedSettingsSchema>;
+export type HostedClaudeAccount = {
+  phase: "signedOut" | "pending" | "connected" | "error";
+  verificationUrl?: string;
+  subscription?: string;
+  error?: string;
+};
 export type HostedCodexAccount = {
   phase: "signedOut" | "pending" | "connected" | "error";
   email?: string;
