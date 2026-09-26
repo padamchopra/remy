@@ -1,7 +1,8 @@
 // Screenshot harness for the web window.
 //
-// The UI is a web app, served beside the daemon or by Vite in preview. This script
-// renders states and interactions to PNGs that can be looked at directly.
+// It renders states and interactions to PNGs that can be looked at directly,
+// from `npm run dev:hosted` by default, or from the URL `npm run qa:web` prints
+// when that is set in MC_URL.
 //
 // Uses Playwright's already-cached Chromium; nothing is downloaded.
 import { chromium } from "playwright-core";
@@ -10,7 +11,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 
-const URL = process.env.MC_URL ?? "http://127.0.0.1:5173";
+const URL = process.env.MC_URL ?? "http://127.0.0.1:5174";
 const OUT = process.env.MC_OUT ?? "/tmp/mc-shots";
 mkdirSync(OUT, { recursive: true });
 
