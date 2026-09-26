@@ -503,10 +503,32 @@ export class GitHubConnection {
     return { viewer, pullRequests };
   }
 
+  /// A private repository's attachments load only from the signed addresses
+  /// GitHub renders for a reader, and those expire within minutes, so they are
+  /// read when a pull request opens rather than kept with the list.
+  async pullRequestImages(org: string, user: string, repository: string, number: number) {
+    await this.access(org, user);
+    const workspaces = await this.organizations.workspaces(org, user);
+    const known = workspaces.some((workspace) =>
+      githubRepositoryFromOrigin(workspace.origin).toLowerCase() === repository.toLowerCase());
+    const [owner, name, extra] = repository.split("/");
+    if (!known || !owner || !name || extra || !Number.isSafeInteger(number) || number < 1) {
+      throw new ConnectionError("Choose a pull request in one of your workspaces.", 404);
+    }
+    const data = await this.graphql(org, user, {
+      query: `query PullRequestImages($owner: String!, $name: String!, $number: Int!) {
+        repository(owner: $owner, name: $name) { pullRequest(number: $number) { bodyHTML } }
+      }`,
+      variables: { owner, name, number },
+    });
+    const pullRequest = (data.data?.repository as { pullRequest?: { bodyHTML?: unknown } } | undefined)?.pullRequest;
+    return { images: signedAttachmentImages(typeof pullRequest?.bodyHTML === "string" ? pullRequest.bodyHTML : "") };
+  }
+
   private async graphql(
     org: string,
     user: string,
-    input: { query: string; variables?: Record<string, string> },
+    input: { query: string; variables?: Record<string, string | number> },
   ) {
     return this.api<{
       data?: Record<string, unknown>;
@@ -526,9 +548,13 @@ export function clearHostedPullRequestCache() {
   hostedPullRequestCache.clear();
 }
 
+// Mergeability is left out on purpose: GitHub computes it per pull request
+// while answering, which roughly doubled how long this list took to arrive.
 const HOSTED_PULL_REQUEST_FRAGMENT = `fragment HostedPullRequest on PullRequest {
   number title url body isDraft reviewDecision updatedAt additions deletions changedFiles
-  headRefName baseRefName mergeable mergeStateStatus
+  headRefName baseRefName
+  stackEntry { position }
+  stack { number size baseRefName entries(first: 20) { nodes { position pullRequest { number title state isDraft } } } }
   author { login }
   repository { nameWithOwner }
   assignees(first: 10) { nodes { login } }
@@ -596,9 +622,16 @@ type HostedListedPullRequest = {
   workspaceTint: string;
   workspacePath: string;
   worktreePath: string | null;
-  mergeable: string;
-  mergeStateStatus: string;
+  stack: HostedPullRequestStack | null;
   state: string;
+};
+
+type HostedPullRequestStack = {
+  number: number;
+  position: number;
+  size: number;
+  baseRefName: string;
+  entries: { position: number; number: number; title: string; state: string; isDraft: boolean }[];
 };
 
 function hostedPullRequest(
@@ -639,10 +672,54 @@ function hostedPullRequest(
     workspaceTint: workspace.tint ?? "zinc",
     workspacePath: "",
     worktreePath: viewer && author.toLowerCase() === viewer.toLowerCase() ? "hosted" : null,
-    mergeable: String(pr.mergeable ?? ""),
-    mergeStateStatus: String(pr.mergeStateStatus ?? ""),
+    stack: pullRequestStack(pr),
     state: "OPEN",
   };
+}
+
+/// Stack membership comes only from GitHub, the same as a computer reads it.
+function pullRequestStack(pr: Record<string, unknown>): HostedPullRequestStack | null {
+  const stack = pr.stack as { number?: unknown; size?: unknown; baseRefName?: unknown; entries?: { nodes?: unknown[] } } | null | undefined;
+  const position = (pr.stackEntry as { position?: unknown } | null | undefined)?.position;
+  if (!stack || !positive(stack.number) || !positive(stack.size) || !positive(position) || position > stack.size) return null;
+  const entries = nodesOf(stack.entries).flatMap((node) => {
+    const entry = node as { position?: unknown; pullRequest?: { number?: unknown; title?: unknown; state?: unknown; isDraft?: unknown } } | null;
+    const member = entry?.pullRequest;
+    if (!entry || !positive(entry.position) || !member || !positive(member.number) || typeof member.title !== "string") return [];
+    return [{
+      position: entry.position,
+      number: member.number,
+      title: member.title,
+      state: typeof member.state === "string" ? member.state : "",
+      isDraft: member.isDraft === true,
+    }];
+  }).sort((left, right) => left.position - right.position);
+  return {
+    number: stack.number,
+    position,
+    size: stack.size,
+    baseRefName: typeof stack.baseRefName === "string" ? stack.baseRefName : "",
+    entries,
+  };
+}
+
+function positive(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+const PRIVATE_ATTACHMENT = /<img\b[^>]*?\ssrc="(https:\/\/private-user-images\.githubusercontent\.com\/[^"]+)"/gi;
+const ATTACHMENT_ID = /-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.[a-z0-9]+$/i;
+
+/// Each private attachment's `github.com/user-attachments` address, mapped to
+/// the signed copy GitHub rendered for this reader.
+export function signedAttachmentImages(bodyHTML: string): Record<string, string> {
+  const images: Record<string, string> = {};
+  for (const match of bodyHTML.matchAll(PRIVATE_ATTACHMENT)) {
+    const signed = match[1]!.replaceAll("&amp;", "&");
+    const id = ATTACHMENT_ID.exec(new URL(signed).pathname)?.[1];
+    if (id) images[`https://github.com/user-attachments/assets/${id.toLowerCase()}`] = signed;
+  }
+  return images;
 }
 
 function pullRequestComments(pr: Record<string, unknown>) {

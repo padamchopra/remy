@@ -28,7 +28,7 @@ export async function githubRoute(
 ): Promise<Response | undefined> {
   const url = new URL(request.url),
     match =
-      /^\/api\/organizations\/([^/]+)\/github(?:\/(installations|repositories|selection|monitoring|actions|token|accessible-repositories|import|workspace-images|workspace-branches|pull-requests))?$/.exec(
+      /^\/api\/organizations\/([^/]+)\/github(?:\/(installations|repositories|selection|monitoring|actions|token|accessible-repositories|import|workspace-images|workspace-branches|pull-requests|pull-request-images))?$/.exec(
         url.pathname,
       );
   if (!match) return;
@@ -38,6 +38,7 @@ export async function githubRoute(
   try {
     if (request.method === "GET") {
       if (action === "pull-requests") return Response.json(await service.openPullRequests(org, user, url.searchParams.get("refresh") === "1"), { headers: { "cache-control": "no-store" } });
+      if (action === "pull-request-images") return Response.json(await service.pullRequestImages(org, user, url.searchParams.get("repository") ?? "", Number(url.searchParams.get("number"))), { headers: { "cache-control": "no-store" } });
       if (action === "workspace-branches") return Response.json(await service.workspaceBranches(org, user, url.searchParams.get("workspace") ?? ""), { headers: { "cache-control": "no-store" } });
       if (action === "workspace-images") return Response.json(await service.workspaceImage(org, user, url.searchParams.get("workspace") ?? "", url.searchParams.get("path") ?? undefined, url.searchParams.get("q") ?? ""), { headers: { "cache-control": "no-store" } });
       if (action === "accessible-repositories") return Response.json(await service.accessibleRepositories(org, user, Number(url.searchParams.get("page") ?? 1)), {headers: {"cache-control":"no-store"}});

@@ -1,10 +1,56 @@
-import { Children, memo, useMemo, type MouseEvent } from "react";
-import { ChevronRight, Square, SquareCheckBig } from "lucide-react";
+import { Children, createContext, memo, useContext, useMemo, useState, type MouseEvent, type ReactNode } from "react";
+import { ChevronRight, ImageOff, Square, SquareCheckBig } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { stripMarkdownHtmlComments } from "@/lib/markdown-html-comments";
 import { cn } from "@/lib/utils";
+
+/// Signed addresses for images the reader cannot load by their written URL,
+/// such as a private repository's GitHub attachments.
+const ImageSources = createContext<Record<string, string> | undefined>(undefined);
+const InsideLink = createContext(false);
+
+function LinkContent({ children }: { children?: ReactNode }) {
+  return <InsideLink value>{children}</InsideLink>;
+}
+
+function MarkdownImage({ alt, src, width, height }: { alt?: string; src?: string; width?: number | string; height?: number | string }) {
+  const sources = useContext(ImageSources);
+  const insideLink = useContext(InsideLink);
+  const resolved = (src && sources?.[src]) || src;
+  const [failed, setFailed] = useState<string>();
+  if (!resolved || failed === resolved) {
+    // A broken-image glyph says nothing; the alt text and a way to GitHub,
+    // where the reader is signed in, still do.
+    const label = (
+      <>
+        <ImageOff className="size-3.5 shrink-0" />
+        <span className="min-w-0 wrap-break-word">{alt || "Image"}</span>
+      </>
+    );
+    const className = "inline-flex max-w-full items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground";
+    return insideLink || !src ? (
+      <span data-slot="markdown-image-unavailable" className={className}>{label}</span>
+    ) : (
+      <a data-slot="markdown-image-unavailable" data-link href={src} target="_blank" rel="noreferrer noopener" className={cn(className, "hover:text-foreground")} title="Open image on GitHub">
+        {label}
+      </a>
+    );
+  }
+  return (
+    <img
+      alt={alt ?? ""}
+      src={resolved}
+      width={width}
+      height={height}
+      loading="lazy"
+      referrerPolicy="no-referrer"
+      onError={() => setFailed(resolved)}
+      className="h-auto max-w-full rounded-md"
+    />
+  );
+}
 
 const COMPONENTS: Components = {
   p: ({ children }) => <p className="wrap-break-word whitespace-pre-wrap">{children}</p>,
@@ -37,7 +83,7 @@ const COMPONENTS: Components = {
       rel="noreferrer noopener"
       className="underline underline-offset-2 hover:text-primary"
     >
-      {children}
+      <LinkContent>{children}</LinkContent>
     </a>
   ),
   // Inline code is a pill. A fenced block is the same element inside `pre`,
@@ -61,14 +107,7 @@ const COMPONENTS: Components = {
   ),
   td: ({ children }) => <td className="border border-border px-2 py-1 align-top">{children}</td>,
   img: ({ alt, src, width, height }) => (
-    <img
-      alt={alt ?? ""}
-      src={src}
-      width={width}
-      height={height}
-      loading="lazy"
-      className="h-auto max-w-full rounded-md"
-    />
+    <MarkdownImage alt={alt} src={typeof src === "string" ? src : undefined} width={width} height={height} />
   ),
   input: ({ checked, type }) => type === "checkbox"
     ? checked
@@ -266,7 +305,7 @@ function withLinkHandler(components: Components, onOpenLink?: (href: string) => 
           onOpenLink(href);
         }}
       >
-        {children}
+        <LinkContent>{children}</LinkContent>
       </a>
     ),
   };
@@ -283,9 +322,11 @@ export const Markdown = memo(function Markdown({
   text,
   className,
   onOpenLink,
+  images,
 }: {
   text: string;
   className?: string;
+  images?: Record<string, string>;
   /// A thread keeps ordinary clicks in its own work surface. Command-click is
   /// left to the anchor, which opens it outside Remy.
   onOpenLink?: (href: string) => void;
@@ -297,9 +338,11 @@ export const Markdown = memo(function Markdown({
   const source = useMemo(() => stripMarkdownHtmlComments(text), [text]);
   return (
     <div className={cn("flex flex-col gap-3 text-sm leading-relaxed", className)}>
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkDetails, remarkImages]} components={components}>
-        {source}
-      </ReactMarkdown>
+      <ImageSources value={images}>
+        <ReactMarkdown remarkPlugins={[remarkGfm, remarkDetails, remarkImages]} components={components}>
+          {source}
+        </ReactMarkdown>
+      </ImageSources>
     </div>
   );
 });

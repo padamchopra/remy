@@ -16,7 +16,9 @@ export type Route = (
   | { name: "workspaces"; workspaceId?: string }
   | { name: "board"; scope?: string }
   | { name: "ticket"; key: string }
-  | { name: "prs" }
+  // A pull request is addressed by its repository and number, which is what
+  // GitHub calls it and what someone pastes.
+  | { name: "prs"; repository?: string; number?: number }
   | { name: "settings"; tab: SettingsTab; organizationTab?: "general" | "members" | "teams" | "computers"; analyticsTab?: AnalyticsTab; deviceId?: string; organizationId?: string }) & { organizationId?: string; ownerOrganizationId?: string };
 
 export interface AppLocation {
@@ -39,6 +41,18 @@ export function sectionOf(route: Route): "chats" | "workspaces" | "prs" | "tasks
   return route.name;
 }
 
+function pullRequestRoute(path: string): Route {
+  let parts: string[];
+  try {
+    parts = path.replace(/^\/+/, "").split("/").map((part) => decodeURIComponent(part));
+  } catch {
+    return { name: "prs" };
+  }
+  const [, owner, name, number, extra] = parts;
+  if (!owner || !name || extra !== undefined || !/^[1-9]\d{0,9}$/.test(number ?? "")) return { name: "prs" };
+  return { name: "prs", repository: `${owner}/${name}`, number: Number(number) };
+}
+
 function parseRoute(hash: string): AppLocation {
   const raw = hash.replace(/^#/, "");
   const [path, query = ""] = raw.split("?");
@@ -52,7 +66,7 @@ function parseRoute(hash: string): AppLocation {
   // always one click from.
   if (head === "inbox" || head === "agents") return { route: { name: "threads" } };
   if (head === "workspaces") return { route: { name: "workspaces", workspaceId: rest } };
-  if (head === "pull-requests") return { route: { name: "prs" } };
+  if (head === "pull-requests") return { route: pullRequestRoute(trimmed) };
   // Older links to recurring tickets land on the board.
   if (head === "recurring") return { route: { name: "board", scope: rest } };
   if (head === "board") return { route: { name: "board", scope: rest } };
@@ -103,7 +117,9 @@ export function formatPathLocation({ route }: AppLocation): string {
             ? `/tickets/${encodeURIComponent(route.key)}`
           : route.name === "settings"
               ? `/settings/${route.tab}`
-              : "/pull-requests";
+              : route.repository && route.number
+                ? `/pull-requests/${route.repository.split("/").map(encodeURIComponent).join("/")}/${route.number}`
+                : "/pull-requests";
   const params = new URLSearchParams();
   const threadId = route.name === "threads" ? route.threadId : undefined;
   if (route.name === "threads" && route.focus) params.set("focus", route.focus);

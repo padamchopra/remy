@@ -39,6 +39,9 @@ function fixture() {
     if (path === "/graphql") {
       if (githubDelayMs) await new Promise((resolve) => setTimeout(resolve, githubDelayMs));
       const variables = (body?.variables ?? {}) as Record<string, string>;
+      if (String(body?.query ?? "").includes("PullRequestImages")) {
+        return Response.json({ data: { repository: { pullRequest: { bodyHTML: '<table><tr><td><a href="x"><img width="190" alt="Buy sheet" src="https://private-user-images.githubusercontent.com/19776024/659476008-5C22357B-a164-4e88-9294-4c12eee8542d.png?jwt=signed&amp;v=1" style="max-width: 100%;"></a></td></tr></table><img src="https://camo.githubusercontent.com/abc" data-canonical-src="https://example.com/a.png">' } } } });
+      }
       const viewerPullRequests = [
         {
           number: 11,
@@ -123,6 +126,11 @@ function fixture() {
             baseRefName: "main",
             mergeable: "MERGEABLE",
             mergeStateStatus: "CLEAN",
+            stackEntry: { position: 2 },
+            stack: { number: 6, size: 2, baseRefName: "main", entries: { nodes: [
+              { position: 2, pullRequest: { number: 7, title: "Ready to review", state: "OPEN", isDraft: false } },
+              { position: 1, pullRequest: { number: 5, title: "Lay the groundwork", state: "OPEN", isDraft: true } },
+            ] } },
             author: { login: "ada" },
             repository: { nameWithOwner: "release/remy" },
             assignees: { nodes: [] },
@@ -399,6 +407,46 @@ test("hosted pull requests stay on workspace origins, keep PAT-backed workspaces
     afterSearchFailure.pullRequests.map((pullRequest) => `${pullRequest.repository}#${pullRequest.number}`),
     ["release/remy#7"],
   );
+  sqlite.close();
+});
+
+test("hosted pull requests carry their GitHub stack and skip mergeability", async () => {
+  clearHostedPullRequestCache();
+  const { service, calls, hideViewerPullRequests, failSearch, sqlite } = fixture();
+  hideViewerPullRequests();
+  failSearch();
+  await service.importRepository("studio", "ada", "release/remy");
+  const listed = await service.openPullRequests("studio", "ada");
+  assert.deepEqual(listed.pullRequests[0]?.stack, {
+    number: 6, position: 2, size: 2, baseRefName: "main",
+    entries: [
+      { position: 1, number: 5, title: "Lay the groundwork", state: "OPEN", isDraft: true },
+      { position: 2, number: 7, title: "Ready to review", state: "OPEN", isDraft: false },
+    ],
+  });
+  const query = String((calls.filter((call) => call.path === "/graphql").at(-1)?.body as { query?: string } | undefined)?.query ?? "");
+  assert.ok(query.includes("stackEntry"));
+  assert.ok(!query.includes("mergeable"));
+  sqlite.close();
+});
+
+test("pull request images map private attachments to the signed copies for a workspace repository", async () => {
+  clearHostedPullRequestCache();
+  const { service, calls, sqlite } = fixture();
+  await service.importRepository("studio", "ada", "release/remy");
+  assert.deepEqual(await service.pullRequestImages("studio", "ada", "release/remy", 7), {
+    images: {
+      "https://github.com/user-attachments/assets/5c22357b-a164-4e88-9294-4c12eee8542d":
+        "https://private-user-images.githubusercontent.com/19776024/659476008-5C22357B-a164-4e88-9294-4c12eee8542d.png?jwt=signed&v=1",
+    },
+  });
+  assert.equal(calls.at(-1)?.actor, "Bearer member-ada");
+  assert.deepEqual((calls.at(-1)?.body as { variables?: unknown } | undefined)?.variables, { owner: "release", name: "remy", number: 7 });
+  const count = calls.length;
+  await assert.rejects(service.pullRequestImages("studio", "ada", "ada/notes", 7));
+  await assert.rejects(service.pullRequestImages("studio", "ada", "release/remy", 0));
+  await assert.rejects(service.pullRequestImages("other", "ada", "release/remy", 7));
+  assert.equal(calls.length, count);
   sqlite.close();
 });
 
