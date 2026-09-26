@@ -26,16 +26,16 @@ remy start          # keeps this computer available
 
 `npx @padamchopra/remy` runs the same command without a global install. `remy update` (or `remy update --yes`) installs the latest published CLI. `remy status` says what it is connected to and `remy logout` disconnects it. Remy still listens on `127.0.0.1`, and another device reaches it over your tailnet.
 
-**Or run the window from source**, against the same daemon:
+**Or run the web app from source**, against your Remy account:
 
 ```sh
 git clone https://github.com/padamchopra/remy
 cd remy
 npm run install:all
-npm run dev:web
+npm run dev:hosted
 ```
 
-Then open `http://127.0.0.1:5173`. That is the real app against your real folders, not a demo.
+Then open `http://127.0.0.1:5174` and sign in. That is this checkout's web app against your live account and computers, not a demo.
 
 > [!NOTE]
 > The page does not live-reload — refresh it after a change. Editing Remy while watching Remy meant every save yanked the window out from under whatever was on screen.

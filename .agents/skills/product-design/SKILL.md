@@ -9,7 +9,7 @@ description: Product structure, platform parity, and ownership in Remy. Use befo
 
 ## Web and desktop parity
 
-The hosted web app, desktop browser shell, and Mac app expose the same capabilities for the same concept by default. Match controls, navigation, editing, icon choices, defaults, and visual hierarchy. This applies to the web product, not the marketing website's page layout.
+The hosted web app and the Mac app expose the same capabilities for the same concept by default. Match controls, navigation, editing, icon choices, defaults, and visual hierarchy. This applies to the web product, not the marketing website's page layout.
 
 Before designing or changing a surface, inspect its counterpart in the running app and source. Reuse shared components and interaction patterns; adapt the data source behind them when platforms reach the same capability differently. A missing endpoint, separate implementation, or unfinished integration is work to complete, not a platform exception.
 

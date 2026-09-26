@@ -17,26 +17,15 @@ The Electron desktop app and the iPhone app are both off `main`. Electron lives 
 
 Once: `npm run install:all` — contract, hub, server, web, mobile.
 
-Choose the browser shell explicitly:
+There is one browser dev shell: `npm run dev:hosted` serves this checkout's `web/` at `http://127.0.0.1:5174` against your live hosted account. Use it for any web app, web shell, or `app.tryremy.dev` change. Open `127.0.0.1`, not `localhost`: the backend's origin allowlist names that exact address, and the preview redirects `localhost` there. The local browser shell that pointed the UI at this machine's daemon on 5173 was removed; `dev:mac-browser` and `dev:web` no longer exist. Never substitute the production website or sample QA state for a requested local hosted preview with live data.
 
-| Request | Command | URL and data |
-| --- | --- | --- |
-| Local app UI against this machine's daemon | `npm run dev:mac-browser` | `http://127.0.0.1:5173`, real local daemon and local data |
-| Hosted web app, web shell, or local changes to `app.tryremy.dev` | `npm run dev:hosted` | `http://127.0.0.1:5174`, local UI with your live hosted account |
+Hosted preview sign-in uses **Sign in with Remy → Approve in Remy → Finish signing in** when you are at the keyboard. Agent-driven hosted QA signs in with the production email and password from `REMY_QA_EMAIL` and `REMY_QA_PASSWORD` on `dev:hosted` and `app.tryremy.dev`. Create that password on `app.tryremy.dev` with **Create your account**; there is no reset form. Isolated `qa:web`, fixture data, and captured-mail hub sessions are not a substitute when testing hosted start, organizations, computers, or providers. If either secret is missing, fail with `set REMY_QA_EMAIL and REMY_QA_PASSWORD`. The production page is only the approval handoff for the device-code path; return to `http://127.0.0.1:5174` to use the changed UI. Its actions affect the live account. Preview credentials stay in the local Vite process and are forgotten when it stops. The configured preview port is part of the backend's exact origin allowlist; do not rewrite Origin headers or turn off origin checks. `hub/docs/web.md` documents authentication and backend selection.
 
-`npm run dev:web` is a legacy alias for the local browser shell. It does not launch the hosted shell. Match the user's requested shell; a browser can display either. For a generic preview request, use the shell affected by the current work and state which one you opened. Never substitute the production website or sample QA state for a requested local hosted preview with live data.
+Verify the opened shell, not only a responding port: it shows account sign-in or personal/organization navigation. Keep the requested preview running for the user.
 
-Hosted preview sign-in uses **Sign in with Remy → Approve in Remy → Finish signing in** when you are at the keyboard. Agent-driven hosted QA signs in with the production email and password from `REMY_QA_EMAIL` and `REMY_QA_PASSWORD` on `dev:hosted` and `app.tryremy.dev`. Create that password on `app.tryremy.dev` with **Create your account**; there is no reset form. Isolated `qa:web`, fixture data, and captured-mail hub sessions are not a substitute when testing hosted start, organizations, computers, or providers. If either secret is missing, fail with `set REMY_QA_EMAIL and REMY_QA_PASSWORD`. The production page is only the approval handoff for the device-code path; return to localhost to use the changed UI. Its actions affect the live account. Preview credentials stay in the local Vite process and are forgotten when it stops. The configured preview port is part of the backend's exact origin allowlist; do not rewrite Origin headers or turn off origin checks. `hub/docs/web.md` documents authentication and backend selection.
-
-Verify the opened shell, not only a responding port: the local shell shows this machine's computers and workspace threads; the hosted shell shows account sign-in or personal/organization navigation. Keep the requested preview running for the user.
-
-For a local daemon change, run `npm run qa:web` instead. For hosted backend changes, use the isolated hosted setup in `hub/docs/web.md` for QA; use `dev:hosted` when the user asks to try the live-account web shell. It builds the current checkout, starts its daemon and Vite on unused loopback ports, and prints the URL. Its database and sample workspace are temporary and removed when the command stops. Use `npm run qa:web -- --empty` when the empty state is what you need to inspect, or `npm run qa:web -- --check` for a non-interactive startup and proxy check.
-
-The local Vite preview talks to the same daemon as `remy start` (`127.0.0.1:8420`) and the same database (`~/.remy/remy.db`), so threads, workspaces, settings and the token are the real ones. If that daemon is already running, Vite attaches to it rather than starting a second one.
+For a daemon change, run `npm run qa:web`. It builds the current checkout, starts its own daemon and Vite on unused loopback ports, and prints the URL. Its database and sample workspace are temporary and removed when the command stops; it never touches the daemon on `127.0.0.1:8420` or `~/.remy/remy.db`. Use `npm run qa:web -- --empty` when the empty state is what you need to inspect, or `npm run qa:web -- --check` for a non-interactive startup and proxy check. For hosted backend changes, use the isolated hosted setup in `hub/docs/web.md`.
 
 The page does not live-reload. Refresh it to see a change: editing Remy while watching Remy meant every save yanked the window out from under whatever was on screen.
-
-**UI changes** — the running daemon can stay up; the page is your local `web/` either way.
 
 **Server changes** — leave the daemon on port 8420 running and use the isolated QA sidecar. Never stop the daemon on 8420 from a thread it is hosting. Stop only the `qa:web` command you started.
 
@@ -51,7 +40,7 @@ Skip `VITE_MC_FIXTURE=1`; that is fake data, not your real state.
 | `deploy/` | Optional launchd login item, provider hooks, `tailscale serve`, pairing QR. |
 | `.agents/skills/` | House rules. Read the one that covers what you are about to change. |
 
-`web/vite.config.ts` selects the preview backend. The local shell starts a daemon when needed and proxies `/api` with the token from `~/.remy/remy.db`. The hosted shell uses `web/hosted-preview.ts` to proxy its approved hosted session. Neither credential reaches the page.
+`web/vite.config.ts` selects the preview backend. `dev:hosted` uses `web/hosted-preview.ts` to proxy its approved hosted session; `qa:web` proxies `/api` to its own temporary daemon with the token it generated. Neither credential reaches the page.
 
 ## Skills
 
@@ -119,8 +108,8 @@ Check removals and changed defaults for stale promises. Screenshots and demos mu
 npm run typecheck    # contract + hub + web + mobile
 npm test             # contract; server: tsc, then node --test on dist/*.test.js
 npm run qa:web -- --check  # current server + UI, temporary state, alternate ports
-npm run shots        # Playwright PNGs of the page
-npm run live-check   # assert the page is showing threads
+npm run shots        # Playwright PNGs of dev:hosted, or MC_URL=<qa:web URL>
+npm run live-check   # assert that page is showing threads
 npm run perf         # what each pane costs to open, and how much of it waits on another device
 npm run bundle       # what a cold start downloads, and what waits for a first open
 # npm run perf needs its fixture re-pointed at the proxy transport; it mocked the desktop bridge.
@@ -136,7 +125,7 @@ A server module opens its database at import time, so a test that touches state 
 - **No shell strings.** The server reaches `git`, `gh`, and `tmux` through `execFile` with an argument array. Never build a command line, and never interpolate a path or a branch name into one.
 - **Loopback only.** The daemon binds `127.0.0.1` behind a bearer token; the way in from another device is `tailscale serve`. Do not widen the bind.
 - **Config lives in the database** — the `kv` table in `~/.remy/remy.db`, read through `server/src/config.ts`. A new setting is a key on `Config`, a line in `publicSettings`, and a validated branch in `patchSettings`; the client reads and writes it at `/server/settings`. `~/.mission-control` is the legacy directory, honoured when `~/.remy` is absent.
-- **Where the window is lives in the URL**, parsed and formatted by `web/src/lib/route.ts`. The hosted app uses clean paths with a server-side app-shell fallback; the local shell keeps hash routes so a reload never needs a server rule. Shared navigation goes through `navigateLocation` so each surface uses its valid form. All is the default account view and adds no query parameter; a narrower account writes `organization` explicitly. A hosted thread is `/threads/<id>` only.
+- **Where the window is lives in the URL**, parsed and formatted by `web/src/lib/route.ts`. The hosted app uses clean paths with a server-side app-shell fallback; the local window keeps hash routes so a reload never needs a server rule. Shared navigation goes through `navigateLocation` so each surface uses its valid form. All is the default account view and adds no query parameter; a narrower account writes `organization` explicitly. A hosted thread is `/threads/<id>` only.
 - **Worktrees** Remy creates go in a `.remy` folder, inside the workspace or under the `worktreeRoot` setting, hidden by a rule in the repo's `.git/info/exclude` — per-clone and never committed, so no tracked `.gitignore` changes. Worktrees already checked out elsewhere are left where they are.
 - **The words a person reads** are not always the words the code uses — see **Terminology** above, and check it before naming a label, an error or an empty state.
 - **Base UI for new work.** New UI surfaces and redesigns use Base UI (`@base-ui/react` / shadcn base style). Do not add new Radix-based primitives or redesign existing ones onto Radix. Migrating an existing Radix surface is a redesign — use Base UI and follow `.agents/skills/migrate-radix-to-base`. Existing Radix/shadcn New York surfaces may remain until they are redesigned.

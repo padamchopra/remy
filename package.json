@@ -9,9 +9,7 @@
   "scripts": {
     "install:all": "npm --prefix contract install && npm --prefix hub install && npm --prefix server install && npm --prefix web install",
     "install:computer": "npm --prefix contract ci --no-audit --no-fund && npm --prefix server ci --no-audit --no-fund && npm --prefix web ci --no-audit --no-fund",
-    "dev:web": "npm --prefix web run dev",
-    "dev:mac-browser": "node scripts/dev-browser.mjs mac",
-    "dev:hosted": "node scripts/dev-browser.mjs hosted",
+    "dev:hosted": "node scripts/dev-hosted.mjs",
     "dev:server": "npm --prefix server run build && npm --prefix server start",
     "dev:website": "npm --prefix web run dev:website",
     "qa:web": "node scripts/qa-sidecar.mjs",

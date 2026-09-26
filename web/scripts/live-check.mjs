@@ -1,5 +1,7 @@
 // Proves the window is Remy's threads remote: it loads, reaches the daemon, and
 // shows somewhere you could start work — without anyone touching the UI.
+// It checks `npm run dev:hosted` by default, or the URL `npm run qa:web` prints
+// when that is set in MC_URL.
 import { chromium } from "playwright-core";
 import { chromiumPath } from "./chromium.mjs";
 
@@ -8,7 +10,7 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, dev
 const errors = [];
 page.on("pageerror", (error) => errors.push(String(error)));
 
-await page.goto("http://127.0.0.1:5173", { waitUntil: "networkidle" });
+await page.goto(process.env.MC_URL ?? "http://127.0.0.1:5174",{ waitUntil: "networkidle" });
 await page.waitForSelector("[data-slot=sidebar]", { timeout: 30_000 });
 await page.waitForTimeout(1500);
 

@@ -37,8 +37,16 @@ export function hostedPreview(target: string): { plugin: Plugin; proxy: ProxyOpt
       origin = `http://127.0.0.1:${server.config.server.port}`;
       server.httpServer?.once('close', () => agent.destroy());
       server.middlewares.use(async (request, response, next) => {
+        // The backend allows only the 127.0.0.1 origin, so a page opened on
+        // `localhost` would load but fail every request. Send it to the one
+        // address that works rather than widening the allowlist.
+        const host = request.headers.host ?? '';
+        if (!request.url?.startsWith('/api/') && /^(localhost|\[::1\])(:\d+)?$/.test(host)) {
+          response.writeHead(307, {location:`${origin}${request.url ?? '/'}`});
+          return response.end();
+        }
         if (!request.url?.startsWith('/api/')) return next();
-        if (!trusted(request)) return json(response, 403, {error:'Open the preview on this Mac.'});
+        if (!trusted(request)) return json(response, 403, {error:`Open the preview at ${origin}.`});
         try {
           if (request.url === '/api/runtime') return json(response, 200, {mode:'hub', preview:true, auth:{magicLink:false,google:false,github:false,sso:false,password:qaHostedAccountAvailable()}});
           if (request.url === '/api/preview/password' && request.method === 'POST') {

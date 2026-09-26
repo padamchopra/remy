@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createServer } from 'node:http';
+import { createServer, request } from 'node:http';
 import { createServer as vite } from 'vite';
 import { hostedPreview } from '../hosted-preview.ts';
 test('preview approval keeps credentials on the proxy and rejects foreign origins', async () => {
@@ -24,6 +24,10 @@ test('preview approval keeps credentials on the proxy and rejects foreign origin
   await actual.listen();
   try {
    const call=(path,method='GET',source=origin)=>fetch(origin+path,{method,headers:{origin:source}});
+   const redirect=await new Promise((resolve,reject)=>request({host:'127.0.0.1',port,path:'/threads/abc',headers:{host:`localhost:${port}`}},resolve).on('error',reject).end());
+   redirect.resume();
+   assert.equal(redirect.statusCode,307);
+   assert.equal(redirect.headers.location,`${origin}/threads/abc`);
    assert.equal((await call('/api/profile')).status,401);
    assert.equal((await call('/api/preview/sign-in','POST','https://evil.test')).status,403);
    const start=await (await call('/api/preview/sign-in','POST')).text();
