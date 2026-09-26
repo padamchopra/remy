@@ -45,7 +45,6 @@ test("a Remy capability reaches orchestration without reaching administration", 
   assert.equal(isRemyToolRoute("POST", "/pull-requests/merge"), false);
   assert.equal(isRemyToolRoute("POST", "/workspaces"), true);
   assert.equal(isRemyToolRoute("POST", "/runtime/environment-command"), true);
-  assert.equal(isRemyToolRoute("POST", "/routines"), true);
   assert.equal(isRemyToolRoute("PATCH", "/routines/one"), false);
   assert.equal(isRemyToolRoute("POST", "/chats"), true);
   assert.equal(isRemyToolRoute("POST", "/chats/chat-2/message"), true);
@@ -70,21 +69,16 @@ test("a Remy capability reaches orchestration without reaching administration", 
   assert.equal(isRemyToolRoute("PATCH", "/server/settings"), false);
   assert.equal(isRemyToolRoute("POST", "/server/automatic-update"), false);
   assert.equal(isRemyToolRoute("PATCH", "/server/app-update"), false);
-  // The inbox is the person's, not an agent's: an agent may read the roster
-  // but may not open somebody's conversation with one, or mark it read.
-  assert.equal(isRemyToolRoute("GET", "/agents"), true);
-  assert.equal(isRemyToolRoute("GET", "/agents/one/memories"), true);
-  assert.equal(isRemyToolRoute("POST", "/agents/one/memories"), true);
-  assert.equal(isRemyToolRoute("PATCH", "/agents/one/memories/memory-one"), true);
-  assert.equal(isRemyToolRoute("DELETE", "/agents/one/memories/memory-one"), true);
-  assert.equal(isRemyToolRoute("DELETE", "/agents/one/memories"), false);
-  assert.equal(isRemyToolRoute("POST", "/agents/one/memories/memory-one"), false);
-  assert.equal(isRemyToolRoute("POST", "/agents/one/dm"), false);
+  // Agents and routing are gone, so their routes are not a capability either.
+  assert.equal(isRemyToolRoute("GET", "/agents"), false);
+  assert.equal(isRemyToolRoute("POST", "/agents/one/memories"), false);
+  assert.equal(isRemyToolRoute("POST", "/routines"), false);
+  assert.equal(isRemyToolRoute("GET", "/routing"), false);
+  assert.equal(isRemyToolRoute("PUT", "/routing"), false);
   assert.equal(isRemyToolRoute("POST", "/chats/chat-2/read"), false);
-  assert.equal(isRemyToolRoute("GET", "/routing"), true);
-  assert.equal(isRemyToolRoute("PUT", "/routing"), true);
-  assert.equal(isRemyToolRoute("PUT", "/routing/preference"), false);
-  assert.equal(isRemyToolRoute("DELETE", "/routing"), false);
+  assert.equal(isRemyToolRoute("POST", "/organization-tools/create_organization_ticket"), true);
+  assert.equal(isRemyToolRoute("POST", "/organization-tools/explain_routing"), false);
+  assert.equal(isRemyToolRoute("POST", "/organization-tools/create_organization_routine"), false);
   assert.equal(isRemyToolRoute("POST", "/agents"), false);
   assert.equal(isRemyToolRoute("DELETE", "/agents/one"), false);
 });

@@ -1,10 +1,8 @@
 import { isAbsolute, relative } from "node:path";
-import { getAgent } from "./agents.js";
-import { createChat, getChat, listChats, sendChatMessage, type ChatSummary } from "./chat.js";
+import { getChat, sendChatMessage } from "./chat.js";
 import { getKv, setKv } from "./db.js";
 import { listAuthoredPullRequests, type AuthoredPullRequest } from "./pull-requests.js";
 import { hasPullRequestMonitoring, pullRequestMonitoring } from "./pull-request-monitoring.js";
-import { checkoutPullRequestWorktree } from "./workspaces.js";
 
 const HANDLED_KEY = "pullRequestMonitorHandled";
 const MONITOR_INTERVAL_MS = 60_000;
@@ -47,21 +45,6 @@ function inside(path: string, root: string): boolean {
   return fromRoot === "" || (!fromRoot.startsWith("..") && !isAbsolute(fromRoot));
 }
 
-export function activePullRequestThread(
-  pullRequest: AuthoredPullRequest,
-  chats: ChatSummary[],
-  agentId?: string,
-): ChatSummary | undefined {
-  if (!pullRequest.worktreePath) return undefined;
-  return chats
-    .filter((chat) =>
-      (chat.state === "working" || chat.state === "needs_input")
-      && inside(chat.cwd, pullRequest.worktreePath!)
-      && (!agentId || chat.agentId === agentId),
-    )
-    .sort((a, b) => b.updatedAt - a.updatedAt)[0];
-}
-
 function workPrompt(pullRequest: AuthoredPullRequest, issue: string): string {
   return [
     `Keep ${pullRequest.repository}#${pullRequest.number} moving: ${pullRequest.title}`,
@@ -84,11 +67,10 @@ export async function monitorPullRequests(): Promise<void> {
     const next: HandledPullRequests = {};
     const pullRequests = await listAuthoredPullRequests(true);
     for (const pullRequest of pullRequests) {
-      const policy = pullRequestMonitoring(pullRequest.workspaceId, pullRequest.repository, pullRequest.number);
-      if (!policy.enabled || (!policy.agentId && !policy.chatId)) continue;
-      const agent = policy.agentId ? getAgent(policy.agentId) : undefined;
-      const targetThread = policy.chatId ? getChat(policy.chatId) : undefined;
-      if (!agent && !targetThread) continue;
+      const policy = pullRequestMonitoring(pullRequest.repository, pullRequest.number);
+      if (!policy.enabled || !policy.chatId) continue;
+      const thread = getChat(policy.chatId);
+      if (!thread) continue;
       const issue = pullRequestIssue(pullRequest);
       if (!issue) continue;
       const key = pullRequestKey(pullRequest);
@@ -99,28 +81,7 @@ export async function monitorPullRequests(): Promise<void> {
       }
 
       try {
-        const prompt = workPrompt(pullRequest, issue);
-        const active = targetThread ?? activePullRequestThread(pullRequest, listChats(), agent?.id);
-        if (active) {
-          await sendChatMessage(active.id, prompt);
-        } else {
-          const { workspace, path } = await checkoutPullRequestWorktree(
-            pullRequest.workspaceId,
-            pullRequest.headRefName,
-            pullRequest.number,
-          );
-          const thread = createChat({
-            cwd: path,
-            title: `PR #${pullRequest.number}: ${pullRequest.title}`,
-            agentId: agent?.id,
-            workspaceDefault: {
-              provider: workspace.provider,
-              model: workspace.model,
-              effort: workspace.effort,
-            },
-          });
-          await sendChatMessage(thread.id, prompt);
-        }
+        await sendChatMessage(thread.id, workPrompt(pullRequest, issue));
         next[key] = fingerprint;
       } catch (error) {
         console.error(`could not handle ${key}:`, error);

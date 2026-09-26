@@ -202,7 +202,7 @@ export const computerToHubFrameSchema = z.discriminatedUnion("kind", [
 ]);
 export type ComputerToHubFrame = z.infer<typeof computerToHubFrameSchema>;
 export const hubToComputerFrameSchema = z.discriminatedUnion("kind", [
-  z.object({kind:z.literal("agent.deleted"),threadIds:z.array(z.string().uuid()).max(1000)}),
+  z.object({ kind: z.literal("thread.retired"), threadIds: z.array(z.string().uuid()).max(1000) }),
   z.object({ kind: z.literal("board.changed") }),
   z.object({ kind: z.literal("sharing.changed"), organizationIds: z.array(z.string().min(1)).max(100) }),
   z.object({ kind: z.literal("welcome"), protocolVersion: z.number().int().positive(), heartbeatIntervalMs: z.number().int().positive(), threadRelay: z.boolean().optional(), notifications: z.boolean().optional(), sharedOrganizationIds: z.array(z.string().min(1)).max(100).optional() }),
@@ -321,14 +321,14 @@ export type OrganizationWorkspace = z.infer<typeof organizationWorkspaceSchema>;
 export const organizationDeletionImpactSchema = z.object({ organizationId: z.string().min(1), name: z.string().min(1), members: z.number().int().nonnegative(), teams: z.number().int().nonnegative(), invites: z.number().int().nonnegative(), workspaces: z.number().int().nonnegative(), deletes: z.array(z.string().min(1)) });
 export type OrganizationDeletionImpact = z.infer<typeof organizationDeletionImpactSchema>;
 
-export const boardLogEntitySchema = z.enum(["project", "ticket", "agent", "memory", "recurrence"]);
+export const boardLogEntitySchema = z.enum(["project", "ticket"]);
 export type BoardLogEntity = z.infer<typeof boardLogEntitySchema>;
-export const boardProjectionEntitySchema = z.enum(["tickets", "agents", "memories", "routines"]);
+export const boardProjectionEntitySchema = z.enum(["tickets"]);
 export type BoardProjectionEntity = z.infer<typeof boardProjectionEntitySchema>;
-export const boardLogKindSchema = z.enum(["create", "field", "status", "comment", "comment_edit", "comment_delete", "handoff", "link", "unlink", "ran", "tombstone"]);
+export const boardLogKindSchema = z.enum(["create", "field", "status", "comment", "comment_edit", "comment_delete", "link", "unlink", "tombstone"]);
 export type BoardLogKind = z.infer<typeof boardLogKindSchema>;
 export const boardActorSchema = z.object({
-  kind: z.enum(["member", "agent", "computer"]),
+  kind: z.enum(["member", "computer"]),
   id: z.string().min(1),
   label: z.string().min(1),
 });
@@ -408,10 +408,7 @@ function compareEvents(left: BoardLogEvent, right: BoardLogEvent): number {
 
 const editable: Record<BoardLogEntity, readonly string[]> = {
   project: ["name", "keyPrefix", "defaultProvider", "defaultModel", "defaultEffort", "defaultPermissionMode"],
-  ticket: ["number", "keyPrefix", "linearIssueId", "externalUrl", "assigneeMemberId", "assigneeName", "labels", "title", "body", "status", "priority", "assigneeAgentId", "parentId", "rank", "deviceId", "branch", "handoffs", "startedAt", "closedAt"],
-  agent: ["scope", "ownerId", "createdByUserId", "builtIn", "name", "handle", "role", "instructions", "provider", "model", "effort", "permissionMode", "avatar", "tint", "autoStart", "handoffTo", "gitIdentity", "gitName"],
-  memory: ["content"],
-  recurrence: ["projectId", "runAsUserId", "timeZone", "name", "prompt", "cadence", "hour", "minute", "weekday", "day", "enabled", "schedulerDeviceId"],
+  ticket: ["number", "keyPrefix", "linearIssueId", "externalUrl", "assigneeMemberId", "assigneeName", "labels", "title", "body", "status", "priority", "parentId", "rank", "deviceId", "branch", "startedAt", "closedAt"],
 };
 
 function applyFields(fields: Record<string, unknown>, payload: Record<string, unknown>, allowed: readonly string[]): Record<string, unknown> {
@@ -421,18 +418,7 @@ function applyFields(fields: Record<string, unknown>, payload: Record<string, un
 }
 
 function createdFields(entity: BoardLogEntity, event: BoardLogEvent): Record<string, unknown> | undefined {
-  if (entity === "ticket") return applyFields({ number: Number(event.payload.number ?? 0), projectId: String(event.payload.projectId ?? ""), title: "Untitled", body: "", status: "backlog", priority: 0, rank: "n", handoffs: 0 }, event.payload, editable.ticket);
-  if (entity === "agent") return applyFields({ scope: "org", ownerId: "", name: "Agent", handle: "agent", instructions: "", provider: "default", permissionMode: "default", autoStart: true, handoffTo: [], gitIdentity: "default" }, event.payload, editable.agent);
-  if (entity === "memory") {
-    if (typeof event.payload.agentId !== "string" || !event.payload.agentId || typeof event.payload.content !== "string" || !event.payload.content.trim()) return undefined;
-    const scope = event.payload.scope === "workspace" ? "workspace" : "global";
-    if (scope === "workspace" && (typeof event.payload.projectId !== "string" || !event.payload.projectId)) return undefined;
-    return { agentId: event.payload.agentId, scope, ...(scope === "workspace" ? { projectId: event.payload.projectId } : {}), content: event.payload.content.trim() };
-  }
-  if (entity === "recurrence") {
-    if (event.payload.type !== "routine") return undefined;
-    return applyFields({ type: "routine", agentId: String(event.payload.agentId ?? ""), name: "Routine", prompt: "", cadence: "weekly", hour: 9, minute: 0, enabled: true, schedulerDeviceId: String(event.payload.schedulerDeviceId ?? event.deviceId), runs: 0 }, event.payload, editable.recurrence);
-  }
+  if (entity === "ticket") return applyFields({ number: Number(event.payload.number ?? 0), projectId: String(event.payload.projectId ?? ""), title: "Untitled", body: "", status: "backlog", priority: 0, rank: "n" }, event.payload, editable.ticket);
   return { ...event.payload };
 }
 
@@ -446,7 +432,6 @@ export function foldBoardEvents(entity: BoardLogEntity, id: string, events: Boar
 
   for (const event of events.sort(compareEvents)) {
     if (event.kind === "tombstone") return undefined;
-    if (entity === "recurrence" && event.kind === "create" && event.payload.type !== "routine") return undefined;
     if (event.kind === "create") {
       fields = createdFields(entity, event);
       createdAt = event.at;
@@ -457,13 +442,6 @@ export function foldBoardEvents(entity: BoardLogEntity, id: string, events: Boar
         if (event.payload.status === "done" || event.payload.status === "cancelled") fields.closedAt = event.at;
         else delete fields.closedAt;
       }
-    } else if (fields && event.kind === "handoff") {
-      fields = { ...fields, handoffs: Number(fields.handoffs ?? 0) + 1, assigneeAgentId: event.payload.toAgentId ?? fields.assigneeAgentId };
-    } else if (fields && event.kind === "ran") {
-      const failed = typeof event.payload.error === "string";
-      fields = { ...fields, runs: Number(fields.runs ?? 0) + (failed ? 0 : 1), lastRunAt: event.at };
-      if (failed) fields.lastError = event.payload.error;
-      else delete fields.lastError;
     } else if (fields && (event.kind === "link" || event.kind === "unlink")) {
       const key = `${String(event.payload.computerId ?? event.payload.deviceId ?? event.deviceId)}:${String(event.payload.chatId ?? "")}`;
       if (event.kind === "link") links.set(key, { ...event.payload, computerId: event.payload.computerId ?? event.payload.deviceId ?? event.deviceId, deviceId: event.payload.deviceId ?? event.deviceId, createdAt: event.at });
@@ -515,25 +493,6 @@ export type HostedComputerState = {
   usage: { activeMs: number; warmIdleMs: number; snapshotByteMs: number };
   timing: { allocationMs?: number; restoreMs?: number; readyMs?: number; warmRequestMs?: number; firstResponseMs?: number };
 };
-
-export const routingRuleSchema = z.object({
-  id: z.string().min(1).max(100),
-  name: z.string().min(1).max(120),
-  workspaceId: z.string().optional(),
-  teamId: z.string().optional(),
-  trigger: z.enum(["manual", "ticket", "routine", "agent"]).optional(),
-  target: z.object({computerId:z.string().optional(),class:z.enum(["hosted","darwin","linux"]).optional(),emulator:z.boolean().optional()}),
-});
-export type RoutingRule = z.infer<typeof routingRuleSchema>;
-
-export const hubRoutineSchema = z.object({
- name:z.string().trim().min(1).max(120),prompt:z.string().trim().min(1).max(16000),
- projectId:z.string().min(1),agentId:z.string().min(1),runAsUserId:z.string().min(1),
- cadence:z.enum(["daily","weekdays","weekly","monthly"]),hour:z.number().int().min(0).max(23),minute:z.number().int().min(0).max(59),
- weekday:z.number().int().min(0).max(6).default(1),day:z.number().int().min(1).max(31).default(1),
- timeZone:z.string().max(100).default("UTC").refine(value=>{try{new Intl.DateTimeFormat("en",{timeZone:value});return true;}catch{return false;}}),enabled:z.boolean().default(true),
-});
-export type HubRoutine = z.infer<typeof hubRoutineSchema>;
 
 export const CLOUD_COMPUTERS = [
   { id: "cloud:fly-sprites", provider: "fly-sprites", name: "Cloud · Fly.io Sprites" },

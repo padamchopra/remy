@@ -113,8 +113,7 @@ export function HubBoardSync({
           <AlertDialogHeader>
             <AlertDialogTitle>Synchronize shared Tasks?</AlertDialogTitle>
             <AlertDialogDescription>
-              This computer keeps a copy of your organization’s tickets, agents,
-              memories, and routines.
+              This computer keeps a copy of your organization’s tickets.
             </AlertDialogDescription>
           </AlertDialogHeader>
           {!state?.imported && (
@@ -125,8 +124,7 @@ export function HubBoardSync({
                 onCheckedChange={(v) => setImportExisting(v === true)}
               />
               <FieldLabel htmlFor="import-board">
-                Also share your existing local tickets, agents, memories, and
-                routines
+                Also share your existing local tickets
               </FieldLabel>
             </Field>
           )}

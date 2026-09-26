@@ -40,9 +40,6 @@ type BoardDependencies = {
 
 const projectionEntities: Record<BoardProjectionEntity, BoardLogEntity> = {
   tickets: "ticket",
-  agents: "agent",
-  memories: "memory",
-  routines: "recurrence",
 };
 const entityFor = (entity: BoardProjectionEntity): BoardLogEntity => projectionEntities[entity];
 const projectionKey = (entity: BoardLogEntity, id: string) => `${PROJECTION_PREFIX}${entity}:${id}`;

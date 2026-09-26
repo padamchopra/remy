@@ -163,12 +163,6 @@ test("keeps the current value when a patch is not a value it knows", () => {
   assert.equal(publicSettings().defaultModel, "opus");
 });
 
-test("turns the retired committer mode into agent attribution", () => {
-  patchSettings({ defaultGitIdentity: "off" });
-  patchSettings({ defaultGitIdentity: "full" });
-  assert.equal(publicSettings().defaultGitIdentity, "author");
-});
-
 test("a provider and a model change together", () => {
   patchSettings({ defaultProvider: "claude", defaultModel: "sonnet" });
   assert.equal(publicSettings().defaultModel, "sonnet");

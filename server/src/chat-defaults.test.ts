@@ -28,7 +28,6 @@ const {
   restoreArchivedChat,
   updateChat,
 } = await import("./chat.js");
-const { createAgent } = await import("./agents.js");
 const { patchSettings } = await import("./config.js");
 
 const cwd = mkdtempSync(join(tmpdir(), "remy-chat-cwd-"));
@@ -63,18 +62,6 @@ test("a workspace that follows the machine changes nothing", () => {
   const chat = createChat({ cwd, workspaceDefault: { provider: null, model: null } });
   assert.equal(chat.provider, "claude");
   assert.equal(chat.model, "haiku");
-});
-
-test("an inherited agent still outranks a workspace default", () => {
-  patchSettings({ defaultProvider: "claude", defaultModel: "sonnet" });
-  const agent = createAgent({ name: "Follower" });
-  const chat = createChat({
-    cwd,
-    agentId: agent.id,
-    workspaceDefault: { provider: "codex", model: "gpt-5.6-terra" },
-  });
-  assert.equal(chat.provider, "claude");
-  assert.equal(chat.model, "sonnet");
 });
 
 test("what the caller asked for outranks both", () => {

@@ -1,6 +1,5 @@
 import {hubLinearResolveInput,hubTicketCommentInput} from "./hub-linear-input.js";
 import {hubGitHubInput} from "./hub-github-input.js";
-import {hubRoutineInput} from "./hub-routine-input.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { basename } from "node:path";
@@ -17,18 +16,9 @@ interface ApiTicket {
   body: string;
   status: string;
   priority: number;
-  assigneeAgentId?: string;
   branch?: string;
   parentId?: string;
   threads: { chatId: string; deviceId: string }[];
-}
-
-interface ApiAgent {
-  id: string;
-  handle: string;
-  name: string;
-  role?: string;
-  handoffTo: string[];
 }
 
 interface ApiWorkspace {
@@ -39,13 +29,6 @@ interface ApiWorkspace {
   worktrees?: { path: string }[];
 }
 
-interface ApiMemory {
-  id: string;
-  scope: "global" | "workspace";
-  projectId?: string;
-  content: string;
-}
-
 interface ApiThread {
   id: string;
   title: string;
@@ -53,7 +36,6 @@ interface ApiThread {
   state: string;
   provider: string;
   model?: string;
-  agentId?: string;
   preview?: string;
   entries?: {
     kind: string;
@@ -73,7 +55,6 @@ interface ApiBrowserView {
 
 interface Board {
   tickets?: ApiTicket[];
-  agents?: ApiAgent[];
   projects?: { id: string; name: string; workspaceIds?: string[] }[];
 }
 
@@ -85,8 +66,6 @@ const token = process.env.REMY_API_TOKEN
   ?? "";
 const chatId = process.env.REMY_CHAT_ID ?? "";
 const threadDeviceId = process.env.REMY_DEVICE_ID ?? "";
-const agentId = process.env.REMY_AGENT_ID ?? "";
-const chatDm = process.env.REMY_CHAT_DM === "1";
 
 async function request<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
   const response = await fetch(`${apiUrl}${path}`, {
@@ -120,7 +99,6 @@ async function ticketFor(key?: string): Promise<{ ticket: ApiTicket; board: Boar
 async function describe(key?: string): Promise<string> {
   const { ticket, board: snapshot } = await ticketFor(key);
   const project = snapshot.projects?.find((entry) => entry.id === ticket.projectId);
-  const agent = snapshot.agents?.find((entry) => entry.id === ticket.assigneeAgentId);
   const children = snapshot.tickets?.filter((entry) => entry.parentId === ticket.id) ?? [];
   const activity = await request<{ activity?: { actor: string; kind: string; body?: string }[] }>(
     `/tickets/${encodeURIComponent(ticket.id)}/activity`,
@@ -130,7 +108,6 @@ async function describe(key?: string): Promise<string> {
     `Workspace: ${project?.name ?? "Unknown"}`,
     `Status: ${ticket.status}`,
     `Priority: ${ticket.priority}`,
-    `Assignee: ${agent?.name ?? ticket.assigneeAgentId ?? "Nobody"}`,
     ticket.branch ? `Branch: ${ticket.branch}` : "",
     ticket.body ? `\nDescription:\n${ticket.body}` : "\nNo description.",
     children.length
@@ -200,8 +177,7 @@ async function workspacePath(reference?: string): Promise<string> {
   return matches[0].path;
 }
 
-function describeThread(thread: ApiThread, agents: ApiAgent[]): string {
-  const agent = agents.find((entry) => entry.id === thread.agentId);
+function describeThread(thread: ApiThread): string {
   const recent = (thread.entries ?? []).slice(-20).map((entry) => entry.text
     ? `- ${entry.kind}: ${entry.text}`
     : `- ${entry.kind}: ${[entry.verb, entry.arg, entry.status].filter(Boolean).join(" ")}`);
@@ -210,7 +186,6 @@ function describeThread(thread: ApiThread, agents: ApiAgent[]): string {
     `State: ${thread.state}`,
     `Workspace folder: ${thread.cwd}`,
     `Provider: ${thread.provider}${thread.model ? ` / ${thread.model}` : ""}`,
-    agent ? `Agent: @${agent.handle}` : "Agent: Workspace agent",
     thread.preview ? `Latest: ${thread.preview}` : "",
     recent.length ? `\nRecent thread activity:\n${recent.join("\n")}` : "",
   ].filter(Boolean).join("\n");
@@ -222,14 +197,11 @@ const server = new McpServer(
   { instructions: REMY_TOOL_INSTRUCTIONS },
 );
 
-if(process.env.REMY_HUB_INBOX==="1")server.registerTool("create_organization_routine",{description:"Create repeated work when the person asks this agent for it.",inputSchema:hubRoutineInput},async input=>{const result=await request<{artifact?:ConvArtifact}>("/organization-tools/create_organization_routine",{method:"POST",body:input});return ok(JSON.stringify(result),result.artifact);});
 server.registerTool("resolve_linear_ticket",{description:"Resolve a Linear ticket in this workspace.",inputSchema:hubLinearResolveInput},async input=>{const result=await request<{artifact?:ConvArtifact}>("/organization-tools/resolve_linear_ticket",{method:"POST",body:input});return ok(JSON.stringify(result),result.artifact);});
 server.registerTool("comment_organization_ticket",{description:"Comment on a shared ticket with a link to this thread.",inputSchema:hubTicketCommentInput},async input=>ok(JSON.stringify(await request("/organization-tools/comment_organization_ticket",{method:"POST",body:input}))));
 server.registerTool("github_action",{description:"Create a pull request, comment or review using the linked member account.",inputSchema:hubGitHubInput},async input=>ok(JSON.stringify(await request("/organization-tools/github_action",{method:"POST",body:input}))));
 for(const action of ["list_organization_computers","list_organization_workspaces"])server.registerTool(action,{description:"List organization resources visible to the person.",inputSchema:{}},async()=>ok(JSON.stringify(await request(`/organization-tools/${action}`,{method:"POST",body:{}}))));
-for(const action of ["explain_routing","start_organization_thread","create_organization_ticket","handoff_organization_ticket","move_organization_thread"])server.registerTool(action,{description:"Act within the person's visible organization workspaces.",inputSchema:{workspaceId:z.string(),prompt:z.string().optional(),title:z.string().optional(),ticketId:z.string().optional(),agentId:z.string().optional(),threadId:z.string().optional(),computerId:z.string().optional()}},async input=>{const result=await request<{artifact?:ConvArtifact}>(`/organization-tools/${action}`,{method:"POST",body:input});return ok(JSON.stringify(result),result.artifact);});
-server.registerTool("read_routing", {description:"Read your organization's routing rules.",inputSchema:{}}, async()=>ok(JSON.stringify(await request("/routing"))));
-server.registerTool("edit_routing", {description:"Replace your organization's ordered routing rules.",inputSchema:{rules:z.array(z.object({id:z.string(),name:z.string(),workspaceId:z.string().optional(),teamId:z.string().optional(),trigger:z.enum(["manual","ticket","routine","agent"]).optional(),target:z.object({computerId:z.string().optional(),class:z.enum(["hosted","darwin","linux"]).optional(),emulator:z.boolean().optional()})})).max(100)}}, async input=>ok(JSON.stringify(await request("/routing", {method:"PUT",body:input}))));
+for(const action of ["start_organization_thread","create_organization_ticket","move_organization_thread"])server.registerTool(action,{description:"Act within the person's visible organization workspaces.",inputSchema:{workspaceId:z.string(),prompt:z.string().optional(),title:z.string().optional(),ticketId:z.string().optional(),threadId:z.string().optional(),computerId:z.string().optional()}},async input=>{const result=await request<{artifact?:ConvArtifact}>(`/organization-tools/${action}`,{method:"POST",body:input});return ok(JSON.stringify(result),result.artifact);});
 server.registerTool("list_workspaces", {
   description: "List the workspace folders registered on this machine.",
   inputSchema: {},
@@ -395,95 +367,16 @@ server.registerTool("browser_wait", {
   return ok(browserResult("Finished waiting.", view));
 });
 
-server.registerTool("list_agents", {
-  description: "List the agents available when starting a thread.",
-  inputSchema: {},
-  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-}, async () => {
-  const listed = (await request<{ agents?: ApiAgent[] }>("/agents")).agents ?? [];
-  return ok(listed.length
-    ? listed.map((agent) => `@${agent.handle}: ${agent.role || agent.name}`).join("\n")
-    : "No custom agents are available. Use the workspace agent.");
-});
-
-server.registerTool("list_memories", {
-  description: "Read this agent's durable memories for the current workspace.",
-  inputSchema: { query: z.string().max(500).optional() },
-  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-}, async ({ query }) => {
-  if (!agentId) throw new Error("This thread has no agent memory.");
-  const held = await workspaceFor();
-  const snapshot = held ? await board() : undefined;
-  const projectId = held
-    ? snapshot?.projects?.find((project) => project.workspaceIds?.includes(held.id))?.id
-    : undefined;
-  const params = new URLSearchParams();
-  if (projectId) params.set("project", projectId);
-  if (query?.trim()) params.set("query", query.trim());
-  const suffix = params.size > 0 ? `?${params.toString()}` : "";
-  const memories = (await request<{ memories?: ApiMemory[] }>(
-    `/agents/${encodeURIComponent(agentId)}/memories${suffix}`,
-  )).memories ?? [];
-  return ok(memories.length
-    ? memories.map((memory) => `${memory.id} [${memory.scope}]\n${memory.content}`).join("\n\n")
-    : "You have no matching memories.");
-});
-
-server.registerTool("save_memory", {
-  description: "Save or replace a durable fact that should follow this agent between devices.",
-  inputSchema: {
-    content: z.string().min(1).max(4000),
-    scope: z.enum(["global", "workspace"]).optional(),
-    workspace: z.string().optional().describe("Registered workspace name, id, path, or origin. Required only when this thread is not already in that workspace."),
-    memory_id: z.string().optional().describe("Existing memory id to replace."),
-  },
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-}, async ({ content, scope, workspace, memory_id }) => {
-  if (!agentId) throw new Error("This thread has no agent memory.");
-  let projectId: string | undefined;
-  if (scope === "workspace") {
-    const held = await workspaceFor(workspace);
-    const snapshot = held ? await board() : undefined;
-    projectId = held
-      ? snapshot?.projects?.find((project) => project.workspaceIds?.includes(held.id))?.id
-      : undefined;
-  }
-  const path = memory_id
-    ? `/agents/${encodeURIComponent(agentId)}/memories/${encodeURIComponent(memory_id)}`
-    : `/agents/${encodeURIComponent(agentId)}/memories`;
-  const saved = await request<{ memory: ApiMemory }>(path, {
-    method: memory_id ? "PATCH" : "POST",
-    body: { content, scope, projectId },
-  });
-  return ok(`${memory_id ? "Updated" : "Saved"} memory ${saved.memory.id}.`);
-});
-
-server.registerTool("forget_memory", {
-  description: "Forget one of this agent's durable memories.",
-  inputSchema: { memory_id: z.string() },
-  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-}, async ({ memory_id }) => {
-  if (!agentId) throw new Error("This thread has no agent memory.");
-  await request(`/agents/${encodeURIComponent(agentId)}/memories/${encodeURIComponent(memory_id)}`, {
-    method: "DELETE",
-  });
-  return ok(`Forgot memory ${memory_id}.`);
-});
-
 server.registerTool("list_threads", {
   description: "List recent Remy threads and their current state.",
   inputSchema: {},
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, async () => {
-  const [threads, snapshot] = await Promise.all([
-    request<{ chats?: ApiThread[] }>("/chats"),
-    board(),
-  ]);
+  const threads = await request<{ chats?: ApiThread[] }>("/chats");
   const listed = threads.chats ?? [];
-  return ok(listed.slice(0, 50).map((thread) => {
-    const owner = snapshot.agents?.find((entry) => entry.id === thread.agentId)?.handle;
-    return `${thread.id} [${thread.state}] ${thread.title}\n${thread.cwd}${owner ? `\n@${owner}` : ""}`;
-  }).join("\n\n") || "There are no threads on this machine.");
+  return ok(listed.slice(0, 50).map((thread) =>
+    `${thread.id} [${thread.state}] ${thread.title}\n${thread.cwd}`,
+  ).join("\n\n") || "There are no threads on this machine.");
 });
 
 server.registerTool("read_thread", {
@@ -491,11 +384,8 @@ server.registerTool("read_thread", {
   inputSchema: { thread_id: z.string() },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }, async ({ thread_id }) => {
-  const [thread, snapshot] = await Promise.all([
-    request<ApiThread>(`/chats/${encodeURIComponent(thread_id)}`),
-    board(),
-  ]);
-  return ok(describeThread(thread, snapshot.agents ?? []));
+  const thread = await request<ApiThread>(`/chats/${encodeURIComponent(thread_id)}`);
+  return ok(describeThread(thread));
 });
 
 server.registerTool("start_thread", {
@@ -503,23 +393,17 @@ server.registerTool("start_thread", {
   inputSchema: {
     prompt: z.string().min(1).max(20000).describe("The complete task for the new thread"),
     workspace: z.string().optional().describe("Registered workspace name, id, path, or origin. Omit it to use this thread's folder."),
-    agent: z.string().optional().describe("Agent handle. Omit it to use the workspace agent."),
     title: z.string().max(120).optional(),
     provider: z.enum(["claude", "codex", "cursor"]).optional(),
     model: z.string().optional(),
   },
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-}, async ({ prompt, workspace, agent, title, provider, model }) => {
-  const snapshot = await board();
-  const handle = agent?.replace(/^@/, "");
-  const selected = handle ? snapshot.agents?.find((entry) => entry.handle === handle) : undefined;
-  if (agent && !selected) throw new Error(`No agent called ${agent}.`);
+}, async ({ prompt, workspace, title, provider, model }) => {
   const created = await request<{ chat: ApiThread }>("/chats", {
     method: "POST",
     body: {
       cwd: await workspacePath(workspace),
       title: title?.trim() || prompt.split("\n")[0]?.trim().slice(0, 120),
-      ...(selected ? { agentId: selected.id } : {}),
       ...(provider ? { provider } : {}),
       ...(model ? { model } : {}),
     },
@@ -556,30 +440,6 @@ server.registerTool("stop_thread", {
   return ok(`Stopped thread ${thread_id}.`);
 });
 
-if (chatDm && agentId) server.registerTool("create_routine", {
-  description: "Create a routine for this agent when the person asks for work to happen repeatedly.",
-  inputSchema: {
-    name: z.string().min(1).max(200).describe("A short name for the routine"),
-    prompt: z.string().min(1).max(20000).describe("The complete instruction to send this agent each time"),
-    cadence: z.enum(["daily", "weekdays", "weekly", "monthly"]),
-    hour: z.number().int().min(0).max(23).describe("Local hour on the routine's clock device"),
-    minute: z.number().int().min(0).max(59).default(0),
-    weekday: z.number().int().min(0).max(6).optional().describe("Sunday is 0; required for weekly routines"),
-    day: z.number().int().min(1).max(28).optional().describe("Day of month; required for monthly routines"),
-  },
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-}, async ({ name, prompt, cadence, hour, minute, weekday, day }) => {
-  const created = await request<{ routine: { id: string; name: string } }>("/routines", {
-    method: "POST",
-    body: { name, prompt, cadence, hour, minute, weekday, day },
-  });
-  return ok(`Created ${created.routine.name}.`, {
-    kind: "routine",
-    id: created.routine.id,
-    title: created.routine.name,
-  });
-});
-
 server.registerTool("create_ticket", {
   description: "Write a new ticket on a workspace's board.",
   inputSchema: {
@@ -601,7 +461,6 @@ server.registerTool("create_ticket", {
       title,
       ...(body ? { body } : {}),
       ...(status ? { status } : {}),
-      actor: agentId,
     },
   });
   return ok(`Created ${created.ticket.key} in ${project.name}.`, ticketCard(created.ticket));
@@ -626,7 +485,6 @@ server.registerTool("attach_ticket", {
       deviceId: threadDeviceId,
       state: "working",
       linkedBy: "runner",
-      ...(agentId ? { agentId } : {}),
     },
   });
   return ok(`Linked this thread to ${ticket.key}.`, ticketCard(ticket));
@@ -663,7 +521,7 @@ server.registerTool("set_ticket_status", {
   const { ticket } = await ticketFor(asked);
   await request(`/tickets/${encodeURIComponent(ticket.id)}/status`, {
     method: "POST",
-    body: { status, note, instruction, actor: agentId },
+    body: { status, note, instruction },
   });
   return ok(`Moved ${ticket.key} to ${status}.`, { ...ticketCard(ticket), detail: status });
 });
@@ -676,7 +534,7 @@ server.registerTool("comment_on_ticket", {
   const { ticket } = await ticketFor(asked);
   await request(`/tickets/${encodeURIComponent(ticket.id)}/comment`, {
     method: "POST",
-    body: { body, actor: agentId },
+    body: { body },
   });
   return ok(`Commented on ${ticket.key}.`, ticketCard(ticket));
 });
@@ -694,27 +552,9 @@ server.registerTool("create_sub_ticket", {
       parentId: ticket.id,
       title,
       ...(body ? { body } : {}),
-      actor: agentId,
     },
   });
   return ok(`Created ${created.ticket.key} under ${ticket.key}.`, ticketCard(created.ticket));
-});
-
-server.registerTool("handoff_ticket", {
-  description: "Assign a ticket to one of this agent's configured handoff targets.",
-  inputSchema: { key, handle: z.string() },
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-}, async ({ key: asked, handle }) => {
-  const { ticket, board: snapshot } = await ticketFor(asked);
-  const current = snapshot.agents?.find((entry) => entry.id === agentId);
-  const next = snapshot.agents?.find((entry) => entry.handle === handle);
-  if (!next) throw new Error(`No agent called @${handle}.`);
-  if (!current?.handoffTo.includes(next.handle)) throw new Error(`@${current?.handle ?? "workspace"} cannot hand tickets to @${next.handle}.`);
-  await request(`/tickets/${encodeURIComponent(ticket.id)}/handoff`, {
-    method: "POST",
-    body: { agentId: next.id, actor: current.handle },
-  });
-  return ok(`Handed ${ticket.key} to @${next.handle}.`, ticketCard(ticket));
 });
 
 await server.connect(new StdioServerTransport());

@@ -1,5 +1,4 @@
 import { useMemo, useState, type ComponentType } from "react";
-import { useShallow } from "zustand/react/shallow";
 import { Archive, ArrowUpCircle, Pin, Settings2 } from "lucide-react";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { agoLabel, elapsedSince, useTicker } from "@/lib/elapsed";
@@ -63,9 +62,6 @@ export function useMacSidebar({
   const avatar = useStore((state) => state.settings?.avatar);
   const stillLooking = useStore((state) => state.loading);
   const needsYou = useStore((state) => state.chats.filter((chat) => chat.state === "needs_input").length);
-  const unread = useStore(useShallow((state) => state.agents.filter((agent) =>
-    state.dms.some((chat) => chat.agentId === agent.id && chat.unread),
-  ).length));
   const anyWorking = chats.some((chat) => Boolean(chat.workingSince));
   const now = useTicker(anyWorking);
   const machine = servers.find((server) => server.local) ?? servers[0];
@@ -88,13 +84,13 @@ export function useMacSidebar({
     id,
     label,
     icon,
-    count: id === "agents" ? unread : id === "general" && updateAvailable ? 1 : undefined,
+    count: id === "general" && updateAvailable ? 1 : undefined,
     selected: settingsTab === id,
     onSelect: () => openSettings(id),
   }));
 
   const groups = useMemo<SidebarThreadGroup[]>(() => {
-    const listed = chats.filter((chat) => !chat.dm);
+    const listed = chats;
     const topology = listed.map((chat) => ({
       id: chat.id,
       parentChatId: chat.parentChatId,

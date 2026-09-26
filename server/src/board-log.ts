@@ -14,7 +14,7 @@ import { db, getKv, runTransaction, setKv } from "./db.js";
 /// device id breaks the tie the counter cannot. `at` is wall clock, and is only
 /// ever shown to a person.
 
-export type LogEntity = "project" | "agent" | "memory" | "ticket" | "recurrence";
+export type LogEntity = "project" | "ticket";
 
 export type LogKind =
   | "create"
@@ -23,12 +23,8 @@ export type LogKind =
   | "comment"
   | "comment_edit"
   | "comment_delete"
-  | "handoff"
   | "link"
   | "unlink"
-  /// A routine completing one trigger. On the log rather than in a row so two
-  /// machines cannot each believe they still owe the same run.
-  | "ran"
   | "tombstone";
 
 export interface LogEvent {
@@ -208,7 +204,7 @@ export function eventsSince(vector: Record<string, number>, limit = 500): LogEve
   return rows.map(toEvent);
 }
 
-const LOG_ENTITIES: LogEntity[] = ["project", "agent", "memory", "ticket", "recurrence"];
+const LOG_ENTITIES: LogEntity[] = ["project", "ticket"];
 const LOG_KINDS: LogKind[] = [
   "create",
   "field",
@@ -216,10 +212,8 @@ const LOG_KINDS: LogKind[] = [
   "comment",
   "comment_edit",
   "comment_delete",
-  "handoff",
   "link",
   "unlink",
-  "ran",
   "tombstone",
 ];
 

@@ -6,19 +6,10 @@ import { apiError } from "@/lib/api-error";
 import type { LinearState } from "./HubLinear";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectTrigger,
-  SelectValue,
-  SelectContent,
-  SelectItem,
-} from "@/components/ui/select";
 export type LinearBoardState = {
   settings: {
     workspace_id: string;
     enabled: number;
-    agent_map: string;
     error: string | null;
   }[];
   labels: Record<string, { id: string; name: string }[]>;
@@ -29,22 +20,15 @@ export function HubLinearBoard({ organizationId }: { organizationId: string }) {
       organizationId,
       "/linear-board",
     ),
-    { value: mapping } = useHubResource<LinearState>(organizationId, "/linear"),
-    { value: agents } = useHubResource<{
-      agents: { id: string; fields: Record<string, unknown> }[];
-    }>(organizationId, "/agents", "/board/live");
+    { value: mapping } = useHubResource<LinearState>(organizationId, "/linear");
   const [busy, setBusy] = useState(false);
-  const save = async (
-    workspaceId: string,
-    enabled: boolean,
-    agentMap: Record<string, string>,
-  ) => {
+  const save = async (workspaceId: string, enabled: boolean) => {
     setBusy(true);
     try {
       await hubRequest(
         `${hubThreadBase(organizationId)}/linear-board`,
         "POST",
-        { workspaceId, enabled, agentMap },
+        { workspaceId, enabled },
       );
     } catch (e) {
       toast.error("Couldn't save Linear sync", { description: apiError(e) });
@@ -70,9 +54,6 @@ export function HubLinearBoard({ organizationId }: { organizationId: string }) {
               (p) => p.workspace_id === map.workspace_id,
             ),
             enabled = !!policy?.enabled,
-            selected: Record<string, string> = JSON.parse(
-              policy?.agent_map ?? "{}",
-            ),
             workspace = mapping.workspaces.find(
               (w) => w.id === map.workspace_id,
             );
@@ -89,53 +70,10 @@ export function HubLinearBoard({ organizationId }: { organizationId: string }) {
               <Button
                 variant={enabled ? "outline" : "default"}
                 disabled={busy || stale || !mapping.canManage}
-                onClick={() => void save(map.workspace_id, !enabled, selected)}
+                onClick={() => void save(map.workspace_id, !enabled)}
               >
                 {enabled ? "Turn off Linear sync" : "Turn on Linear sync"}
               </Button>
-              {mapping.canManage && (
-                <>
-                  <p className="text-sm text-muted-foreground">
-                    Choose agents for assignments made by matched members.
-                  </p>
-                  {mapping.catalog.users.map((user) => (
-                    <div key={user.id} className="flex min-w-0 flex-col gap-2">
-                      <Label>Agent for {user.name}</Label>
-                      <Select
-                        value={selected[user.id] ?? "none"}
-                        disabled={busy || stale}
-                        onValueChange={(id) => {
-                          const next = { ...selected };
-                          if (id === "none") delete next[user.id];
-                          else next[user.id] = id;
-                          void save(map.workspace_id, enabled, next);
-                        }}
-                      >
-                        <SelectTrigger aria-label={`Agent for ${user.name}`}>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">
-                            No automatic work
-                          </SelectItem>
-                          {agents?.agents
-                            .filter(
-                              (a) =>
-                                a.fields.scope !== "personal" &&
-                                (a.fields.scope !== "workspace" ||
-                                  a.fields.ownerId === map.workspace_id),
-                            )
-                            .map((a) => (
-                              <SelectItem key={a.id} value={a.id}>
-                                {String(a.fields.name)}
-                              </SelectItem>
-                            ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  ))}
-                </>
-              )}
             </div>
           );
         })}

@@ -9,7 +9,7 @@ try {
   page.on('pageerror', error => errors.push(error.message));
   await page.route('**/api/**', route => route.fulfill({ status: route.request().url().endsWith('/api/runtime') ? 200 : 401, contentType: 'application/json', body: JSON.stringify(route.request().url().endsWith('/api/runtime') ? { mode: 'hub', auth: { google: true, github: true, magicLink: false, sso: true } } : { error: 'Sign in again.' }) }));
   await page.goto(url, { waitUntil: 'networkidle' });
-  await page.getByRole('heading', { name: 'Your agents, within reach.' }).waitFor();
+  await page.getByRole('heading', { name: 'Your coding threads, within reach.' }).waitFor();
   assert.equal(await page.getByText('Sign in to Remy', { exact: true }).count(), 0);
   const destination = await page.locator('.hero').getByRole('link', { name: 'Open Remy', exact: true }).getAttribute('href');
   assert.equal(destination, 'https://app.tryremy.dev/');

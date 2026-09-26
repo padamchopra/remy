@@ -15,7 +15,6 @@ const config = await import("./config.js");
 const log = await import("./board-log.js");
 const projects = await import("./projects.js");
 const tickets = await import("./tickets.js");
-const agents = await import("./agents.js");
 const runner = await import("./ticket-runner.js");
 
 function project(name: string) {
@@ -23,7 +22,6 @@ function project(name: string) {
 }
 
 // ── ordering ────────────────────────────────────────────────────────────────
-
 test("a rank always sorts between the two it was asked for", () => {
   const first = tickets.rankBetween();
   const before = tickets.rankBetween(undefined, first);
@@ -108,23 +106,6 @@ test("a sub-ticket hangs off its parent and cannot nest further", () => {
 
 // ── status rules ────────────────────────────────────────────────────────────
 
-test("auto-start becomes ready regardless of whether Todo or assignee changes first", () => {
-  const board = project("Order independent start");
-  const agent = agents.createAgent({ name: "Autostarter" });
-
-  const statusFirst = tickets.createTicket({ projectId: board.id, title: "Status first" });
-  tickets.setTicketStatus(statusFirst.id, "todo");
-  assert.equal(runner.shouldAutoStart(tickets.getTicket(statusFirst.id)!), false);
-  tickets.updateTicket(statusFirst.id, { assigneeAgentId: agent.id });
-  assert.equal(runner.shouldAutoStart(tickets.getTicket(statusFirst.id)!), true);
-
-  const assigneeFirst = tickets.createTicket({ projectId: board.id, title: "Assignee first" });
-  tickets.updateTicket(assigneeFirst.id, { assigneeAgentId: agent.id });
-  assert.equal(runner.shouldAutoStart(tickets.getTicket(assigneeFirst.id)!), false);
-  tickets.setTicketStatus(assigneeFirst.id, "todo");
-  assert.equal(runner.shouldAutoStart(tickets.getTicket(assigneeFirst.id)!), true);
-});
-
 test("a linked thread moves a ticket between In progress and Needs input", () => {
   const board = project("Statuses");
   const ticket = tickets.createTicket({ projectId: board.id, title: "Flaky login test" });
@@ -144,37 +125,6 @@ test("a linked thread moves a ticket between In progress and Needs input", () =>
   tickets.setTicketStatus(ticket.id, "done");
   tickets.syncTicketFromThread("chat-1", "working");
   assert.equal(tickets.getTicket(ticket.id)?.status, "done");
-});
-
-test("starting a ticket hands You and Nobody to the workspace agent", () => {
-  const board = project("Start assignees");
-  const nobody = tickets.createTicket({ projectId: board.id, title: "Unassigned", status: "backlog" });
-  const mine = tickets.createTicket({
-    projectId: board.id,
-    title: "Mine",
-    status: "todo",
-    assigneeAgentId: tickets.YOU,
-  });
-  const builder = agents.createAgent({ name: "Start builder" });
-  const assigned = tickets.createTicket({
-    projectId: board.id,
-    title: "Assigned",
-    status: "todo",
-    assigneeAgentId: builder.id,
-  });
-
-  assert.deepEqual(tickets.prepareTicketStart(nobody.id), {
-    ticket: tickets.getTicket(nobody.id),
-  });
-  assert.equal(tickets.getTicket(nobody.id)?.assigneeAgentId, agents.WORKSPACE_AGENT);
-  assert.deepEqual(tickets.prepareTicketStart(mine.id), {
-    ticket: tickets.getTicket(mine.id),
-  });
-  assert.equal(tickets.getTicket(mine.id)?.assigneeAgentId, agents.WORKSPACE_AGENT);
-  assert.equal(tickets.prepareTicketStart(assigned.id).agentId, builder.id);
-
-  tickets.setTicketStatus(assigned.id, "in_progress");
-  assert.throws(() => tickets.prepareTicketStart(assigned.id), /Backlog or Todo/);
 });
 
 test("a status change records who made it", () => {
@@ -518,20 +468,18 @@ test("every board write is an event, so nothing changes without a record", () =>
 test("your comments can be edited and deleted without rewriting the board log", () => {
   const board = project("Comments");
   const ticket = tickets.createTicket({ projectId: board.id, title: "Discuss this" });
-  const agent = agents.createAgent({ name: "Reviewer" });
 
-  tickets.commentOnTicket(ticket.id, "First draft @reviewer");
+  tickets.commentOnTicket(ticket.id, "First draft");
   const yours = tickets.ticketActivity(ticket.id).at(-1)!;
-  tickets.commentOnTicket(ticket.id, "Agent note", agent.handle);
+  tickets.commentOnTicket(ticket.id, "A note from Remy", "remy");
   const theirs = tickets.ticketActivity(ticket.id).at(-1)!;
 
-  tickets.editTicketComment(ticket.id, yours.id, "Final draft @you");
+  tickets.editTicketComment(ticket.id, yours.id, "Final draft");
   const edited = tickets.ticketActivity(ticket.id).find((entry) => entry.id === yours.id);
-  assert.equal(edited?.body, "Final draft @you");
-  assert.deepEqual(edited?.mentions, [{ handle: "you", id: "you" }]);
+  assert.equal(edited?.body, "Final draft");
   assert.ok(edited?.editedAt);
   assert.throws(
-    () => tickets.editTicketComment(ticket.id, theirs.id, "Changed agent note"),
+    () => tickets.editTicketComment(ticket.id, theirs.id, "Changed Remy's note"),
     /only change your own comments/,
   );
 
@@ -546,277 +494,4 @@ test("your comments can be edited and deleted without rewriting the board log", 
     () => tickets.deleteTicketComment(ticket.id, theirs.id),
     /only change your own comments/,
   );
-});
-
-// ── agents ──────────────────────────────────────────────────────────────────
-
-test("an agent handle is unique and usable in a tool call", () => {
-  const first = agents.createAgent({ name: "Iris the Scout" });
-  assert.equal(first.handle, "iris-the-scout");
-
-  // A handle derived from a name is only a default, so a clash steps aside —
-  // which is what lets New agent be pressed twice.
-  const second = agents.createAgent({ name: "iris the scout" });
-  assert.equal(second.handle, "iris-the-scout-2");
-
-  // One you typed has to be the one you get, so a clash is an error.
-  assert.throws(() => agents.createAgent({ name: "Someone", handle: "iris-the-scout" }), /already uses/);
-
-  // Renaming to a free handle is fine; the clash check exempts the agent itself.
-  const renamed = agents.updateAgent(first.id, { handle: "iris" });
-  assert.equal(renamed.handle, "iris");
-  assert.equal(agents.updateAgent(first.id, { handle: "iris" }).handle, "iris");
-});
-
-test("commit attribution decides whether an agent authors a commit", () => {
-  const off = agents.createAgent({ name: "Quiet", gitIdentity: "off" });
-  assert.deepEqual(agents.gitIdentityEnv(off), {});
-
-  const author = agents.createAgent({ name: "Writer", gitIdentity: "author" });
-  const authorEnv = agents.gitIdentityEnv(author);
-  assert.equal(authorEnv.GIT_AUTHOR_NAME, "Writer");
-  assert.equal(authorEnv.GIT_AUTHOR_EMAIL, "writer@remy.invalid", "no GitHub login here, so Remy names itself");
-  // Author-only deliberately leaves the human as committer.
-  assert.equal(authorEnv.GIT_COMMITTER_NAME, undefined);
-
-  const legacy = agents.createAgent({ name: "Legacy", gitIdentity: "full" });
-  assert.equal(legacy.gitIdentity, "author");
-  assert.equal(agents.gitIdentityEnv(legacy).GIT_COMMITTER_NAME, undefined);
-
-  assert.deepEqual(agents.gitIdentityEnv(undefined), {}, "a thread with no agent keeps your identity");
-});
-
-test("an inherited agent follows later model and git identity defaults", () => {
-  const previous = {
-    provider: config.config.defaultProvider,
-    model: config.config.defaultModel,
-    effort: config.config.defaultEffort,
-    identity: config.config.defaultGitIdentity,
-  };
-  try {
-    config.config.defaultProvider = "claude";
-    config.config.defaultModel = "sonnet";
-    config.config.defaultEffort = "high";
-    config.config.defaultGitIdentity = "author";
-    const agent = agents.createAgent({ name: "Follower" });
-
-    assert.equal(agent.provider, "default");
-    assert.equal(agent.gitIdentity, "default");
-    assert.deepEqual(agents.resolvedAgentModel(agent), { provider: "claude", model: "sonnet", effort: "high" });
-    assert.equal(agents.gitIdentityEnv(agent).GIT_COMMITTER_NAME, undefined);
-
-    config.config.defaultProvider = "codex";
-    config.config.defaultModel = "gpt-5.6-terra";
-    config.config.defaultEffort = "xhigh";
-    config.config.defaultGitIdentity = "off";
-    assert.deepEqual(agents.resolvedAgentModel(agent), { provider: "codex", model: "gpt-5.6-terra", effort: "xhigh" });
-    assert.deepEqual(agents.gitIdentityEnv(agent), {});
-
-    const fixed = agents.updateAgent(agent.id, {
-      provider: "claude",
-      model: "opus",
-      effort: "low",
-      gitIdentity: "off",
-    });
-    assert.deepEqual(agents.resolvedAgentModel(fixed), { provider: "claude", model: "opus", effort: "low" });
-    assert.deepEqual(agents.gitIdentityEnv(fixed), {});
-  } finally {
-    config.config.defaultProvider = previous.provider;
-    config.config.defaultModel = previous.model;
-    config.config.defaultEffort = previous.effort;
-    config.config.defaultGitIdentity = previous.identity;
-  }
-});
-
-test("existing agents inherit defaults unless a field records an override", () => {
-  const inheritedId = "legacy-inherited-agent";
-  log.append("agent", inheritedId, "create", {
-    name: "Legacy follower",
-    handle: "legacy-follower",
-    provider: "claude",
-    gitIdentity: "author",
-  });
-  agents.reproject(inheritedId);
-
-  const fixedId = "legacy-fixed-agent";
-  log.append("agent", fixedId, "create", {
-    name: "Legacy fixed",
-    handle: "legacy-fixed",
-    provider: "claude",
-    gitIdentity: "author",
-  });
-  log.append("agent", fixedId, "field", {
-    provider: "codex",
-    model: "gpt-5.6-terra",
-    gitIdentity: "full",
-  });
-  agents.reproject(fixedId);
-
-  agents.seedPresetAgents();
-  assert.equal(agents.getAgent(inheritedId)?.provider, "default");
-  assert.equal(agents.getAgent(inheritedId)?.gitIdentity, "default");
-  assert.equal(agents.getAgent(fixedId)?.provider, "codex");
-  assert.equal(agents.getAgent(fixedId)?.model, "gpt-5.6-terra");
-  assert.equal(agents.getAgent(fixedId)?.gitIdentity, "author");
-
-  const migratedEventCount = log.eventsFor("agent", inheritedId).length;
-  agents.seedPresetAgents();
-  assert.equal(log.eventsFor("agent", inheritedId).length, migratedEventCount);
-});
-
-test("an agent's commit address is derived, not set", () => {
-  const agent = agents.createAgent({ name: "Picky", handle: "picky" });
-  assert.equal(agent.gitEmail, "picky@remy.invalid");
-
-  // Nothing a client sends can move it, so no commit can claim a real mailbox.
-  const ignored = agents.updateAgent(agent.id, { gitEmail: "picky@example.com" });
-  assert.equal(ignored.gitEmail, "picky@remy.invalid");
-  assert.equal(agents.gitIdentityEnv(ignored).GIT_AUTHOR_EMAIL, "picky@remy.invalid");
-});
-
-test("the commit address follows a renamed handle", () => {
-  const agent = agents.createAgent({ name: "Drifter", handle: "before" });
-  assert.equal(agent.gitEmail, "before@remy.invalid");
-
-  const renamed = agents.updateAgent(agent.id, { handle: "after" });
-  assert.equal(renamed.gitEmail, "after@remy.invalid", "derived, so it cannot go stale");
-  assert.equal(agents.gitIdentityEnv(renamed).GIT_AUTHOR_EMAIL, "after@remy.invalid");
-});
-
-test("the commit address carries whoever the machine is signed in as", () => {
-  const agent = agents.createAgent({ name: "Owned", handle: "planner" });
-  config.config.githubLogin = "padamchopra";
-  try {
-    assert.equal(agents.reproject(agent.id)?.gitEmail, "planner@padamchopra.invalid");
-    assert.equal(
-      agents.gitIdentityEnv(agents.getAgent(agent.id)).GIT_AUTHOR_EMAIL,
-      "planner@padamchopra.invalid",
-    );
-  } finally {
-    config.config.githubLogin = "";
-  }
-});
-
-test("a login that is not one is dropped rather than passed into an address", () => {
-  assert.equal(config.githubAccount("padamchopra"), "padamchopra");
-  assert.equal(config.githubAccount("has space"), "");
-  assert.equal(config.githubAccount("bad@login"), "");
-  assert.equal(config.githubAccount("-leading"), "");
-  assert.equal(config.githubAccount(undefined), "");
-});
-
-test("the built-in agents seed once and stay editable", () => {
-  agents.seedPresetAgents();
-  const first = agents.listAgents().filter((agent) => agent.preset).length;
-  agents.seedPresetAgents();
-  assert.equal(agents.listAgents().filter((agent) => agent.preset).length, first);
-  assert.equal(first, 4, "GitHub, PM, Builder, and QA should be there");
-  assert.deepEqual(
-    agents.listAgents().filter((agent) => agent.preset).map((agent) => agent.id).sort(),
-    ["remy-preset-builder", "remy-preset-critic", "remy-preset-github", "remy-preset-scout"],
-  );
-
-  const github = agents.agentByHandle("github");
-  const pm = agents.agentByHandle("pm");
-  const qa = agents.agentByHandle("qa");
-  assert.equal(pm?.handoffTo[0], "builder");
-  assert.equal(qa?.handoffTo[0], "builder");
-
-  const builder = agents.agentByHandle("builder");
-  assert.ok(builder, "builder should be seeded");
-  // An agent runs while you are not watching, so there are two modes it can be
-  // in and `auto` is where every one of them starts.
-  assert.equal(github?.permissionMode, "auto");
-  assert.equal(pm?.permissionMode, "auto");
-  assert.equal(qa?.permissionMode, "auto");
-  assert.equal(builder.permissionMode, "auto");
-  assert.equal(builder.gitIdentity, "default");
-  const edited = agents.updateAgent(builder.id, { role: "Changed by hand" });
-  assert.equal(edited.role, "Changed by hand");
-});
-
-test("a ticket can be yours as well as an agent's", () => {
-  const mine = project("Mine");
-  const ticket = tickets.createTicket({ projectId: mine.id, title: "Something I keep" });
-
-  const kept = tickets.updateTicket(ticket.id, { assigneeAgentId: tickets.YOU });
-  assert.equal(kept.assigneeAgentId, tickets.YOU, "you are an assignee, not an agent lookup");
-
-  const agent = agents.createAgent({ name: "Handoff" });
-  const theirs = tickets.updateTicket(ticket.id, { assigneeAgentId: agent.id });
-  assert.equal(theirs.assigneeAgentId, agent.id);
-
-  // The sentinel is the only name that is not an agent; anything else is still
-  // a typo worth refusing.
-  assert.throws(
-    () => tickets.updateTicket(ticket.id, { assigneeAgentId: "nobody-by-that-id" }),
-    /no such agent/,
-  );
-
-  const cleared = tickets.updateTicket(ticket.id, { assigneeAgentId: "" });
-  assert.equal(cleared.assigneeAgentId, undefined, "clearing leaves nobody on it");
-});
-
-test("a ticket can be the workspace's own, without an agent being written first", () => {
-  const mine = project("Workspaces");
-  const ticket = tickets.createTicket({
-    projectId: mine.id,
-    title: "Bump the dependencies",
-    assigneeAgentId: agents.WORKSPACE_AGENT,
-  });
-  assert.equal(ticket.assigneeAgentId, agents.WORKSPACE_AGENT);
-
-  // It is not a row, so nothing can rename or delete it — and what runs the
-  // turn is this machine's own default model.
-  assert.equal(agents.getAgent(agents.WORKSPACE_AGENT), undefined);
-  const stand_in = agents.assignedAgent(agents.WORKSPACE_AGENT);
-  assert.equal(stand_in?.handle, "workspace");
-  assert.equal(stand_in?.model, undefined, "an empty model is this machine's default");
-  assert.equal(stand_in?.instructions, "", "no persona in front of it");
-
-  assert.throws(
-    () => agents.createAgent({ name: "Impostor", handle: "workspace" }),
-    /workspace agent/,
-    "no agent may take the handle the workspace answers to",
-  );
-  // One derived from a name gets out of the way instead of failing.
-  assert.equal(agents.createAgent({ name: "Workspace" }).handle, "workspace-2");
-});
-
-test("a comment can name the workspace agent", () => {
-  const board = project("Naming");
-  const ticket = tickets.createTicket({ projectId: board.id, title: "Ask the workspace" });
-  tickets.commentOnTicket(ticket.id, "@workspace can you read the changelog?");
-  const comment = tickets.ticketActivity(ticket.id).at(-1);
-  assert.deepEqual(comment?.mentions, [{ handle: "workspace", id: "workspace" }]);
-});
-
-test("a comment records who it named, so renaming an agent renames the mention", () => {
-  const board = project("Talkers");
-  const ticket = tickets.createTicket({ projectId: board.id, title: "Scope me" });
-  const pm = agents.createAgent({ name: "Product", handle: "product" });
-
-  tickets.commentOnTicket(ticket.id, "@product what is the scope here? @you should weigh in. team@example.com");
-  const comment = tickets.ticketActivity(ticket.id).at(-1);
-  assert.ok(comment, "the comment should be on the feed");
-  assert.deepEqual(
-    comment.mentions,
-    [{ handle: "product", id: pm.id }, { handle: "you", id: "you" }],
-    "an email address is not a mention, and an unknown name is not either",
-  );
-
-  // The prose still says `@pm`, and the id still says who that was — which is
-  // the whole point of storing the pair.
-  agents.updateAgent(pm.id, { handle: "product-renamed" });
-  const after = tickets.ticketActivity(ticket.id).at(-1)?.mentions?.[0];
-  assert.equal(after?.handle, "product", "the prose still says what was typed");
-  assert.equal(agents.getAgent(after!.id)?.handle, "product-renamed", "and the id says who that is now");
-});
-
-test("an unknown name in a comment stays plain text", () => {
-  const board = project("Quiet");
-  const ticket = tickets.createTicket({ projectId: board.id, title: "Nobody home" });
-  tickets.commentOnTicket(ticket.id, "@nosuchagent are you there?");
-  const comment = tickets.ticketActivity(ticket.id).at(-1);
-  assert.deepEqual(comment?.mentions, [], "nothing was named, so nothing is recorded");
 });

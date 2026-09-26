@@ -260,9 +260,9 @@ function ThreadMenuView({
           <AlertDialogHeader>
             <AlertDialogTitle className="break-words">{dialog === "delete" ? "Delete" : "Stop and archive"} {chat.title}?</AlertDialogTitle>
             <AlertDialogDescription>
-              {dialog === "delete" ? "Permanently delete this conversation" : "Stop active agents and archive this conversation"}
+              {dialog === "delete" ? "Permanently delete this conversation" : "Stop this thread and archive the conversation"}
               {childCount ? ` and ${childCount} ${childCount === 1 ? "subthread" : "subthreads"}` : ""}.
-              {dialog === "delete" && !archive ? " Any active agents in these threads will stop." : ""}
+              {dialog === "delete" && !archive ? " Anything still running in these threads stops." : ""}
               {dialog === "delete" ? " This cannot be undone." : " You can unarchive it later."}
               {" Workspace files and worktrees stay untouched."}
             </AlertDialogDescription>

@@ -4,10 +4,7 @@ import { deviceId, eventsSince, mergeRemote, onLocalAppend, versionVector } from
 import { config, hasTailscaleServePreference, patchSettings } from "./config.js";
 import { db } from "./db.js";
 import { exportEnvironmentSync, mergeEnvironmentSync } from "./environments.js";
-import { reprojectAll as reprojectAgents, seedPresetAgents } from "./agents.js";
-import { reprojectAll as reprojectMemories } from "./agent-memories.js";
 import { reprojectAll as reprojectProjects } from "./projects.js";
-import { reprojectAll as reprojectRoutines } from "./routines.js";
 import { reprojectAll as reprojectTickets } from "./tickets.js";
 import { serveTarget, tailnetSelf, tailscale, type TailnetState } from "./tailnet.js";
 
@@ -626,14 +623,10 @@ export function acceptEvents(body: Record<string, unknown>): number {
 }
 
 /// Replays every fold over the merged log. The board's tables are projections,
-/// so this is how a peer's events become tickets, agents and projects here.
+/// so this is how a peer's events become tickets and projects here.
 function reprojectBoard(): void {
   reprojectProjects();
-  reprojectAgents();
-  reprojectMemories();
   reprojectTickets();
-  reprojectRoutines();
-  seedPresetAgents();
 }
 
 let syncTimer: ReturnType<typeof setInterval> | undefined;

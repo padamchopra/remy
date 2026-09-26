@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { append, applyFields, deviceId, entityIds, eventsFor, type LogEvent } from "./board-log.js";
-import { WORKSPACE_AGENT, getAgent, listAgents } from "./agents.js";
 import { db, runTransaction } from "./db.js";
 import { getProject, nextTicketNumber, ticketKey, whenSlugChanges } from "./projects.js";
 
@@ -59,14 +58,12 @@ export interface Ticket {
   body: string;
   status: TicketStatus;
   priority: number;
-  assigneeAgentId?: string;
   parentId?: string;
   rank: string;
   /// The machine that runs this ticket's work. Decided when the ticket is made
   /// and changed by hand; no machine ever claims a ticket that is not its own.
   deviceId?: string;
   branch?: string;
-  handoffs: number;
   createdAt: number;
   updatedAt: number;
   startedAt?: number;
@@ -77,7 +74,6 @@ export interface TicketThread {
   ticketId: string;
   deviceId: string;
   chatId: string;
-  agentId?: string;
   stage?: string;
   /// `runner` when the board started it, `you` when it was attached by hand.
   /// The runner uses this to know a ticket is already being worked on.
@@ -88,13 +84,11 @@ export interface TicketThread {
 export interface TicketActivity {
   id: string;
   at: number;
-  /// `you`, `remy`, or an agent's handle.
+  /// `you` or `remy`.
   actor: string;
   kind: string;
   body?: string;
   editedAt?: number;
-  /// Who the comment named, if anyone. See `Mention`.
-  mentions?: Mention[];
   detail?: Record<string, unknown>;
 }
 
@@ -107,12 +101,10 @@ const EDITABLE = [
   "body",
   "status",
   "priority",
-  "assigneeAgentId",
   "parentId",
   "rank",
   "deviceId",
   "branch",
-  "handoffs",
   "startedAt",
   "closedAt",
 ] as const;
@@ -165,7 +157,6 @@ function foldTicket(id: string, events: LogEvent[]): Ticket | undefined {
         status: status(event.payload.status),
         priority: Number(event.payload.priority ?? 0),
         rank: String(event.payload.rank ?? "n"),
-        handoffs: 0,
         createdAt: event.at,
         updatedAt: event.at,
       };
@@ -185,14 +176,6 @@ function foldTicket(id: string, events: LogEvent[]): Ticket | undefined {
       }
       continue;
     }
-    if (event.kind === "handoff") {
-      ticket = {
-        ...ticket,
-        handoffs: ticket.handoffs + 1,
-        assigneeAgentId: String(event.payload.toAgentId ?? ticket.assigneeAgentId ?? ""),
-        updatedAt: event.at,
-      };
-    }
   }
   return ticket;
 }
@@ -206,7 +189,6 @@ function foldThreads(events: LogEvent[]): TicketThread[] {
         ticketId: event.entityId,
         deviceId: String(event.payload.deviceId ?? event.deviceId),
         chatId: String(event.payload.chatId ?? ""),
-        ...(event.payload.agentId ? { agentId: String(event.payload.agentId) } : {}),
         ...(event.payload.stage ? { stage: String(event.payload.stage) } : {}),
         linkedBy: event.payload.linkedBy === "runner" ? "runner" : "you",
         createdAt: event.at,
@@ -230,17 +212,17 @@ export function reproject(id: string): Ticket | undefined {
   }
   db.prepare(
     `insert into tickets (
-       id, number, key, project_id, title, body, status, priority, assignee_agent_id,
-       parent_id, rank, device_id, branch, handoffs,
+       id, number, key, project_id, title, body, status, priority,
+       parent_id, rank, device_id, branch,
        created_at, updated_at, started_at, closed_at, deleted
-     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
      on conflict(id) do update set
        number = excluded.number, key = excluded.key,
        project_id = excluded.project_id, title = excluded.title,
        body = excluded.body, status = excluded.status, priority = excluded.priority,
-       assignee_agent_id = excluded.assignee_agent_id, parent_id = excluded.parent_id,
+       parent_id = excluded.parent_id,
        rank = excluded.rank, device_id = excluded.device_id, branch = excluded.branch,
-       handoffs = excluded.handoffs, updated_at = excluded.updated_at,
+       updated_at = excluded.updated_at,
        started_at = excluded.started_at, closed_at = excluded.closed_at, deleted = 0`,
   ).run(
     ticket.id,
@@ -251,12 +233,10 @@ export function reproject(id: string): Ticket | undefined {
     ticket.body,
     ticket.status,
     ticket.priority,
-    ticket.assigneeAgentId || null,
     ticket.parentId || null,
     ticket.rank,
     ticket.deviceId || null,
     ticket.branch || null,
-    ticket.handoffs,
     ticket.createdAt,
     ticket.updatedAt,
     ticket.startedAt ?? null,
@@ -264,15 +244,14 @@ export function reproject(id: string): Ticket | undefined {
   );
   const insert = db.prepare(
     `insert or replace into ticket_threads
-       (ticket_id, device_id, chat_id, agent_id, stage, linked_by, created_at)
-     values (?, ?, ?, ?, ?, ?, ?)`,
+       (ticket_id, device_id, chat_id, stage, linked_by, created_at)
+     values (?, ?, ?, ?, ?, ?)`,
   );
   for (const thread of foldThreads(events)) {
     insert.run(
       thread.ticketId,
       thread.deviceId,
       thread.chatId,
-      thread.agentId ?? null,
       thread.stage ?? null,
       thread.linkedBy,
       thread.createdAt,
@@ -297,12 +276,10 @@ function toTicket(row: Record<string, unknown>): Ticket {
     body: String(row.body ?? ""),
     status: status(row.status),
     priority: Number(row.priority ?? 0),
-    ...(row.assignee_agent_id ? { assigneeAgentId: String(row.assignee_agent_id) } : {}),
     ...(row.parent_id ? { parentId: String(row.parent_id) } : {}),
     rank: String(row.rank ?? "n"),
     ...(row.device_id ? { deviceId: String(row.device_id) } : {}),
     ...(row.branch ? { branch: String(row.branch) } : {}),
-    handoffs: Number(row.handoffs ?? 0),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
     ...(row.started_at ? { startedAt: Number(row.started_at) } : {}),
@@ -320,7 +297,6 @@ function threadsFor(ticketId: string): TicketThread[] {
     ticketId: String(row.ticket_id),
     deviceId: String(row.device_id),
     chatId: String(row.chat_id),
-    ...(row.agent_id ? { agentId: String(row.agent_id) } : {}),
     ...(row.stage ? { stage: String(row.stage) } : {}),
     linkedBy: row.linked_by === "runner" ? "runner" : "you",
     createdAt: Number(row.created_at),
@@ -364,36 +340,10 @@ export function ticketForChat(chatId: string, onDevice = deviceId): TicketView |
   return row?.ticket_id ? getTicket(row.ticket_id) : undefined;
 }
 
-const ACTIVITY_KINDS = new Set(["create", "status", "comment", "handoff", "link", "unlink", "field"]);
+const ACTIVITY_KINDS = new Set(["create", "status", "comment", "comment_edit", "link", "unlink", "field"]);
 
 /// The ticket's story, newest last. This is the log itself — there is no second
 /// record that could drift from it.
-/// Who a comment named.
-///
-/// Stored as a pair rather than as either half alone: the handle is the text
-/// that is actually in the prose, so the renderer knows what to mark, and the
-/// id is who that was, so renaming an agent renames every mention of it that
-/// was ever written.
-export interface Mention {
-  id: string;
-  handle: string;
-}
-
-/// A leading `@` that starts a word. An email address has a character before
-/// the `@`, so it is left alone, and an unknown name stays plain text.
-const MENTION = /(?:^|[^\w@.])@([\w-]+)/g;
-
-export function parseMentions(body: string): Mention[] {
-  const known = new Map<string, string>([[YOU, YOU], [WORKSPACE_AGENT, WORKSPACE_AGENT]]);
-  for (const agent of listAgents()) known.set(agent.handle, agent.id);
-  const found = new Map<string, string>();
-  for (const match of body.matchAll(MENTION)) {
-    const id = known.get(match[1]);
-    if (id) found.set(match[1], id);
-  }
-  return [...found].map(([handle, id]) => ({ handle, id }));
-}
-
 /// The note whoever moved a ticket left with the move.
 ///
 /// `body` is where a status note was written before it had a key of its own. A
@@ -406,7 +356,7 @@ function moveNote(event: LogEvent): string | undefined {
 
 export function ticketActivity(id: string): TicketActivity[] {
   const events = eventsFor("ticket", id);
-  const comments = new Map<string, { actor: string; body: string; mentions: Mention[]; editedAt?: number }>();
+  const comments = new Map<string, { actor: string; body: string; editedAt?: number }>();
   const deletedComments = new Set<string>();
 
   for (const event of events) {
@@ -415,7 +365,6 @@ export function ticketActivity(id: string): TicketActivity[] {
       comments.set(event.id, {
         actor: String(event.payload.actor ?? YOU),
         body: String(event.payload.body ?? ""),
-        mentions: Array.isArray(event.payload.mentions) ? event.payload.mentions as Mention[] : [],
       });
       continue;
     }
@@ -434,7 +383,6 @@ export function ticketActivity(id: string): TicketActivity[] {
       comments.set(commentId, {
         actor: comment.actor,
         body: String(event.payload.body ?? ""),
-        mentions: Array.isArray(event.payload.mentions) ? event.payload.mentions as Mention[] : [],
         editedAt: event.at,
       });
     }
@@ -455,7 +403,6 @@ export function ticketActivity(id: string): TicketActivity[] {
         ...(comment
           ? {
               body: comment.body,
-              mentions: comment.mentions,
               ...(comment.editedAt ? { editedAt: comment.editedAt } : {}),
             }
           : moveNote(event) ? { body: moveNote(event)! } : {}),
@@ -464,9 +411,8 @@ export function ticketActivity(id: string): TicketActivity[] {
     });
 }
 
-/// What `assigneeAgentId` holds when the ticket is yours rather than an
-/// agent's. Remy has no accounts — there is one person at this daemon — so the
-/// name is the whole record.
+/// Who a comment is from when it is yours. Remy has no accounts — there is one
+/// person at this daemon — so the name is the whole record.
 export const YOU = "you";
 
 // ── writing ─────────────────────────────────────────────────────────────────
@@ -486,19 +432,6 @@ function validate(input: Record<string, unknown>): Record<string, unknown> {
   }
   if (input.body !== undefined) patch.body = typeof input.body === "string" ? input.body.slice(0, 20000) : "";
   if (input.priority !== undefined) patch.priority = Math.min(Math.max(Number(input.priority) || 0, 0), 4);
-  if (input.assigneeAgentId !== undefined) {
-    const id = text(input.assigneeAgentId, 64);
-    // `you` and `workspace` are not rows: one is the person at this daemon, the
-    // other the workspace's own default model.
-    if (id && id !== YOU && id !== WORKSPACE_AGENT) {
-      const agent = getAgent(id);
-      if (!agent) throw new Error("no such agent");
-      // Remy runs the app rather than the work in a repository, so a ticket is
-      // not something it can be handed.
-      if (agent.builtIn) throw new Error("Remy does not take tickets");
-    }
-    patch.assigneeAgentId = id ?? "";
-  }
   if (input.parentId !== undefined) {
     const parent = text(input.parentId, 64);
     if (parent && !getTicket(parent)) throw new Error("no such parent ticket");
@@ -562,25 +495,14 @@ export function updateTicket(id: string, input: Record<string, unknown>, actor =
   return getTicketOrThrow(id);
 }
 
-/// Resolves who a thread started from the board runs as.
-///
-/// Starting work is itself the handoff for a ticket held by the person or by
-/// nobody, so those two become the workspace agent before the thread sees its
-/// ticket context. A named agent stays named.
-export function prepareTicketStart(id: string): { ticket: TicketView; agentId?: string } {
-  let ticket = getTicket(id);
+/// The ticket a thread is about to be started for.
+export function prepareTicketStart(id: string): TicketView {
+  const ticket = getTicket(id);
   if (!ticket) throw new Error("no such ticket");
   if (ticket.status !== "backlog" && ticket.status !== "todo") {
     throw new Error("Move this ticket to Backlog or Todo before starting it.");
   }
-  if (!ticket.assigneeAgentId || ticket.assigneeAgentId === YOU) {
-    ticket = updateTicket(ticket.id, { assigneeAgentId: WORKSPACE_AGENT });
-  }
-  if (ticket.assigneeAgentId === WORKSPACE_AGENT) return { ticket };
-  if (!ticket.assigneeAgentId || !getAgent(ticket.assigneeAgentId)) {
-    throw new Error("Assign this ticket to an agent before starting it.");
-  }
-  return { ticket, agentId: ticket.assigneeAgentId };
+  return ticket;
 }
 
 /// Moves a ticket, recording who moved it. `actor` is what the feed shows, and
@@ -619,7 +541,7 @@ export function commentOnTicket(id: string, body: string, actor = "you"): Ticket
   if (!getTicket(id)) throw new Error("no such ticket");
   const text_ = body.trim().slice(0, 10000);
   if (!text_) throw new Error("a comment needs something in it");
-  append("ticket", id, "comment", { body: text_, actor, mentions: parseMentions(text_) });
+  append("ticket", id, "comment", { body: text_, actor });
   return getTicketOrThrow(id);
 }
 
@@ -639,7 +561,6 @@ export function editTicketComment(id: string, commentId: string, body: string): 
     commentId,
     body: text_,
     actor: YOU,
-    mentions: parseMentions(text_),
   });
   return getTicketOrThrow(id);
 }
@@ -647,14 +568,6 @@ export function editTicketComment(id: string, commentId: string, body: string): 
 export function deleteTicketComment(id: string, commentId: string): TicketView {
   ownComment(id, commentId);
   append("ticket", id, "comment_delete", { commentId, actor: YOU });
-  return getTicketOrThrow(id);
-}
-
-export function handoffTicket(id: string, toAgentId: string, actor = "you"): TicketView {
-  const ticket = getTicket(id);
-  if (!ticket) throw new Error("no such ticket");
-  if (!getAgent(toAgentId)) throw new Error("no such agent");
-  append("ticket", id, "handoff", { toAgentId, actor });
   return getTicketOrThrow(id);
 }
 
@@ -675,7 +588,6 @@ export function linkThread(
   input: {
     chatId: string;
     deviceId?: string;
-    agentId?: string;
     stage?: string;
     linkedBy?: "runner" | "you";
   },
@@ -703,7 +615,6 @@ export function linkThread(
       deviceId: threadDeviceId,
       actor: "you",
       linkedBy: input.linkedBy ?? "you",
-      ...(input.agentId ? { agentId: input.agentId } : {}),
       ...(input.stage ? { stage: input.stage } : {}),
     });
     linked = getTicketOrThrow(ticketId);
@@ -878,7 +789,7 @@ const WORK_TICKET = /\b(?:work on|start|implement|build|fix|pick up|take)\s+(?:t
 /// Connects an explicit "work on REMY-1" request to its ticket before the
 /// agent sees the prompt. A question that merely mentions a key stays a normal
 /// thread; ticket tools can still read it without claiming the work.
-export function linkTicketFromWorkPrompt(chatId: string, prompt: string, agentId?: string): TicketView | undefined {
+export function linkTicketFromWorkPrompt(chatId: string, prompt: string): TicketView | undefined {
   const existing = ticketForChat(chatId);
   if (existing) return existing;
   const match = WORK_TICKET.exec(prompt);
@@ -886,7 +797,7 @@ export function linkTicketFromWorkPrompt(chatId: string, prompt: string, agentId
   const key = `${match[1]}-${match[2]}`.toUpperCase();
   const ticket = ticketByKey(key);
   if (!ticket) return undefined;
-  return linkThread(ticket.id, { chatId, agentId, linkedBy: "runner" });
+  return linkThread(ticket.id, { chatId, linkedBy: "runner" });
 }
 
 // Renaming a project's slug re-keys its tickets. Registered here rather than
@@ -905,8 +816,7 @@ whenSlugChanges((projectId) => {
 /// rather than one per ticket.
 export function boardSnapshot(projectId?: string): {
   tickets: TicketView[];
-  agents: ReturnType<typeof listAgents>;
   deviceId: string;
 } {
-  return { tickets: listTickets(projectId), agents: listAgents(), deviceId };
+  return { tickets: listTickets(projectId), deviceId };
 }

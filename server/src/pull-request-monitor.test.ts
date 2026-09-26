@@ -3,12 +3,11 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import type { ChatSummary } from "./chat.js";
 import type { AuthoredPullRequest } from "./pull-requests.js";
 
 process.env.MC_CONFIG_DIR = mkdtempSync(join(tmpdir(), "remy-pr-monitor-test-"));
 
-const { activePullRequestThread, pullRequestFingerprint, pullRequestIssue } = await import("./pull-request-monitor.js");
+const { pullRequestFingerprint, pullRequestIssue } = await import("./pull-request-monitor.js");
 
 const pullRequest: AuthoredPullRequest = {
   url: "https://github.com/acme/control/pull/42",
@@ -39,10 +38,6 @@ const pullRequest: AuthoredPullRequest = {
   worktreePath: "/code/control/.remy/feature/flight-deck",
 };
 
-function chat(id: string, cwd: string, state: ChatSummary["state"], updatedAt: number): ChatSummary {
-  return { id, title: id, cwd, state, provider: "claude", updatedAt } as ChatSummary;
-}
-
 test("summarizes only pull request state that needs work", () => {
   assert.equal(
     pullRequestIssue(pullRequest),
@@ -62,22 +57,4 @@ test("the monitor fingerprint changes when GitHub state changes", () => {
     pullRequestFingerprint(pullRequest),
     pullRequestFingerprint({ ...pullRequest, checks: [{ name: "build", state: "pass" }] }),
   );
-});
-
-test("routes work to the newest active thread in the pull request worktree", () => {
-  const selected = activePullRequestThread(pullRequest, [
-    chat("workspace", "/code/control", "working", 50),
-    chat("old", "/code/control/.remy/feature/flight-deck", "working", 10),
-    chat("new", "/code/control/.remy/feature/flight-deck/Sources", "needs_input", 20),
-    chat("idle", "/code/control/.remy/feature/flight-deck", "idle", 30),
-  ]);
-  assert.equal(selected?.id, "new");
-});
-
-test("routes work only to an active thread using the selected agent", () => {
-  const chats = [
-    { ...chat("newer-wrong-agent", pullRequest.worktreePath!, "working", 20), agentId: "qa" },
-    { ...chat("selected-agent", pullRequest.worktreePath!, "working", 10), agentId: "builder" },
-  ];
-  assert.equal(activePullRequestThread(pullRequest, chats, "builder")?.id, "selected-agent");
 });

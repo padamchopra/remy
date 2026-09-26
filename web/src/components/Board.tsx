@@ -68,8 +68,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { PaneHeader } from "@/components/PaneHeader";
 import { ProjectScope, chosenPrefixes, scopedProjects } from "@/components/ProjectScope";
 import { deviceIcon } from "@/lib/devices";
-import { localWorkspace } from "@/lib/projects";
-import { AssigneeAvatar, StatusIcon, SubTicketProgress } from "@/components/TicketGlyphs";
+import { StatusIcon, SubTicketProgress } from "@/components/TicketGlyphs";
 import { apiError } from "@/lib/api-error";
 import {
   BOARD_COLUMNS,
@@ -85,7 +84,7 @@ import {
 } from "@/lib/tickets";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
-import type { Agent, Chat, Project, Server, Ticket, TicketStatus, Workspace } from "@/state/types";
+import type { Chat, Project, Server, Ticket, TicketStatus } from "@/state/types";
 
 const DONE_PREVIEW_COUNT = 5;
 
@@ -112,7 +111,6 @@ export function Board({
 }) {
   const projects = useStore((s) => s.projects);
   const tickets = useStore((s) => s.tickets);
-  const agents = useStore((s) => s.agents);
   const linkedChatIds = useMemo(
     () => new Set(tickets.flatMap((ticket) => ticket.threads.map((link) => link.chatId))),
     [tickets],
@@ -247,10 +245,7 @@ export function Board({
                   status={status}
                   tickets={ticketsInColumn(scoped, status)}
                   allTickets={scoped}
-                  agents={agents}
                   chats={chats}
-                  projects={projects}
-                  workspaces={workspaces}
                   onOpenTicket={onOpenTicket}
                   onViewAllDone={() => setDoneOpen(true)}
                 />
@@ -261,10 +256,8 @@ export function Board({
             {dragging && (
               <CardBody
                 ticket={dragging}
-                agents={agents}
                 thread={currentThread(chats, dragging)}
                 device={deviceForTicket(dragging, boardDevices, servers)}
-                workspace={workspaceForTicket(dragging, projects, workspaces)}
                 progress={subTicketProgress(scoped, dragging)}
                 className="rotate-1 shadow-lg"
               />
@@ -284,9 +277,6 @@ export function Board({
         open={doneOpen}
         onOpenChange={setDoneOpen}
         tickets={ticketsInColumn(scoped, "done")}
-        agents={agents}
-        projects={projects}
-        workspaces={workspaces}
         servers={servers}
         boardDevices={boardDevices}
         onOpenTicket={onOpenTicket}
@@ -299,20 +289,14 @@ function Column({
   status,
   tickets,
   allTickets,
-  agents,
   chats,
-  projects,
-  workspaces,
   onOpenTicket,
   onViewAllDone,
 }: {
   status: TicketStatus;
   tickets: Ticket[];
   allTickets: Ticket[];
-  agents: Agent[];
   chats: Chat[];
-  projects: Project[];
-  workspaces: Workspace[];
   onOpenTicket: (key: string) => void;
   onViewAllDone: () => void;
 }) {
@@ -340,10 +324,8 @@ function Column({
             key={ticket.id}
             ticket={ticket}
             allTickets={allTickets}
-            agents={agents}
             thread={currentThread(chats, ticket)}
             device={deviceForTicket(ticket, boardDevices, servers)}
-            workspace={workspaceForTicket(ticket, projects, workspaces)}
             onOpen={() => onOpenTicket(ticket.key)}
           />
         ))}
@@ -361,9 +343,6 @@ function DoneTicketsDialog({
   open,
   onOpenChange,
   tickets,
-  agents,
-  projects,
-  workspaces,
   servers,
   boardDevices,
   onOpenTicket,
@@ -371,9 +350,6 @@ function DoneTicketsDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   tickets: Ticket[];
-  agents: Agent[];
-  projects: Project[];
-  workspaces: Workspace[];
   servers: Server[];
   boardDevices: { deviceId: string; serverId: string }[];
   onOpenTicket: (key: string) => void;
@@ -393,7 +369,6 @@ function DoneTicketsDialog({
         <ScrollArea className="max-h-[60vh]">
           <ItemGroup className="gap-1 pr-3">
             {tickets.map((ticket) => {
-              const workspace = workspaceForTicket(ticket, projects, workspaces);
               const device = deviceForTicket(ticket, boardDevices, servers);
               const DeviceIcon = deviceIcon(device?.icon);
               return (
@@ -412,7 +387,6 @@ function DoneTicketsDialog({
                       </ItemDescription>
                     </ItemContent>
                     <ItemActions>
-                      <AssigneeAvatar assignee={ticket.assigneeAgentId} agents={agents} workspace={workspace} />
                       {device ? <DeviceIcon aria-label={device.name} /> : null}
                     </ItemActions>
                   </button>
@@ -430,18 +404,14 @@ function DoneTicketsDialog({
 /// render exactly the same thing without a second set of styles.
 function CardBody({
   ticket,
-  agents,
   thread,
   device,
-  workspace,
   progress,
   className,
 }: {
   ticket: Ticket;
-  agents: Agent[];
   thread?: Chat;
   device?: Server;
-  workspace?: Workspace;
   progress: { done: number; total: number };
   className?: string;
 }) {
@@ -474,13 +444,6 @@ function CardBody({
             </TooltipContent>
           </Tooltip>
         )}
-        <span className="ml-auto flex shrink-0 items-center gap-1">
-          <AssigneeAvatar
-            assignee={ticket.assigneeAgentId}
-            agents={agents}
-            workspace={workspace}
-          />
-        </span>
       </div>
 
       <div className="flex items-start gap-2">
@@ -514,18 +477,14 @@ function CardBody({
 function TicketCard({
   ticket,
   allTickets,
-  agents,
   thread,
   device,
-  workspace,
   onOpen,
 }: {
   ticket: Ticket;
   allTickets: Ticket[];
-  agents: Agent[];
   thread?: Chat;
   device?: Server;
-  workspace?: Workspace;
   onOpen: () => void;
 }) {
   const moveTicket = useStore((s) => s.moveTicket);
@@ -578,10 +537,8 @@ function TicketCard({
         >
           <CardBody
             ticket={ticket}
-            agents={agents}
             thread={thread}
             device={device}
-            workspace={workspace}
             progress={subTicketProgress(allTickets, ticket)}
             className="bg-transparent hover:bg-transparent"
           />
@@ -607,11 +564,6 @@ function TicketCard({
       </ContextMenuContent>
     </ContextMenu>
   );
-}
-
-function workspaceForTicket(ticket: Ticket, projects: Project[], workspaces: Workspace[]): Workspace | undefined {
-  const project = projects.find((entry) => entry.id === ticket.projectId);
-  return project ? localWorkspace(project, workspaces) : undefined;
 }
 
 export function NewTicketDialog({
@@ -667,7 +619,7 @@ export function NewTicketDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{parentId ? "New sub-ticket" : "New ticket"}</DialogTitle>
-          <DialogDescription>Name the work. You can assign it once it exists.</DialogDescription>
+          <DialogDescription>Name the work you want to do.</DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-4">
           <Field>

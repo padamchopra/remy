@@ -8,8 +8,6 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { agentCommand } from "./agent.js";
-import { getAgent, gitIdentityEnv, resolvedAgentModel, type Agent } from "./agents.js";
-import { memoryPrompt } from "./agent-memories.js";
 import { deviceId } from "./board-log.js";
 import {
   redactForCwd,
@@ -126,10 +124,7 @@ interface ChatRecord {
   model?: string;
   effort?: string;
   permissionMode: ChatPermissionMode;
-  /// True when this is an agent's inbox conversation rather than work in a
-  /// repository. One per agent, and never listed among the threads.
-  dm?: boolean;
-  /// When you last had this conversation open. What makes an inbox row bold.
+  /// When you last had this thread open. What makes a thread row bold.
   readAt?: number;
   pinned?: boolean;
   /// A parallel session sharing its parent thread's checkout.
@@ -144,9 +139,6 @@ interface ChatRecord {
   /// Cursor's ACP session id. It is separate for the same reason as Codex's:
   /// moving away and back resumes each provider's own conversation.
   cursorSessionId?: string;
-  /// The persona this thread runs as, if it was started as one. Decides the
-  /// instructions appended to the preset and the name on its commits.
-  agentId?: string;
   entries: ConvEntry[];
   todos: ConvTodo[];
   context?: ContextUsage;
@@ -163,10 +155,6 @@ export interface ChatSummary {
   model?: string;
   effort?: string;
   permissionMode: ChatPermissionMode;
-  agentId?: string;
-  /// True when this is the conversation with an agent in the inbox. It has an
-  /// agent, it has no work of its own, and there is exactly one per agent.
-  dm?: boolean;
   /// The agent has spoken since you last opened this. Derived rather than
   /// stored, so it clears the moment you read it on any device.
   unread?: boolean;
@@ -230,14 +218,11 @@ export function permissionMode(value: unknown, fallback: ChatPermissionMode = "d
 /// launchd hands the server a stripped PATH. Claude's own Bash tool inherits it,
 /// so without this a chat would fail on `git`, `gh`, or `node` while the same
 /// command works in a tmux session started from a login shell.
-export function agentEnvironment(agent?: Agent): NodeJS.ProcessEnv {
+export function agentEnvironment(): NodeJS.ProcessEnv {
   const extra = ["/opt/homebrew/bin", "/usr/local/bin", join(homedir(), ".local", "bin"), "/usr/bin", "/bin", "/usr/sbin", "/sbin"];
   const current = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
   const merged = [...new Set([...current, ...extra])].join(delimiter);
-  // Git reads its identity from the environment ahead of any config file, so an
-  // agent signs its own commits without a line being written to ~/.gitconfig or
-  // to the repository — and two agents committing in one worktree stay distinct.
-  return { ...process.env, PATH: merged, ...gitIdentityEnv(agent) };
+  return { ...process.env, PATH: merged };
 }
 
 interface ChatPrompt {
@@ -328,8 +313,6 @@ export class Chat {
       model: this.record.model,
       effort: this.record.effort,
       permissionMode: this.record.permissionMode,
-      ...(this.record.agentId ? { agentId: this.record.agentId } : {}),
-      ...(this.record.dm ? { dm: true } : {}),
       ...(this.unread() ? { unread: true } : {}),
       ...(this.record.pinned ? { pinned: true } : {}),
       ...(this.record.parentChatId ? { parentChatId: this.record.parentChatId } : {}),
@@ -361,19 +344,6 @@ export class Chat {
   markRead(): void {
     if (this.record.readAt === this.record.updatedAt) return;
     this.record.readAt = this.record.updatedAt;
-    this.persist();
-    this.push();
-  }
-
-  /// Says something in this conversation as Remy rather than as the agent.
-  ///
-  /// Nothing reaches a provider: no turn runs, no token is spent, and the agent
-  /// does not read it back on its next turn. It is Remy talking in the agent's
-  /// conversation, which is what an announcement is.
-  post(text: string): void {
-    if (!text.trim()) return;
-    this.record.updatedAt = nowMs();
-    this.append({ id: `n-${randomUUID()}`, kind: "assistant", text: clip(text, MAX_TEXT) });
     this.persist();
     this.push();
   }
@@ -418,25 +388,17 @@ export class Chat {
       }))),
     })));
     const first = this.record.entries.length === 0;
-    // A DM is called after the agent you are talking to, and stays called that
-    // however the conversation opens.
-    if (first && !this.record.dm && this.record.title === "New chat") {
+    if (first && this.record.title === "New chat") {
       this.record.title = titleFrom(safeText);
     }
     // A better name is worth having but not worth waiting for, so it runs
     // alongside the turn and lands whenever it lands.
-    if (first && !this.record.dm) void this.rename(safeText);
+    if (first) void this.rename(safeText);
     const ticketOwnerId = this.record.parentChatId ?? this.record.id;
-    linkTicketFromWorkPrompt(ticketOwnerId, safeText, this.record.agentId);
+    linkTicketFromWorkPrompt(ticketOwnerId, safeText);
     const ticketContext = ticketPromptContext(ticketOwnerId);
-    const routineContext = this.record.dm
-      ? `<remy_routine_context>
-This is the agent's conversation. When the person signals that something should happen repeatedly, routinely, or on a cadence, use Remy's create_routine tool directly. Do not use a scheduling skill, shell command, cron, or an outside automation. The routine belongs to this agent and Remy runs it on the preferred available device.
-</remy_routine_context>`
-      : undefined;
     const referenceContext = codeReferencePrompt(safeReferences);
-    const remembered = this.record.agentId ? await memoryPrompt(this.record.agentId, this.record.cwd) : undefined;
-    const agentText = [remembered, ticketContext, routineContext, referenceContext, agentContext, safeText]
+    const agentText = [ticketContext, referenceContext, agentContext, safeText]
       .filter(Boolean)
       .join("\n\n");
     const agentPrompt: ChatPrompt = { text: agentText, attachments, environment:await taskEnvironment(this.record.cwd,this.record.id) };
@@ -588,7 +550,6 @@ This is the agent's conversation. When the person signals that something should 
 
   private environmentSignature = "";
   private async providerTurn(prompt: ChatPrompt): Promise<void> {
-    const agent = this.record.agentId ? getAgent(this.record.agentId) : undefined;
     this.activePermissionMode = this.record.permissionMode;
     let run: ProviderRun;
     try {
@@ -614,8 +575,8 @@ This is the agent's conversation. When the person signals that something should 
               ? { sessionId: providerSessionId(this.record, this.record.provider) }
               : {}),
             additionalDirectories: [uploadRoot],
-            developerInstructions: remyProviderInstructions(getKv<string>(`hubPersona:${this.record.id}`) ?? agent?.instructions),
-            inProcessMcp: inProcessTicketMcpServer(this.record.id, this.record.agentId, this.record.dm === true, {
+            developerInstructions: remyProviderInstructions(),
+            inProcessMcp: inProcessTicketMcpServer(this.record.id, {
               currentCwd: this.record.cwd,
               list: listChats,
               read: getChat,
@@ -625,7 +586,6 @@ This is the agent's conversation. When the person signals that something should 
                   title: input.title?.trim() || input.prompt.split("\n")[0]?.trim().slice(0, 120),
                   provider: input.provider,
                   model: input.model,
-                  agentId: input.agentId,
                 });
                 await sendChatMessage(created.id, input.prompt);
                 return getChat(created.id)!;
@@ -639,12 +599,9 @@ This is the agent's conversation. When the person signals that something should 
               apiUrl: `http://127.0.0.1:${config.port}`,
               token: remyToolToken(this.record.id),
               chatId: this.record.id,
-              hubInbox: getKv<boolean>(`hubInbox:${this.record.id}`)===true,
               deviceId,
-              agentId: this.record.agentId,
-              dm: this.record.dm,
             }),
-            env: { ...agentEnvironment(agent), ...environment },
+            env: { ...agentEnvironment(), ...environment },
             entries: this.record.entries,
           },
           {
@@ -1153,10 +1110,8 @@ function summaries(): ChatSummary[] {
   return [...chats.values()].map((chat) => chat.summary()).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-/// The threads: work in a repository. An agent's inbox conversation is not one
-/// of these, so it never appears in the thread list or in a thread count.
 export function listChats(): ChatSummary[] {
-  return summaries().filter((chat) => !chat.dm);
+  return summaries();
 }
 
 /// Everything an archived thread needs to resume as the same conversation.
@@ -1171,7 +1126,6 @@ export interface ArchivedConversation extends Conversation {
   cursorSessionId?: string;
   turns?: number;
   costUsd?: number;
-  agentId?: string;
   parentChatId?: string;
 }
 
@@ -1190,7 +1144,6 @@ export function archiveConversation(id: string): ArchivedConversation {
     cursorSessionId: record.cursorSessionId,
     turns: record.turns,
     costUsd: record.costUsd,
-    agentId: record.agentId,
     parentChatId: record.parentChatId,
     context: record.context,
     todos: record.todos,
@@ -1217,7 +1170,6 @@ export function restoreArchivedChat(input: {
     ...(conversation.model ? { model: conversation.model } : {}),
     ...(conversation.effort ? { effort: conversation.effort } : {}),
     permissionMode: permissionMode(conversation.permissionMode, config.defaultPermissionMode),
-    ...(conversation.agentId ? { agentId: conversation.agentId } : {}),
     ...(conversation.parentChatId ? { parentChatId: conversation.parentChatId } : {}),
     createdAt: conversation.createdAt ?? nowMs(),
     updatedAt: nowMs(),
@@ -1239,47 +1191,10 @@ export function restoreArchivedChat(input: {
   return chat.summary();
 }
 
-/// The inbox: one conversation per agent, most recently spoken to first.
-///
-/// An agent's conversation belongs to the agent, so a row whose agent is gone
-/// is not in the inbox — deleted here, deleted on the machine you paired with,
-/// or a tombstone that arrived before its conversation was cleaned up.
-export function listDms(): ChatSummary[] {
-  return summaries().filter((chat) => chat.dm && chat.agentId && getAgent(chat.agentId));
-}
-
-/// Clears out conversations whose agent is gone, once, at boot.
-///
-/// `listDms` already hides them, so this is about the rows rather than the
-/// screen: an agent deleted while this machine was shut leaves a conversation
-/// behind that nothing will ever ask for again.
-export function pruneOrphanDms(): void {
-  for (const chat of summaries()) {
-    if (chat.dm && (!chat.agentId || !getAgent(chat.agentId))) deleteChat(chat.id);
-  }
-}
-
-/// Both, for the few callers that mean every conversation this machine is
-/// holding — keeping the machine awake while one is working, and shutting them
-/// all down. A DM runs a real turn like any other thread.
+/// Every conversation this machine is holding — keeping the machine awake while
+/// one is working, and shutting them all down.
 export function listAllChats(): ChatSummary[] {
   return summaries();
-}
-
-/// The one conversation you have with an agent, made the first time you open it.
-///
-/// It opens in your home folder rather than a repository: work that needs a
-/// repository open in front of it is a thread the agent starts, not this. Found
-/// by its agent rather than by id, so opening the inbox twice never leaves two
-/// conversations behind.
-export function dmChatFor(agentId: string): ChatSummary {
-  const existing = listDms()
-    .filter((chat) => chat.agentId === agentId)
-    .sort((a, b) => a.createdAt - b.createdAt)[0];
-  if (existing) return existing;
-  const agent = getAgent(agentId);
-  if (!agent) throw new Error("no such agent");
-  return createChat({ cwd: homedir(), title: agent.name, agentId: agent.id, dm: true });
 }
 
 export function getChat(id: string): ChatDetail | undefined {
@@ -1290,51 +1205,8 @@ export function getChatWindow(id: string, turns: number, before?: string): ChatD
   return chats.get(id)?.detailWindow(turns, before);
 }
 
-/// Moves an agent's inbox conversation onto what that agent now thinks with.
-///
-/// A thread keeps the provider it was started on: its transcript is only
-/// readable by the tool that wrote it, and the thread is a piece of work with
-/// its own history. An inbox conversation is not that — it is the agent, so
-/// picking a model for the agent picks it here too, whether that choice was
-/// made on the agent or on the machine default it follows.
-///
-/// A conversation mid-turn is left alone; the next change catches it.
-export function syncAgentDm(agentId: string): void {
-  const agent = getAgent(agentId);
-  if (!agent) {
-    // The agent is gone, so the conversation goes with it: it was the agent,
-    // and there is nobody left in it to answer.
-    for (const chat of summaries()) {
-      if (chat.dm && chat.agentId === agentId) deleteChat(chat.id);
-    }
-    return;
-  }
-  const dm = listDms().find((chat) => chat.agentId === agentId);
-  if (!dm || dm.state === "working" || dm.state === "needs_input") return;
-  const { provider, model, effort } = resolvedAgentModel(agent);
-  if (dm.provider === provider && (dm.model ?? "") === model && (dm.effort ?? "") === effort) return;
-  try {
-    updateChat(dm.id, { provider, model: model || null, effort: effort || null }, { allowProviderChange: true });
-  } catch (error) {
-    // A provider that is off, or a tool that is not installed. The conversation
-    // keeps what it had rather than being left pointing at nothing.
-    console.error(`could not move @${agent.handle}'s conversation:`, error);
-  }
-}
-
-/// Every inbox conversation at once, for a change to the machine default that
-/// each inherited agent follows.
-export function syncAgentDms(): void {
-  for (const dm of listDms()) if (dm.agentId) syncAgentDm(dm.agentId);
-}
-
-/// Says something in a conversation as Remy. See `Chat.post`.
-export function postToChat(id: string, text: string): void {
-  chats.get(id)?.post(text);
-}
-
-/// Clears an inbox conversation's unread mark. Opening it is what calls this,
-/// from whichever device you opened it on.
+/// Clears a thread's unread mark. Opening it is what calls this, from
+/// whichever device you opened it on.
 export function markChatRead(id: string): void {
   chats.get(id)?.markRead();
 }
@@ -1353,10 +1225,6 @@ export function createChat(input: {
   model?: string;
   effort?: string;
   permissionMode?: unknown;
-  agentId?: string;
-  /// Marks this as an agent's inbox conversation. `dmChatFor` is the only
-  /// caller that sets it, so there stays one per agent.
-  dm?: boolean;
   /// Makes this a parallel session in an existing thread's exact checkout.
   /// The parent owns every execution choice; callers cannot override them.
   parentChatId?: string;
@@ -1369,17 +1237,10 @@ export function createChat(input: {
   assertChatStorage();
   const parent = input.parentChatId ? mustGet(input.parentChatId).record : undefined;
   if (parent?.parentChatId) throw new Error("a subthread cannot start another subthread");
-  if (parent?.dm) throw new Error("an inbox conversation cannot have subthreads");
   const cwd = parent?.cwd ?? expandChatCwd(input.cwd ?? "~");
   if (!existsSync(cwd)) throw new Error("that directory does not exist on this machine");
-  // An agent brings its own provider, model and permission mode, and anything
-  // the caller asked for explicitly still wins over them.
-  const inheritedAgentId = parent?.agentId ?? input.agentId;
-  const agent = inheritedAgentId ? getAgent(inheritedAgentId) : undefined;
-  if (inheritedAgentId && !agent) throw new Error("no such agent");
   // A workspace that runs on something of its own stands where the machine's
-  // default would. An agent still outranks it, including one that follows the
-  // machine default rather than naming a model of its own.
+  // default would.
   const workspace = input.workspaceDefault?.provider
     ? {
         provider: input.workspaceDefault.provider,
@@ -1387,7 +1248,7 @@ export function createChat(input: {
         effort: input.workspaceDefault.effort ?? "",
       }
     : { provider: config.defaultProvider, model: config.defaultModel, effort: config.defaultEffort };
-  const inherited = agent ? resolvedAgentModel(agent) : workspace;
+  const inherited = workspace;
   const askedProvider = providerId(parent?.provider ?? input.provider ?? inherited.provider);
   if (input.provider !== undefined && !config.enabledProviders.includes(askedProvider)) {
     throw new Error("that provider is turned off");
@@ -1409,11 +1270,9 @@ export function createChat(input: {
     provider,
     ...(model ? { model } : {}),
     ...(effort ? { effort } : {}),
-    ...(agent ? { agentId: agent.id } : {}),
-    ...(input.dm ? { dm: true } : {}),
     ...(parent ? { parentChatId: parent.id } : {}),
     permissionMode: parent?.permissionMode
-      ?? permissionMode(input.permissionMode, agent?.permissionMode ?? config.defaultPermissionMode),
+      ?? permissionMode(input.permissionMode, config.defaultPermissionMode),
     createdAt: nowMs(),
     updatedAt: nowMs(),
     entries: [],
@@ -1606,8 +1465,6 @@ export function deleteChat(id: string): void {
   chat.markDeleted();
   chats.delete(id);
   removeChat(id);
-  setKv(`hubPersona:${id}`, null);
-  setKv(`hubInbox:${id}`,null);
   broadcast({ type: "chat-list", operation: "remove", chatIds: [id] });
   broadcast({ type: "chats" });
   syncSleepAssertion();

@@ -79,25 +79,13 @@ test("a late third writer remains visible through the version vector", async () 
   assert.equal((await first.detail("tickets", "ticket-1"))?.fields.priority, 1);
 });
 
-test("reprojects every hub board entity and keeps actor attribution", async () => {
+test("reprojects hub tickets and keeps actor attribution", async () => {
   const current = board("hub");
-  const inputs: Array<["ticket" | "agent" | "memory" | "recurrence", string, Record<string, unknown>]> = [
-    ["ticket", "ticket-1", { title: "Ticket" }],
-    ["agent", "agent-1", { name: "Builder" }],
-    ["memory", "memory-1", { agentId: "agent-1", content: "Remember" }],
-    ["recurrence", "routine-1", { type: "routine", name: "Digest" }],
-  ];
-  const events: BoardLogEvent[] = [];
-  for (const [entity, entityId, payload] of inputs) {
-    events.push((await current.append({ entity, entityId, kind: "create", payload }, member("ada"))).event);
-  }
+  const created = await current.append({ entity: "ticket", entityId: "ticket-1", kind: "create", payload: { title: "Ticket" } }, member("ada"));
 
   assert.equal((await current.list("tickets")).items.length, 1);
-  assert.equal((await current.list("agents")).items.length, 1);
-  assert.equal((await current.list("memories")).items.length, 1);
-  assert.equal((await current.list("routines")).items.length, 1);
   assert.equal((await current.detail("tickets", "ticket-1"))?.lastActor.label, "Ada");
-  assert.equal((await current.detail("tickets", "ticket-1"))?.activity[0]?.eventId, events[0]?.id);
+  assert.equal((await current.detail("tickets", "ticket-1"))?.activity[0]?.eventId, created.event.id);
 });
 
 test("merge ignores malformed and duplicate events", async () => {
@@ -109,13 +97,11 @@ test("merge ignores malformed and duplicate events", async () => {
   assert.equal((await target.eventsSince({})).length, 1);
 });
 
-test("keeps project events mergeable and legacy recurrences out of routine projections", async () => {
+test("keeps project events mergeable", async () => {
   const source = board("device-a");
   const target = board("device-b");
   const project = await source.append({ entity: "project", entityId: "project-1", kind: "create", payload: { name: "Remy" } }, member("ada"));
-  const legacy = await source.append({ entity: "recurrence", entityId: "legacy-1", kind: "create", payload: { projectId: "project-1", title: "Old schedule" } }, member("ada"));
 
-  assert.equal((await target.mergeRemote([project.event, legacy.event])).landed, 2);
-  assert.deepEqual((await target.eventsSince({})).map((event) => event.entity), ["project", "recurrence"]);
-  assert.deepEqual((await target.list("routines")).items, []);
+  assert.equal((await target.mergeRemote([project.event])).landed, 1);
+  assert.deepEqual((await target.eventsSince({})).map((event) => event.entity), ["project"]);
 });

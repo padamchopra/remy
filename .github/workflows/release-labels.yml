@@ -24,7 +24,6 @@ jobs:
           script: |
             const {
               COMPUTER_LABEL,
-              TESTFLIGHT_LABEL,
               releaseLabelsForPaths,
             } = require("./.github/scripts/release-labels.cjs");
             const owner = context.repo.owner;
@@ -39,7 +38,6 @@ jobs:
             const wanted = new Set(releaseLabelsForPaths(files.map((file) => file.filename)));
             const definitions = [
               { name: COMPUTER_LABEL, color: "6f42c1", description: "Merging this pull request builds a computer release." },
-              { name: TESTFLIGHT_LABEL, color: "0969da", description: "Merging this pull request builds a TestFlight release." },
             ];
             const current = new Set(context.payload.pull_request.labels.map((label) => label.name));
 

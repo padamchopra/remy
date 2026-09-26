@@ -35,7 +35,7 @@ function migrate(database: DatabaseSync): void {
       created_at integer not null,
       updated_at integer not null,
       claude_session_id text,
-      -- Which agent runs this thread, and the id that resumes it there. Each
+      -- Which provider runs this thread, and the id that resumes it there. Each
       -- provider keeps its own transcript, so each has its own column: a thread
       -- that ran on one is not resumable on the other.
       provider text not null default 'claude',
@@ -62,10 +62,7 @@ function migrate(database: DatabaseSync): void {
       name text not null,
       path text not null,
       icon text,
-      tint text,
-      pr_monitoring_override integer not null default 0,
-      pr_monitoring_enabled integer not null default 0,
-      pr_monitoring_agent_id text
+      tint text
     );
     create table if not exists archives (
       id text primary key,
@@ -113,40 +110,6 @@ function migrate(database: DatabaseSync): void {
       workspace_id text not null,
       primary key (project_id, workspace_id)
     );
-    create table if not exists agents (
-      id text primary key,
-      name text not null,
-      handle text not null,
-      role text,
-      instructions text not null default '',
-      provider text not null default 'claude',
-      model text,
-      effort text,
-      permission_mode text not null default 'default',
-      avatar text,
-      tint text,
-      auto_start integer not null default 1,
-      handoff_to text,
-      git_identity text not null default 'author',
-      git_name text,
-      git_email text,
-      preset text,
-      created_at integer not null,
-      updated_at integer not null,
-      deleted integer not null default 0
-    );
-    create table if not exists agent_memories (
-      id text primary key,
-      agent_id text not null,
-      scope text not null default 'global',
-      project_id text,
-      content text not null,
-      created_at integer not null,
-      updated_at integer not null,
-      deleted integer not null default 0
-    );
-    create index if not exists agent_memories_agent
-      on agent_memories(agent_id, scope, project_id, deleted, updated_at);
     create table if not exists tickets (
       id text primary key,
       -- The number is what a ticket owns; the key is that number behind its
@@ -158,12 +121,10 @@ function migrate(database: DatabaseSync): void {
       body text not null default '',
       status text not null default 'backlog',
       priority integer not null default 0,
-      assignee_agent_id text,
       parent_id text,
       rank text not null default 'n',
       device_id text,
       branch text,
-      handoffs integer not null default 0,
       created_at integer not null,
       updated_at integer not null,
       started_at integer,
@@ -175,36 +136,12 @@ function migrate(database: DatabaseSync): void {
       ticket_id text not null,
       device_id text not null,
       chat_id text not null,
-      agent_id text,
       stage text,
       linked_by text not null default 'you',
       created_at integer not null,
       primary key (ticket_id, device_id, chat_id)
     );
     create index if not exists ticket_threads_chat on ticket_threads(chat_id);
-    -- Agent routines reuse the former recurrence projection so existing
-    -- databases need no destructive migration. project_id is empty for them.
-    create table if not exists recurrences (
-      id text primary key,
-      project_id text not null,
-      title text not null,
-      body text not null default '',
-      assignee_agent_id text,
-      cadence text not null default 'weekly',
-      hour integer not null default 9,
-      minute integer not null default 0,
-      weekday integer,
-      day integer,
-      enabled integer not null default 1,
-      device_id text,
-      runs integer not null default 0,
-      last_run_at integer,
-      last_error text,
-      created_at integer not null,
-      updated_at integer not null,
-      deleted integer not null default 0
-    );
-    create index if not exists recurrences_project on recurrences(project_id);
     -- The other machines this one is paired with. The token is theirs, not
     -- ours: it is what this daemon presents when it calls them, which is why
     -- pairing lives here rather than in any one client.
@@ -300,6 +237,11 @@ function migrate(database: DatabaseSync): void {
     );
     create index if not exists pull_request_questions_pr on pull_request_questions(repository, number, created_at);
   `);
+  // Agents and routines were removed, and their projections with them. The
+  // board log keeps whatever it recorded; nothing folds it any more.
+  database.exec("drop table if exists agent_memories");
+  database.exec("drop table if exists agents");
+  database.exec("drop table if exists recurrences");
   try {
     database.exec("alter table workspaces add column icon text");
   } catch {
@@ -322,11 +264,6 @@ function migrate(database: DatabaseSync): void {
   }
   try {
     database.exec("alter table peers add column tint text");
-  } catch {
-    // Column already exists on databases created after this migration.
-  }
-  try {
-    database.exec("alter table chats add column agent_id text");
   } catch {
     // Column already exists on databases created after this migration.
   }
@@ -369,33 +306,6 @@ function migrate(database: DatabaseSync): void {
   }
   try {
     database.exec("alter table chats add column effort text");
-  } catch {
-    // Column already exists on databases created after this migration.
-  }
-  try {
-    database.exec("alter table agents add column effort text");
-  } catch {
-    // Column already exists on databases created after this migration.
-  }
-  try {
-    database.exec("alter table workspaces add column pr_monitoring_override integer not null default 0");
-  } catch {
-    // Column already exists on databases created after this migration.
-  }
-  try {
-    database.exec("alter table workspaces add column pr_monitoring_enabled integer not null default 0");
-  } catch {
-    // Column already exists on databases created after this migration.
-  }
-  try {
-    database.exec("alter table workspaces add column pr_monitoring_agent_id text");
-  } catch {
-    // Column already exists on databases created after this migration.
-  }
-  // A thread that is an agent's inbox conversation rather than work in a
-  // repository. Zero in every existing row, which is what they all are.
-  try {
-    database.exec("alter table chats add column dm integer not null default 0");
   } catch {
     // Column already exists on databases created after this migration.
   }

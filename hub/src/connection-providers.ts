@@ -12,7 +12,7 @@ export function connectionProviders(env: Env): ConnectionProvider[] {
   return [
     {
       id: "github",
-      receive: async delivery => { await githubFor(env).receive(delivery,async(org,user,workspace,agent,prompt)=>{const response=await env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${org}`)).fetch(new Request("https://internal/github/start",{method:"POST",headers:{"x-organization-id":org,"x-user-id":user,"content-type":"application/json"},body:JSON.stringify({workspace,agent,prompt})}));if(!response.ok)throw Error("This agent is unavailable.");return await response.json() as {threadId:string;computerId:string};}); },
+      receive: async delivery => { await githubFor(env).receive(delivery); },
       name: "GitHub",
       subjects: ["member"],
       clientId: env.GITHUB_CONNECTION_CLIENT_ID ?? env.GITHUB_CLIENT_ID,

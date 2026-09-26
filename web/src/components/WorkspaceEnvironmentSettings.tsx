@@ -225,7 +225,7 @@ function ImportFileDialog({
               <Field orientation="horizontal">
                 <FieldContent>
                   <FieldLabel htmlFor="remove-environment-file">Remove after import</FieldLabel>
-                  <FieldDescription>This keeps agents from reading the original file.</FieldDescription>
+                  <FieldDescription>This keeps a thread from reading the original file.</FieldDescription>
                 </FieldContent>
                 <Switch id="remove-environment-file" checked={remove} onCheckedChange={setRemove} />
               </Field>

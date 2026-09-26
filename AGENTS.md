@@ -7,7 +7,7 @@ This repository ships two products on one release train:
 
 Local mode remains the default. Work for the hub must not make the local app, its daemon, or its CLI depend on a hosted service.
 
-The Electron desktop app is off `main`. It lives on the long-lived `padam/desktop-electron-9236` branch; do not reintroduce `desktop/`, an Electron bridge in `web/`, or a DMG here. `main` is the web app, the daemon, the CLI, and the phone.
+The Electron desktop app and the iPhone app are both off `main`. Electron lives on the long-lived `padam/desktop-electron-9236` branch and the Expo app on `padam/mobile-expo-b423`; do not reintroduce `desktop/`, `mobile/`, an Electron bridge in `web/`, a DMG, or an Expo build here. `main` is the web app, the daemon, and the CLI.
 
 `README.md` is the product story. This file is how to work in the code.
 
@@ -32,8 +32,6 @@ Verify the opened shell, not only a responding port: the local shell shows this 
 
 For a local daemon change, run `npm run qa:web` instead. For hosted backend changes, use the isolated hosted setup in `hub/docs/web.md` for QA; use `dev:hosted` when the user asks to try the live-account web shell. It builds the current checkout, starts its daemon and Vite on unused loopback ports, and prints the URL. Its database and sample workspace are temporary and removed when the command stops. Use `npm run qa:web -- --empty` when the empty state is what you need to inspect, or `npm run qa:web -- --check` for a non-interactive startup and proxy check.
 
-The iPhone app is `cd mobile && npx expo run:ios`. It talks to the same daemon over Tailscale after you pair it from Settings → Devices.
-
 The local Vite preview talks to the same daemon as `remy start` (`127.0.0.1:8420`) and the same database (`~/.remy/remy.db`), so threads, workspaces, settings and the token are the real ones. If that daemon is already running, Vite attaches to it rather than starting a second one.
 
 The page does not live-reload. Refresh it to see a change: editing Remy while watching Remy meant every save yanked the window out from under whatever was on screen.
@@ -50,7 +48,6 @@ Skip `VITE_MC_FIXTURE=1`; that is fake data, not your real state.
 |---|---|
 | `web/` | The UI. React 19, Tailwind v4, [shadcn/ui](https://ui.shadcn.com) in `web/src/components/ui` (still largely New York / Radix; **new work and redesigns use Base UI**), Zustand store in `web/src/state`. |
 | `server/` | The daemon. Node and TypeScript, binds `127.0.0.1` only, SQLite at `~/.remy/remy.db` through `node:sqlite`. Threads run on the Claude Agent SDK, Codex app-server, or Cursor ACP — see **Providers**. |
-| `mobile/` | The iPhone app (Expo / React Native). A remote for a computer's daemon — it cannot run standalone. |
 | `deploy/` | Optional launchd login item, provider hooks, `tailscale serve`, pairing QR. |
 | `.agents/skills/` | House rules. Read the one that covers what you are about to change. |
 
@@ -86,16 +83,14 @@ mistake in this repo, so check the table before naming anything.
 | The code says | A person reads | Because |
 |---|---|---|
 | `project` | **workspace** | A project is the repository, keyed on its origin remote so two machines land on the same one. A workspace is one machine's folder holding it. Nobody adds a project — they add a folder, so that is the only word the UI uses. |
-| `chat` | **thread** | A conversation with an agent. The API, the database and the code all still say chat. |
-| a `chat` with `dm` | **the conversation with an agent** | One per agent, in Settings. Code still says chat; nothing a person reads says DM. |
-| `server`, `peer`, `device`, `runner` | **computer** | A Mac running Remy or a hosted computer that can run threads. A phone is a client, not a computer. |
+| `chat` | **thread** | A conversation you have in a workspace. The API, the database and the code all still say chat. |
+| `server`, `peer`, `device`, `runner` | **computer** | A machine running Remy or a hosted computer that can run threads. |
 | `keyPrefix` | **ticket slug** | The letters in front of a ticket key. |
-| `recurrence` | **routine** | The legacy projection name remains internal; a routine belongs to an agent and sends it work on a cadence. |
-| `assigneeAgentId` of `you` / `workspace` | **You** / **Workspace agent** | The two assignees that are not agent rows. |
 
-Nothing a person reads says project, job, workflow, cron, daemon, projection, runner,
-fold, board log, lamport, event or DM. **Tasks** is the board section and a
-**ticket** is its unit of work. Machine is
+Nothing a person reads says project, job, workflow, cron, daemon, projection,
+runner, fold, board log, lamport or event. Agents, routines and routing were
+removed from the product, so nothing anybody reads mentions those either.
+**Tasks** is the board section and a **ticket** is its unit of work. Machine is
 fine — the app says "this machine" — and so is worktree, which is a git word
 anyone using worktrees already has.
 
@@ -116,13 +111,13 @@ The homepage is a curated product story, not a release feed. Promote a capabilit
 
 The changelog is one supporting surface; keep feature guides, setup documentation, FAQs, and download information accurate too. Describe the user benefit, group related changes, and link to details rather than reproducing commits. Keep unreleased work explicitly unreleased; use real release versions and dates only when confirmed. Never advertise planned or gated capabilities as generally available.
 
-Check removals and changed defaults for stale promises. Screenshots and demos must match the behavior they illustrate and use safe sample content. Keep local Remy and optional Remy for Teams availability distinct. Verify links and review affected desktop and mobile layouts before shipping website changes. Test real touch gestures through the page, including over embedded previews; `scrollTo` and viewport resizing alone do not prove that a phone can scroll. Keep the app’s viewport and scroll-lock rules inside the demo, and let the marketing document own page scrolling.
+Check removals and changed defaults for stale promises. Screenshots and demos must match the behavior they illustrate and use safe sample content. Keep local Remy and optional Remy for Teams availability distinct. Verify links and review affected desktop and phone layouts before shipping website changes. Test real touch gestures through the page, including over embedded previews; `scrollTo` and viewport resizing alone do not prove that a phone can scroll. Keep the app’s viewport and scroll-lock rules inside the demo, and let the marketing document own page scrolling.
 
 ## Checks
 
 ```sh
 npm run typecheck    # contract + hub + web + mobile
-npm test             # contract; server: tsc, then node --test on dist/*.test.js; then the phone's contract rules
+npm test             # contract; server: tsc, then node --test on dist/*.test.js
 npm run qa:web -- --check  # current server + UI, temporary state, alternate ports
 npm run shots        # Playwright PNGs of the page
 npm run live-check   # assert the page is showing threads
@@ -145,7 +140,7 @@ A server module opens its database at import time, so a test that touches state 
 - **Worktrees** Remy creates go in a `.remy` folder, inside the workspace or under the `worktreeRoot` setting, hidden by a rule in the repo's `.git/info/exclude` — per-clone and never committed, so no tracked `.gitignore` changes. Worktrees already checked out elsewhere are left where they are.
 - **The words a person reads** are not always the words the code uses — see **Terminology** above, and check it before naming a label, an error or an empty state.
 - **Base UI for new work.** New UI surfaces and redesigns use Base UI (`@base-ui/react` / shadcn base style). Do not add new Radix-based primitives or redesign existing ones onto Radix. Migrating an existing Radix surface is a redesign — use Base UI and follow `.agents/skills/migrate-radix-to-base`. Existing Radix/shadcn New York surfaces may remain until they are redesigned.
-- **A provider and a model are one choice.** `server/src/providers.ts` is the only list of what a thread may run on; `config.ts`, `agents.ts` and `chat.ts` validate against it, `GET /server/providers` serves it with what the machine actually has installed, and every picker in the window is `web/src/components/ModelPicker.tsx`. Moving to another provider takes the model to that provider's default rather than keeping one it would refuse.
+- **A provider and a model are one choice.** `server/src/providers.ts` is the only list of what a thread may run on; `config.ts` and `chat.ts` validate against it, `GET /server/providers` serves it with what the machine actually has installed, and every picker in the window is `web/src/components/ModelPicker.tsx`. Moving to another provider takes the model to that provider's default rather than keeping one it would refuse.
 - **Threads are the product; nothing displaces them.** The sidebar's thread
   list is on screen in every section, and a thread is always one click away.
   A new section brings its own lists into the main pane — never by taking the
@@ -163,37 +158,11 @@ A server module opens its database at import time, so a test that touches state 
   hook holding its state, a label helper — out of it, or the import that draws
   the button drags the surface back into the first load. `npm run bundle` says
   what is in the first load and `npm run perf` times each first open.
-- **A desktop thread is a workbench of tabs.** Everything open for a main thread — its transcript, each subthread, each tool — is a tab in that thread's collection (`web/src/lib/thread-workbench.ts`), shown as a strip or as panes side by side, and never mixed with another main thread's. A tool opened from the transcript lands beside it; a tab stays mounted behind the one in front, so a terminal keeps its shell. The layout is remembered per thread on this device, and the URL names only the thread in front. The transcript stays a narrow, identity-light reading column; agent conversations keep their agent identity because the person is the point there.
-- **Agents live in Settings.** Every agent has one conversation with you, made the
-  first time you open it (`dmChatFor`), listed by `listDms` and never by
-  `listChats` — a thread is work in a repository, and this is not. It opens in
-  your home folder: work that needs a repository open in front of it is a thread
-  the agent starts. The roster is a list inside Settings → Agents rather than a
-  top-level section, so threads stay one click away in the sidebar. Everything
-  about an agent lives there: settings, routines, and the conversation. A
-  conversation belongs to its agent: deleting the agent deletes it, and
-  `listDms` hides one whose agent is gone before the row is cleared. Picking a
-  model for an agent picks it for its conversation (`syncAgentDm`) — a thread
-  keeps the provider it was started on, but an agent conversation *is* the
-  agent. Do not add Inbox as a product surface.
-- **An agent has two permission modes**, `auto` and `bypassPermissions`, and
-  `PERMISSION_MODES` in `agents.ts` is the whole list. A thread you are sitting
-  in front of can stop and ask; an agent works while you are not watching, so a
-  mode that asks for every edit is a mode nobody can use. `auto` reaches the
-  Claude SDK as `acceptEdits` — the SDK has no `auto`, and passing it through
-  silently means asking for everything.
-- **Remy has an agent of its own.** `remy-agent`, seeded by `seedRemyAgent`, and
-  the only agent with `builtIn`. Its name, handle, role and instructions come
-  from `remy-agent.ts` and are re-synced on every boot, so an upgrade can teach
-  it something new; `updateAgent` refuses those fields from a client and
-  `deleteAgent` refuses it altogether. What it thinks with is a choice, made in
-  its settings in Settings → Agents, and it follows the machine default until it is
-  made.
-- **Remy says one thing to a new install.** `announcements.ts` is an append-only
-  list; a machine that has never run it is greeted and every other entry is
-  marked said, so installing after ten releases is one message rather than ten.
-  Every release after that lands one message when it lands. Never edit or remove
-  a delivered entry's id — delivery is remembered by it.
+- **A desktop thread is a workbench of tabs.** Everything open for a main thread — its transcript, each subthread, each tool — is a tab in that thread's collection (`web/src/lib/thread-workbench.ts`), shown as a strip or as panes side by side, and never mixed with another main thread's. A tool opened from the transcript lands beside it; a tab stays mounted behind the one in front, so a terminal keeps its shell. The layout is remembered per thread on this device, and the URL names only the thread in front. The transcript stays a narrow, identity-light reading column.
+- **A person starts every thread.** There is no roster of personas, no
+  conversation outside a workspace, and no schedule that sends work on its own.
+  A thread is work in a repository, started by someone, running on a provider.
+  Do not reintroduce Agents, Routines, Routing or an Inbox as product surfaces.
 - **A Remy tool says what it made.** `ok(text, artifact)` appends a
   `<remy-artifact>` marker that `takeArtifacts` lifts back off in
   `applyToolOutput`, so the feed draws a ticket, a thread or a workspace as a
@@ -204,11 +173,10 @@ A server module opens its database at import time, so a test that touches state 
   and `role="link"`) is what `index.css` gives `cursor: pointer`; a button that
   acts on what is already in front of you keeps the arrow. Mark navigation with
   the attribute rather than a `cursor-pointer` class.
-- **The `remy` MCP is the agent's control surface.** Claude gets the in-process server in `server/src/ticket-tools.ts`; Codex and Cursor get the STDIO server in `server/src/ticket-mcp.ts`. Every tool exists on both paths. A normal thread may orchestrate only the operations allowlisted by `isRemyToolRoute`; add each new capability to the smallest explicit route and method set, derive its thread, device and actor from the capability where relevant, and test both an allowed route and a neighbouring forbidden one. STDIO providers receive the HMAC capability from `remyToolToken` through inherited environment variable names, never `config.token` or another daemon-wide credential. `create_routine` exists only in an agent's conversation; ordinary Remy threads and separately installed external MCP clients never receive it. "Work on REMY-1" is resolved and linked before the model sees the prompt; a key that does not exist in Remy's board is not invented.
+- **The `remy` MCP is a thread's control surface.** Claude gets the in-process server in `server/src/ticket-tools.ts`; Codex and Cursor get the STDIO server in `server/src/ticket-mcp.ts`. Every tool exists on both paths. A thread may orchestrate only the operations allowlisted by `isRemyToolRoute`; add each new capability to the smallest explicit route and method set, derive its thread, device and actor from the capability where relevant, and test both an allowed route and a neighbouring forbidden one. STDIO providers receive the HMAC capability from `remyToolToken` through inherited environment variable names, never `config.token` or another daemon-wide credential. "Work on REMY-1" is resolved and linked before the model sees the prompt; a key that does not exist in Remy's board is not invented.
 - **Every provider keeps a live conversation.** A Claude thread holds one SDK query process across turns; a Codex thread holds one `codex app-server` JSON-RPC connection; a Cursor thread holds one `agent acp` connection through the official Agent Client Protocol SDK. Hosted Cursor Cloud threads use the Cursor SDK cloud VM instead of ACP. They can stop mid-turn for approvals and questions, stream tool progress, interrupt the active turn, and resume their own provider transcript after a restart. Cursor models come from `agent --list-models`, and its current default comes from `agent about`; do not replace ACP with the older headless JSON stream. Never quietly grant what a person would have been asked about.
-- **Reusable environments are assigned to repositories.** Settings owns shared definitions and workspace assignments. Cloud and model-access keys on Computers follow the same rule: values are encrypted at rest and management APIs return names and configured state, never values; agent capabilities cannot manage them. An account can keep multiple named Fly.io, OpenRouter, and other integration keys; execution uses the active key. Authenticated computer channels deliver assigned environment values, and providers inherit them automatically for each task. Restart a provider session when its environment changes. Keep values out of arguments, prompts, logs and snapshots. Exact output redaction cannot recognise encoded or transformed values and cannot prevent a provider or command from reading its inherited environment; keep that limitation visible anywhere the guarantee is described.
-- **Computer pairing lives in the daemon**, in the `peers` table, so one pairing serves every client reading that computer. Those clients reach a paired computer through `/peers/:id/api/...`; the native phone may use that authenticated route once to learn the computer's identity and keep its own direct credential in secure storage. `GET /server/identity` is how a computer introduces itself; `tailscale serve` is the only way in, so the daemon's bind stays on `127.0.0.1`, and `PATCH /server/identity {exposed}` is the switch for it.
-- **The iPhone app is a fleet client**, never an execution daemon of its own. Its first `remy://configure?url=&token=` pairing bootstraps the fleet; as reachable paired computers introduce themselves, the phone stores a direct credential for each in secure storage and connects to them independently. Shared state can come from any computer that answers, while threads and workspaces remain owned by the computer that can run them.
+- **Reusable environments are assigned to repositories.** Settings owns shared definitions and workspace assignments. Cloud and model-access keys on Computers follow the same rule: values are encrypted at rest and management APIs return names and configured state, never values; the `remy` MCP cannot manage them. An account can keep multiple named Fly.io, OpenRouter, and other integration keys; execution uses the active key. Authenticated computer channels deliver assigned environment values, and providers inherit them automatically for each task. Restart a provider session when its environment changes. Keep values out of arguments, prompts, logs and snapshots. Exact output redaction cannot recognise encoded or transformed values and cannot prevent a provider or command from reading its inherited environment; keep that limitation visible anywhere the guarantee is described.
+- **Computer pairing lives in the daemon**, in the `peers` table, so one pairing serves every client reading that computer. Those clients reach a paired computer through `/peers/:id/api/...`. `GET /server/identity` is how a computer introduces itself; `tailscale serve` is the only way in, so the daemon's bind stays on `127.0.0.1`, and `PATCH /server/identity {exposed}` is the switch for it.
 - **Pairing starts on the device you are using.** An authenticated client asks
   its computer to pair with another on the tailnet. The receiving computer can
   approve without a second confirmation only when Tailscale Serve's identity
@@ -228,13 +196,12 @@ A server module opens its database at import time, so a test that touches state 
   move is actor `remy` and carries what derived it, because the rule reads the
   ticket's own story to see what it has already done: one pull request moves a
   card once, and a card you moved by hand stays where you put it.
-- **A routine belongs to an agent, not a ticket.** It is created conversationally when the person asks that agent for repeated work, then managed in that agent's settings. The machine on the create event owns the clock so paired machines do not trigger it twice; each trigger tries the current device preference order and sends the prompt to the first device that can run the agent. It writes no ticket and needs no workspace. The old `recurrences` projection remains only as compatible storage, and older recurring-ticket events stay inert rather than becoming routines.
-- **Device administration and device preference are separate.** The detailed Devices list always keeps this machine first so its settings are easy to find. A compact **Preferred device order** field owns the order used when agent conversations, routines, or other work can run on any available device.
-- **The workspace agent is not a row.** `workspace` is an assignee like `you` is: it means the workspace's own default model with no persona in front of it, so work can be handed off before anybody has written an agent. `assignedAgent` in `agents.ts` is what turns either into something that can run a turn; no agent may take the handle.
-- **Notifications are addressed, not broadcast.** The machine that raises one decides where it goes: `notifySelf` for itself, a `notify` flag per peer. A forwarded notification is always shown by whoever receives it. When no window is open, `notifySelf` falls through to Apple Push for iPhones registered on that daemon (`~/.remy/apns.json`).
+- **Which computer a thread runs on is a choice, not a rule.** The person picks it in the composer, or Remy takes the one they last used for that workspace; `chooseComputer` in `hub/src/computer-choice.ts` is that decision on the hub, and `preferredServer` with `devicePreferenceOrder` is its local equivalent. There is nothing to configure, so do not add a rules table, a resolver endpoint, or a settings section for it.
+- **Device administration and device preference are separate.** The detailed Devices list always keeps this machine first so its settings are easy to find. A compact **Preferred device order** field owns the order used when a new thread or other work can run on any available computer.
+- **Notifications are addressed, not broadcast.** The machine that raises one decides where it goes: `notifySelf` for itself, a `notify` flag per peer. A forwarded notification is always shown by whoever receives it. When no window is open, `notifySelf` falls through to Apple Push for any phone still registered on that daemon (`~/.remy/apns.json`); nothing on `main` registers one.
 - **Commit subjects** are a sentence in the imperative with no prefix or scope tag: "Store chats in SQLite instead of a file each". PRs land squashed with the `(#n)` suffix.
 - **Version** is `{major}.{minor}.{run}`, where the run number comes from CI. Do not bump `version` in `package.json` by hand.
 
 ## Prerequisites
 
-Node 22.5+ for `node:sqlite`, `git`, `gh` authenticated for pull requests, at least one of Claude Code, Codex, or Cursor Agent, and `tmux` for the older session remote. Tailscale only if another device needs to reach the daemon. Xcode and an Apple Push key in `~/.remy/apns.json` for the iPhone app.
+Node 22.5+ for `node:sqlite`, `git`, `gh` authenticated for pull requests, at least one of Claude Code, Codex, or Cursor Agent, and `tmux` for the older session remote. Tailscale only if another device needs to reach the daemon.

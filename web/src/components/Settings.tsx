@@ -18,7 +18,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Check, Cloud, Copy, Folder, GripVertical, Laptop, Plus, RefreshCw, Smartphone, Trash2, X } from "lucide-react";
+import { Check, Cloud, Copy, Folder, GripVertical, Laptop, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -76,7 +76,6 @@ import {
   ItemTitle,
 } from "@/components/ui/item";
 import { ModelPickerButton } from "@/components/ModelPicker";
-import { PullRequestMonitoringFields } from "@/components/PullRequestMonitoring";
 import { permissionOf } from "@/lib/chat-options";
 import { ProviderMark } from "@/components/ProviderMark";
 import type { Provider } from "@/lib/providers";
@@ -96,7 +95,6 @@ import { PathPickerDialog } from "@/components/PathPicker";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { apiError } from "@/lib/api-error";
 
-import { IDENTITIES } from "@/components/AgentSettings";
 import { useStore } from "@/state/store";
 import type { ProviderMcpStatus, Server, ServerSettings, TailnetDevice, Tooling, ToolStatus } from "@/state/types";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
@@ -398,63 +396,15 @@ function VersionControlPane() {
   const tooling = useStore((s) => s.tooling);
   const loadTooling = useStore((s) => s.loadTooling);
   const [pickingRoot, setPickingRoot] = useState(false);
-  const servers = useStore((s) => s.servers);
-  const agents = useStore((s) => s.agents);
-  const loadBoard = useStore((s) => s.loadBoard);
-  const localServer = servers.find((server) => !server.peer && !server.cloud);
-  const localAgents = agents.filter((agent) => agent.serverId === localServer?.id);
-
   useEffect(() => {
     if (online) void loadTooling().catch(() => {});
   }, [online, loadTooling]);
-
-  useEffect(() => { if (online) void loadBoard().catch(() => {}); }, [online, loadBoard]);
 
   if (!online) return <Unreachable />;
   if (!settings) return <p className="text-sm shimmer text-muted-foreground">Reading this machine's settings…</p>;
 
   return (
     <div className="flex flex-col gap-5">
-      <PullRequestMonitoringFields
-        id="default-pull-request-monitoring"
-        enabled={settings.pullRequestMonitoringEnabled}
-        agentId={settings.pullRequestMonitoringAgentId || null}
-        agents={localAgents}
-        description="Work starts when one of your pull requests needs attention."
-        onChange={(policy) => void save({
-          pullRequestMonitoringEnabled: policy.enabled,
-          pullRequestMonitoringAgentId: policy.agentId ?? "",
-        }, "pull request monitoring")}
-      />
-
-      <Field orientation="horizontal" className="items-center">
-        <FieldContent>
-          <FieldLabel htmlFor="default-git-identity">Commit attribution</FieldLabel>
-          <FieldDescription className="text-xs">
-            Agents set to Remy default follow this choice.
-          </FieldDescription>
-        </FieldContent>
-        <Select
-          value={settings.defaultGitIdentity ?? "author"}
-          onValueChange={(value) =>
-            void save({ defaultGitIdentity: value as "off" | "author" }, "who agent commits credit")
-          }
-        >
-          <SelectTrigger id="default-git-identity" size="sm" className="w-44 shrink-0">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent align="end">
-            <SelectGroup>
-              {IDENTITIES.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-      </Field>
-
       <Field orientation="horizontal" className="items-center">
         <FieldContent>
           <FieldLabel htmlFor="default-checkout">New threads open in</FieldLabel>
@@ -1071,7 +1021,7 @@ function DevicesPane({ organizationId }: { organizationId?: string }) {
   const [latestRelease, setLatestRelease] = useState<RemyRelease>();
   const hasPeer = servers.some((server) => server.peer);
   // Pairing lives in the daemon on this machine rather than in any one window,
-  // so the desktop app, a browser and the phone all pair once and see one list.
+  // so every client of that computer pairs once and sees one list.
   const home = servers.find((server) => server.local) ?? servers.find((server) => !server.cloud);
   // Nothing can pair with a machine nothing can reach, so the list below says
   // so rather than offering buttons that cannot work.
@@ -1214,7 +1164,6 @@ function DevicesPane({ organizationId }: { organizationId?: string }) {
           </SortableContext>
         </DndContext>
       </Field>
-      {home ? <PhonesField serverId={home.id} /> : null}
       <DiscoveredDevices homeId={home?.id} reachable={homeReachable} />
       <AddDevice onAdd={addServer} />
     </div>
@@ -1834,7 +1783,7 @@ function ReachableField({ serverId, identity }: { serverId: string; identity?: I
             <FieldContent>
               <FieldLabel>Pairing link</FieldLabel>
               <FieldDescription className="text-xs">
-                Scan it from the iPhone app, or paste it on a machine that never shows up below.
+                Paste it on a machine that never shows up below.
               </FieldDescription>
             </FieldContent>
             <Button variant="outline" size="sm" className="shrink-0" onClick={() => void copy()}>
@@ -1849,77 +1798,6 @@ function ReachableField({ serverId, identity }: { serverId: string; identity?: I
           </div>
         </>
       )}
-    </div>
-  );
-}
-
-/// iPhones that have registered an Apple Push token with this machine.
-///
-/// They buzz when a thread here needs you and no window is open to show a
-/// banner. The key that signs those pushes lives in `~/.remy/apns.json`, not
-/// in this pane — this is just who will hear it.
-function PhonesField({ serverId }: { serverId: string }) {
-  const [status, setStatus] = useState<{
-    configured: boolean;
-    devices: { token: string; name: string; lastSeen: number }[];
-  }>();
-
-  const reload = useCallback(() => {
-    void transport
-      .request<{ configured?: boolean; devices?: { token: string; name: string; lastSeen: number }[] }>(
-        serverId,
-        "/push/devices",
-      )
-      .then((body) => setStatus({ configured: body.configured === true, devices: body.devices ?? [] }))
-      .catch(() => {
-        // A daemon from before Apple Push landed has no phones.
-      });
-  }, [serverId]);
-
-  useEffect(() => reload(), [reload]);
-
-  const forget = async (token: string, name: string) => {
-    try {
-      await transport.request(serverId, `/push/devices/${encodeURIComponent(token)}`, { method: "DELETE" });
-      toast.success(`Forgot ${name}.`);
-      reload();
-    } catch (caught) {
-      toast.error("Couldn't forget that iPhone", { description: apiError(caught) });
-    }
-  };
-
-  if (!status) return null;
-
-  return (
-    <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/40 px-3.5 py-3">
-      <Field>
-        <FieldContent>
-          <FieldLabel className="flex items-center gap-2">
-            <Smartphone className="size-3.5" />
-            iPhone
-          </FieldLabel>
-          <FieldDescription className="text-xs">
-            {!status.configured
-              ? "Apple Push isn't set up on this machine yet, so the iPhone stays quiet."
-              : status.devices.length === 0
-                ? "Pair the iPhone app and it gets a push when no window is open."
-                : "A thread on this machine reaches these phones when no window is open."}
-          </FieldDescription>
-        </FieldContent>
-      </Field>
-      {status.devices.map((device) => (
-        <div key={device.token} className="flex items-center gap-3 border-t border-border pt-3">
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm">{device.name}</span>
-            <span className="block text-xs text-muted-foreground">
-              Last seen {new Date(device.lastSeen).toLocaleString(undefined, { month: "short", day: "numeric" })}
-            </span>
-          </span>
-          <Button variant="ghost" size="icon-xs" aria-label={`Forget ${device.name}`} onClick={() => void forget(device.token, device.name)}>
-            <Trash2 />
-          </Button>
-        </div>
-      ))}
     </div>
   );
 }

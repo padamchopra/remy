@@ -159,7 +159,7 @@ cat <<SUMMARY
 Remy server: $HEALTH
 Tailnet exposure:        $SERVE_NOTE
 
-Pair the app: open Remy on your iPhone and scan this:
+Pair another device: open Remy on it and scan this:
 ============================================================
 SUMMARY
 
@@ -173,16 +173,13 @@ Or enter manually:
   Server URL : $APP_URL
   Token      : $TOKEN
 
-On desktop, copy this link and use "Paste pairing link" in the iPhone app:
+Or copy this link and paste it on the other device:
   $PAIR_LINK
 
 Reprint this QR anytime:  ./deploy/show-pairing.sh
 
-Notifications go to the iPhone app through Apple Push. Copy deploy/apns.json.example
-to ~/.remy/apns.json with your key, then pair the phone.
-
-Once the app is on your phone, turn off Claude Code remote control
-(remoteControlAtStartup: false) — Remy replaces it.
+Turn off Claude Code remote control (remoteControlAtStartup: false) — Remy
+replaces it.
 
 Codex will ask you to review newly installed lifecycle hooks. In a Codex
 session, run /hooks once and trust the Remy entries so live state,
