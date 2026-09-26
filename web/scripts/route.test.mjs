@@ -80,6 +80,22 @@ test("old thread query links still parse, then format clean", () => {
   assert.equal(formatPathLocation(parsed), "/threads/thread-1");
 });
 
+test("a pull request has its own address in both shells", () => {
+  const route = { name: "prs", repository: "jup-ag/mobile", number: 9029 };
+  assert.equal(formatPathLocation({ route }), "/pull-requests/jup-ag/mobile/9029");
+  assert.deepEqual(parseLocation("/pull-requests/jup-ag/mobile/9029").route, route);
+  assert.deepEqual(parseLocation("#/pull-requests/jup-ag/mobile/9029").route, route);
+  assert.deepEqual(parseLocation("/app/pull-requests/jup-ag/mobile/9029").route, route);
+  assert.equal(
+    formatPathLocation({ route: { ...route, organizationId: "release" } }),
+    "/pull-requests/jup-ag/mobile/9029?organization=release",
+  );
+  assert.equal(formatPathLocation({ route: { name: "prs" } }), "/pull-requests");
+  for (const path of ["/pull-requests/jup-ag/mobile", "/pull-requests/jup-ag/mobile/0", "/pull-requests/jup-ag/mobile/12/files"]) {
+    assert.deepEqual(parseLocation(path).route, { name: "prs" }, path);
+  }
+});
+
 test("a retired Inbox or Agents link opens threads", () => {
   for (const path of ["/inbox", "/inbox/remy", "/app/inbox", "/agents", "/agents/remy", "/app/agents"]) {
     const parsed = parseLocation(path);

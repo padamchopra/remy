@@ -1,15 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Check, CircleDot, GitPullRequest, Layers, RefreshCw, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { Markdown } from "@/components/Markdown";
 import { PaneHeader } from "@/components/PaneHeader";
-import { PullRequestChecks } from "@/components/PullRequestChecks";
-import { PullRequestView } from "@/components/PullRequestView";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { watchHubResource } from "@/lib/hub-computers";
 import type { HubWorkspace } from "@/lib/hub-organization";
@@ -24,14 +22,25 @@ import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
 import type { Chat, PullRequestStack, Server, Workspace } from "@/state/types";
 
+// The list is what a person scans first, so the detail views — the local one
+// carries the whole diff and review — arrive only when a pull request opens.
+const PullRequestView = lazy(() => import("@/components/PullRequestView").then((module) => ({ default: module.PullRequestView })));
+const PullRequestHostedDetail = lazy(() => import("@/components/PullRequestHostedDetail").then((module) => ({ default: module.PullRequestHostedDetail })));
+
 type PullRequestFilter = "yours" | "review";
+
+/// Which pull request is open, as the route names it.
+export interface PullRequestAddress {
+  repository: string;
+  number: number;
+}
 
 interface PullRequestCheck {
   name: string;
   state: "pass" | "fail" | "pending" | "skipping";
 }
 
-interface AuthoredPullRequest {
+export interface AuthoredPullRequest {
   stack?: PullRequestStack | null;
   url: string;
   number: number;
@@ -204,6 +213,15 @@ function hostedCacheId(organizationId: string) {
   return `github:${organizationId}`;
 }
 
+function hostedOrganizationOf(serverId: string) {
+  return serverId.startsWith("github:") ? serverId.slice("github:".length) : "";
+}
+
+function sameAddress(pullRequest: { repository: string; number: number }, address: PullRequestAddress) {
+  return pullRequest.number === address.number
+    && pullRequest.repository.toLowerCase() === address.repository.toLowerCase();
+}
+
 export function PullRequests({
   servers,
   workspaces,
@@ -211,6 +229,8 @@ export function PullRequests({
   onOpenWorkspace,
   hostedOrganizationId,
   hostedOrganizationIds,
+  selected: selectedAddress,
+  onSelect,
 }: {
   servers: Server[];
   workspaces: Workspace[];
@@ -218,6 +238,10 @@ export function PullRequests({
   onOpenWorkspace: (id: string) => void;
   hostedOrganizationId?: string;
   hostedOrganizationIds?: string[];
+  /// The open pull request lives in the route, so Back returns to the list and
+  /// a reload lands on the same pull request.
+  selected?: PullRequestAddress;
+  onSelect: (address?: PullRequestAddress) => void;
 }) {
   const hostedIds = hostedOrganizationIds
     ?? (hostedOrganizationId ? [hostedOrganizationId] : []);
@@ -243,10 +267,13 @@ export function PullRequests({
   const [loading, setLoading] = useState(!hasCachedPullRequests(serverIds));
   const [githubError, setGithubError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedURL, setSelectedURL] = useState("");
+  // Accounts still answering after the first landed; the refresh control spins
+  // for them instead of the list waiting on the slowest one.
+  const [pending, setPending] = useState(0);
   const [hostedWorkspaces, setHostedWorkspaces] = useState(() =>
     hostedIds.flatMap((organizationId) => cachedHubWorkspaces(organizationId)));
   const requestId = useRef(0);
+  const answered = useRef(false);
   const progressRequestId = useRef<number | undefined>(undefined);
 
   const load = useCallback(async ({ refresh = false, showProgress = false } = {}) => {
@@ -264,15 +291,21 @@ export function PullRequests({
       } else {
         setLoading(true);
       }
-      const batches: Array<{ serverId: string; pullRequests: AuthoredPullRequest[] } | { serverId: string; error: string }> =
-        await Promise.all(hostedIdsRef.current.map(async (organizationId) => {
+      const organizations = hostedIdsRef.current;
+      const errors: string[] = [];
+      let settled = 0;
+      let landed = false;
+      if (!answered.current) setPending(organizations.length);
+      // Each account lands on its own: one slow GitHub answer must not hold
+      // back the pull requests another account already has.
+      await Promise.all(organizations.map(async (organizationId) => {
         const serverId = hostedCacheId(organizationId);
+        let batch: { pullRequests: AuthoredPullRequest[] } | { error: string };
         try {
           const response = await hubRequest<{ pullRequests: AuthoredPullRequest[] }>(
             `${hubThreadBase(organizationId)}/github/pull-requests${refresh ? "?refresh=1" : ""}`,
           );
-          return {
-            serverId,
+          batch = {
             pullRequests: (response.pullRequests ?? []).map((pullRequest) => ({
               ...pullRequest,
               serverId,
@@ -280,33 +313,30 @@ export function PullRequests({
           };
         } catch (caught) {
           const message = caught instanceof Error ? caught.message : "Connect GitHub to see pull requests.";
-          if (caught instanceof HubRequestError && caught.status === 409) {
-            const known = pullRequestCache.get(serverId);
-            if (known?.length) return { serverId, pullRequests: known };
-          }
-          return { serverId, error: message };
+          const known = caught instanceof HubRequestError && caught.status === 409 ? pullRequestCache.get(serverId) : undefined;
+          batch = known?.length ? { pullRequests: known } : { error: message };
+        }
+        if (currentRequest !== requestId.current) return;
+        settled += 1;
+        if (!answered.current) setPending(organizations.length - settled);
+        if (settled === organizations.length) answered.current = true;
+        if ("pullRequests" in batch) {
+          cachePullRequests(serverId, batch.pullRequests);
+          landed = true;
+        } else {
+          errors.push(batch.error);
+        }
+        const next = cachedPullRequests(cacheIds);
+        if (next.length > 0 || landed) {
+          setPullRequests(next);
+          setGithubError("");
+        }
+        if (next.length > 0 || settled === organizations.length) setLoading(false);
+        if (settled === organizations.length && !landed && next.length === 0) {
+          setPullRequests([]);
+          setGithubError(errors[0] || "Connect GitHub to see pull requests.");
         }
       }));
-      if (currentRequest !== requestId.current) {
-        if (progressRequestId.current === currentRequest) {
-          progressRequestId.current = undefined;
-          setRefreshing(false);
-        }
-        return;
-      }
-      const errors = batches.flatMap((batch) => ("error" in batch && batch.error ? [batch.error] : []));
-      for (const batch of batches) {
-        if ("pullRequests" in batch) cachePullRequests(batch.serverId, batch.pullRequests);
-      }
-      const next = cachedPullRequests(cacheIds);
-      if (next.length > 0 || errors.length < batches.length) {
-        setPullRequests(next);
-        setGithubError("");
-      } else {
-        setPullRequests([]);
-        setGithubError(errors[0] || "Connect GitHub to see pull requests.");
-      }
-      setLoading(false);
       if (progressRequestId.current === currentRequest) {
         progressRequestId.current = undefined;
         setRefreshing(false);
@@ -356,6 +386,7 @@ export function PullRequests({
   }, [hosted, serverKey]);
 
   useEffect(() => {
+    answered.current = false;
     void load();
     const timer = window.setInterval(() => void load(), PULL_REQUEST_POLL_MS);
     return () => window.clearInterval(timer);
@@ -407,7 +438,7 @@ export function PullRequests({
         .some((value) => value.toLowerCase().includes(normalizedQuery));
     });
   }, [filter, pullRequests, query]);
-  const selected = pullRequests.find((pullRequest) => pullRequest.url === selectedURL);
+  const selected = selectedAddress && pullRequests.find((pullRequest) => sameAddress(pullRequest, selectedAddress));
   const groupedWorkspaces = useMemo(() => workspaceGroups(workspaces, servers), [servers, workspaces]);
   const workspaceGroupByCopy = useMemo(() => new Map<string, WorkspaceGroup>(
     groupedWorkspaces.flatMap((group) => group.copies.map((workspace) => [
@@ -424,88 +455,101 @@ export function PullRequests({
     ?? selected.serverId
   );
   const selectedThread = selected && activeThread(selected, chats);
+  const back = () => onSelect(undefined);
+  const open = (pullRequest: { repository: string; number: number }) =>
+    onSelect({ repository: pullRequest.repository, number: pullRequest.number });
 
-  if (selected && hosted) {
+  if (selectedAddress && !selected) {
+    // A link to a pull request waits for the list that can say whether it is
+    // open, rather than flashing "not found" while GitHub answers.
+    const githubURL = `https://github.com/${selectedAddress.repository}/pull/${selectedAddress.number}`;
     return (
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         <PaneHeader
           sidebar
           crumbs={[
-            { label: "Pull requests", onClick: () => setSelectedURL("") },
-            { label: selected.title },
+            { label: "Pull requests", onClick: back },
+            { label: `${selectedAddress.repository} #${selectedAddress.number}` },
           ]}
         >
           <Button asChild variant="ghost" size="sm">
-            <a href={selected.url} target="_blank" rel="noreferrer" data-link>Open on GitHub</a>
+            <a href={githubURL} target="_blank" rel="noreferrer" data-link>Open on GitHub</a>
           </Button>
         </PaneHeader>
-        <div className="mx-auto flex w-full max-w-6xl gap-8 px-6 py-6">
-          <div className="min-w-0 flex-1">
-            <p className="text-xs text-muted-foreground">{selected.repository} #{selected.number}</p>
-            <h1 className="mt-3 text-2xl font-semibold">{selected.title}</h1>
-            <p className="mt-2 font-mono text-xs text-muted-foreground">{selected.headRefName} → {selected.baseRefName}</p>
-            <section className="mt-8">
-              <h2 className="text-sm font-medium">Description</h2>
-              <div className="mt-3">
-                {selected.body?.trim()
-                  ? <Markdown text={selected.body} className="text-sm" />
-                  : <p className="text-sm text-muted-foreground">No description.</p>}
-              </div>
-            </section>
-            {selected.comments && selected.comments.length > 0 && (
-              <section className="mt-8">
-                <h2 className="text-sm font-medium">Comments</h2>
-                <div className="mt-3 flex flex-col gap-4">
-                  {selected.comments.map((comment, index) => (
-                    <article key={comment.url || `${comment.author}:${index}`} className="flex flex-col gap-2">
-                      <p className="text-xs text-muted-foreground">{comment.author}</p>
-                      <Markdown text={comment.body} className="text-sm" />
-                    </article>
-                  ))}
-                </div>
-              </section>
-            )}
-          </div>
-          <aside className="w-72 shrink-0">
-            <PullRequestChecks checks={selected.checks} />
-          </aside>
-        </div>
+        {loading || pending > 0 ? (
+          <PullRequestDetailLoading />
+        ) : (
+          <Empty className="min-h-0 flex-1">
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><GitPullRequest /></EmptyMedia>
+              <EmptyTitle>This pull request isn't open</EmptyTitle>
+              <EmptyDescription>It may be merged or closed. Open it on GitHub to see what happened.</EmptyDescription>
+            </EmptyHeader>
+            <EmptyContent className="flex-row justify-center">
+              <Button variant="outline" size="sm" onClick={back}>Back to pull requests</Button>
+            </EmptyContent>
+          </Empty>
+        )}
       </main>
+    );
+  }
+
+  if (selected && hosted) {
+    const members = (number: number) => pullRequests.find((pullRequest) =>
+      sameAddress(pullRequest, { repository: selected.repository, number }));
+    return (
+      <Suspense fallback={(
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <PaneHeader sidebar crumbs={[{ label: "Pull requests", onClick: back }, { label: selected.title }]} />
+          <PullRequestDetailLoading />
+        </main>
+      )}>
+        <PullRequestHostedDetail
+          key={selected.url}
+          pullRequest={selected}
+          organizationId={hostedOrganizationOf(selected.serverId)}
+          canOpen={(number) => Boolean(members(number))}
+          onOpen={(number) => open({ repository: selected.repository, number })}
+          onBack={back}
+        />
+      </Suspense>
     );
   }
 
   if (selected) {
     return (
       <main className="flex min-w-0 flex-1 flex-col">
-        <PullRequestView
-          key={selected.url}
-          serverId={selectedDetailServerId ?? selected.serverId}
-          repository={selected.repository}
-          number={selected.number}
-          stack={selected.stack}
-          onPullRequestChanged={() => void load({ refresh: true })}
-          leadingActions={(
-            <Button variant="ghost" size="sm" onClick={() => setSelectedURL("")}>
-              Pull requests
-            </Button>
-          )}
-          actions={(
-            <>
-              {selectedWorkspace && (
-                <Button variant="ghost" size="sm" data-link className="max-w-48" onClick={() => onOpenWorkspace(selectedWorkspace.id)}>
-                  <WorkspaceMark home={false} workspace={selectedWorkspace} server={selectedServer} size="sm" />
-                  <span className="truncate">{selectedWorkspaceGroup?.workspace.name ?? selected.workspaceName}</span>
-                </Button>
-              )}
-              {selectedThread && (
-                <Button variant="secondary" size="sm" data-link onClick={() => onOpenThread(selectedThread.id)}>
-                  <CircleDot />
-                  Open thread
-                </Button>
-              )}
-            </>
-          )}
-        />
+        <Suspense fallback={<PullRequestDetailLoading />}>
+          <PullRequestView
+            key={selected.url}
+            serverId={selectedDetailServerId ?? selected.serverId}
+            repository={selected.repository}
+            number={selected.number}
+            stack={selected.stack}
+            onPullRequestChanged={() => void load({ refresh: true })}
+            leadingActions={(
+              <Button variant="ghost" size="sm" data-link onClick={back}>
+                Pull requests
+              </Button>
+            )}
+            actions={(
+              <>
+                {selectedWorkspace && (
+                  <Button variant="ghost" size="sm" data-link className="max-w-48" onClick={() => onOpenWorkspace(selectedWorkspace.id)}>
+                    <WorkspaceMark home={false} workspace={selectedWorkspace} server={selectedServer} size="sm" />
+                    <span className="truncate">{selectedWorkspaceGroup?.workspace.name ?? selected.workspaceName}</span>
+                  </Button>
+                )}
+                {selectedThread && (
+                  <Button variant="secondary" size="sm" data-link onClick={() => onOpenThread(selectedThread.id)}>
+                    <CircleDot />
+                    Open thread
+                  </Button>
+                )}
+              </>
+            )}
+          />
+        </Suspense>
       </main>
     );
   }
@@ -520,10 +564,20 @@ export function PullRequests({
       thread={linkedThread(pullRequest, chats)}
       stacked={stacked}
       stackIndex={stackIndex}
-      onOpen={() => setSelectedURL(pullRequest.url)}
+      onOpen={() => open(pullRequest)}
       onOpenThread={onOpenThread}
     />
   );
+
+  const empty = githubError
+    ? { title: "Couldn't load pull requests", description: githubError }
+    : pullRequests.length === 0
+      ? { title: "No open pull requests", description: "Ask a thread to open one." }
+      : query.trim()
+        ? { title: "No matching pull requests", description: "Try another search or filter." }
+        : filter === "review"
+          ? { title: "No reviews requested", description: "Nobody is waiting on your review." }
+          : { title: "None of yours are open", description: "Ask a thread to open one." };
 
   return (
     <main className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -534,11 +588,17 @@ export function PullRequests({
             ? "Live from GitHub"
             : `Live from GitHub · ${onlineCount} of ${computerCount} ${computerCount === 1 ? "computer" : "computers"}`}
         </span>
-        <Button variant="ghost" size="icon-sm" disabled={refreshing} onClick={() => void load({ refresh: true, showProgress: true })} aria-label="Refresh pull requests">
-          <RefreshCw className={refreshing ? "animate-spin" : undefined} />
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          disabled={refreshing || pending > 0}
+          onClick={() => void load({ refresh: true, showProgress: true })}
+          aria-label={pending > 0 ? "Loading pull requests" : "Refresh pull requests"}
+        >
+          <RefreshCw className={refreshing || pending > 0 ? "animate-spin motion-reduce:animate-none" : undefined} />
         </Button>
       </PaneHeader>
-      <div className="flex items-center gap-3 px-4 pb-3">
+      <div className="flex min-w-0 flex-wrap items-center gap-3 px-5 py-3">
         <ToggleGroup
           type="single"
           size="sm"
@@ -551,11 +611,13 @@ export function PullRequests({
             ["review", "Review requested"],
           ] as const).map(([value, label]) => (
             <ToggleGroupItem key={value} value={value} className="px-2.5">
-              {label} <span className="text-muted-foreground">{counts[value]}</span>
+              {label}
+              {/* A count is a claim; until GitHub answers there is none to make. */}
+              {!loading && <span className="text-muted-foreground tabular-nums">{counts[value]}</span>}
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
-        <InputGroup className="ml-auto w-64">
+        <InputGroup className="ml-auto w-64 max-w-full">
           <InputGroupAddon><Search /></InputGroupAddon>
           <InputGroupInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search pull requests" aria-label="Search pull requests" />
         </InputGroup>
@@ -566,14 +628,8 @@ export function PullRequests({
         <Empty className="min-h-0 flex-1">
           <EmptyHeader>
             <EmptyMedia variant="icon"><GitPullRequest /></EmptyMedia>
-            <EmptyTitle>{pullRequests.length === 0 ? "No pull requests" : "No matching pull requests"}</EmptyTitle>
-            <EmptyDescription>
-              {githubError
-                ? githubError
-                : pullRequests.length === 0
-                ? "An agent opens one from a thread."
-                : "Try another search or filter."}
-            </EmptyDescription>
+            <EmptyTitle>{empty.title}</EmptyTitle>
+            <EmptyDescription>{empty.description}</EmptyDescription>
           </EmptyHeader>
         </Empty>
       ) : (
@@ -583,17 +639,24 @@ export function PullRequests({
               const stacked = group.key.startsWith("stack:");
               const lead = group.members[0];
               if (!stacked || !lead?.stack) return renderTile(lead!);
+              const shown = group.members.length;
+              const size = lead.stack.size;
               return (
                 <section
                   key={group.key}
                   data-slot="pull-request-stack"
                   aria-label={`Stack #${lead.stack.number}`}
-                  className="mx-2 my-1 overflow-hidden rounded-lg ring-1 ring-border"
+                  className="mx-3 my-1.5 overflow-hidden rounded-lg ring-1 ring-border"
                 >
-                  <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground">
+                  <div className="flex min-w-0 items-center gap-2 border-b border-border bg-muted/40 px-2 py-1.5 text-xs text-muted-foreground">
                     <Layers className="size-3.5 shrink-0" />
-                    <span>Stack #{lead.stack.number}</span>
-                    <span>{group.members.length} of {lead.stack.size}</span>
+                    <span className="font-medium text-foreground">Stack #{lead.stack.number}</span>
+                    {/* How many of the stack are in this list — not a position,
+                        which each row carries for itself. */}
+                    <span>· {shown === size ? `${size} pull requests` : `${shown} of ${size} pull requests`}</span>
+                    {lead.stack.baseRefName && (
+                      <span className="min-w-0 truncate">· into <span className="font-mono">{lead.stack.baseRefName}</span></span>
+                    )}
                   </div>
                   {group.members.map((pullRequest, index) => renderTile(pullRequest, true, index))}
                 </section>
@@ -644,7 +707,7 @@ function PullRequestListItem({
       data-stack-index={stacked ? String(stackIndex) : undefined}
       className={cn(
         "flex min-w-0 items-center gap-3 py-2 hover:bg-accent/60",
-        stacked && stackIndex > 0 ? "pl-8 pr-4" : "px-4",
+        stacked ? "px-2" : "px-5",
       )}
     >
       <button type="button" data-link className="flex min-w-0 flex-1 items-start gap-2 text-left" onClick={onOpen}>
@@ -690,16 +753,32 @@ function PullRequestListItem({
 
 function PullRequestListLoading() {
   return (
-    <div className="flex flex-col gap-4 px-4 py-3" aria-label="Loading pull requests">
-      {["w-4/5", "w-3/5", "w-2/3", "w-5/6"].map((width, index) => (
-        <span key={index} className="flex items-start gap-3">
-          <span className="shimmer mt-1 size-4 rounded" />
-          <span className="flex min-w-0 flex-1 flex-col gap-2">
-            <span className={cn("shimmer h-3 rounded", width)} />
-            <span className="shimmer h-2.5 w-full rounded" />
-          </span>
-        </span>
+    <div role="status" aria-label="Loading pull requests" aria-busy="true" className="flex flex-col">
+      {["w-3/5", "w-2/5", "w-1/2", "w-2/3", "w-1/3"].map((width, index) => (
+        <div key={index} className="flex items-center gap-3 px-5 py-2">
+          <Skeleton className="size-4 shrink-0 rounded-full" />
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <Skeleton className={cn("h-3.5", width)} />
+            <Skeleton className="h-2.5 w-28" />
+          </div>
+          <Skeleton className="h-3 w-10 shrink-0" />
+          <Skeleton className="h-3 w-16 shrink-0" />
+          <Skeleton className="h-3 w-8 shrink-0" />
+        </div>
       ))}
+    </div>
+  );
+}
+
+function PullRequestDetailLoading() {
+  return (
+    <div role="status" aria-label="Loading pull request" aria-busy="true" className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 py-6">
+      <Skeleton className="h-3 w-40" />
+      <Skeleton className="h-7 w-3/4" />
+      <Skeleton className="h-3 w-56" />
+      <Skeleton className="mt-6 h-3 w-full" />
+      <Skeleton className="h-3 w-5/6" />
+      <Skeleton className="h-3 w-2/3" />
     </div>
   );
 }

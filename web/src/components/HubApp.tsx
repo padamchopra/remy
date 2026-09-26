@@ -414,7 +414,15 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           {workspacesListOpen ? null : organizationSettings && route.name === "settings" ? (
             <Deferred open><OrganizationAdmin organizations={organizations} selectedId={isAll ? route.ownerOrganizationId : organizationId} tab={route.organizationTab ?? "general"} onSelect={owner => navigate({...route,tab:"organization",organizationId:isAll ? "all" : owner,...(isAll ? {ownerOrganizationId:owner} : {})})} onTab={organizationTab => navigate({...route,tab:"organization",organizationTab,ownerOrganizationId:isAll ? route.ownerOrganizationId ?? organizations[0]?.id : undefined})} /></Deferred>
           ) : route.name === "prs" ? (
-            <div className="flex min-h-0 flex-1"><Deferred open><PullRequests servers={[]} workspaces={[]} hostedOrganizationIds={isAll ? contexts.map((item) => item.id) : [organization.id]} onOpenThread={() => undefined} onOpenWorkspace={() => undefined} /></Deferred></div>
+            <div className="flex min-h-0 flex-1"><Deferred open><PullRequests
+              servers={[]}
+              workspaces={[]}
+              hostedOrganizationIds={isAll ? contexts.map((item) => item.id) : [organization.id]}
+              onOpenThread={() => undefined}
+              onOpenWorkspace={() => undefined}
+              selected={route.repository && route.number ? { repository: route.repository, number: route.number } : undefined}
+              onSelect={(address) => navigate({ name: "prs", organizationId: route.organizationId, ...address })}
+            /></Deferred></div>
           ) : isAll ? (
             <Deferred open><AllView organizations={contexts} route={route} navigate={navigate} threads={threads} threadsLoaded={threadsLoaded} /></Deferred>
           ) : (

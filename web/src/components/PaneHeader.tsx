@@ -52,7 +52,8 @@ export function PaneHeader({
               // The separator is a sibling of the item, not a child: both are
               // `li`, and one inside the other is not a list.
               <Fragment key={index}>
-                <BreadcrumbItem className="min-w-0">
+                {/* A way back keeps its whole label; the place you are is what truncates. */}
+                <BreadcrumbItem className={crumb.onClick ? "shrink-0" : "min-w-0"}>
                   {crumb.onClick ? (
                     <BreadcrumbLink asChild>
                       <Button type="button" data-link variant="ghost" size="sm" className="h-auto px-1" onClick={crumb.onClick}>
