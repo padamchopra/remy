@@ -1096,14 +1096,17 @@ test("owners can archive and delete hosted threads after the cloud computer slee
 });
 
 test("Claude Code and Codex account login are refused on cloud computers", async () => {
-  const { sqlite, db } = database();
+  const { sqlite, db, computers, organizations, service } = database();
   const { createRouteHandler } = await import("./worker.js");
+  const { OrganizationService } = await import("./organizations.js");
   const secret = "test-encryption-root-with-at-least-thirty-two-characters";
+  const hostedId = crypto.randomUUID();
+  await service.register("org", "ada", { ...input, computerId: hostedId, ownership: "hosted", name: "Cloud task" });
   const route = createRouteHandler({
-    accountStore: () => ({}) as never,
-    accountService: () => ({ authenticate: async () => ({ userId: "user", sessionId: "session", clientKind: "web" }) }) as never,
-    organizationStore: () => ({}) as never,
-    organizationService: () => ({ member: async () => ({ role: "owner" }), workspace: async () => ({ id: "ws" }) }) as never,
+    accountService: () => ({ authenticate: async () => ({ userId: "ada", sessionId: "session", clientKind: "web" }) }) as never,
+    computerStore: () => computers,
+    organizationStore: () => organizations,
+    organizationService: () => new OrganizationService(organizations),
   });
   const env = { DB: db, AUTH_SECRET: { get: async () => secret }, BETTER_AUTH_URL: "https://hub.example", COORDINATOR: { idFromName: () => ({}), get: () => ({ fetch: async () => Response.json({ ok: true }) }) } } as never;
   const call = (path: string, method = "GET", origin = "https://hub.example") =>
@@ -1116,6 +1119,12 @@ test("Claude Code and Codex account login are refused on cloud computers", async
     assert.equal(started.status, 403);
     assert.match(((await started.json()) as { error: string }).error, /computer you own/);
     assert.equal((await call("claude-account")).status, 403);
+    const hostedClaude = await call(`computers/${hostedId}/claude-account/start`, "POST");
+    assert.equal(hostedClaude.status, 403);
+    assert.match(((await hostedClaude.json()) as { error: string }).error, /computer you own/);
+    const hostedCodex = await call(`computers/${hostedId}/codex/start`, "POST");
+    assert.equal(hostedCodex.status, 403);
+    assert.match(((await hostedCodex.json()) as { error: string }).error, /computer you own/);
     const listed = await (await call("model-access")).json() as { providers: { id: string }[]; accounts?: { claude?: { phase: string } } };
     assert.equal(listed.accounts?.claude, undefined);
     assert.deepEqual(listed.providers.map((entry) => entry.id), ["anthropic", "openai", "router", "openrouter"]);
@@ -1123,6 +1132,60 @@ test("Claude Code and Codex account login are refused on cloud computers", async
     assert.equal(codex.status, 403);
     assert.match(((await codex.json()) as { error: string }).error, /computer you own/);
     assert.equal((await call("hosted/ws/codex")).status, 403);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("owned connected computers can start Claude Code and Codex account login", async () => {
+  const { sqlite, db, computers, organizations, service } = database();
+  const { createRouteHandler } = await import("./worker.js");
+  const { OrganizationService } = await import("./organizations.js");
+  const secret = "test-encryption-root-with-at-least-thirty-two-characters";
+  await service.register("org", "ada", input);
+  const forwarded: string[] = [];
+  let clientKind = "web";
+  let userId = "ada";
+  const route = createRouteHandler({
+    accountService: () => ({ authenticate: async () => ({ userId, sessionId: "session", clientKind }) }) as never,
+    computerStore: () => computers,
+    organizationStore: () => organizations,
+    organizationService: () => new OrganizationService(organizations),
+  });
+  const env = { DB: db, AUTH_SECRET: { get: async () => secret }, BETTER_AUTH_URL: "https://hub.example", COORDINATOR: { idFromName: (id: string) => id, get: () => ({ fetch: async (request: Request) => {
+    forwarded.push(new URL(request.url).pathname);
+    return Response.json({ phase: "pending", userCode: "ABCD-EFGH", verificationUrl: "https://auth.openai.com/codex/device", apiKeyConfigured: false });
+  } }) } } as never;
+  const call = (path: string, method = "GET", payload?: unknown, origin = "https://hub.example") =>
+    route(new Request(`https://hub.example/api/organizations/org/${path}`, {
+      method,
+      headers: { authorization: "Bearer test", origin, "content-type": "application/json" },
+      ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
+    }), env);
+  try {
+    const started = await call(`computers/${input.computerId}/claude-account/start`, "POST");
+    assert.equal(started.status, 200);
+    const pending = await started.json() as { phase: string; verificationUrl?: string };
+    assert.equal(pending.phase, "pending");
+    assert.ok(pending.verificationUrl?.startsWith("https://claude.ai/oauth/authorize?"));
+    assert.ok(!JSON.stringify(pending).includes("codeVerifier"));
+    const status = await (await call(`computers/${input.computerId}/claude-account`)).json() as { phase: string };
+    assert.equal(status.phase, "pending");
+    assert.equal((await call(`computers/${input.computerId}/claude-account/start`, "POST", undefined, "https://foreign.example")).status, 403);
+    userId = "grace";
+    assert.equal((await call(`computers/${input.computerId}/claude-account/start`, "POST")).status, 404);
+    userId = "ada";
+    clientKind = "computer";
+    assert.equal((await call(`computers/${input.computerId}/claude-account/start`, "POST")).status, 404);
+    clientKind = "web";
+    const listed = await (await call("model-access")).json() as { providers: { id: string }[]; accounts?: { claude?: { phase: string } } };
+    assert.equal(listed.accounts?.claude, undefined);
+    assert.deepEqual(listed.providers.map((entry) => entry.id), ["anthropic", "openai", "router", "openrouter"]);
+    const codex = await call(`computers/${input.computerId}/codex/start`, "POST");
+    assert.equal(codex.status, 200);
+    assert.ok(forwarded.some((path) => path.includes(`/computer-account/${input.computerId}/codex/start`)));
+    assert.equal((await call("claude-account/start", "POST")).status, 403);
+    assert.equal((await call("hosted/ws/codex/start", "POST")).status, 403);
   } finally {
     sqlite.close();
   }

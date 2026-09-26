@@ -13,6 +13,8 @@ import { allowedRequestOrigin } from "./request-origin.js";
 import { emailAvailable, sendAccountEmail, type AccountEmail } from "./email.js";
 import { EnvironmentStore } from "./environments.js";
 import { ComputerModelKeyStore, computerModelKeyName, computerModelKeyWrite, publicComputerModelKeys } from "./computer-model-keys.js";
+import { ComputerAccountStore } from "./computer-accounts.js";
+import { cancelClaudeAccount, claudeAccountStatus, claudeComputerEnvironment, completeClaudeAccount, logoutClaudeAccount, startClaudeAccount } from "./claude-account.js";
 import { encodeComputerConnectionKey } from "@remy/contract";
 import { personalSpace } from "./personal-space.js";
 import {LinearBoard} from "./linear-board.js";
@@ -351,7 +353,9 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     const org=decodeURIComponent(modelKeySync[1]),computer=await authenticateComputer(request,org,computerStore);
     if(!computer)return jsonError("This computer cannot read its provider keys.",403);
     const keys=new ComputerModelKeyStore(env.DB,()=>env.AUTH_SECRET.get());
-    return Response.json({values:await keys.values(computer.computerId)},{headers:{"cache-control":"no-store"}});
+    const accounts=new ComputerAccountStore(env.DB,()=>env.AUTH_SECRET.get());
+    const claude=computer.ownership==="hosted" ? {} : await claudeComputerEnvironment(accounts,computer.computerId);
+    return Response.json({values:await keys.values(computer.computerId),claudeCredentials:claude.CLAUDE_CREDENTIALS_JSON??null},{headers:{"cache-control":"no-store"}});
   }
   const codexTokens=/^\/api\/organizations\/([^/]+)\/computers\/codex-tokens$/.exec(url.pathname);
   if(codexTokens && request.method==="POST") {
@@ -747,6 +751,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           }
           await computers.remove(organizationId, id, identity.userId);
           await new ComputerModelKeyStore(env.DB, () => env.AUTH_SECRET.get()).forget(id);
+          await new ComputerAccountStore(env.DB, () => env.AUTH_SECRET.get()).forget(id);
           for (const targetOrganizationId of sharedOrganizationIds) await env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${targetOrganizationId}`)).fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": targetOrganizationId, "x-removed-computer": id } }));
         }
         else {
@@ -791,6 +796,45 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       const hostedAccount = /^hosted\/([^/]+)\/codex(?:\/(start|cancel|logout))?$/.exec(tail);
       if (hostedAccount) {
         return jsonError("Connect Codex on a computer you own.", 403);
+      }
+      const computerClaude = /^computers\/([^/]+)\/claude-account(?:\/(start|complete|cancel|logout))?$/.exec(tail);
+      if (computerClaude) {
+        await organizations.member(organizationId, identity.userId);
+        const id = decodeURIComponent(computerClaude[1]);
+        const computer = await computerStore.computer(organizationId, id);
+        if (!computer || identity.clientKind === "computer" || !await computers.canManage(computer, identity.userId, organizationId)) return jsonError("Computer not found.", 404);
+        if (computer.ownership === "hosted") return jsonError("Connect Claude Code on a computer you own.", 403);
+        const accounts = new ComputerAccountStore(env.DB, () => env.AUTH_SECRET.get());
+        if (request.method === "GET" && !computerClaude[2]) {
+          return Response.json(await claudeAccountStatus(accounts, id), { headers: { "cache-control": "no-store" } });
+        }
+        if (!allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Connect Claude Code from Remy.", 403);
+        if (request.method !== "POST" || !computerClaude[2]) return jsonError("This account action is unavailable.", 405);
+        try {
+          const account = computerClaude[2] === "start" ? await startClaudeAccount(accounts, id)
+            : computerClaude[2] === "complete" ? await completeClaudeAccount(accounts, id, await body(request))
+            : computerClaude[2] === "cancel" ? await cancelClaudeAccount(accounts, id)
+            : await logoutClaudeAccount(accounts, id);
+          if (computerClaude[2] === "complete" || computerClaude[2] === "logout") {
+            await board().fetch(new Request("https://internal/computer-model-keys/changed", { method: "POST", headers: { "x-organization-id": organizationId, "x-computer-id": id } }));
+          }
+          return Response.json(account, { headers: { "cache-control": "no-store" } });
+        } catch (error) {
+          return jsonError(error instanceof Error ? error.message : "Claude Code could not connect; try again.", 400);
+        }
+      }
+      const computerCodex = /^computers\/([^/]+)\/codex(?:\/(start|cancel|logout))?$/.exec(tail);
+      if (computerCodex) {
+        await organizations.member(organizationId, identity.userId);
+        const id = decodeURIComponent(computerCodex[1]);
+        const computer = await computerStore.computer(organizationId, id);
+        if (!computer || identity.clientKind === "computer" || !await computers.canManage(computer, identity.userId, organizationId)) return jsonError("Computer not found.", 404);
+        if (computer.ownership === "hosted") return jsonError("Connect Codex on a computer you own.", 403);
+        if (!(request.method === "GET" && !computerCodex[2]) && !(request.method === "POST" && computerCodex[2])) return jsonError("This account action is unavailable.", 405);
+        if (request.method === "POST" && !allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Connect Codex from Remy.", 403);
+        return board().fetch(new Request(`https://internal/computer-account/${encodeURIComponent(id)}/codex${computerCodex[2] ? `/${computerCodex[2]}` : ""}`, {
+          method: request.method, headers: { "x-organization-id": organizationId, "x-user-id": identity.userId },
+        }));
       }
       if (tail === "model-access" || tail.startsWith("model-access/")) {
         const member=await organizations.member(organizationId,identity.userId);
@@ -1465,6 +1509,16 @@ export class HubCoordinator {
     const hostedAccount = /^\/hosted-account\/([^/]+)(?:\/(start|cancel|logout))?$/.exec(url.pathname);
     if (hostedAccount) {
       return jsonError("Connect Codex on a computer you own.", 403);
+    }
+    const computerCodex = /^\/computer-account\/([^/]+)\/codex(?:\/(start|cancel|logout))?$/.exec(url.pathname);
+    if (computerCodex && org && user) {
+      const computerId = decodeURIComponent(computerCodex[1]);
+      const computer = await this.computers.computer(org, computerId);
+      if (!computer || computer.ownership === "hosted" || !await this.computerService().canManage(computer, user, org)) return jsonError("Computer not found.", 404);
+      if (!(request.method === "GET" && !computerCodex[2]) && !(request.method === "POST" && computerCodex[2])) return jsonError("This account action is unavailable.", 405);
+      const response = await this.dispatchComputer(computerId, { id: user, label: "Admin" }, request.method,
+        `/hub/codex-account${computerCodex[2] ? `/${computerCodex[2]}` : ""}`, {});
+      return new Response(response.body, { status: response.status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
     }
     const hostedMatch=/^\/hosted\/([^/]+)$/.exec(url.pathname);
     if(hostedMatch && org){

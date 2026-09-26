@@ -41,6 +41,10 @@ try {
 
   const keys = page.getByRole("region", { name: "Provider keys" });
   await keys.waitFor();
+  const accounts = page.getByRole("region", { name: "Provider accounts" });
+  await accounts.waitFor();
+  await accounts.getByRole("button", { name: "Connect Claude Code", exact: true }).waitFor();
+  await accounts.getByRole("button", { name: "Connect Codex", exact: true }).waitFor();
   await keys.getByText("Claude uses the sign-in on this computer.", { exact: true }).waitFor();
   await keys.getByText("Codex uses the sign-in on this computer.", { exact: true }).waitFor();
   await page.screenshot({ path: `${out}/provider-keys-empty.png`, clip: await keys.boundingBox() });

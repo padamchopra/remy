@@ -118,7 +118,7 @@ Cloud Model access offers Connect Claude Code and Connect Codex, then injects th
 GOOD
 ```text
 Cloud Model access saves Anthropic, OpenAI, Router, and OpenRouter keys.
-Settings on a paired Mac still signs in to Claude Code and Codex the way those CLIs do.
+Computers → Connected signs in to Claude Code and Codex on a computer you own, or sets an API key there.
 ```
 
 BAD
