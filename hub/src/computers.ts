@@ -129,13 +129,15 @@ export class ComputerService {
 
   async list(organizationId: string, userId?: string) {
     const now = this.now();
-    const visible: { computer: StoredComputer; granted: boolean }[] = [];
-    for (const computer of await this.store.computers(organizationId)) {
+    // Each computer's checks are independent reads. Awaiting them computer by
+    // computer made the list take one round trip per check per computer.
+    const visible = (await Promise.all((await this.store.computers(organizationId)).map(async (computer) => {
       const granted = await this.shareGranted(computer, organizationId);
       if (userId) {
-        if (await this.canUse(computer, userId, organizationId) || await this.canManage(computer, userId, organizationId)) visible.push({ computer, granted });
-      } else if (computer.organizationId === organizationId || granted) visible.push({ computer, granted });
-    }
+        return await this.canUse(computer, userId, organizationId) || await this.canManage(computer, userId, organizationId) ? { computer, granted } : undefined;
+      }
+      return computer.organizationId === organizationId || granted ? { computer, granted } : undefined;
+    }))).filter((entry): entry is { computer: StoredComputer; granted: boolean } => entry !== undefined);
     return Promise.all(visible.map(async ({ computer: { publicKey: _, ...computer }, granted }) => computerSummarySchema.parse({
       ...computer,
       organizationId,

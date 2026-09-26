@@ -955,15 +955,23 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         if (workspaceId) await organizations.workspace(organizationId, identity.userId, workspaceId);
         const settings = new HostedSettingsStore(env.DB, () => env.AUTH_SECRET.get());
         if (request.method === "GET" && (!workspaceId || hostedMatch[2] === "settings")) {
-          const names = await settings.secretNames(organizationId);
-          const enabledProviders = await settings.enabledProviders(organizationId);
-          const access = publicModelAccess(await settings.executionSecrets(organizationId));
+          // Every read here is independent; awaiting them one after another made
+          // this the slowest thing the new-thread composer waits on.
+          const [names, enabledProviders, executionSecrets, hostedSettings, secrets] = await Promise.all([
+            settings.secretNames(organizationId),
+            settings.enabledProviders(organizationId),
+            settings.executionSecrets(organizationId),
+            settings.settings(organizationId, workspaceId),
+            settings.secrets(organizationId),
+          ]);
+          const access = publicModelAccess(executionSecrets);
           const cloudStart: Record<string, { owner: boolean; providers: ReturnType<typeof publicStartProviders> }> = {};
-          for (const provider of enabledProviders) {
-            const grant = await cloudStartGrant(settings, organizationId, provider, identity.userId);
+          const grants = await Promise.all(enabledProviders.map((provider) => cloudStartGrant(settings, organizationId, provider, identity.userId)));
+          enabledProviders.forEach((provider, index) => {
+            const grant = grants[index]!;
             cloudStart[provider] = { owner: grant.owner, providers: publicStartProviders(grant.advertised, grant.stored) };
-          }
-          return Response.json({ settings: await settings.settings(organizationId,workspaceId), secretNames: member.role !== "member" ? names.filter(name => !name.startsWith("cloud:") && !name.startsWith("model:") && !name.startsWith("access:") && !name.startsWith("named-")) : [], enabledProviders, cloudStart, routerConfigured: !!access.find(entry => entry.id === "router")?.configured, openrouterConfigured: !!access.find(entry => entry.id === "openrouter")?.configured, connections: names.filter(name => name.startsWith("cloud:")).map(name => name.slice(6)), providerKeys: publicProviderKeys(await settings.secrets(organizationId)), available: enabledProviders.includes("cursor-cloud") || (!!env.HOSTED_IMAGE && (!!env.PROVIDER_RUNTIME || (!!env.HOSTED_CONTROL_URL && !!env.HOSTED_CONTROL_TOKEN))) });
+          });
+          return Response.json({ settings: hostedSettings, secretNames: member.role !== "member" ? names.filter(name => !name.startsWith("cloud:") && !name.startsWith("model:") && !name.startsWith("access:") && !name.startsWith("named-")) : [], enabledProviders, cloudStart, routerConfigured: !!access.find(entry => entry.id === "router")?.configured, openrouterConfigured: !!access.find(entry => entry.id === "openrouter")?.configured, connections: names.filter(name => name.startsWith("cloud:")).map(name => name.slice(6)), providerKeys: publicProviderKeys(secrets), available: enabledProviders.includes("cursor-cloud") || (!!env.HOSTED_IMAGE && (!!env.PROVIDER_RUNTIME || (!!env.HOSTED_CONTROL_URL && !!env.HOSTED_CONTROL_TOKEN))) });
         }
         if (request.method === "PUT" && (!workspaceId || hostedMatch[2] === "settings")) {
           if (member.role === "member") return jsonError("Ask an admin to change hosted computers.",403);
@@ -1000,7 +1008,8 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       }
       if(tail==="computers/choice" || tail==="computers/preference") {
         await organizations.member(organizationId,identity.userId);
-        const enabledProviders=await new HostedSettingsStore(env.DB,()=>env.AUTH_SECRET.get()).enabledProviders(organizationId);
+        // Reading your saved preference needs no cloud settings; the composer
+        // asks for it first, so it stays one query.
         if(tail==="computers/preference" && request.method==="GET") {
           const workspaceId=url.searchParams.get("workspaceId");
           if(!workspaceId)return jsonError("Choose a workspace.",400);
@@ -1009,6 +1018,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           return Response.json({computerId:preference?.computer_id??null});
         }
         if(request.method==="POST") {
+          const enabledProviders=await new HostedSettingsStore(env.DB,()=>env.AUTH_SECRET.get()).enabledProviders(organizationId);
           const input=await body<{workspaceId?:string;computerId?:string|null;prewarm?:boolean;usePreference?:boolean}>(request);
           if(!input?.workspaceId)return jsonError("Choose a workspace.",400);
           const workspace=await organizations.workspace(organizationId,identity.userId,input.workspaceId);
@@ -2139,9 +2149,14 @@ export class HubCoordinator {
     const computerId = match ? decodeURIComponent(match[1]) : undefined;
     const id = match?.[2]; const action = match?.[3]; const attachmentId = match?.[4];
     if (url.pathname === "/threads" && request.method === "GET") {
+      // The cursor is read first so no frame between it and the list is lost;
+      // the list and the computers it is checked against are independent.
       const cursor = (await this.threads.replay()).cursor;
-      const threads = await this.visibleThreads(actor.id);
-      const availability = new Map((await this.computerService().list(request.headers.get("x-organization-id")!, actor.id)).map(computer => [computer.computerId, computer.availability]));
+      const [threads, computers] = await Promise.all([
+        this.visibleThreads(actor.id),
+        this.computerService().list(request.headers.get("x-organization-id")!, actor.id),
+      ]);
+      const availability = new Map(computers.map(computer => [computer.computerId, computer.availability]));
       return Response.json({ threads: threads.map((thread) => ({ ...thread, stale: thread.stale || availability.get(thread.computerId) === "offline" })), cursor, member: actor });
     }
     if (url.pathname === "/threads/live" && request.method === "GET") {
