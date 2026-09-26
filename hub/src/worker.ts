@@ -17,7 +17,7 @@ import { encodeComputerConnectionKey } from "@remy/contract";
 import { personalSpace } from "./personal-space.js";
 import {LinearBoard} from "./linear-board.js";
 import {linearFor} from "./linear-routes.js";
-import {linearRoute} from "./linear-routes.js";
+import {linearAccountRoute, linearAccountsFor, linearRoute} from "./linear-routes.js";
 import { githubFor, githubRoute } from "./github-routes.js";
 import { connectionRoute, connectionWebhook, isGitHubConnectionCallback } from "./connection-routes.js";
 import { connectionProviders } from "./connection-providers.js";
@@ -456,9 +456,10 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
   if (webhookResponse) return webhookResponse;
   const identity = await identityFor(request, service);
   if (!identity) return jsonError("Sign in again.", 401);
-  const connectionResponse = await connectionRoute(request, env, identity.userId);
+  const connectionResponse = await connectionRoute(request, env, identity.userId, identity.clientKind);
   if (connectionResponse) return connectionResponse;
   const githubResponse=await githubRoute(request,env,identity.userId);if(githubResponse)return githubResponse;
+  const linearAccountResponse=await linearAccountRoute(request,env,identity.userId,identity.clientKind);if(linearAccountResponse)return linearAccountResponse;
   const linearResponse=await linearRoute(request,env,identity.userId);if(linearResponse)return linearResponse;
   const linearBoardRoute=/^\/api\/organizations\/([^/]+)\/linear-board$/.exec(url.pathname);
   if(linearBoardRoute){const org=decodeURIComponent(linearBoardRoute[1]);return env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${org}`)).fetch(new Request("https://internal/linear/board",{method:request.method,headers:{"x-organization-id":org,"x-user-id":identity.userId,"content-type":"application/json"},...(request.method==="GET"?{}:{body:request.body})}));}
@@ -1749,6 +1750,9 @@ export class HubCoordinator {
       const local=computer?.capabilities.workspaces.find(w=>w.id===(input as {workspaceId?:string}).workspaceId || (thread?.detail.cwd===w.path || typeof thread?.detail.cwd==="string" && thread.detail.cwd.startsWith(w.path.replace(/\/$/,"")+"/")));
       const workspace=local?.origin?await new D1OrganizationStore(this.env.DB).workspaceByOrigin(org,repositoryOrigin(local.origin)):undefined;
       if(workspace)input={...input,hubEnvironment:await new EnvironmentStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).forWorkspace(org,workspace.id)};
+      const current=input as Record<string, unknown>;
+      try { input={...current, hubLinear: await linearAccountsFor(this.env).forThread(org, actor.id)}; }
+      catch { input={...current, hubLinear:{kind:"off"}}; }
     }
     if (computer && computer.organizationId !== org) {
       const coordinator = this.env.COORDINATOR.get(this.env.COORDINATOR.idFromName(`organization:${computer.organizationId}`));
@@ -2201,7 +2205,7 @@ export class HubCoordinator {
     if (!id) {
       let input;
       try { input = JSON.parse(new TextDecoder().decode(payload)); } catch { return jsonError("Choose a workspace.", 400); }
-      if(input.hubInstructions!==undefined || input.hubInbox!==undefined || input.hubEnvironment!==undefined || input.hubTaskId!==undefined)return jsonError("This thread configuration is unavailable.",403);
+      if(input.hubInstructions!==undefined || input.hubInbox!==undefined || input.hubEnvironment!==undefined || input.hubTaskId!==undefined || input.hubLinear!==undefined)return jsonError("This thread configuration is unavailable.",403);
       if (typeof input.workspaceId !== "string" || !await this.computerService().canUseWorkspace(target, actor.id, input.workspaceId, request.headers.get("x-organization-id")!)) return jsonError("This workspace is not available to you.", 404);
       const start=hostedStartChoice(typeof input.provider === "string" ? input.provider : undefined, typeof input.model === "string" ? input.model : undefined);
       if(!await this.computerService().canStartWithProvider(target, actor.id, request.headers.get("x-organization-id")!, start.provider)) return jsonError(START_PROVIDER_DENIED,403);
@@ -2228,7 +2232,7 @@ export class HubCoordinator {
     }
     let input:Record<string,unknown>={};
     if(payload.byteLength){try{input=JSON.parse(new TextDecoder().decode(payload));}catch{return jsonError("Send a valid thread request.",400);}}
-    if(input.hubEnvironment!==undefined || input.hubTaskId!==undefined)return jsonError("This thread configuration is unavailable.",403);
+    if(input.hubEnvironment!==undefined || input.hubTaskId!==undefined || input.hubLinear!==undefined)return jsonError("This thread configuration is unavailable.",403);
     const answer=await this.dispatchComputer(computerId,actor,request.method,`/hub/threads${id?`/${id}`:""}${action?`/${action}`:""}`,input);
     if (id && (request.method === "DELETE" || action === "archive")) {
       if (answer.ok) {

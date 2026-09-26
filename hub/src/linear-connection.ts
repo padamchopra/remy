@@ -43,6 +43,8 @@ export class LinearConnection {
     readonly connections: Connections,
     readonly changed: (org: string) => Promise<void>,
     readonly send: typeof fetch = (input, init) => fetch(input, init),
+    private readonly linearToken: (org: string, user?: string) => Promise<string> = (org) =>
+      this.connections.token(org, "linear"),
   ) {
     this.store = new D1OrganizationStore(db);
     this.organizations = new OrganizationService(this.store);
@@ -57,8 +59,9 @@ export class LinearConnection {
     org: string,
     query: string,
     variables: Record<string, unknown> = {},
+    user?: string,
   ): Promise<T> {
-    const token = await this.connections.token(org, "linear");
+    const token = await this.linearToken(org, user);
     const response = await this.send("https://api.linear.app/graphql", {
       method: "POST",
       headers: {
@@ -76,7 +79,7 @@ export class LinearConnection {
       throw new ConnectionError("Linear could not complete this action.", 502);
     return result.data;
   }
-  async pages<T>(org: string, field: string, selection: string, filter = "") {
+  async pages<T>(org: string, field: string, selection: string, filter = "", user?: string) {
     const rows: T[] = [];
     let after: string | null = null;
     for (let page = 0; page < 100; page++) {
@@ -98,6 +101,7 @@ export class LinearConnection {
         org,
         `query($after:String){${field}(first:100,after:$after${filter}){nodes{${selection}} pageInfo{hasNextPage endCursor}}}`,
         { after },
+        user,
       );
       const list = data[field];
       rows.push(...list.nodes);
@@ -111,29 +115,33 @@ export class LinearConnection {
     await this.access(org, user, true);
     const connection = await this.db
       .prepare(
-        "SELECT id,external_id FROM connections WHERE organization_id=? AND provider='linear' AND subject=''",
+        "SELECT external_id FROM organization_linear_links WHERE organization_id=?",
       )
       .bind(org)
-      .first<{ id: string; external_id: string }>();
+      .first<{ external_id: string }>();
     if (!connection)
       throw new ConnectionError(
-        "Connect Linear before mapping your workspaces.",
+        "Choose a Linear account for this organization.",
       );
     const [teams, projects, users] = await Promise.all([
       this.pages<{ id: string; name: string; key: string }>(
         org,
         "teams",
         "id name key",
+        "",
+        user,
       ),
       this.pages<{
         id: string;
         name: string;
         teams: { nodes: { id: string }[] };
-      }>(org, "projects", "id name teams{nodes{id}}"),
+      }>(org, "projects", "id name teams{nodes{id}}", "", user),
       this.pages<{ id: string; name: string; email: string }>(
         org,
         "users",
         "id name email",
+        "",
+        user,
       ),
     ]);
     const complete: LinearTeam[] = [];
@@ -147,6 +155,7 @@ export class LinearConnection {
         "workflowStates",
         "id name type",
         `,filter:{team:{id:{eq:${JSON.stringify(team.id)}}}}`,
+        user,
       );
       complete.push({ ...team, states });
     }
@@ -162,14 +171,14 @@ export class LinearConnection {
     await this.access(org, user, true);
     await this.db
       .prepare(
-        "INSERT INTO linear_catalog(organization_id,external_id,catalog,updated_at) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM connections WHERE id=? AND external_id=?) ON CONFLICT(organization_id) DO UPDATE SET external_id=excluded.external_id,catalog=excluded.catalog,updated_at=excluded.updated_at",
+        "INSERT INTO linear_catalog(organization_id,external_id,catalog,updated_at) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM organization_linear_links WHERE organization_id=? AND external_id=?) ON CONFLICT(organization_id) DO UPDATE SET external_id=excluded.external_id,catalog=excluded.catalog,updated_at=excluded.updated_at",
       )
       .bind(
         org,
         connection.external_id,
         JSON.stringify(catalog),
         Date.now(),
-        connection.id,
+        org,
         connection.external_id,
       )
       .run();
@@ -179,20 +188,20 @@ export class LinearConnection {
   async externalId(org: string) {
     const row = await this.db
       .prepare(
-        "SELECT external_id FROM connections WHERE organization_id=? AND provider='linear' AND subject=''",
+        "SELECT external_id FROM organization_linear_links WHERE organization_id=?",
       )
       .bind(org)
       .first<{ external_id: string }>();
     if (!row)
       throw new ConnectionError(
-        "Connect Linear before mapping your workspaces.",
+        "Choose a Linear account for this organization.",
       );
     return row.external_id;
   }
   async catalog(org: string) {
     const row = await this.db
       .prepare(
-        "SELECT l.catalog FROM linear_catalog l JOIN connections c ON c.organization_id=l.organization_id AND c.external_id=l.external_id AND c.provider='linear' AND c.subject='' WHERE l.organization_id=?",
+        "SELECT l.catalog FROM linear_catalog l JOIN organization_linear_links c ON c.organization_id=l.organization_id AND c.external_id=l.external_id WHERE l.organization_id=?",
       )
       .bind(org)
       .first<{ catalog: string }>();
@@ -207,7 +216,7 @@ export class LinearConnection {
     const mappings = (
       await this.db
         .prepare(
-          "SELECT * FROM linear_workspace_mappings WHERE organization_id=? AND external_id=(SELECT external_id FROM connections WHERE organization_id=linear_workspace_mappings.organization_id AND provider='linear' AND subject='')",
+          "SELECT * FROM linear_workspace_mappings WHERE organization_id=? AND external_id=(SELECT external_id FROM organization_linear_links WHERE organization_id=linear_workspace_mappings.organization_id)",
         )
         .bind(org)
         .all<LinearMapping>()
@@ -215,7 +224,7 @@ export class LinearConnection {
     const matches = (
       await this.db
         .prepare(
-          "SELECT linear_user_id,member_id FROM linear_member_mappings WHERE organization_id=? AND external_id=(SELECT external_id FROM connections WHERE organization_id=linear_member_mappings.organization_id AND provider='linear' AND subject='')",
+          "SELECT linear_user_id,member_id FROM linear_member_mappings WHERE organization_id=? AND external_id=(SELECT external_id FROM organization_linear_links WHERE organization_id=linear_member_mappings.organization_id)",
         )
         .bind(org)
         .all<{ linear_user_id: string; member_id: string }>()
@@ -346,7 +355,7 @@ export class LinearConnection {
     const orgs = (
       await this.db
         .prepare(
-          "SELECT organization_id FROM connections WHERE provider='linear' AND subject='' AND external_id=?",
+          "SELECT organization_id FROM organization_linear_links WHERE external_id=?",
         )
         .bind(external)
         .all<{ organization_id: string }>()
@@ -355,9 +364,9 @@ export class LinearConnection {
       if (payload.type === "OAuthApp" && payload.action === "revoked") {
         await this.db
           .prepare(
-            "UPDATE connections SET status='reauth' WHERE organization_id=? AND provider='linear' AND subject=''",
+            "UPDATE linear_accounts SET status='reauth',updated_at=? WHERE external_id=? AND user_id IN (SELECT user_id FROM memberships WHERE organization_id=?)",
           )
-          .bind(org)
+          .bind(Date.now(), external, org)
           .run();
         await this.changed(org);
         continue;

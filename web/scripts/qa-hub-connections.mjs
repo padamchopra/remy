@@ -10,13 +10,14 @@ const route=`${info.hubUrl}/#/settings/connections?organization=${info.organizat
 try {
  await page.goto(route);await other.goto(route);await page.getByRole("button",{name:"Connect Linear",exact:true}).waitFor();
  assert.equal((await call("grace","/connections/linear","POST",{scope:"organization"})).status,403);
+ const linearRow=()=>page.getByRole("listitem",{name:"Release team",exact:true});
  await page.getByRole("button",{name:"Connect Linear",exact:true}).click();await page.getByRole("link",{name:"Allow connection",exact:true}).click();
- await page.getByText("Release team · Connected",{exact:true}).waitFor();await other.getByText("Release team · Connected",{exact:true}).waitFor();
+ await linearRow().getByText("Connected",{exact:true}).waitFor();await other.getByRole("listitem",{name:"Release team",exact:true}).getByText("Connected",{exact:true}).waitFor();
  await page.getByRole("button",{name:"Connect GitHub",exact:true}).click();await page.getByRole("link",{name:"Allow connection",exact:true}).click();await page.getByText("ada-release · Connected",{exact:true}).waitFor();
- const own=await call("ada","/connections"),member=await call("grace","/connections");assert.equal(own.body.connections.length,2);assert.equal(member.body.connections.length,1);assert.ok(!JSON.stringify(own.body).includes("disposable-connection-token"));
+ const own=await call("ada","/connections"),member=await call("grace","/connections");assert.equal(own.body.connections.length,1);assert.equal(own.body.linearAccounts.length,1);assert.equal(member.body.connections.length,0);assert.equal(member.body.linearAccounts.length,0);assert.ok(!JSON.stringify(own.body).includes("disposable-connection-token"));assert.ok(!JSON.stringify(member.body).includes("Release team"));
  await page.screenshot({path:out+"/connected.png"});
- await page.getByRole("button",{name:"Disconnect Linear",exact:true}).click();await page.getByRole("button",{name:"Cancel",exact:true}).click();assert.equal((await call("ada","/connections")).body.connections.length,2);
- await page.getByRole("button",{name:"Disconnect Linear",exact:true}).click();await page.getByRole("button",{name:"Disconnect account",exact:true}).click();await other.getByRole("button",{name:"Connect Linear",exact:true}).waitFor();assert.equal((await call("ada","/connections")).body.connections.length,1);
+ await linearRow().getByRole("button",{name:"Disconnect",exact:true}).click();await page.getByRole("button",{name:"Cancel",exact:true}).click();assert.equal((await call("ada","/connections")).body.linearAccounts.length,1);
+ await linearRow().getByRole("button",{name:"Disconnect",exact:true}).click();await page.getByRole("button",{name:"Disconnect account",exact:true}).click();await other.getByRole("button",{name:"Connect Linear",exact:true}).waitFor();assert.equal((await call("ada","/connections")).body.connections.length,1);assert.equal((await call("ada","/connections")).body.linearAccounts.length,0);
  await page.reload();await page.getByText("ada-release · Connected",{exact:true}).waitFor();await page.setViewportSize({width:390,height:844});assert.ok(await page.getByRole("region",{name:"Connections",exact:true}).evaluate(e=>e.scrollWidth<=e.clientWidth));await page.screenshot({path:out+"/mobile.png"});
  console.log("PASS: OAuth consent with PKCE, organization and private member accounts, cross-tab live updates, disconnect cancellation and confirmation, readback without credentials, reload and phone width");
 } catch(e){await page.screenshot({path:out+"/failure.png"});console.error(await page.locator("body").innerText());throw e;}finally{await other.close();await context.close();await browser.close();}console.log(`VIDEO=${await page.video().path()}`);

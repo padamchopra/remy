@@ -1,6 +1,7 @@
 import { taskEnvironment } from "./environments.js";
 import { withAppUpdateGuard } from "./app-update.js";
 import { getKv, setKv } from "./db.js";
+import { linearHttpAttachment, linearNotice } from "./linear-session.js";
 import type { ThreadMember } from "@remy/contract";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -185,6 +186,8 @@ export interface ChatDetail extends ChatSummary {
   history?: ChatHistory;
   approval?: ChatApproval;
   question?: ChatQuestionRequest;
+  /// Why this thread cannot use Linear yet. Absent when Linear is off or ready.
+  linearNotice?: string;
 }
 
 // The feed a client renders. Older turns stay in Claude's own transcript; this
@@ -352,6 +355,7 @@ export class Chat {
       todos: this.record.todos,
       approval: this.approval,
       question: this.question,
+      ...(linearNotice(this.record.id) ? { linearNotice: linearNotice(this.record.id) } : {}),
     };
   }
 
@@ -550,7 +554,8 @@ export class Chat {
     let run: ProviderRun;
     try {
       const environment = prompt.environment;
-      const signature = JSON.stringify(environment);
+      const linear = linearHttpAttachment(this.record.id);
+      const signature = JSON.stringify({ environment, linear: linear?.fingerprint ?? null });
       if (this.providerSession && signature !== this.environmentSignature) {
         this.providerSession.close();
         this.providerSession = undefined;
@@ -589,6 +594,7 @@ export class Chat {
               stop: stopChat,
               runEnvironment: (input) => this.runEnvironmentCommand(input),
             }),
+            ...(linear ? { httpMcp: [{ name: linear.name, url: linear.url, token: linear.token }] } : {}),
             mcpProcess: remyMcpProcess({
               apiUrl: `http://127.0.0.1:${config.port}`,
               token: remyToolToken(this.record.id),
@@ -994,6 +1000,7 @@ export class Chat {
       title: this.record.title,
       live: this.isLive,
       error: this.record.error ?? null,
+      linearNotice: linearNotice(this.record.id) ?? null,
       updatedAt: this.record.updatedAt,
       // Carried on every frame so an inbox row goes bold the moment the agent
       // stops talking, rather than on the next poll.
@@ -1077,6 +1084,18 @@ for (const stored of loadChats(MAX_ENTRIES)) {
 }
 
 /// Applies changed account credentials on the next turn without interrupting active work.
+/// The Linear sign-in for this thread changed, so the next turn starts a new session.
+export function publishLinearNotice(chatId: string): void {
+  const chat = chats.get(chatId);
+  if (!chat) return;
+  chat.reconfigure();
+  chat.push();
+}
+
+export function publishLinearNotices(): void {
+  for (const chat of chats.values()) publishLinearNotice(chat.record.id);
+}
+
 export function refreshProviderSessions(provider: ProviderId): void {
   for (const chat of chats.values()) if (chat.record.provider === provider) chat.reconfigure();
 }

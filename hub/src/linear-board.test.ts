@@ -17,7 +17,7 @@ async function fixture() {
         .join("\n"),
     );
   sqlite.exec(
-    "INSERT INTO user(id,name,email,createdAt,updatedAt) VALUES('ada','Ada','ada@example.test',1,1); INSERT INTO organizations(id,name,createdAt,updatedAt) VALUES('studio','Studio',1,1); INSERT INTO memberships(id,organization_id,user_id,role,createdAt,updatedAt) VALUES('m','studio','ada','owner',1,1); INSERT INTO connections(id,organization_id,provider,subject,external_id,label,credentials,updated_at) VALUES('linear','studio','linear','','external','Studio','encrypted',1);",
+    "INSERT INTO user(id,name,email,createdAt,updatedAt) VALUES('ada','Ada','ada@example.test',1,1); INSERT INTO organizations(id,name,createdAt,updatedAt) VALUES('studio','Studio',1,1); INSERT INTO memberships(id,organization_id,user_id,role,createdAt,updatedAt) VALUES('m','studio','ada','owner',1,1); INSERT INTO organization_linear_links(organization_id,external_id,label,updated_at) VALUES('studio','external','Studio',1);",
   );
   const catalog = {
     teams: [

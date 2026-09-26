@@ -1,4 +1,5 @@
 import { hostedModelSelection } from "../hosted-models.js";
+import { codexLinearArgs, LINEAR_MCP_TOKEN_ENV, linearHttpMcp } from "../linear-mcp.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
@@ -88,6 +89,7 @@ export interface CodexSessionOptions {
     args: string[];
     env: Record<string, string>;
   };
+  httpMcp?: { name: string; url: string; token: string }[];
   env?: NodeJS.ProcessEnv;
   authTokens?: () => Promise<{accessToken:string;chatgptAccountId:string}|null>;
 }
@@ -174,6 +176,7 @@ class CodexAdapterSession implements ProviderSession {
         ...(options.additionalDirectories ? { additionalDirectories: options.additionalDirectories } : {}),
         ...(options.developerInstructions ? { developerInstructions: options.developerInstructions } : {}),
         ...(options.mcpProcess ? { mcpServer: options.mcpProcess } : {}),
+        ...(options.httpMcp ? { httpMcp: options.httpMcp } : {}),
         ...(options.env ? { env: options.env } : {}),
       },
       (event) => this.receive(event),
@@ -316,6 +319,8 @@ export function codexAppServerArgs(options: CodexSessionOptions): string[] {
     args.push("--config", 'mcp_servers.remy.default_tools_approval_mode="approve"');
     args.push("--config", `mcp_servers.remy.env_vars=${JSON.stringify(Object.keys(options.mcpServer.env))}`);
   }
+  const linear = linearHttpMcp(options.httpMcp);
+  if (linear) args.push(...codexLinearArgs(linear));
   return args;
 }
 
@@ -403,7 +408,12 @@ class AppServerSession implements CodexSession {
       // Starting in a protected or vanished workspace makes that bootstrap fail,
       // even though each thread and turn below carries its real cwd explicitly.
       cwd: homedir(),
-      env: { ...process.env, ...options.env, ...options.mcpServer?.env },
+      env: {
+        ...process.env,
+        ...options.env,
+        ...options.mcpServer?.env,
+        ...(linearHttpMcp(options.httpMcp) ? { [LINEAR_MCP_TOKEN_ENV]: linearHttpMcp(options.httpMcp)!.token } : {}),
+      },
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.child.stderr.setEncoding("utf8");

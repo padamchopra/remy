@@ -25,6 +25,7 @@ export interface ProviderSessionOptions {
   developerInstructions?: string;
   inProcessMcp?: unknown;
   mcpProcess?: ProviderMcpProcess;
+  httpMcp?: { name: string; url: string; token: string }[];
   env?: NodeJS.ProcessEnv;
   entries?: readonly ConvEntry[];
 }

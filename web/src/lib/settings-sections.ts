@@ -1,4 +1,4 @@
-import { Boxes, ChartNoAxesCombined, GitBranch, Laptop, Monitor } from "lucide-react";
+import { Boxes, ChartNoAxesCombined, GitBranch, Laptop, Link2, Monitor } from "lucide-react";
 
 export type SettingsTab = "organization" | "environments" | "general" | "version-control" | "providers" | "devices" | "analytics" | "members" | "teams" | "connections";
 
@@ -11,6 +11,7 @@ export const SETTINGS_SECTIONS: {
 }[] = [
   { id: "environments", label: "Environments", icon: Boxes },
   { id: "general", label: "General", icon: Monitor },
+  { id: "connections", label: "Connections", icon: Link2 },
   { id: "version-control", label: "Version control", icon: GitBranch },
   { id: "providers", label: "Providers", icon: Boxes },
   { id: "devices", label: "Computers", icon: Laptop },

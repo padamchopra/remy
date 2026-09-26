@@ -4,6 +4,7 @@ import {
   ingestConnectionWebhook,
   type ConnectionJob,
 } from "./connections.js";
+import { assertLinearPerson } from "./linear-accounts.js";
 import { connectionProviders } from "./connection-providers.js";
 import { D1OrganizationStore } from "./organization-store.js";
 import { OrganizationService } from "./organizations.js";
@@ -61,6 +62,7 @@ export async function connectionRoute(
   request: Request,
   env: Env,
   userId: string,
+  clientKind?: string,
 ): Promise<Response | undefined> {
   const url = new URL(request.url),
     callback = /^\/api\/connections\/([a-z]+)\/callback$/.exec(url.pathname) ?? (isGitHubConnectionCallback(url) ? [url.pathname, "github"] : null),
@@ -99,12 +101,13 @@ export async function connectionRoute(
         headers: { "cache-control": "no-store" },
       });
     if (provider && ["POST", "DELETE"].includes(request.method)) {
-      const body = (await request.json()) as { scope?: string };
+      const body = (await request.json()) as { scope?: string; accountId?: string };
       if (body.scope !== "organization" && body.scope !== "member")
         throw new ConnectionError("Choose a connection owner.");
+      if (provider === "linear") assertLinearPerson(clientKind);
       const subject = body.scope === "member" ? userId : "";
       if (request.method === "DELETE") {
-        await service.disconnect(org, userId, provider, subject);
+        await service.disconnect(org, userId, provider, subject, body.accountId);
         return Response.json({ ok: true });
       }
       return Response.json(

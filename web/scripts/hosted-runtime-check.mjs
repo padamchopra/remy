@@ -220,6 +220,8 @@ try {
           [`${base}/board/tickets`]: {items:process.env.QA_SCOPE_ONLY === "1"?[{id:`${org.id}-ticket`,entity:"ticket",fields:{title:org.personal?"Personal ticket":"Studio ticket",status:"todo",number:1,keyPrefix:org.personal?"PER":"STD"},lastActor:{id:"reader",label:"Reader"},activity:[]}]:[]},
           [`${base}/github/pull-requests`]: {pullRequests:[]},
           [`${base}/connections`]: {canManage:true,providers:[],connections:[]},
+          [`${base}/linear-workspace`]: {accounts:[],link:null},
+          [`${base}/linear-access`]: {notice:null},
           [`${base}/compute-shares`]: {canManage:true,computers:[{id:"personal-mac",name:"Personal Mac",icon:"laptop",platform:"darwin",shared:sharedComputer,available:true,sharedBy:sharedComputer?"Reader":null,canShare:true,canRevoke:true,providers:sharedComputer?[{id:"claude",label:"Claude",allowed:true},{id:"codex",label:"Codex",allowed:true}]:[]}],cloudConnections:[{provider:"fly-sprites",shared:true,available:true,sharedBy:"Reader",canShare:true,canRevoke:true,providers:[{id:"openrouter",label:"OpenRouter",allowed:true}]},{provider:"modal",shared:sharedCloud,available:true,sharedBy:sharedCloud?"Reader":null,canShare:true,canRevoke:true,providers:sharedCloud?[{id:"anthropic",label:"Anthropic",allowed:true},{id:"openrouter",label:"OpenRouter",allowed:true}]:[]}]},
         };
         if (!(path in responses)) unexpected.push(path);

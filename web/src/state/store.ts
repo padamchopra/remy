@@ -1889,6 +1889,7 @@ interface ChatFrame {
   title?: string;
   live?: boolean;
   error?: string | null;
+  linearNotice?: string | null;
   context?: ContextUsage | null;
   updatedAt?: number;
   workingSince?: number | null;
@@ -1907,6 +1908,7 @@ interface RawChatDetail extends RawChat {
   action?: string | null;
   live?: boolean;
   error?: string | null;
+  linearNotice?: string | null;
   context?: ContextUsage | null;
 }
 
@@ -1935,6 +1937,7 @@ function toDetail(raw: RawChatDetail, serverId: string): ChatDetail {
     question: raw.question ?? undefined,
     live: raw.live,
     error: raw.error ?? undefined,
+    linearNotice: typeof raw.linearNotice === "string" ? raw.linearNotice : undefined,
     context: raw.context ?? undefined,
     workingSince: raw.workingSince ?? undefined,
   };
@@ -2046,6 +2049,7 @@ function mergeDetail(detail: ChatDetail, frame: ChatFrame): ChatDetail {
     title: frame.title ?? detail.title,
     live: frame.live ?? detail.live,
     error: frame.error === undefined ? detail.error : frame.error ?? undefined,
+    linearNotice: frame.linearNotice === undefined ? detail.linearNotice : frame.linearNotice ?? undefined,
     context: frame.context === undefined ? detail.context : frame.context ?? undefined,
     workingSince:
       frame.workingSince === undefined ? detail.workingSince : (frame.workingSince ?? undefined),

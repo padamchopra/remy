@@ -12,6 +12,7 @@ import type {
   ToolCall,
   ToolCallUpdate,
 } from "@agentclientprotocol/sdk";
+import { cursorLinearMcp, linearHttpMcp } from "../linear-mcp.js";
 import { buildDiff, clip, describeTool, MAX_OUTPUT, type ConvEntry, type ConvTodo } from "../transcript.js";
 import { takeArtifacts } from "../remy-artifacts.js";
 import { ThreadActivityTracker } from "./activity.js";
@@ -42,6 +43,7 @@ export interface CursorSessionOptions {
   additionalDirectories?: string[];
   developerInstructions?: string;
   mcpServer?: CursorMcpServer;
+  httpMcp?: { name: string; url: string; token: string }[];
   env?: NodeJS.ProcessEnv;
 }
 
@@ -126,6 +128,7 @@ class CursorAdapterSession implements ProviderSession {
         ...(options.additionalDirectories ? { additionalDirectories: options.additionalDirectories } : {}),
         ...(options.developerInstructions ? { developerInstructions: options.developerInstructions } : {}),
         ...(options.mcpProcess ? { mcpServer: options.mcpProcess } : {}),
+        ...(options.httpMcp ? { httpMcp: options.httpMcp } : {}),
         ...(options.env ? { env: options.env } : {}),
       },
       (event) => this.receive(event),
@@ -469,7 +472,11 @@ class AcpCursorSession implements CursorSession {
     }
     await this.connection.agent.request(acp.methods.agent.authenticate, { methodId: "cursor_login" });
 
-    const mcpServers = this.options.mcpServer ? [cursorMcpServer(this.options.mcpServer)] : [];
+    const linear = linearHttpMcp(this.options.httpMcp);
+    const mcpServers = [
+      ...(this.options.mcpServer ? [cursorMcpServer(this.options.mcpServer)] : []),
+      ...(linear ? [cursorLinearMcp(linear) as acp.McpServer] : []),
+    ];
     let configOptions: SessionConfigOption[] = [];
     if (this.options.sessionId) {
       if (initialized.agentCapabilities?.loadSession !== true) {

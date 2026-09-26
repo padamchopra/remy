@@ -1,6 +1,7 @@
 import { useHubResource } from "@/lib/hub-organization";
 import { toast } from "sonner";
 import { useState } from "react";
+import { HubLinearWorkspace } from "./LinearConnection";
 import { HubModelDefault } from "./HubModelDefault";
 import { AvatarField, AppearanceField, NotificationsField, PermissionField, AppInfo } from "./GeneralFields";
 import { useHubProfile, saveHubAvatar } from "@/lib/hub-profile";
@@ -24,6 +25,7 @@ export default function HubGeneralSettings({organizationId,showModelDefault=true
     }} />}
     {error && <p role="alert">{error}</p>}
     <NotificationsField />
+    {showModelDefault ? <HubLinearWorkspace organizationId={organizationId} personal /> : null}
     {showModelDefault ? <HubModelDefault organizationId={organizationId}>
       <PermissionControl permission={permission} saving={saving} source={preferences.value} setSaving={setSaving} saved={setSaved} organizationId={organizationId} />
     </HubModelDefault> : <Field orientation="horizontal" className="items-center">

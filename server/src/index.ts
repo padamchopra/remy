@@ -64,7 +64,9 @@ import {
   stopChatGroup,
   chatCwd,
   updateChat,
+  publishLinearNotices,
 } from "./chat.js";
+import { linearHttp } from "./linear-accounts.js";
 import { findProjectFiles, findSkills } from "./discovery.js";
 import { discoveredProviders } from "./provider-adapters/index.js";
 import { setProviderEnabled } from "./provider-settings.js";
@@ -581,6 +583,13 @@ const server = createServer(async (req, res) => {
         return json(res, 200, settings);
       } catch (error) {
         return json(res, 400, { error: (error as Error).message || "could not change that provider" });
+      }
+    }
+    if (url.pathname.startsWith("/server/linear")) {
+      const answered = await linearHttp(req.method ?? "GET", url.pathname, req.method === "GET" ? undefined : await readJson(req));
+      if (answered) {
+        if (answered.status < 300 && req.method !== "GET") publishLinearNotices();
+        return json(res, answered.status, answered.body);
       }
     }
     if (url.pathname === "/server/settings" && req.method === "GET") {

@@ -2,6 +2,7 @@ import { modelSwitch, speaker } from "@/lib/thread-message";
 import { BranchName } from "./BranchName";
 import { ReplyComposer, replyComposerFrame, replyComposerForm } from "./ReplyComposer";
 import { organizationArtifactRoute } from "@/lib/artifact-route";
+import { LinearThreadNotice } from "./LinearConnection";
 import { navigateLocation } from "@/lib/route";
 import type { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, ReactNode, RefObject } from "react";
 import {
@@ -521,6 +522,7 @@ export function ChatView({
             </div>
           </ScrollFeed>
 
+          <LinearThreadNotice notice={open?.linearNotice} />
           <div className={replyComposerFrame}>
             {archived && (
               <Item

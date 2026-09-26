@@ -56,7 +56,7 @@ export class LinearBoard {
     return (
       await this.linear.db
         .prepare(
-          "SELECT s.* FROM linear_board_settings s JOIN connections c ON c.organization_id=s.organization_id AND c.external_id=s.external_id AND c.provider='linear' AND c.subject='' WHERE s.organization_id=?",
+          "SELECT s.* FROM linear_board_settings s JOIN organization_linear_links c ON c.organization_id=s.organization_id AND c.external_id=s.external_id WHERE s.organization_id=?",
         )
         .bind(this.org)
         .all<Policy>()

@@ -69,9 +69,9 @@ export function connectionProviders(env: Env): ConnectionProvider[] {
     },
     {
       id: "linear",
-      receive: async delivery=>{await linearFor(env).receive(delivery);const payload=JSON.parse(delivery.payload);const orgs=(await env.DB.prepare("SELECT organization_id FROM connections WHERE provider='linear' AND subject='' AND external_id=?").bind(String(payload.organizationId??'')).all<{organization_id:string}>()).results;for(const row of orgs)await env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${row.organization_id}`)).fetch(new Request("https://internal/linear/wake",{method:"POST",headers:{"x-organization-id":row.organization_id}}));},
+      receive: async delivery=>{await linearFor(env).receive(delivery);const payload=JSON.parse(delivery.payload);const orgs=(await env.DB.prepare("SELECT organization_id FROM organization_linear_links WHERE external_id=?").bind(String(payload.organizationId??'')).all<{organization_id:string}>()).results;for(const row of orgs)await env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${row.organization_id}`)).fetch(new Request("https://internal/linear/wake",{method:"POST",headers:{"x-organization-id":row.organization_id}}));},
       name: "Linear",
-      subjects: ["organization"],
+      subjects: ["member"],
       clientId: env.LINEAR_CLIENT_ID,
       clientSecret: env.LINEAR_CLIENT_SECRET
         ? () => env.LINEAR_CLIENT_SECRET!.get()

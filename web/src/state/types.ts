@@ -441,6 +441,8 @@ export interface ChatDetail {
   /// the next message, so this is a hint, not a blocker.
   live?: boolean;
   error?: string;
+  /// Why this thread cannot use Linear yet.
+  linearNotice?: string;
 }
 
 /// Settings that belong to a machine rather than a device or a chat. They live
