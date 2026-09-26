@@ -106,7 +106,7 @@ Name the capability, its durable owner, the actor that performs it, the event th
 A setting lives with the thing whose behavior it controls. The actor that carries out that behavior is a reference, not the owner, when another actor could reasonably take its place.
 
 - A machine integration belongs to that machine's settings. Hosted thread start uses the providers enabled on the chosen computer, including a cloud computer's OpenRouter, Router, OpenAI, and Anthropic access. A cloud computer shared into an organization carries that source account's enabled model access. A Remy-wide OpenRouter default does not start on an organization that has no OpenRouter key and no shared computer that does.
-- A Personal computer or cloud connection shared into an organization is a start grant. The member who owns that computer or connection can share it, unshare it, and choose which of its advertised providers other members may use to start a new thread. Administrators can revoke the grant; they cannot configure someone else's machine. Sharing turns every currently advertised provider on. The owner can always start with any provider on that computer. Other members can still reply, approve, and otherwise contribute on threads that already exist. An account can keep multiple named Fly.io, OpenRouter, and other integration keys; sharing and new work use the active key.
+- A Personal computer or cloud connection shared into an organization is a start grant. The member who owns that computer or connection can share it, unshare it, and choose which of its advertised providers other members may use to start a new thread. Administrators can revoke the grant; they cannot configure someone else's machine. Sharing turns every currently advertised provider on. The owner can always start with any provider on that computer, and always sees that computer in the thread picker for every organization they belong to. Turning share off hides it from other members, not from the owner. Other members can still reply, approve, and otherwise contribute on threads that already exist. An account can keep multiple named Fly.io, OpenRouter, and other integration keys; sharing and new work use the active key.
 - A shared cloud computer advertises the source account's enabled model access — OpenRouter, Router, OpenAI, Anthropic — not the Codex or Claude runtime those gateways execute through. Codex appears only when Codex itself is configured.
 - Hosted Model access is API keys. ChatGPT device-code and Claude Code account login belong on a computer you own. Do not start those logins on a Fly, Modal, or other hosted computer.
 
@@ -119,6 +119,19 @@ GOOD
 ```text
 Cloud Model access saves Anthropic, OpenAI, Router, and OpenRouter keys.
 Computers → Connected signs in to Claude Code and Codex on a computer you own, or sets an API key there.
+```
+
+BAD
+```text
+Apollo is Personal and not shared with Remy.
+A new Remy thread only offers Cloud · Fly.io Sprites.
+```
+
+GOOD
+```text
+Apollo is Personal and not shared with Remy.
+The owner still sees Apollo next to Cloud in that thread’s computer picker.
+Other members do not.
 ```
 
 BAD

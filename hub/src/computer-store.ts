@@ -46,27 +46,41 @@ export class D1ComputerStore implements ComputerStore {
   async computer(organizationId: string, computerId: string) {
     const row = await this.db.prepare(`SELECT c.* FROM organization_computers c
       WHERE c.organization_id=? AND c.id=?
-      UNION ALL
+      UNION
       SELECT c.* FROM organization_computers c
       JOIN organization_computer_shares s ON s.computer_id=c.id AND s.source_organization_id=c.organization_id
       WHERE s.organization_id=? AND c.id=?
-      LIMIT 1`).bind(organizationId, computerId, organizationId, computerId).first<Row>();
+      UNION
+      SELECT c.* FROM organization_computers c
+      JOIN organizations o ON o.id=c.organization_id AND o.personal_owner_id=c.owner_user_id
+      JOIN memberships m ON m.organization_id=? AND m.user_id=c.owner_user_id
+      WHERE c.ownership='personal' AND c.id=?
+      LIMIT 1`).bind(organizationId, computerId, organizationId, computerId, organizationId, computerId).first<Row>();
     return row ? fromRow(row) : undefined;
   }
 
   async computers(organizationId: string) {
     const rows = await this.db.prepare(`SELECT * FROM (
       SELECT c.* FROM organization_computers c WHERE c.organization_id=?
-      UNION ALL
+      UNION
       SELECT c.* FROM organization_computers c
       JOIN organization_computer_shares s ON s.computer_id=c.id AND s.source_organization_id=c.organization_id
       WHERE s.organization_id=?
-    ) ORDER BY lower(name),id`).bind(organizationId, organizationId).all<Row>();
+      UNION
+      SELECT c.* FROM organization_computers c
+      JOIN organizations o ON o.id=c.organization_id AND o.personal_owner_id=c.owner_user_id
+      JOIN memberships m ON m.organization_id=? AND m.user_id=c.owner_user_id
+      WHERE c.ownership='personal' AND c.organization_id!=?
+    ) ORDER BY lower(name),id`).bind(organizationId, organizationId, organizationId, organizationId).all<Row>();
     return rows.results.map(fromRow);
   }
 
   async sharedOrganizationIds(sourceOrganizationId: string, computerId: string) {
-    return (await this.db.prepare("SELECT organization_id FROM organization_computer_shares WHERE source_organization_id=? AND computer_id=? ORDER BY organization_id").bind(sourceOrganizationId, computerId).all<{organization_id:string}>()).results.map(row => row.organization_id);
+    const shares = (await this.db.prepare("SELECT organization_id FROM organization_computer_shares WHERE source_organization_id=? AND computer_id=? ORDER BY organization_id").bind(sourceOrganizationId, computerId).all<{organization_id:string}>()).results.map(row => row.organization_id);
+    const computer = await this.db.prepare("SELECT owner_user_id,ownership FROM organization_computers WHERE organization_id=? AND id=?").bind(sourceOrganizationId, computerId).first<{owner_user_id:string|null;ownership:string}>();
+    if (!computer?.owner_user_id || computer.ownership !== "personal") return shares;
+    const owned = (await this.db.prepare("SELECT m.organization_id FROM memberships m JOIN organizations o ON o.id=m.organization_id WHERE m.user_id=? AND m.organization_id!=? AND o.personal_owner_id IS NULL ORDER BY m.organization_id").bind(computer.owner_user_id, sourceOrganizationId).all<{organization_id:string}>()).results.map(row => row.organization_id);
+    return [...new Set([...shares, ...owned])].sort();
   }
 
   async shareStartProviders(organizationId: string, computerId: string) {
