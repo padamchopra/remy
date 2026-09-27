@@ -186,3 +186,19 @@ test("removing Tasks drops the board and Linear sync tables and keeps each perso
   for (const kept of ["linear_accounts", "organization_linear_links", "connections", "connection_deliveries"]) assert.equal(tables.has(kept), true, kept);
   assert.deepEqual(database.prepare("SELECT id FROM connection_deliveries").all().map((row) => row.id), ["github-one"]);
 });
+
+test("watching moves to pull request follows and keeps recorded GitHub activity", () => {
+  const database = new DatabaseSync(":memory:");
+  database.exec("PRAGMA foreign_keys = ON");
+  const directory = new URL("../migrations/", import.meta.url);
+  const files = readdirSync(directory).filter((file) => file.endsWith(".sql")).sort();
+  for (const file of files.filter((file) => file < "0033")) database.exec(readFileSync(new URL(file, directory), "utf8"));
+  database.exec("INSERT INTO organizations(id,name,createdAt,updatedAt) VALUES('org','Org',1,1); INSERT INTO organization_workspaces(id,organization_id,name,origin,created_at,updated_at) VALUES('w','org','Remy','github.com/release/remy',1,1)");
+  database.exec("INSERT INTO github_activity(id,organization_id,workspace_id,event,pull_number,summary,created_at) VALUES('a','org','w','issue_comment',7,'Comment updated',1)");
+  database.exec(readFileSync(new URL("0033_pull_request_follows.sql", directory), "utf8"));
+  const tables = new Set(database.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all().map((row) => String(row.name)));
+  assert.equal(tables.has("github_monitoring"), false);
+  for (const kept of ["pull_request_follows", "pull_request_seen", "github_activity"]) assert.equal(tables.has(kept), true, kept);
+  assert.deepEqual(columns(database, "github_activity").slice(-3), ["message", "delivered_at", "attempted_at"]);
+  assert.deepEqual({ ...database.prepare("SELECT id, message, delivered_at FROM github_activity").get() }, { id: "a", message: null, delivered_at: null });
+});

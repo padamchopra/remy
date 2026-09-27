@@ -178,6 +178,58 @@ export class LinearAccounts {
     return this.openToken(row);
   }
 
+  /// One GraphQL request to Linear as this member.
+  async linearGraphql<T>(org: string, user: string, query: string, variables: Record<string, unknown>): Promise<T | undefined> {
+    const token = await this.accessToken(org, user);
+    const send = this.oauth.send ?? fetch;
+    const response = await send("https://api.linear.app/graphql", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ query, variables }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (response.status === 401) throw new ConnectionError(LINEAR_REAUTH_NOTICE, 409);
+    if (!response.ok) throw new ConnectionError("Linear could not answer.", 502);
+    const value = (await response.json()) as { data?: T };
+    return value.data;
+  }
+
+  /// The Linear issue a pull request belongs to, as your own Linear account
+  /// sees it: one the pull request is attached to, else the issue its branch
+  /// was made for, else an identifier in the branch or title. Null when
+  /// nothing matches or Linear is not connected here.
+  async pullRequestTicket(org: string, user: string, pull: { url: string; branch: string; title: string }): Promise<LinearTicket | null> {
+    const key = `${org}:${user}:${pull.url}`;
+    const cached = ticketCache.get(key);
+    if (cached && this.now() - cached.at < TICKET_CACHE_MS) return cached.ticket;
+    const ticket = await this.findTicket(org, user, pull);
+    ticketCache.set(key, { at: this.now(), ticket });
+    if (ticketCache.size > 500) ticketCache.delete(ticketCache.keys().next().value!);
+    return ticket;
+  }
+
+  private async findTicket(org: string, user: string, pull: { url: string; branch: string; title: string }) {
+    const attached = await this.linearGraphql<{ attachmentsForURL?: { nodes?: { issue?: unknown }[] } }>(org, user,
+      `query Attached($url: String!) { attachmentsForURL(url: $url) { nodes { issue { ${TICKET_FIELDS} } } } }`, { url: pull.url });
+    for (const node of attached?.attachmentsForURL?.nodes ?? []) {
+      const ticket = linearTicket(node?.issue);
+      if (ticket) return ticket;
+    }
+    if (pull.branch) {
+      const branch = await this.linearGraphql<{ issueVcsBranchSearch?: unknown }>(org, user,
+        `query Branch($branch: String!) { issueVcsBranchSearch(branchName: $branch) { ${TICKET_FIELDS} } }`, { branch: pull.branch }).catch(() => undefined);
+      const ticket = linearTicket(branch?.issueVcsBranchSearch);
+      if (ticket) return ticket;
+    }
+    for (const identifier of ticketIdentifiers(`${pull.branch} ${pull.title}`)) {
+      const issue = await this.linearGraphql<{ issue?: unknown }>(org, user,
+        `query Issue($id: String!) { issue(id: $id) { ${TICKET_FIELDS} } }`, { id: identifier }).catch(() => undefined);
+      const ticket = linearTicket(issue?.issue);
+      if (ticket) return ticket;
+    }
+    return null;
+  }
+
   async forThread(org: string, user: string): Promise<LinearThreadAccess> {
     const current = await this.effectiveLink(org, user);
     if (!current || !(await this.isMember(org, user))) return { kind: "off" };
@@ -344,6 +396,36 @@ export class LinearAccounts {
       throw new ConnectionError("Reconnect your account to continue.", 409);
     return result;
   }
+}
+
+export type LinearTicket = { identifier: string; title: string; url: string; state: "backlog" | "unstarted" | "started" | "completed" | "canceled" | "triage" | "" };
+const TICKET_FIELDS = "identifier title url state { type }";
+const TICKET_CACHE_MS = 5 * 60_000;
+const ticketCache = new Map<string, { at: number; ticket: LinearTicket | null }>();
+export function clearLinearTicketCache() {
+  ticketCache.clear();
+}
+const TICKET_STATES = new Set(["backlog", "unstarted", "started", "completed", "canceled", "triage"]);
+
+export function linearTicket(value: unknown): LinearTicket | null {
+  if (!value || typeof value !== "object") return null;
+  const issue = value as { identifier?: unknown; title?: unknown; url?: unknown; state?: { type?: unknown } | null };
+  if (typeof issue.identifier !== "string" || !/^[A-Z][A-Z0-9]{0,9}-\d{1,7}$/.test(issue.identifier) || typeof issue.title !== "string") return null;
+  const url = typeof issue.url === "string" && /^https:\/\/linear\.app\//.test(issue.url) ? issue.url : "";
+  const state = typeof issue.state?.type === "string" && TICKET_STATES.has(issue.state.type) ? issue.state.type as LinearTicket["state"] : "";
+  return { identifier: issue.identifier, title: issue.title.slice(0, 300), url, state };
+}
+
+/// Issue identifiers written into a branch or title, such as REMY-214 or
+/// remy-214-search, first seen first, at most three.
+export function ticketIdentifiers(text: string) {
+  const found: string[] = [];
+  for (const match of text.matchAll(/(?:^|[^A-Za-z0-9])([A-Za-z][A-Za-z0-9]{0,9}-\d{1,7})(?![A-Za-z0-9])/g)) {
+    const identifier = match[1]!.toUpperCase();
+    if (!found.includes(identifier)) found.push(identifier);
+    if (found.length === 3) break;
+  }
+  return found;
 }
 
 export function assertLinearPerson(clientKind: string | undefined) {

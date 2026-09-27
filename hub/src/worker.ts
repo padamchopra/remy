@@ -1369,7 +1369,9 @@ export class HubCoordinator {
       const action=input?.action,asked=input?.input??{},store=new D1OrganizationStore(this.env.DB);
       if(action==="github_action") {
         const githubInput=asked as Record<string,unknown>;
-        try{return Response.json(await githubFor(this.env).action(org,binding.userId,String(githubInput.workspaceId),String(githubInput.action),githubInput));}catch{return jsonError("Your GitHub action could not complete.",400);}
+        // What a thread posts carries a signed marker naming it, so Activity
+        // says which thread wrote it and a watched pull request skips it.
+        try{return Response.json(await githubFor(this.env).action(org,binding.userId,String(githubInput.workspaceId),String(githubInput.action),githubInput,{computerId:binding.computerId,threadId:decodeURIComponent(agentTool[1])}));}catch{return jsonError("Your GitHub action could not complete.",400);}
       }
       if(action==="list_organization_workspaces")return Response.json({workspaces:await new OrganizationService(store).workspaces(org,binding.userId)});
       if(action==="list_organization_computers") {const threads=await this.visibleThreads(binding.userId);return Response.json({computers:(await this.computerService().list(org,binding.userId)).map(c=>({...c,activeThreads:threads.filter(t=>t.computerId===c.computerId && ["working","running","busy"].includes(String(t.detail.state))).length}))});}
@@ -2226,5 +2228,7 @@ export default {
       await env.JOBS.send({kind:"connection.webhook",id:row.id});
       await env.DB.prepare("UPDATE connection_deliveries SET next_attempt_at=? WHERE id=?").bind(Date.now()+300_000,row.id).run();
     }
+    // A watched pull request's receipts that its thread has not accepted yet.
+    try{await githubFor(env).deliverPending();}catch(error){console.error("Watched pull request delivery failed",error);}
   })()),
 } satisfies ExportedHandler<Env, UptimeCheckFrame | ConnectionJob>;

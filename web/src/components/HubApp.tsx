@@ -420,6 +420,8 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               onSelect={(address) => navigate({ name: "prs", organizationId: route.organizationId, ...address })}
               hubThreads={threads}
               onOpenHubThread={(thread) => navigate({ name: "threads", organizationId, threadId: thread.id })}
+              onStartThread={() => navigate({ name: "threads", organizationId })}
+              onConnectGitHub={() => navigate({ name: "settings", tab: "connections", organizationId })}
               onOpenHostedWorkspace={(owner, workspaceId) => navigate(isAll
                 ? { name: "workspaces", workspaceId, organizationId: "all", ownerOrganizationId: owner }
                 : { name: "workspaces", workspaceId, organizationId })}

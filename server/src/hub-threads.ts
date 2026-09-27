@@ -31,7 +31,6 @@ import {
 import { setHubLinear } from "./linear-session.js";
 import { archiveChat } from "./archives.js";
 import { closeBrowser } from "./browser.js";
-import { clearThreadPullRequestMonitoring } from "./pull-request-monitoring.js";
 import { closeTerminal } from "./terminal.js";
 import { getKv, setKv } from "./db.js";
 import { broadcast } from "./notify.js";
@@ -322,7 +321,6 @@ async function retireHubThread(id: string, mode: "archive" | "delete"): Promise<
         });
         void closeBrowser(id);
         closeTerminal(`thread-${id}`);
-        clearThreadPullRequestMonitoring(id);
         deleteChat(id);
       } else {
         const group = await stopChatGroup(id);
@@ -336,21 +334,18 @@ async function retireHubThread(id: string, mode: "archive" | "delete"): Promise<
             conversation: archiveConversation(member.id),
           });
           closeTerminal(`thread-${member.id}`);
-          clearThreadPullRequestMonitoring(member.id);
         }
         deleteChatGroup(id);
       }
     } else if (chat.parentChatId) {
       void closeBrowser(id);
       closeTerminal(`thread-${id}`);
-      clearThreadPullRequestMonitoring(id);
       deleteChat(id);
     } else {
       const group = await stopChatGroup(id);
       await Promise.all(group.map((member) => closeBrowser(member.id).catch(() => undefined)));
       for (const member of group) {
         closeTerminal(`thread-${member.id}`);
-        clearThreadPullRequestMonitoring(member.id);
       }
       deleteChatGroup(id);
     }

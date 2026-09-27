@@ -18,6 +18,16 @@ import {
   reviewThreads,
   viewedStates,
 } from "./github-review.js";
+import {
+  ACTIVITY_TIMELINE_ITEMS,
+  activityItems,
+  checkState,
+  followMessage,
+  followMessageId,
+  markFromThread,
+  readThreadMarker,
+} from "./github-activity.js";
+import { canWriteThread, type ThreadAccess, type ThreadMember } from "@remy/contract";
 
 type Repository = {
   id: number;
@@ -42,7 +52,20 @@ export type GitHubActivity = {
   computer_id: string | null;
   member_id: string | null;
   reply_id: number | null;
+  message: string | null;
+  delivered_at: number | null;
+  attempted_at: number | null;
+  created_at: number;
 };
+/// A request to a thread through its account's coordinator, as that member:
+/// the same authorization a person's own request gets.
+export type HubThreadCall = (org: string, member: ThreadMember, method: string, path: string, body?: unknown) => Promise<Response>;
+/// A thread a member's action came from, when a thread posts through the hub.
+export type FromThread = { computerId: string; threadId: string };
+type Follow = { organization_id: string; workspace_id: string; pull_number: number; computer_id: string; thread_id: string; member_id: string; created_at: number };
+/// How long an undelivered receipt keeps being retried before it is dropped.
+export const FOLLOW_RETRY_MS = 24 * 60 * 60_000;
+const FOLLOW_CLAIM_MS = 60_000;
 export class GitHubConnection {
   readonly store: D1OrganizationStore;
   readonly organizations: OrganizationService;
@@ -52,6 +75,14 @@ export class GitHubConnection {
     readonly appId: string,
     readonly changed: (org: string) => Promise<void>,
     readonly send: typeof fetch = (input, init) => fetch(input, init),
+    readonly options: {
+      /// Reaches a watching thread. Without it nothing is delivered and
+      /// receipts wait for the retry sweep.
+      threads?: HubThreadCall;
+      /// Signs the marker on what a thread posts.
+      secret?: () => Promise<string>;
+      now?: () => number;
+    } = {},
   ) {
     this.store = new D1OrganizationStore(db);
     this.organizations = new OrganizationService(this.store);
@@ -304,12 +335,19 @@ export class GitHubConnection {
     workspace: string,
     action: string,
     input: Record<string, unknown>,
+    /// A thread posting through the hub: what it writes carries a signed
+    /// marker naming that thread, so the pull request's Activity can say so.
+    from?: FromThread,
   ) {
     const repo = await this.repository(org, user, workspace),
       prefix = `/repos/${repo}`;
-    const body = typeof input.body === "string" ? input.body : "";
-    if (body.length > 60000)
+    const raw = typeof input.body === "string" ? input.body : "";
+    if (raw.length > 60000)
       throw new ConnectionError("Write a shorter message.");
+    const secret = from && this.options.secret ? await this.options.secret() : "";
+    const mark = (text: string) => (from && secret ? markFromThread(text, secret, org, from) : Promise.resolve(text));
+    const body = await mark(raw);
+    if (from && secret) input = { ...input, ...(typeof input.body === "string" && input.body.trim() ? { body: await mark(input.body.trim()) } : {}) };
     if (action === "create") {
       if (
         typeof input.title !== "string" ||
@@ -406,7 +444,7 @@ export class GitHubConnection {
     ) {
       await this.db.batch([
         this.db
-          .prepare("DELETE FROM github_monitoring WHERE organization_id=?")
+          .prepare("DELETE FROM pull_request_follows WHERE organization_id=?")
           .bind(org),
         this.db
           .prepare("DELETE FROM github_repositories WHERE organization_id=?")
@@ -448,22 +486,32 @@ export class GitHubConnection {
         value.check_suite?.pull_requests?.[0]?.number,
     );
     if (!Number.isSafeInteger(pull) || pull < 1) return;
-    const workspace = repository.workspace_id,
-      text = String(value.comment?.body ?? value.review?.body ?? ""),
-      summary =
-        (
-          {
-            issue_comment: "Comment updated",
-            pull_request_review: "Review updated",
-            pull_request_review_comment: "Review comment updated",
-            check_run: "Check updated",
-            check_suite: "Checks updated",
-            pull_request: "Pull request updated",
-          } as Record<string, string>
-        )[delivery.event] ?? "GitHub updated";
+    const workspace = repository.workspace_id;
+    const action = typeof value.action === "string" ? value.action : "";
+    // A closed pull request has nothing left to watch.
+    if (delivery.event === "pull_request" && action === "closed")
+      await this.db
+        .prepare("DELETE FROM pull_request_follows WHERE organization_id=? AND workspace_id=? AND pull_number=?")
+        .bind(org, workspace, pull)
+        .run();
+    const follow = await this.db
+      .prepare("SELECT * FROM pull_request_follows WHERE organization_id=? AND workspace_id=? AND pull_number=?")
+      .bind(org, workspace, pull)
+      .first<Follow>();
+    const message = follow ? followMessage(delivery.event, action, value, pull) : null;
+    const summary = message?.summary ?? (
+      {
+        issue_comment: "Comment updated",
+        pull_request_review: "Review updated",
+        pull_request_review_comment: "Review comment updated",
+        check_run: "Check updated",
+        check_suite: "Checks updated",
+        pull_request: "Pull request updated",
+      } as Record<string, string>
+    )[delivery.event] ?? "GitHub updated";
     const inserted = await this.db
       .prepare(
-        "INSERT OR IGNORE INTO github_activity(id,organization_id,workspace_id,event,pull_number,summary,created_at) VALUES(?,?,?,?,?,?,?)",
+        "INSERT OR IGNORE INTO github_activity(id,organization_id,workspace_id,event,pull_number,summary,created_at,thread_id,computer_id,member_id,message) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
       )
       .bind(
         delivery.id,
@@ -473,12 +521,262 @@ export class GitHubConnection {
         pull,
         summary,
         delivery.received_at,
+        message ? follow!.thread_id : null,
+        message ? follow!.computer_id : null,
+        message ? follow!.member_id : null,
+        message?.text ?? null,
       )
       .run();
-    if (!inserted.meta.changes) return;
-    await this.changed(org);
+    // A redelivered receipt that never reached its thread gets another try.
+    if (message) await this.deliver(delivery.id);
+    if (inserted.meta.changes) await this.changed(org);
   }
 
+  /// Sends one receipt to the thread watching its pull request. The thread is
+  /// reached as the member who turned watching on, through the same checks
+  /// their own message would pass; a thread that is gone or no longer theirs
+  /// to write stops the watching. Anything else waits for the next sweep.
+  async deliver(id: string): Promise<"delivered" | "dropped" | "waiting"> {
+    const now = this.now();
+    const row = await this.db
+      .prepare(
+        "UPDATE github_activity SET attempted_at=? WHERE id=? AND message IS NOT NULL AND delivered_at IS NULL AND (attempted_at IS NULL OR attempted_at<?) RETURNING *",
+      )
+      .bind(now, id, now - FOLLOW_CLAIM_MS)
+      .first<GitHubActivity>();
+    if (!row) return "waiting";
+    const drop = async () => {
+      await this.db.prepare("UPDATE github_activity SET message=NULL, phase='dropped' WHERE id=?").bind(id).run();
+      return "dropped" as const;
+    };
+    if (now - row.created_at > FOLLOW_RETRY_MS) return drop();
+    const follow = await this.db
+      .prepare("SELECT * FROM pull_request_follows WHERE organization_id=? AND workspace_id=? AND pull_number=?")
+      .bind(row.organization_id, row.workspace_id, row.pull_number)
+      .first<Follow>();
+    // Watching was turned off, or moved to another thread, since it arrived.
+    if (!follow || follow.thread_id !== row.thread_id || follow.computer_id !== row.computer_id) return drop();
+    const unfollow = async () => {
+      await this.db
+        .prepare("DELETE FROM pull_request_follows WHERE organization_id=? AND workspace_id=? AND pull_number=? AND thread_id=?")
+        .bind(follow.organization_id, follow.workspace_id, follow.pull_number, follow.thread_id)
+        .run();
+      return drop();
+    };
+    const member = await this.store.membership(follow.organization_id, follow.member_id);
+    if (!member) return unfollow();
+    try {
+      await this.organizations.workspace(follow.organization_id, follow.member_id, follow.workspace_id);
+    } catch {
+      return unfollow();
+    }
+    if (!this.options.threads) return "waiting";
+    let response: Response;
+    try {
+      response = await this.options.threads(
+        follow.organization_id,
+        await this.member(follow.member_id),
+        "POST",
+        `/computers/${encodeURIComponent(follow.computer_id)}/threads/${follow.thread_id}/message`,
+        { text: row.message, messageId: followMessageId(row.id), attachmentIds: [] },
+      );
+    } catch {
+      return "waiting";
+    }
+    if (response.ok) {
+      await this.db.prepare("UPDATE github_activity SET delivered_at=?, phase='delivered' WHERE id=?").bind(this.now(), id).run();
+      return "delivered";
+    }
+    if (response.status === 404 || response.status === 403) return unfollow();
+    return "waiting";
+  }
+
+  /// Receipts a thread has not accepted yet, retried from the scheduled sweep.
+  async deliverPending(limit = 50) {
+    const now = this.now();
+    const rows = await this.db
+      .prepare(
+        "SELECT id FROM github_activity WHERE message IS NOT NULL AND delivered_at IS NULL AND (attempted_at IS NULL OR attempted_at<?) ORDER BY created_at LIMIT ?",
+      )
+      .bind(now - FOLLOW_CLAIM_MS, limit)
+      .all<{ id: string }>();
+    const results = [];
+    for (const row of rows.results) results.push(await this.deliver(row.id));
+    return results;
+  }
+
+  private now() {
+    return (this.options.now ?? Date.now)();
+  }
+
+  /// A member as a thread sees them: their id and the name on their profile.
+  private async member(user: string): Promise<ThreadMember> {
+    const profile = await this.db.prepare("SELECT name FROM user WHERE id=?").bind(user).first<{ name: string | null }>();
+    return { id: user, label: (profile?.name?.trim() || "Member").slice(0, 120) };
+  }
+
+  /// Who watches a pull request, and whether its webhooks reach Remy at all:
+  /// they come only through the GitHub app installed on that repository.
+  async pullRequestFollow(org: string, user: string, repository: string, number: number) {
+    const { workspaceId } = await this.workspacePullRequest(org, user, repository, number);
+    const [follow, installed] = await Promise.all([
+      this.db
+        .prepare("SELECT * FROM pull_request_follows WHERE organization_id=? AND workspace_id=? AND pull_number=?")
+        .bind(org, workspaceId, number)
+        .first<Follow>(),
+      this.db
+        .prepare("SELECT 1 AS ok FROM github_repositories WHERE organization_id=? AND workspace_id=?")
+        .bind(org, workspaceId)
+        .first<{ ok: number }>(),
+    ]);
+    return {
+      follow: follow ? { computerId: follow.computer_id, threadId: follow.thread_id, memberId: follow.member_id, createdAt: follow.created_at } : null,
+      receives: !!installed,
+    };
+  }
+
+  /// A thread watches this pull request. You must be able to write in it,
+  /// because what arrives is sent there as you.
+  async followPullRequest(org: string, user: string, repository: string, number: number, input: Record<string, unknown>) {
+    const { workspaceId } = await this.workspacePullRequest(org, user, repository, number);
+    const computerId = typeof input.computerId === "string" ? input.computerId : "";
+    const threadId = typeof input.threadId === "string" ? input.threadId : "";
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(computerId) || !/^[0-9a-f-]{36}$/.test(threadId))
+      throw new ConnectionError("Choose a thread to watch this pull request.");
+    const access = await this.threadAccess(org, user, computerId, threadId);
+    if (!access) throw new ConnectionError("Choose a thread you can open.", 404);
+    if (access.organizationId !== org || !canWriteThread(access, user))
+      throw new ConnectionError("Join this thread before it watches a pull request.", 403);
+    await this.db
+      .prepare(
+        "INSERT INTO pull_request_follows(organization_id,workspace_id,pull_number,computer_id,thread_id,member_id,created_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(organization_id,workspace_id,pull_number) DO UPDATE SET computer_id=excluded.computer_id,thread_id=excluded.thread_id,member_id=excluded.member_id,created_at=excluded.created_at",
+      )
+      .bind(org, workspaceId, number, computerId, threadId, user, this.now())
+      .run();
+    return this.pullRequestFollow(org, user, repository, number);
+  }
+
+  /// Watching stops. The member who turned it on can always turn it off;
+  /// anyone else needs to be able to write in the thread, unless it is gone.
+  async unfollowPullRequest(org: string, user: string, repository: string, number: number) {
+    const { workspaceId } = await this.workspacePullRequest(org, user, repository, number);
+    const follow = await this.db
+      .prepare("SELECT * FROM pull_request_follows WHERE organization_id=? AND workspace_id=? AND pull_number=?")
+      .bind(org, workspaceId, number)
+      .first<Follow>();
+    if (follow && follow.member_id !== user) {
+      const access = await this.threadAccess(org, user, follow.computer_id, follow.thread_id);
+      if (access && !canWriteThread(access, user))
+        throw new ConnectionError("Join this thread before you stop it watching.", 403);
+    }
+    await this.db
+      .prepare("DELETE FROM pull_request_follows WHERE organization_id=? AND workspace_id=? AND pull_number=?")
+      .bind(org, workspaceId, number)
+      .run();
+    return this.pullRequestFollow(org, user, repository, number);
+  }
+
+  /// A thread's access as its coordinator holds it, read as this member, or
+  /// undefined when they cannot open it or it is gone.
+  private async threadAccess(org: string, user: string, computerId: string, threadId: string): Promise<ThreadAccess | undefined> {
+    if (!this.options.threads) throw new ConnectionError("Threads are unavailable.", 503);
+    const response = await this.options.threads(org, await this.member(user), "GET", `/computers/${encodeURIComponent(computerId)}/threads/${threadId}`);
+    if (response.status === 404 || response.status === 403) return undefined;
+    if (!response.ok) throw new ConnectionError("This thread is unavailable; try again.", 502);
+    const snapshot = (await response.json()) as { access?: ThreadAccess };
+    return snapshot.access;
+  }
+
+  /// The pull request's timeline for its Activity tab, read with your own
+  /// connection: comments, reviews and each head commit's check result, which
+  /// thread wrote what Remy posted for one, what was sent to the thread
+  /// watching it, and when you last opened Activity. Opening a pull request
+  /// for the first time counts as having seen what came before.
+  async pullRequestActivity(org: string, user: string, repository: string, number: number) {
+    const { owner, name, workspaceId } = await this.workspacePullRequest(org, user, repository, number);
+    const data = await this.graphql(org, user, {
+      query: `query PullRequestActivity($owner: String!, $name: String!, $number: Int!) {
+        viewer { login name avatarUrl }
+        repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+          timelineItems(last: ${ACTIVITY_TIMELINE_ITEMS}, itemTypes: [ISSUE_COMMENT, PULL_REQUEST_REVIEW, PULL_REQUEST_COMMIT]) { nodes {
+            __typename
+            ... on IssueComment { id body createdAt url author { login avatarUrl ... on User { name } } }
+            ... on PullRequestReview { id state body submittedAt createdAt url comments { totalCount } author { login avatarUrl ... on User { name } } }
+            ... on PullRequestCommit { commit { oid committedDate statusCheckRollup { contexts(first: 40) { nodes {
+              __typename
+              ... on CheckRun { name conclusion status completedAt }
+              ... on StatusContext { context state createdAt }
+            } } } } }
+          } }
+        } }
+      }`,
+      variables: { owner, name, number },
+    });
+    const pr = (data.data?.repository as { pullRequest?: { timelineItems?: { nodes?: unknown[] } } | null } | undefined)?.pullRequest;
+    if (!pr) throw new ConnectionError(data.errors?.[0]?.message || "GitHub could not read this pull request's activity.", 404);
+    const secret = this.options.secret ? await this.options.secret().catch(() => "") : "";
+    const items = await activityItems(
+      nodesOf(pr.timelineItems),
+      (body) => readThreadMarker(body, secret || undefined, org),
+      async (computerId) => (await this.db
+        // The marker is signed for this account, so the id is one its thread ran on.
+        .prepare("SELECT name FROM organization_computers WHERE id=?")
+        .bind(computerId)
+        .first<{ name: string }>())?.name ?? null,
+    );
+    const [seen, delivered] = await Promise.all([
+      this.db
+        .prepare("SELECT seen_at FROM pull_request_seen WHERE organization_id=? AND user_id=? AND workspace_id=? AND pull_number=?")
+        .bind(org, user, workspaceId, number)
+        .first<{ seen_at: number }>(),
+      this.db
+        .prepare("SELECT id,summary,thread_id,computer_id,delivered_at FROM github_activity WHERE organization_id=? AND workspace_id=? AND pull_number=? AND delivered_at IS NOT NULL ORDER BY delivered_at DESC LIMIT 50")
+        .bind(org, workspaceId, number)
+        .all<{ id: string; summary: string; thread_id: string; computer_id: string; delivered_at: number }>(),
+    ]);
+    let seenAt = seen?.seen_at ?? null;
+    if (seenAt === null) seenAt = await this.markActivitySeen(org, user, repository, number, workspaceId);
+    return {
+      userId: user,
+      viewer: githubLogin(loginOf(data.data?.viewer)),
+      /// Who is writing in the composer, drawn as its avatar.
+      viewerAuthor: reviewAuthor(data.data?.viewer),
+      seenAt,
+      items,
+      deliveries: delivered.results.map((row) => ({
+        id: row.id,
+        at: new Date(row.delivered_at).toISOString(),
+        summary: row.summary,
+        threadId: row.thread_id,
+        computerId: row.computer_id,
+      })).reverse(),
+    };
+  }
+
+  /// You opened Activity: what is there now is no longer new to you.
+  async markActivitySeen(org: string, user: string, repository: string, number: number, known?: string) {
+    const workspaceId = known ?? (await this.workspacePullRequest(org, user, repository, number)).workspaceId;
+    const at = this.now();
+    await this.db
+      .prepare(
+        "INSERT INTO pull_request_seen(organization_id,user_id,workspace_id,pull_number,seen_at) VALUES(?,?,?,?,?) ON CONFLICT(organization_id,user_id,workspace_id,pull_number) DO UPDATE SET seen_at=MAX(seen_at,excluded.seen_at)",
+      )
+      .bind(org, user, workspaceId, number, at)
+      .run();
+    return at;
+  }
+
+  /// The branch, title and link a linked ticket is found by, read from GitHub
+  /// with your own connection rather than taken from the browser.
+  async pullRequestReference(org: string, user: string, repository: string, number: number) {
+    const { owner, name } = await this.workspacePullRequest(org, user, repository, number);
+    const pull = await this.api<{ html_url?: unknown; title?: unknown; head?: { ref?: unknown } }>(org, user, `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${number}`);
+    return {
+      url: typeof pull.html_url === "string" ? pull.html_url : `https://github.com/${owner}/${name}/pull/${number}`,
+      title: typeof pull.title === "string" ? pull.title.slice(0, 500) : "",
+      branch: typeof pull.head?.ref === "string" ? pull.head.ref.slice(0, 255) : "",
+    };
+  }
 
   /// Open pull requests that belong to a workspace. The saved credential is
   /// the GitHub sign-in or a personal access token; a repo that token can read
@@ -999,13 +1297,13 @@ export class GitHubConnection {
   private async workspacePullRequest(org: string, user: string, repository: string, number: number) {
     await this.access(org, user);
     const workspaces = await this.organizations.workspaces(org, user);
-    const known = workspaces.some((workspace) =>
+    const known = workspaces.find((workspace) =>
       githubRepositoryFromOrigin(workspace.origin).toLowerCase() === repository.toLowerCase());
     const [owner, name, extra] = repository.split("/");
     if (!known || !owner || !name || extra || !Number.isSafeInteger(number) || number < 1) {
       throw new ConnectionError("Choose a pull request in one of your workspaces.", 404);
     }
-    return { owner, name };
+    return { owner, name, workspaceId: known.id };
   }
 
   private async graphql(
@@ -1276,16 +1574,6 @@ function pullRequestComments(pr: Record<string, unknown>) {
 function checkNodes(pr: Record<string, unknown>) {
   const commits = pr.commits as { nodes?: { commit?: { statusCheckRollup?: { contexts?: { nodes?: Record<string, unknown>[] } } } }[] } | undefined;
   return commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts?.nodes ?? [];
-}
-
-function checkState(node: Record<string, unknown>): "pass" | "fail" | "pending" | "skipping" {
-  const conclusion = String(node.conclusion ?? node.state ?? "").toUpperCase();
-  const status = String(node.status ?? "").toUpperCase();
-  if (["SUCCESS", "NEUTRAL"].includes(conclusion)) return "pass";
-  if (["SKIPPED", "EXPECTED"].includes(conclusion)) return "skipping";
-  if (["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"].includes(conclusion)) return "fail";
-  if (status === "COMPLETED") return "pass";
-  return "pending";
 }
 
 function pullRequestChecks(pr: Record<string, unknown>) {

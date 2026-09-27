@@ -22,7 +22,7 @@ export function pullRequestAction<T>(
   workspaceId: string,
   number: number,
   action:
-    | "merge" | "request-reviewers" | "ready" | "draft"
+    | "merge" | "request-reviewers" | "ready" | "draft" | "comment"
     | "view-file" | "line-comment" | "pending-comment" | "reply" | "edit-comment" | "delete-comment" | "submit-review",
   input: Record<string, unknown> = {},
 ) {

@@ -190,6 +190,9 @@ function migrate(database: DatabaseSync): void {
   // its own notifications.
   database.exec("drop table if exists push_devices");
   database.exec("delete from kv where key = 'pairing'");
+  // The hub watches pull requests now, from GitHub's webhooks; the poller that
+  // read gh here and its per-thread choices are gone.
+  database.exec("delete from kv where key in ('pullRequestMonitoringOverrides', 'pullRequestMonitorHandled')");
   // Tasks were removed. Tickets and their thread links go with their events;
   // the log keeps only the projects that workspaces and environments use.
   database.exec("drop table if exists ticket_threads");

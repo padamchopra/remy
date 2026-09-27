@@ -9,10 +9,12 @@ import {
   LINEAR_REAUTH_NOTICE,
   LinearAccounts,
   assertLinearPerson,
+  clearLinearTicketCache,
+  ticketIdentifiers,
 } from "./linear-accounts.js";
 import type { OrganizationService } from "./organizations.js";
 
-function fixture() {
+function fixture(send?: typeof fetch) {
   const folder = new URL("../migrations/", import.meta.url);
   const { db, sqlite } = sqliteD1(
     readdirSync(folder)
@@ -44,6 +46,7 @@ function fixture() {
       changes.push(org);
     },
     () => 1_000_000,
+    { send },
   );
   const save = (user: string, workspace: string, token: string) =>
     accounts.save(user, { access_token: token } satisfies ConnectionTokens, {
@@ -160,4 +163,41 @@ test("a sign-in that needs reconnect keeps the link and withholds the token", as
 test("a computer cannot connect or disconnect Linear", () => {
   assert.throws(() => assertLinearPerson("computer"), /Connect Linear from Remy/);
   assert.doesNotThrow(() => assertLinearPerson("web"));
+});
+
+test("identifiers come from a branch or title, uppercased, first seen first", () => {
+  assert.deepEqual(ticketIdentifiers("padam/remy-214-search Fix REMY-214 and WRK-9"), ["REMY-214", "WRK-9"]);
+  assert.deepEqual(ticketIdentifiers("feature/v2-3000x no-ticket"), []);
+  assert.deepEqual(ticketIdentifiers("main"), []);
+});
+
+test("a pull request's ticket is its attachment, then its branch, then an identifier, as that member", async () => {
+  clearLinearTicketCache();
+  const asked: { query: string; variables: Record<string, unknown>; token: string }[] = [];
+  let attached = true;
+  const send = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body));
+    asked.push({ query: body.query, variables: body.variables, token: new Headers(init?.headers).get("authorization") ?? "" });
+    if (body.query.includes("attachmentsForURL")) return Response.json({ data: { attachmentsForURL: { nodes: attached ? [{ issue: { identifier: "REMY-214", title: "Search repositories", url: "https://linear.app/remy/issue/REMY-214", state: { type: "started" } } }] : [] } } });
+    if (body.query.includes("issueVcsBranchSearch")) return Response.json({ data: { issueVcsBranchSearch: null } });
+    if (body.query.includes("issue(id")) return Response.json({ data: { issue: body.variables.id === "REMY-9" ? { identifier: "REMY-9", title: "Nine", url: "javascript:alert(1)", state: { type: "weird" } } : null } });
+    return Response.json({});
+  }) as typeof fetch;
+  const { accounts, save } = fixture(send);
+  const pull = { url: "https://github.com/release/remy/pull/7", branch: "padam/remy-9-nine", title: "Nine" };
+  // Not connected: no ticket, and Linear is never asked.
+  await assert.rejects(accounts.pullRequestTicket("studio", "ada", pull));
+  assert.equal(asked.length, 0);
+  await save("ada", "linear-studio", "secret-ada");
+  await accounts.setLink("studio", "ada", (await accounts.list("ada"))[0].id);
+  assert.deepEqual(await accounts.pullRequestTicket("studio", "ada", pull), { identifier: "REMY-214", title: "Search repositories", url: "https://linear.app/remy/issue/REMY-214", state: "started" });
+  assert.equal(asked[0].token, "Bearer secret-ada");
+  assert.deepEqual(asked[0].variables, { url: pull.url });
+  // Cached per member and pull request.
+  await accounts.pullRequestTicket("studio", "ada", pull);
+  assert.equal(asked.length, 1);
+  clearLinearTicketCache();
+  attached = false;
+  assert.deepEqual(await accounts.pullRequestTicket("studio", "ada", pull), { identifier: "REMY-9", title: "Nine", url: "", state: "" });
+  assert.deepEqual(asked.slice(1).map((entry) => Object.values(entry.variables)[0]), [pull.url, "padam/remy-9-nine", "REMY-9"]);
 });

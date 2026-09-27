@@ -25,6 +25,7 @@ import { PaneHeader } from "@/components/PaneHeader";
 import { pullRequestAction, RequestReviewers, ReviewerInitials, SquashAndMerge } from "@/components/PullRequestHostedActions";
 import { LinkedThreadChip, ThreadDot } from "@/components/PullRequestLinkedThread";
 import { PullRequestStackEntry, PullRequestStackRows, stackEntriesInOrder } from "@/components/PullRequestStack";
+import { LinkedTicketChip, WatchedBy } from "@/components/PullRequestWatchedBy";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { apiError } from "@/lib/api-error";
 import { useAccountResources } from "@/lib/hub-account-resources";
@@ -39,14 +40,17 @@ import {
   type PullRequestDetailReviewer,
 } from "@/lib/pull-request-detail";
 import { linkedPullRequestThread } from "@/lib/pull-request-linked-thread";
+import { unseenActivity } from "@/lib/pull-request-activity";
+import { usePullRequestActivity, usePullRequestFollow, usePullRequestTicket } from "@/lib/pull-request-activity-data";
 import type { PullRequestTileWorkspace } from "@/lib/pull-request-workspace";
-import { relativeDate } from "@/lib/relative-date";
 import type { PullRequestView } from "@/lib/route";
 import { cn } from "@/lib/utils";
 import type { AuthoredPullRequest } from "@/components/PullRequests";
 
 // The diff is its own surface: nobody reading the summary downloads it.
 const PullRequestHostedFiles = lazy(() => import("@/components/PullRequestHostedFiles").then((module) => ({ default: module.PullRequestHostedFiles })));
+// So is the timeline; only its badge's count is read before it opens.
+const PullRequestHostedActivity = lazy(() => import("@/components/PullRequestHostedActivity").then((module) => ({ default: module.PullRequestHostedActivity })));
 
 /// A private repository's attachments load only from the signed copies GitHub
 /// renders for this reader. They expire within minutes, so they are read when
@@ -339,6 +343,15 @@ export function PullRequestHostedDetail({
   const images = useSignedImages(organizationId, pullRequest.repository, pullRequest.number);
   const detail = usePullRequestDetail(organizationId, pullRequest.repository, pullRequest.number, `${pullRequest.updatedAt}:${revision}`);
   const changed = useCallback(() => { setRevision((value) => value + 1); onChanged(); }, [onChanged]);
+  const timeline = usePullRequestActivity(organizationId, pullRequest.repository, pullRequest.number, `${pullRequest.updatedAt}:${revision}`);
+  const follow = usePullRequestFollow(organizationId, pullRequest.repository, pullRequest.number);
+  const ticket = usePullRequestTicket(organizationId, pullRequest.repository, pullRequest.number);
+  const unseen = unseenActivity(timeline.activity);
+  const { markSeen } = timeline;
+  // Opening Activity, or new activity arriving while it is open, is seeing it.
+  useEffect(() => {
+    if (view === "activity" && unseen > 0) markSeen();
+  }, [view, unseen, markSeen]);
 
   const candidates = useMemo(
     () => threads.filter((thread) => thread.detail.branch === pullRequest.headRefName),
@@ -380,7 +393,6 @@ export function PullRequestHostedDetail({
 
   const stack = pullRequest.stack;
   const conflicts = new Map((detail?.stack ?? []).map((entry) => [entry.number, entry.mergeable]));
-  const comments = pullRequest.comments ?? [];
 
   return (
     <TooltipProvider>
@@ -488,7 +500,18 @@ export function PullRequestHostedDetail({
                 Files
                 {pullRequest.changedFiles ? <span className="font-mono text-[11px] leading-4 text-muted-foreground tabular-nums">{pullRequest.changedFiles.toLocaleString()}</span> : null}
               </TabsTrigger>
-              <TabsTrigger value="activity" className={TAB}>Activity</TabsTrigger>
+              <TabsTrigger value="activity" className={TAB}>
+                Activity
+                {unseen > 0 && (
+                  <span
+                    data-slot="pull-request-activity-unseen"
+                    aria-label={`${unseen} new`}
+                    className="flex h-[15px] min-w-4 items-center justify-center rounded-[4px] bg-primary/20 px-1 text-[10px] leading-3 font-semibold text-info-foreground tabular-nums"
+                  >
+                    {unseen}
+                  </span>
+                )}
+              </TabsTrigger>
             </TabsList>
             {/* The Files tab puts Finish review here, beside the tab it belongs to. */}
             <div ref={setFilesToolbar} data-slot="pull-request-files-toolbar" className={cn("ml-auto flex shrink-0 items-center", view !== "files" && "hidden")} />
@@ -502,6 +525,7 @@ export function PullRequestHostedDetail({
                     {pullRequest.body?.trim()
                       ? <Markdown text={pullRequest.body} images={images} repository={pullRequest.repository} onOpenLink={openLink} className={DESCRIPTION} />
                       : <p className="text-[13px] leading-[21px] text-muted-foreground">No description.</p>}
+                    {ticket && <LinkedTicketChip ticket={ticket} />}
                   </section>
                   {stack?.entries && stack.entries.length > 1 && (
                     <section aria-label={`Stack #${stack.number}`} data-slot="pull-request-stack" className="flex shrink-0 flex-col gap-2">
@@ -553,6 +577,15 @@ export function PullRequestHostedDetail({
                     ) : undefined}
                   />
                   <Checks checks={checks} />
+                  {thread && (thread.access.organizationId || organizationId) === organizationId && (
+                    <WatchedBy
+                      thread={thread}
+                      state={follow.state}
+                      failed={follow.failed}
+                      onChange={follow.change}
+                      onOpenThread={() => onOpenThread(thread)}
+                    />
+                  )}
                 </aside>
               </div>
             </ScrollArea>
@@ -570,28 +603,21 @@ export function PullRequestHostedDetail({
               />
             </Deferred>
           </TabsContent>
-          {/* Interim Activity: the pull request's comments. The timeline of
-              reviews, checks and thread events (Paper 513-0) replaces it. */}
           <TabsContent value="activity" keepMounted className="flex min-h-0 flex-1 data-hidden:hidden">
-            <ScrollArea className="min-h-0 min-w-0 flex-1" viewportProps={{ tabIndex: 0, "aria-label": "Pull request activity" }}>
-              <div className="mx-auto w-full max-w-[46rem] px-4 pt-6 pb-16 sm:px-7">
-                {comments.length === 0 ? (
-                  <p className="text-[13px] leading-[21px] text-muted-foreground">No comments yet.</p>
-                ) : (
-                  <ol className="flex flex-col gap-3">
-                    {comments.map((comment, index) => (
-                      <li key={comment.url || `${comment.author}:${index}`} className="min-w-0 rounded-[10px] border border-border px-4 py-3">
-                        <p className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                          <a href={`https://github.com/${encodeURIComponent(comment.author)}`} target="_blank" rel="noreferrer" data-link className="truncate font-medium text-foreground hover:underline">{comment.author || "Someone"}</a>
-                          {comment.createdAt && <span>{relativeDate(comment.createdAt)}</span>}
-                        </p>
-                        <Markdown text={comment.body} repository={pullRequest.repository} onOpenLink={openLink} className="mt-2 text-[13px] leading-[21px]" />
-                      </li>
-                    ))}
-                  </ol>
-                )}
-              </div>
-            </ScrollArea>
+            <Deferred open={view === "activity"}>
+              <PullRequestHostedActivity
+                organizationId={organizationId}
+                pullRequest={pullRequest}
+                activity={timeline.activity}
+                failed={timeline.failed}
+                threads={threads}
+                thread={thread}
+                active={view === "activity"}
+                onOpenThread={onOpenThread}
+                onOpenLink={openLink}
+                onCommented={() => { timeline.reload(); changed(); }}
+              />
+            </Deferred>
           </TabsContent>
         </Tabs>
       </main>

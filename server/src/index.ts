@@ -111,13 +111,6 @@ import { commentOnPullRequest, listAuthoredPullRequests, markPullRequestFileView
 import { pullRequestFileContent, validPullRequestFileRequest } from "./pull-request-file.js";
 import { askPullRequestQuestion, discoverPullRequestQuestions, readPullRequestQuestions } from "./pull-request-questions.js";
 import { validateChatCodeReferences } from "./chat-references.js";
-import { startPullRequestMonitor } from "./pull-request-monitor.js";
-import {
-  clearThreadPullRequestMonitoring,
-  pullRequestMonitoring,
-  resetPullRequestMonitoring,
-  setPullRequestMonitoring,
-} from "./pull-request-monitoring.js";
 import { setSleepBusyCheck, sleepSupported, syncSleepAssertion } from "./sleep.js";
 import { highlightedIndex, parsePanePrompt } from "./prompt.js";
 import { questionBroker } from "./questions.js";
@@ -1108,14 +1101,12 @@ const server = createServer(async (req, res) => {
           if (chat.parentChatId) {
             void closeBrowser(id);
             closeTerminal(`thread-${id}`);
-            clearThreadPullRequestMonitoring(id);
             deleteChat(id);
           } else {
             const group = await stopChatGroup(id);
             await Promise.all(group.map((member) => closeBrowser(member.id).catch(() => undefined)));
             for (const member of group) {
               closeTerminal(`thread-${member.id}`);
-              clearThreadPullRequestMonitoring(member.id);
             }
             deleteChatGroup(id);
           }
@@ -1144,7 +1135,6 @@ const server = createServer(async (req, res) => {
             });
             void closeBrowser(id);
             closeTerminal(`thread-${id}`);
-            clearThreadPullRequestMonitoring(id);
             deleteChat(id);
             return json(res, 200, { archive });
           }
@@ -1159,7 +1149,6 @@ const server = createServer(async (req, res) => {
           }));
           for (const member of group) {
             closeTerminal(`thread-${member.id}`);
-            clearThreadPullRequestMonitoring(member.id);
           }
           deleteChatGroup(id);
           return json(res, 200, { archive: archives[0], archives });
@@ -1292,33 +1281,6 @@ const server = createServer(async (req, res) => {
         } catch (error) {
           return json(res, 404, { error: (error as Error).message || "no such chat" });
         }
-      }
-    }
-
-    if (url.pathname === "/pull-request-monitoring") {
-      const repository = url.searchParams.get("repository") ?? "";
-      const number = Number(url.searchParams.get("number") ?? "0");
-      if (!repository || !Number.isInteger(number) || number <= 0) {
-        return json(res, 400, { error: "name the pull request to follow" });
-      }
-      try {
-        if (req.method === "GET") {
-          return json(res, 200, { policy: pullRequestMonitoring(repository, number) });
-        }
-        if (req.method === "PATCH") {
-          const body = await readJson(req);
-          const policy = setPullRequestMonitoring(repository, number, {
-            enabled: body.enabled === true,
-            chatId: String(body.chatId ?? "") || null,
-          });
-          return json(res, 200, { policy });
-        }
-        if (req.method === "DELETE") {
-          return json(res, 200, { policy: resetPullRequestMonitoring(repository, number) });
-        }
-      } catch (error) {
-        const message = (error as Error).message || "could not change pull request monitoring";
-        return json(res, /not found|no such/.test(message) ? 404 : 400, { error: message });
       }
     }
 
@@ -1925,9 +1887,6 @@ setSleepBusyCheck(() =>
 syncSleepAssertion();
 syncRepoUpdateSchedule();
 
-// GitHub state belongs to registered workspaces. The monitor sends what changed
-// to the thread that asked to follow that pull request.
-startPullRequestMonitor();
 // Project changes can originate outside an HTTP handler, such as a workspace
 // joining its repository. Keep every open window live without making each
 // writer remember to send its own frame.
