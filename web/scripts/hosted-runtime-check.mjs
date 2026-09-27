@@ -789,6 +789,7 @@ try {
             return url.href === pendingUrl;
           });
           await page.getByRole("button",{name:"Send",exact:true}).waitFor();
+          for(let attempt=0;attempt<40&&startCalls+startStatusCalls<=recoveryRequests;attempt+=1) await new Promise(resolve=>setTimeout(resolve,50));
           assert.ok(startCalls+startStatusCalls>recoveryRequests,"Reload resumes the pending start");
           assert.ok(startCalls===1||startCalls===2);assert.equal(new Set(startIds).size,1);assert.equal(messageCalls,0);
           assert.equal(threadInput.message,"Hello startup QA");
