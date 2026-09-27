@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CLOUD_COMPUTERS, cloudComputerProvider, type ComputerSummary } from "@remy/contract";
 import { useHubModelDefaults } from "@/components/HubModelDefault";
 import type { ModelAccessResponse } from "@/components/HubModelAccess";
-import { cloudShareAllowsProvider, computerModels, executionToChoice, hostedComposerChoice, hostedExecutionChoice, hostedModels, ownModels, type OwnModelAccessResponse } from "./hub-models";
+import { computerModels, enrolledModels, executionToChoice, hostedComposerChoice, hostedExecutionChoice, hostedModels, ownModels, type OwnModelAccessResponse } from "./hub-models";
 import { useHubResource } from "./hub-organization";
 import { hubRequest, hubThreadBase } from "./hub-threads";
 import { composerSnapshot } from "./hub-composer-cache";
@@ -71,13 +71,16 @@ export function useHubStartChoice({
     return () => { cancelled = true; };
   }, [base, workspaceId]);
   const modelAccess = useHubResource<ModelAccessResponse>(organizationId, "/model-access");
-  const cloudConnections = useHubResource<{ settings?: { provider?: string }; enabledProviders?: string[]; cloudStart?: Record<string, { owner: boolean; providers: { id: string; allowed: boolean }[] }> }>(organizationId, "/hosted");
+  const cloudConnections = useHubResource<{ settings?: { provider?: string }; enabledProviders?: string[]; cloudStart?: Record<string, { owner: boolean; providers: { id: string; allowed: boolean }[] }>; cloudPlacements?: { id: string; provider: string; owner: string; keyName: string; own: boolean }[] }>(organizationId, "/hosted");
   const enabledClouds = useMemo(() => CLOUD_COMPUTERS.filter(c => cloudConnections.value?.enabledProviders?.includes(c.provider)), [cloudConnections.value?.enabledProviders]);
-  const unavailable = useMemo(() => enabledClouds.flatMap(c => {
+  const placements = useMemo(() => cloudConnections.value?.cloudPlacements?.length
+    ? cloudConnections.value.cloudPlacements.map((placement) => ({ ...placement, name: `${CLOUD_COMPUTERS.find((entry) => entry.provider === placement.provider)?.name ?? placement.provider} · ${placement.owner} · ${placement.keyName}` }))
+    : enabledClouds, [cloudConnections.value?.cloudPlacements, enabledClouds]);
+  const unavailable = useMemo(() => placements.flatMap(c => {
     const reason = exclude?.(c.id);
     return reason ? [{ id: c.id, name: c.name, reason }] : [];
-  }), [enabledClouds, exclude]);
-  const cloudOptions = useMemo(() => enabledClouds.filter(c => !unavailable.some(u => u.id === c.id)), [enabledClouds, unavailable]);
+  }), [placements, exclude]);
+  const cloudOptions = useMemo(() => placements.filter(c => !unavailable.some(u => u.id === c.id)), [placements, unavailable]);
   const eligible = useMemo(() => computers.filter(
     (c) =>
       c.ownership !== "hosted" &&
@@ -141,24 +144,24 @@ export function useHubStartChoice({
   const inheritedModel = resolveModelDefault(resolvedDefaults?.computer, { provider: "", model: "" });
   const usingCloud = !!cloudComputerProvider(selected);
   const usingCursorCloud = cloudComputerProvider(selected) === "cursor-cloud";
-  // Your own ChatGPT sign-in, when you allow it in this organization. Nobody else's shows here.
+  // Your own ChatGPT sign-in follows you into every organization. Nobody else's shows here.
   const codexAccount = useHubResource<{ available: boolean }>(organizationId, usingCloud && !usingCursorCloud ? "/chatgpt" : null, "/computers/live");
   const chatgpt = codexAccount.value?.available === true;
-  // Your own API keys, where you turned them on for this organization.
+  // Your own keys are always available to you. Other members' keys appear only
+  // when they enrolled those exact credentials for everyone here.
   const ownAccess = useHubResource<OwnModelAccessResponse>(organizationId, usingCloud && !usingCursorCloud ? "/own-model-access" : null, "/computers/live");
   const own = ownAccess.value?.personal ? [] : ownAccess.value?.providers ?? [];
+  const enrolled = ownAccess.value?.personal ? [] : ownAccess.value?.enrolled ?? [];
   const codexAccountPending = usingCloud && !usingCursorCloud && !codexAccount.value && !codexAccount.error;
-  const cloudStart = usingCloud ? cloudConnections.value?.cloudStart?.[cloudComputerProvider(selected) ?? ""] : undefined;
-  const allowedCloudRuntimes = cloudStart && !cloudStart.owner ? new Set(cloudStart.providers.filter(provider => provider.allowed).map(provider => provider.id)) : undefined;
   const resolvedChoice = hostedComposerChoice(modelAccess.value?.providers ?? [], inheritedModel, chatgpt, own);
   const preferredModel = known && selected === known.computerId && known.provider && known.model
     ? executionToChoice(known.provider, known.model, usingCloud)
     : undefined;
   const modelChoice = pickedModel?.workspaceId === workspaceId ? pickedModel.choice : preferredModel ?? resolvedChoice;
-  // Your own keys are yours to start with, so a share's allowlist does not narrow them.
   const cloudModels = [
-    ...hostedModels(modelAccess.value?.providers ?? [], modelChoice, chatgpt).filter(provider => (chatgpt && provider.id === "codex") || cloudShareAllowsProvider(allowedCloudRuntimes, provider.id)),
+    ...hostedModels(modelAccess.value?.providers ?? [], modelChoice, chatgpt),
     ...ownModels(own, modelChoice),
+    ...enrolledModels(enrolled, modelChoice),
   ];
   const localModels = computerModels(computers.find(c => c.computerId === selected)?.capabilities.providers ?? []);
   const modelCatalogue = usingCursorCloud ? [] : usingCloud || !selected ? cloudModels : localModels;

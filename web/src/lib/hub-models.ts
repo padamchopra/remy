@@ -108,36 +108,52 @@ export function hostedModels(
   return cloudModels;
 }
 
-/// Your own model access in an organization, as `GET /own-model-access` sends
-/// it: what you configured in Personal and whether you turned it on there.
+/// Personal model access in an organization, plus exact keys enrolled by
+/// members for everyone there.
 export interface OwnModelAccessEntry {
   id: "chatgpt" | "anthropic" | "openai" | "router" | "openrouter";
   configured: boolean;
   allowed: boolean;
   keyName: string | null;
+  keys: { id: string; name: string; active: boolean; enrolled: boolean; models: string[] }[];
   models: string[];
 }
-export interface OwnModelAccessResponse { personal: boolean; providers: OwnModelAccessEntry[] }
+export interface EnrolledModelAccessEntry { connectionId: string; provider: Exclude<OwnModelAccessEntry["id"], "chatgpt">; owner: string; keyId: string; keyName: string; models: string[] }
+export interface OwnModelAccessResponse { personal: boolean; providers: OwnModelAccessEntry[]; enrolled: EnrolledModelAccessEntry[] }
 
 /// Picker ids for your own key, so it sits beside the organization's key for
 /// the same provider rather than replacing it.
 export const OWN_PREFIX = "own:";
+export const ENROLLED_PREFIX = "enrolled:";
 export const isOwnProvider = (id: string) => id.startsWith(OWN_PREFIX);
+export const isEnrolledProvider = (id: string) => id.startsWith(ENROLLED_PREFIX);
 
-/// Your own API keys that you turned on in this organization, as providers a
-/// cloud thread can start on. ChatGPT is not here: it rides the `chatgpt` flag.
+/// Your own API keys as providers a cloud thread can start on. ChatGPT is not
+/// here: it rides the `chatgpt` flag.
 export function ownModels(entries: OwnModelAccessEntry[], ensure?: ModelChoice): Provider[] {
   return entries.filter((entry) => entry.id !== "chatgpt" && entry.configured && entry.allowed).flatMap((entry) => {
     const runtime = runtimeFor(entry.id);
     if (!runtime) return [];
-    const id = `${OWN_PREFIX}${entry.id}`;
-    return [{
+    const keys = entry.keys?.length ? entry.keys : entry.keyName ? [{ id: "legacy", name: entry.keyName, models: entry.models }] : [];
+    return keys.map((key) => {
+      const id = `${OWN_PREFIX}${entry.id}:${key.id}`;
+      return {
       ...runtime,
       id,
-      label: `Your ${HOSTED_LABELS[entry.id] ?? runtime.label}`,
+      label: `${HOSTED_LABELS[entry.id] ?? runtime.label} · Your ${key.name}`,
       efforts: [],
-      models: withEnsuredModel(hostedModelsFor({ id: entry.id, enabled: true, configured: true, models: entry.models }), ensure?.provider === id ? ensure.model : undefined),
-    }];
+      models: withEnsuredModel(hostedModelsFor({ id: entry.id, enabled: true, configured: true, models: key.models }), ensure?.provider === id ? ensure.model : undefined),
+      };
+    });
+  });
+}
+
+export function enrolledModels(entries: EnrolledModelAccessEntry[], ensure?: ModelChoice): Provider[] {
+  return entries.flatMap((entry) => {
+    const runtime = runtimeFor(entry.provider);
+    if (!runtime) return [];
+    const id = `${ENROLLED_PREFIX}${entry.connectionId}`;
+    return [{ ...runtime, id, label: `${HOSTED_LABELS[entry.provider] ?? runtime.label} · ${entry.owner} · ${entry.keyName}`, efforts: [], models: withEnsuredModel(hostedModelsFor({ id: entry.provider, enabled: true, configured: true, models: entry.models }), ensure?.provider === id ? ensure.model : undefined) }];
   });
 }
 
@@ -166,8 +182,16 @@ export function hostedComposerChoice(
 
 /// Maps a composer or stored gateway choice onto the runtime pair POST /threads
 /// accepts. A model that already carries `remy:` keeps that prefix.
-export function hostedExecutionChoice(choice: ModelChoice): { provider: string; model: string; modelSource?: "own" } {
-  if (isOwnProvider(choice.provider)) return { ...hostedExecutionChoice({ ...choice, provider: choice.provider.slice(OWN_PREFIX.length) }), modelSource: "own" };
+export function hostedExecutionChoice(choice: ModelChoice): { provider: string; model: string; modelSource?: "own" | "enrolled"; modelProvider?: string; modelConnection?: string } {
+  if (isOwnProvider(choice.provider)) {
+    const [provider, ...key] = choice.provider.slice(OWN_PREFIX.length).split(":");
+    return { ...hostedExecutionChoice({ ...choice, provider }), modelSource: "own", modelProvider: provider, modelConnection: key.join(":") };
+  }
+  if (isEnrolledProvider(choice.provider)) {
+    const connection = choice.provider.slice(ENROLLED_PREFIX.length);
+    const [, provider] = connection.split(":");
+    return { ...hostedExecutionChoice({ ...choice, provider }), modelSource: "enrolled", modelProvider: provider, modelConnection: connection };
+  }
   if (choice.provider === "anthropic") return { provider: "claude", model: choice.model };
   if (choice.provider === "openai" || choice.provider === "router" || choice.provider === "openrouter") {
     const model = choice.model.startsWith("remy:") ? choice.model : `remy:${choice.provider}:${choice.model}`;

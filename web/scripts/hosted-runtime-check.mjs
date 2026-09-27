@@ -36,8 +36,8 @@ try {
       const modelEntries=["anthropic","openai","router","openrouter"].map(id=>({id,enabled:false,configured:false,models:[],keys:[]}));
       let chatgptAccount={phase:"signedOut"};
       let chatgptAvailable=false;
-      // Your own keys, per organization: off in each until you turn them on.
-      const ownAccess=["chatgpt","anthropic","openai","router","openrouter"].map(id=>({id,configured:id==="anthropic",allowed:false,keyName:id==="anthropic"?"Mine":null,models:[]}));
+      // Your own keys already work for you. Exact keys can be enrolled for everyone.
+      const ownAccess=["chatgpt","anthropic","openai","router","openrouter"].map(id=>({id,configured:id==="anthropic",allowed:id==="anthropic"||id==="chatgpt",keyName:id==="anthropic"?"Mine":null,models:[],keys:id==="anthropic"?[{id:"mine",name:"Mine",active:true,enrolled:false,models:[]}]:[]}));
       const ownChanges=[];
       let connectionKeys=0;
       const savedKeys=new Map();
@@ -101,7 +101,7 @@ try {
         if (holdComposerReads && (path === `${base}/model-access` || path === `${base}/computers/preference` || path === `${base}/github/workspace-branches` || path.startsWith(`${base}/model-defaults`))) await composerReads;
         if(path === `${base}/github/profile`) return route.fulfill({json:{image:"https://avatars.githubusercontent.com/u/1"}});
         if(path === `${base}/compute-shares/computers/personal-mac` && ["PUT","PATCH","DELETE"].includes(route.request().method())) {sharedComputer=route.request().method()!=="DELETE";return route.fulfill({json:{ok:true}});}
-        if(path === `${base}/compute-shares/cloud/modal` && ["PUT","PATCH","DELETE"].includes(route.request().method())) {sharedCloud=route.request().method()!=="DELETE";return route.fulfill({json:{ok:true}});}
+        if(decodeURIComponent(path) === `${base}/compute-shares/cloud/personal:modal` && ["PUT","PATCH","DELETE"].includes(route.request().method())) {sharedCloud=route.request().method()!=="DELETE";return route.fulfill({json:{ok:true}});}
         if (path.startsWith(`${base}/cloud-connection/keys`)) {
           const connection = route.request().postDataJSON() ?? {};
           const provider = connection.provider;
@@ -199,10 +199,10 @@ try {
         }
         if(path.startsWith(`${base}/own-model-access/`) && ["PUT","DELETE"].includes(route.request().method())) {
           const entry=ownAccess.find(item=>item.id===path.split("/").at(-1));
-          entry.allowed=route.request().method()==="PUT";ownChanges.push(`${route.request().method()} ${org.id}:${entry.id}`);
-          return route.fulfill({json:{personal:org.personal,providers:ownAccess}});
+          const enrolled=route.request().method()==="PUT";(entry.keys??[]).forEach(key=>{key.enrolled=enrolled;});ownChanges.push(`${route.request().method()} ${org.id}:${entry.id}`);
+          return route.fulfill({json:{personal:org.personal,providers:ownAccess,enrolled:[]}});
         }
-        if(path===`${base}/own-model-access`) return route.fulfill({json:{personal:org.personal,providers:org.personal?[]:ownAccess}});
+        if(path===`${base}/own-model-access`) return route.fulfill({json:{personal:org.personal,providers:org.personal?[]:ownAccess,enrolled:[]}});
         if(path===`${base}/computers/connection-keys` && route.request().method()==="POST") {connectionKeys++;return route.fulfill({status:201,json:{key:`test-connection-key-${connectionKeys}`}});}
         if(path===`${base}/chatgpt`) return route.fulfill({json:{connected:chatgptAvailable,enabled:true,personal:org.personal,available:chatgptAvailable}});
         if(/\/hosted\/[^/]+$/.test(path) && path !== `${base}/hosted`) return route.fulfill({json:{state:null}});
@@ -246,7 +246,7 @@ try {
           [`${base}/threads`]: { threads: process.env.QA_SCOPE_ONLY === "1" ? [{id:`${org.id}-thread`,computerId:`${org.id}-computer`,revision:1,stale:!org.personal,observedAt:Date.now(),access:{organizationId:org.id,owner:{id:"reader",label:"Reader"},participants:[],visibility:"private"},detail:{id:`${org.id}-thread`,title:org.personal?"Personal thread":"Studio thread",state:"idle",provider:"codex",entries:[]}}, ...(org.personal ? [{id:"cloud-thread",computerId:"sprite-gone",revision:1,stale:true,observedAt:Date.now(),access:{organizationId:org.id,owner:{id:"reader",label:"Reader"},participants:[],visibility:"private"},detail:{id:"cloud-thread",title:"Cloud thread",state:"idle",provider:"codex",model:"remy:openrouter:openrouter/auto",entries:[]}}] : [])] : startedThread && startedThread.access.organizationId === org.id ? [startedThread]:[], cursor: 0, member: { id: "reader", role: "owner" } },
           [`${base}/computers`]: { computers: process.env.QA_SCOPE_ONLY === "1" ? [{ computerId: `${org.id}-computer`, name: org.personal ? "Personal Mac" : "Studio Mac", icon: "laptop", ownership: "personal", availability: org.personal ? "available" : "offline", access: { mode: "owner" }, canUse: Boolean(org.personal), canManage: false, capabilities: { workspaces: [] } }] : connected ? [{ computerId: "studio", name: computerName, icon: "laptop", ownership: "personal", availability: online ? "online" : "offline", access: { mode: "owner" }, canUse: online, canManage: false, capabilities: { workspaces: [] } }] : [] },
           [`${base}/computers/options`]: { role: "owner", members: [], teams: [] },
-          [`${base}/hosted`]: { settings: { enabled: cloudEnabled, provider: "fly-sprites", region: "", cpu: 1, memoryMiB: 2048, maxComputers: 5, idleMinutes: 12 }, secretNames: [], connections: [...connections], enabledProviders: [...enabledProviders], providerKeys, available },
+          [`${base}/hosted`]: { settings: { enabled: cloudEnabled, provider: "fly-sprites", region: "", cpu: 1, memoryMiB: 2048, maxComputers: 5, idleMinutes: 12 }, secretNames: [], connections: [...connections], enabledProviders: [...enabledProviders], providerKeys, cloudPlacements:org.personal?[]:[...enabledProviders].map(provider=>({id:`cloud:${provider}:personal:legacy`,provider,owner:"Reader",keyName:"Default",own:false})), available },
           [`${base}/members`]: {members:[{id:"reader-member",userId:"reader",name:profile.name,image:profile.image,role:"owner"},...Array.from({length:4},(_,i)=>({id:`m${i}`,userId:`p${i}`,name:`Person ${i}`,image:`data:image/png;base64,${readFileSync(new URL('../public/favicon.png',import.meta.url)).toString('base64')}`,role:"member"}))]},
           [`${base}/teams`]: {teams:[]},
           [`${base}/workspaces/repo`]: {id:"repo",name:"Example",origin:"github.com/example/repo",icon:"icon.png"},
@@ -260,7 +260,7 @@ try {
           [`${base}/github`]: {repositories:[],activity:[]},
           [`${base}/linear-workspace`]: {accounts:[],link:null},
           [`${base}/linear-access`]: {notice:null},
-          [`${base}/compute-shares`]: {canManage:true,computers:[{id:"personal-mac",name:"Personal Mac",icon:"laptop",platform:"darwin",shared:sharedComputer,available:true,sharedBy:sharedComputer?"Reader":null,canShare:true,canRevoke:true,providers:sharedComputer?[{id:"claude",label:"Claude",allowed:true},{id:"codex",label:"Codex",allowed:true}]:[]}],cloudConnections:[{provider:"fly-sprites",shared:true,available:true,sharedBy:"Reader",canShare:true,canRevoke:true,providers:[{id:"openrouter",label:"OpenRouter",allowed:true}]},{provider:"modal",shared:sharedCloud,available:true,sharedBy:sharedCloud?"Reader":null,canShare:true,canRevoke:true,providers:sharedCloud?[{id:"anthropic",label:"Anthropic",allowed:true},{id:"openrouter",label:"OpenRouter",allowed:true}]:[]}]},
+          [`${base}/compute-shares`]: {canManage:true,computers:[{id:"personal-mac",name:"Personal Mac",icon:"laptop",platform:"darwin",shared:sharedComputer,available:true,sharedBy:sharedComputer?"Reader":null,canShare:true,canRevoke:true,providers:sharedComputer?[{id:"claude",label:"Claude",allowed:true},{id:"codex",label:"Codex",allowed:true}]:[]}],cloudConnections:[{id:"personal:fly-sprites",provider:"fly-sprites",shared:true,available:true,sharedBy:"Reader",canShare:true,canRevoke:true,keys:[{id:"legacy",name:"Default",active:true,selected:true}],providers:[]},{id:"personal:modal",provider:"modal",shared:sharedCloud,available:true,sharedBy:sharedCloud?"Reader":null,canShare:true,canRevoke:true,keys:[{id:"legacy",name:"Default",active:true,selected:true}],providers:[]}]},
         };
         if (!(path in responses)) unexpected.push(path);
         return route.fulfill({ status: path in responses ? 200 : 404, json: responses[path] ?? { error: "Not found" } });
@@ -279,8 +279,8 @@ try {
           profile.image="preset:cobalt-cyclops";
           const entry=modelEntries.find(p=>p.id==="openrouter");
           entry.enabled=true;entry.configured=true;entry.models=["openrouter/auto"];
-          computerDefaults.set("cloud:fly-sprites",{provider:"openrouter",model:"openrouter/auto"});
-          preference="cloud:fly-sprites";
+          computerDefaults.set("cloud:fly-sprites:personal:legacy",{provider:"openrouter",model:"openrouter/auto"});
+          preference="cloud:fly-sprites:personal:legacy";
         }
         const target=new URL(url);
         if(process.env.QA_THREAD_RECOVERY_ONLY === "1")await page.goto(new URL("threads?organization=personal",url).href);
@@ -632,7 +632,7 @@ try {
           assert.equal(await page.getByText("Default model",{exact:true}).count(),0,"Organization-filtered General has no default model");
           // An organization has no General tab; an older link to it opens Members.
           await page.goto(clean("/settings/organization?section=general&owner=team"));
-          const organizationSettings=page.getByRole("region",{name:"Organization settings",exact:true});
+          const organizationSettings=page.getByRole("region",{name:"Organizations settings",exact:true});
           await organizationSettings.getByRole("tab",{name:"Members",exact:true,selected:true}).waitFor();
           assert.equal(await page.locator('[data-slot="pane-header"]').count(),1,"Organization settings uses the shared pane header");
           assert.equal(await organizationSettings.getByRole("tab",{name:"General",exact:true}).count(),0,"Organization settings has no General tab");
@@ -670,36 +670,35 @@ try {
           if(artifacts)await page.screenshot({path:`${artifacts}/invite-toast-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
           if(artifacts)await page.screenshot({path:`${artifacts}/member-avatar-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
           await page.goto(clean("/settings/organization?section=computers&owner=team"));
-          const computerShare=page.getByRole("switch",{name:"Share Personal Mac with Studio",exact:true});
-          const cloudShare=page.getByRole("switch",{name:"Share Modal with Studio",exact:true});
+          const computerShare=page.getByRole("switch",{name:"Enroll Personal Mac in Studio",exact:true});
+          const cloudShare=page.getByRole("switch",{name:"Enroll Modal in Studio",exact:true});
           await computerShare.waitFor();await cloudShare.waitFor();
           await computerShare.click();await cloudShare.click();
           assert.equal(sharedComputer,true);assert.equal(sharedCloud,true);
           await page.reload();
-          assert.equal(await page.getByRole("switch",{name:"Share Personal Mac with Studio",exact:true}).isChecked(),true);
-          assert.equal(await page.getByRole("switch",{name:"Share Fly.io Sprites with Studio",exact:true}).isChecked(),true);
-          assert.equal(await page.getByRole("switch",{name:"Share Modal with Studio",exact:true}).isChecked(),true);
-          // What members can start with is a chip per provider, pressed when allowed.
+          assert.equal(await page.getByRole("switch",{name:"Enroll Personal Mac in Studio",exact:true}).isChecked(),true);
+          assert.equal(await page.getByRole("switch",{name:"Enroll Fly.io Sprites in Studio",exact:true}).isChecked(),true);
+          assert.equal(await page.getByRole("switch",{name:"Enroll Modal in Studio",exact:true}).isChecked(),true);
+          // Connected computers still expose the providers they can run.
           const chip=name=>page.getByRole("button",{name:`Members can start ${name}`,exact:true});
-          for(const name of ["Claude on Personal Mac","OpenRouter on Fly.io Sprites","Anthropic on Modal","OpenRouter on Modal"]) assert.equal(await chip(name).getAttribute("aria-pressed"),"true",`${name} is pressed`);
-          assert.equal(await chip("Codex on Fly.io Sprites").count(),0);
-          assert.equal(await chip("Codex on Modal").count(),0);
+          assert.equal(await chip("Claude on Personal Mac").getAttribute("aria-pressed"),"true");
+          assert.equal(await page.getByRole("button",{name:"Enroll Fly.io Sprites key Default in Studio",exact:true}).getAttribute("aria-pressed"),"true");
+          assert.equal(await page.getByRole("button",{name:"Enroll Modal key Default in Studio",exact:true}).getAttribute("aria-pressed"),"true");
           assert.equal(await page.getByRole("switch",{name:/^Start /}).count(),0,"Start providers are chips, not switches");
           assert.equal(await page.getByText("private-modal-secret",{exact:false}).count(),0);
-          await page.getByRole("region",{name:"Shared with Studio",exact:true}).getByText("Members start new threads with the providers you turn on.",{exact:false}).waitFor();
-          // Your own keys are off in an organization until you turn each one on.
-          const ownAccessList=page.getByRole("region",{name:"Your model access",exact:true});
-          const ownAnthropic=ownAccessList.getByRole("switch",{name:"Use my Anthropic in Studio",exact:true});
+          // Your own keys already work for you; an exact key can be enrolled for everyone.
+          const ownAccessList=page.getByRole("region",{name:"Model access",exact:true});
+          const ownAnthropic=ownAccessList.getByRole("button",{name:"Enroll Anthropic key Mine in Studio",exact:true});
           await ownAnthropic.waitFor();
-          assert.equal(await ownAnthropic.isChecked(),false);
-          assert.equal(await ownAccessList.getByRole("switch",{name:"Use my OpenAI in Studio",exact:true}).isDisabled(),true,"A key you have not added cannot be turned on");
+          assert.equal(await ownAnthropic.getAttribute("aria-pressed"),"false");
+          assert.equal(await ownAccessList.getByRole("button",{name:/Enroll OpenAI key/}).count(),0,"A key you have not added cannot be enrolled");
           await ownAnthropic.click();
-          await page.waitForFunction(()=>document.querySelector('[role="switch"][aria-label="Use my Anthropic in Studio"]')?.getAttribute("aria-checked")==="true");
+          await page.waitForFunction(()=>document.querySelector('button[aria-label="Enroll Anthropic key Mine in Studio"]')?.getAttribute("aria-pressed")==="true");
           assert.deepEqual(ownChanges,["PUT team:anthropic"]);
           await page.reload();
-          assert.equal(await page.getByRole("switch",{name:"Use my Anthropic in Studio",exact:true}).isChecked(),true);
-          await page.getByRole("switch",{name:"Use my Anthropic in Studio",exact:true}).click();
-          await page.waitForFunction(()=>document.querySelector('[role="switch"][aria-label="Use my Anthropic in Studio"]')?.getAttribute("aria-checked")==="false");
+          assert.equal(await page.getByRole("button",{name:"Enroll Anthropic key Mine in Studio",exact:true}).getAttribute("aria-pressed"),"true");
+          await page.getByRole("button",{name:"Enroll Anthropic key Mine in Studio",exact:true}).click();
+          await page.waitForFunction(()=>document.querySelector('button[aria-label="Enroll Anthropic key Mine in Studio"]')?.getAttribute("aria-pressed")==="false");
           assert.deepEqual(ownChanges,["PUT team:anthropic","DELETE team:anthropic"]);
           if(artifacts)await page.screenshot({path:`${artifacts}/organization-computers-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
           assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
@@ -709,12 +708,12 @@ try {
           await page.getByRole("menuitem",{name:"Shared",exact:true}).click();
           await sharing.getByText("Shared",{exact:true}).waitFor();
           await composer.getByRole("button",{name:"Model",exact:true}).getByText("openrouter/auto",{exact:true}).waitFor();
-          await composer.getByLabel("Thread computer",{exact:true}).getByText("Cloud · Fly.io Sprites",{exact:true}).waitFor();
+          await composer.getByLabel("Thread computer",{exact:true}).getByText("Cloud · Fly.io Sprites · Reader · Default",{exact:true}).waitFor();
           await composer.getByLabel("Message",{exact:true}).fill("Share this organization thread");
           await page.getByRole("button",{name:"Send",exact:true}).click();
           await page.getByText("Preview request captured.",{exact:true}).waitFor();
           assert.equal(threadInput.visibility,"open");
-          assert.equal(threadInput.computerId,"cloud:fly-sprites");
+          assert.equal(threadInput.computerId,"cloud:fly-sprites:personal:legacy");
           assert.equal(threadInput.provider,"codex");
           assert.equal(threadInput.model,"remy:openrouter:openrouter/auto");
           if(artifacts && !returning && !mobile) await page.screenshot({path:`${artifacts}/shared-start-openrouter.png`});
@@ -1011,9 +1010,10 @@ try {
         // Settings → Computers is one list: Cloud first, then Connected.
         const computersList = page.getByRole("main", { name: "Computers", exact: true });
         const cloudList = computersList.getByRole("list", { name: "Cloud", exact: true });
-        await cloudList.getByRole("button", { name: "Fly.io Sprites", exact: true }).waitFor();
+        const personalCloudRow = name => cloudList.getByRole("button", { name: `${name}, Personal`, exact: true });
+        await personalCloudRow("Fly.io Sprites").waitFor();
         assert.deepEqual(await computersList.locator("section h2").allInnerTexts(), ["Cloud", "Connected"], "Cloud comes before Connected");
-        assert.deepEqual(await cloudList.locator('[data-slot="item-title"]').allInnerTexts(), ["Fly.io Sprites", "Modal", "Cursor Cloud", "Model access"]);
+        assert.deepEqual(await cloudList.locator('[data-slot="item-title"]').allInnerTexts(), ["Fly.io Sprites", "Modal", "Cursor Cloud", "Model access", "Model access"]);
         assert.equal(await computersList.getByRole("tab").count(), 0, "Computers is one list, not tabs");
         await computersList.getByRole("region", { name: "Connected", exact: true }).getByText("No computers connected", { exact: true }).waitFor();
         assert.equal(await page.getByRole("button", { name: "Add computer", exact: true }).count(), 0);
@@ -1034,7 +1034,7 @@ try {
           await page.goto(target.href);
           for (const reload of [false, true]) {
             if (reload) await page.reload();
-            await cloudList.getByRole("button", { name: "Fly.io Sprites", exact: true }).waitFor();
+            await personalCloudRow("Fly.io Sprites").waitFor();
             assert.equal(await page.getByRole("button",{name:"Add computer",exact:true}).count(),0);
             assert.equal(await page.getByLabel("Hosted workspace").count(), 0);
             assert.equal(await page.getByRole("button", { name: "Add a workspace", exact: true }).count(), 0);
@@ -1082,7 +1082,7 @@ try {
           await cloudList.waitFor();
         };
         const providerPage = async name => {
-          await cloudList.getByRole("button", { name, exact: true }).click();
+          await personalCloudRow(name).click();
           await page.getByRole("heading", { name, level: 1, exact: true }).waitFor();
         };
         for (const [name, id, keyLabel, fields] of [["Fly.io Sprites", "fly-sprites", "Sprites token", [["Token", "test-provider-secret"]]], ["Modal", "modal", "Modal token", [["Token ID", "test-modal-id"], ["Token secret", "test-provider-secret"]]]]) {
@@ -1103,11 +1103,11 @@ try {
           await page.waitForFunction(label => document.querySelector(`[role="switch"][aria-label="${label}"]`)?.getAttribute("aria-checked") === "true", `Run threads on ${name}`);
           await backToList();
         }
-        const cursorRow = cloudList.getByRole("button", { name: "Cursor Cloud", exact: true });
+        const cursorRow = personalCloudRow("Cursor Cloud");
         await cursorRow.getByText("Not set up", { exact: true }).waitFor();
         assert.equal(enabledProviders.size, 2, "Both cloud providers can be enabled together");
         await page.reload();
-        for (const name of ["Fly.io Sprites", "Modal"]) await cloudList.getByRole("button", { name, exact: true }).getByText("On", { exact: true }).waitFor();
+        for (const name of ["Fly.io Sprites", "Modal"]) await personalCloudRow(name).getByText("On", { exact: true }).waitFor();
         await providerPage("Fly.io Sprites");
         const flyToggle = page.getByRole("switch", { name: "Run threads on Fly.io Sprites", exact: true });
         const flyKeys = page.getByRole("region", { name: "Sprites tokens", exact: true });
@@ -1139,7 +1139,7 @@ try {
         available = true;
         await backToList();
         await page.reload();
-        await cloudList.getByRole("button", { name: "Fly.io Sprites", exact: true }).waitFor();
+        await personalCloudRow("Fly.io Sprites").waitFor();
         assert.equal(await computersList.getByText("Cloud computers are temporarily unavailable.", { exact: true }).count(), 0);
         assert.equal(await page.getByLabel("Hosted workspace").count(), 0);
         assert.equal(await page.getByRole("button", { name: "Add a workspace", exact: true }).count(), 0);
@@ -1154,7 +1154,7 @@ try {
         const modelAccess = page.getByRole("list", { name: "Model access", exact: true });
         await modelAccess.waitFor();
         assert.deepEqual(await modelAccess.locator(':scope > [role="listitem"] > div > [data-slot="item-content"] > [data-slot="item-title"]').allInnerTexts(), [
-          ...(org.personal ? ["ChatGPT"] : []),
+          "ChatGPT",
           "Anthropic",
           "OpenAI",
           "Router.com",
@@ -1163,25 +1163,21 @@ try {
         assert.equal(await modelAccess.getByText("Claude Code", { exact: true }).count(), 0);
         const accessRow = label => modelAccess.getByRole("listitem").filter({ has: page.getByRole("switch", { name: label, exact: true }) });
         const chatgptRow = modelAccess.getByRole("listitem").filter({ has: page.getByText("ChatGPT", { exact: true }) });
-        if (org.personal) {
-          // Your ChatGPT sign-in is yours: no workspace to pick and no computer to start.
-          assert.ok(await chatgptRow.getByRole("img", { name: "Codex" }).count());
-          await chatgptRow.getByRole("button", { name: "Sign in with ChatGPT", exact: true }).click();
-          await chatgptRow.getByLabel("ChatGPT sign-in code", { exact: true }).waitFor();
-          assert.equal(await chatgptRow.getByLabel("ChatGPT sign-in code", { exact: true }).inputValue(), "DEMO-0000");
-          await chatgptRow.getByRole("button", { name: "Cancel", exact: true }).click();
-          await chatgptRow.getByRole("button", { name: "Sign in with ChatGPT", exact: true }).waitFor();
-          assert.equal(await chatgptRow.getByRole("combobox").count(), 0);
-          assert.equal(await chatgptRow.getByRole("button", { name: "Start computer", exact: true }).count(), 0);
-          assert.equal(await page.getByRole("region", { name: "Your model access", exact: true }).count(), 0, "Personal has no per-organization switches");
-        } else {
-          assert.equal(await chatgptRow.count(), 0, "an organization's Model access never signs anyone in to ChatGPT");
-          await page.getByRole("region", { name: "Your model access", exact: true }).waitFor();
-        }
+        // Account-wide Computers opens the personal connection for editing,
+        // even when the person entered Settings from an organization.
+        assert.ok(await chatgptRow.getByRole("img", { name: "Codex" }).count());
+        await chatgptRow.getByRole("button", { name: "Sign in with ChatGPT", exact: true }).click();
+        await chatgptRow.getByLabel("ChatGPT sign-in code", { exact: true }).waitFor();
+        assert.equal(await chatgptRow.getByLabel("ChatGPT sign-in code", { exact: true }).inputValue(), "DEMO-0000");
+        await chatgptRow.getByRole("button", { name: "Cancel", exact: true }).click();
+        await chatgptRow.getByRole("button", { name: "Sign in with ChatGPT", exact: true }).waitFor();
+        assert.equal(await chatgptRow.getByRole("combobox").count(), 0);
+        assert.equal(await chatgptRow.getByRole("button", { name: "Start computer", exact: true }).count(), 0);
+        assert.equal(await page.getByRole("region", { name: "Your model access", exact: true }).count(), 0, "Personal has no per-organization switches");
         assert.ok(await accessRow("Anthropic").getByRole("img", { name: "Claude" }).count());
         assert.ok(await accessRow("OpenAI").getByRole("img", { name: "Codex" }).count());
-        await page.getByText(`${org.personal ? "Personal" : org.name} · Codex uses ChatGPT or an OpenAI key; Claude uses an Anthropic key.`, { exact: true }).waitFor();
-        await page.getByText(org.personal ? "Only threads you start use these. An organization uses them only where you turn them on." : "Every member's cloud threads here can use these.", { exact: true }).waitFor();
+        await page.getByText("Personal · Codex uses ChatGPT or an OpenAI key; Claude uses an Anthropic key.", { exact: true }).waitFor();
+        await page.getByText("These follow you into every thread you start.", { exact: true }).waitFor();
         const switchState = (label, state) => page.waitForFunction(([label, state]) => [...document.querySelectorAll('[role="list"][aria-label="Model access"] [role="switch"]')].find(el => el.getAttribute("aria-label") === label)?.getAttribute("aria-checked") === state, [label, state]);
         for(const [id,label] of [["anthropic","Anthropic"],["openai","OpenAI"],["router","Router.com"],["openrouter","OpenRouter"]]) {
           const section=accessRow(label);
@@ -1212,19 +1208,6 @@ try {
         assert.equal(savedKeys.get("openrouter"),"disposable-openrouter-team");
         assert.ok(await modelAccess.evaluate(list => { const pane = list.closest("main")?.querySelector(".overflow-auto"); return !!pane && pane.scrollWidth <= pane.clientWidth; }), "Named keys fit the model access pane");
         if (artifacts && org.personal) await page.screenshot({path: `${artifacts}/cloud-configured-${mobile ? "phone" : "desktop"}.png`});
-        if (!org.personal) {
-          // Your own key, once you turn it on here, is something this organization's cloud can run and default to.
-          await page.getByRole("switch", { name: "Use my Anthropic in Studio", exact: true }).click();
-          await page.waitForFunction(() => document.querySelector('[role="switch"][aria-label="Use my Anthropic in Studio"]')?.getAttribute("aria-checked") === "true");
-          await backToList();
-          await providerPage("Fly.io Sprites");
-          await canRun.getByText("OpenRouter", { exact: true }).waitFor();
-          await canRun.getByText("Your Anthropic", { exact: true }).waitFor();
-          await page.getByRole("region", { name: "Default model", exact: true }).locator("[data-model-picker]").click();
-          await page.getByRole("tablist", { name: "Providers", exact: true }).getByRole("tab", { name: /Your Anthropic/ }).waitFor();
-          await page.keyboard.press("Escape");
-          ownAccess.find(entry => entry.id === "anthropic").allowed = false;
-        }
         if (mobile) await page.getByRole("button", { name: "Toggle Sidebar" }).click();
         connected = true;
         enabledProviders.clear();
@@ -1285,7 +1268,7 @@ try {
         target.hash = `/threads?organization=${org.id}`;
         await page.goto(target.href);
         await page.reload();
-        await page.getByLabel("Thread computer",{exact:true}).getByText("Cloud · Modal",{exact:true}).waitFor();
+        await page.getByLabel("Thread computer",{exact:true}).getByText(org.personal ? "Cloud · Modal" : "Cloud · Modal · Reader · Default",{exact:true}).waitFor();
         await composer.getByRole("button",{name:"Model",exact:true}).click();
         disconnectLive = true;
         await Promise.all(liveSockets.splice(0).map(socket => socket.close()));

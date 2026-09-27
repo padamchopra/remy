@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { HubKeyList, type KeyInput } from "./HubKeyList";
 import { HubModelDefault } from "./HubModelDefault";
 import { ProviderMark } from "./ProviderMark";
-import { SettingsSection, StateDot } from "./SettingsList";
+import { SettingsList, SettingsRow, SettingsSection, StateDot } from "./SettingsList";
 import { Button } from "./ui/button";
 import { Switch } from "./ui/switch-base";
 import type { ModelAccessResponse } from "./HubModelAccess";
@@ -34,8 +34,9 @@ export function HubCloudProviderPage({ organizationId, owner, provider, admin, o
   useEffect(() => setSaved(undefined), [organizationId]);
   const state = saved ?? resource.value;
   const keys = state?.providerKeys?.[provider.id] ?? [];
-  const configured = !!state?.connections?.includes(provider.id) || keys.length > 0;
-  const enabled = !!state?.enabledProviders?.includes(provider.id);
+  const placements = state?.cloudPlacements?.filter((placement) => placement.provider === provider.id) ?? [];
+  const configured = owner.personal ? !!state?.connections?.includes(provider.id) || keys.length > 0 : placements.length > 0;
+  const enabled = owner.personal ? !!state?.enabledProviders?.includes(provider.id) : placements.length > 0;
   useEffect(() => { if (state && !configured && admin) setAdding(true); }, [state, configured, admin]);
   const path = `${hubThreadBase(organizationId)}/cloud-connection`;
   const refresh = async () => setSaved(await hubRequest<CloudConnections>(`${hubThreadBase(organizationId)}/hosted`));
@@ -70,16 +71,16 @@ export function HubCloudProviderPage({ organizationId, owner, provider, admin, o
     </div>
     <p className="-mt-6 text-[13px] leading-[18px] text-muted-foreground">{provider.runs}</p>
     {state && !state.connections && <p role="status" className="text-[13px] text-muted-foreground">Update the Remy service to save cloud connections.</p>}
-    {configured && enabled && provider.id !== "cursor-cloud" && <SettingsSection id={`default-${provider.id}`} title="Default model">
+    {admin && configured && enabled && provider.id !== "cursor-cloud" && <SettingsSection id={`default-${provider.id}`} title="Default model">
       <HubModelDefault organizationId={organizationId} computerId={`cloud:${provider.id}`} title={`New threads on ${provider.name}`} />
     </SettingsSection>}
     <SettingsSection
       id={`keys-${provider.id}`}
-      title={`${provider.keyLabel}s`}
-      description={admin ? "New threads use the active one. Keys are encrypted and never reach a computer." : `Ask an admin of ${owner.name} to change these.`}
+      title={admin ? `${provider.keyLabel}s` : "Available keys"}
+      description={admin ? "New threads use the active one. Keys are encrypted and never reach a computer." : "Read-only here. Change your enrollments in Organizations."}
       action={admin && keys.length > 0 && !adding && <Button size="sm" variant="ghost" className="h-7 gap-1.5 rounded-lg px-2.5 text-xs" disabled={busy} onClick={() => setAdding(true)}><Plus className="size-3.5" />Add</Button>}
     >
-      <HubKeyList
+      {admin ? <HubKeyList
         label={provider.keyLabel}
         keys={keys}
         fields={provider.fields}
@@ -90,8 +91,9 @@ export function HubCloudProviderPage({ organizationId, owner, provider, admin, o
         onSave={save}
         onRemove={keyId => run(() => hubRequest(`${path}/keys/${encodeURIComponent(keyId)}`, "DELETE", { provider: provider.id }), `Couldn't remove that ${provider.keyLabel}`)}
         onActivate={keys.length > 1 ? keyId => run(() => hubRequest(`${path}/keys/${encodeURIComponent(keyId)}`, "PATCH", { provider: provider.id, active: true }), `Couldn't switch ${provider.keyLabel}s`) : undefined}
-      />
-      {!keys.length && !admin && <p className="text-[13px] text-muted-foreground">Not set up.</p>}
+      /> : placements.length ? <SettingsList label={`${provider.name} keys available to you`}>
+        {placements.map((placement) => <SettingsRow key={placement.id} title={placement.keyName} description={placement.own ? "Yours" : placement.owner} />)}
+      </SettingsList> : <p className="text-[13px] text-muted-foreground">No key is available to you.</p>}
       {admin && <p className="text-xs leading-4 text-muted-foreground">Get one from <a className="text-info hover:underline" href={provider.href} target="_blank" rel="noreferrer" data-link>{provider.hrefLabel}</a>.</p>}
     </SettingsSection>
     {configured && provider.id !== "cursor-cloud" && <CanRun organizationId={organizationId} onModelAccess={onModelAccess} />}
@@ -107,6 +109,7 @@ function CanRun({ organizationId, onModelAccess }: { organizationId: string; onM
     ...(chatgpt.value?.available ? [{ id: "codex", label: "Codex with ChatGPT" }] : []),
     ...(access.value?.providers ?? []).filter(entry => entry.enabled && entry.configured).map(entry => ({ id: entry.id, label: LABELS[entry.id] ?? entry.id })),
     ...(own.value?.personal ? [] : own.value?.providers ?? []).filter(entry => entry.id !== "chatgpt" && entry.configured && entry.allowed).map(entry => ({ id: entry.id, label: `Your ${LABELS[entry.id] ?? entry.id}` })),
+    ...(own.value?.personal ? [] : own.value?.enrolled ?? []).map(entry => ({ id: entry.provider, label: `${LABELS[entry.provider] ?? entry.provider} · ${entry.owner} · ${entry.keyName}` })),
   ];
   return <SettingsSection
     id="cloud-can-run"

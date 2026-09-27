@@ -16,6 +16,7 @@ import { CLOUD_PROVIDERS, cloudProvider, type CloudConnections } from "@/lib/clo
 import { useComputersAcross, threadIsLive, type ListedComputer } from "@/lib/computer-list";
 import { deviceIcon, type DeviceIconId } from "@/lib/devices";
 import { currentLocation, listenToLocationChanges, navigateLocation, parseLocation } from "@/lib/route";
+import type { OwnModelAccessResponse } from "@/lib/hub-models";
 
 /// Where Settings → Computers is: the list, or one page in it. A page is a
 /// connected computer's id, `cloud:<provider>`, or `model-access`, in the
@@ -30,10 +31,10 @@ function place(all: boolean) {
 
 const ownerLabel = (account: Organization) => account.personal ? "Personal" : account.name;
 
-/// Settings → Computers: one list of every cloud provider and connected
-/// computer you can use in the accounts in view, and a page for each.
-/// `accounts` is Personal and each organization under All, or the one account
-/// the switcher narrowed to.
+/// Settings → Computers: one account-wide inventory of every cloud provider,
+/// model connection, and connected computer available to you. Personal rows
+/// are editable. Organization rows are read-only; grants change under
+/// Organizations.
 export function HubComputers({ accounts, all }: { accounts: Organization[]; all: boolean }) {
   const [where, setWhere] = useState(() => place(all));
   useEffect(() => listenToLocationChanges(() => setWhere(place(all))), [all]);
@@ -46,13 +47,13 @@ export function HubComputers({ accounts, all }: { accounts: Organization[]; all:
   const openThread = (thread: HubThread, account: string) => navigateLocation({ route: { name: "threads", organizationId: all ? "all" : account, threadId: thread.id } });
   const across = useComputersAcross(accounts);
   const [connecting, setConnecting] = useState(false);
-  const connectable = useMemo(() => accounts.filter(account => account.personal || account.role !== "member"), [accounts]);
+  const connectable = useMemo(() => accounts.filter(account => account.personal), [accounts]);
   const account = accounts.find(entry => entry.id === where.account) ?? (accounts.length === 1 ? accounts[0] : accounts.find(entry => entry.personal));
   const connect = <HubConnectComputerDialog open={connecting} onOpenChange={setConnecting} accounts={connectable.length ? connectable : accounts.slice(0, 1)} initial={account?.id} onConnected={(org, computerId) => go(computerId, org)} />;
   const crumbs = (label?: string) => [{ label: "Settings" }, label ? { label: "Computers", onClick: back } : { label: "Computers" }, ...(label ? [{ label }] : [])];
 
   if (where.page && account) {
-    const admin = account.personal || account.role !== "member";
+    const admin = account.personal === true;
     const owner = { name: account.name, personal: account.personal === true };
     const cloud = where.page.startsWith("cloud:") ? cloudProvider(where.page.slice(6)) : undefined;
     const listed = across.listed.find(entry => entry.computer.computerId === where.page);
@@ -82,7 +83,7 @@ export function HubComputers({ accounts, all }: { accounts: Organization[]; all:
         <SettingsSection id="computers-cloud" title="Cloud" description="Each thread gets a fresh computer in your own cloud account.">
           {accounts[0] && <CloudAvailability organizationId={accounts[0].id} />}
           <SettingsList label="Cloud">
-            {accounts.map(entry => <CloudRows key={entry.id} account={entry} full={entry.personal === true || accounts.length === 1} named={accounts.length > 1} open={(page) => go(page, entry.id)} />)}
+            {accounts.map(entry => <CloudRows key={entry.id} account={entry} full={entry.personal === true} named={accounts.length > 1} open={(page) => go(page, entry.id)} />)}
           </SettingsList>
         </SettingsSection>
         <SettingsSection id="computers-connected" title="Connected" description="Your Macs and Linux machines. Threads run in the folders on them.">
@@ -120,12 +121,14 @@ function CloudAvailability({ organizationId }: { organizationId: string }) {
 function CloudRows({ account, full, named, open }: { account: Organization; full: boolean; named: boolean; open: (page: string) => void }) {
   const hosted = useHubResource<CloudConnections>(account.id, "/hosted");
   const access = useHubResource<ModelAccessResponse>(account.id, "/model-access");
+  const memberAccess = useHubResource<OwnModelAccessResponse>(account.id, account.personal ? null : "/own-model-access", "/computers/live");
   const chatgpt = useHubResource<{ available: boolean }>(account.id, account.personal ? "/chatgpt" : null, "/computers/live");
   const state = hosted.value;
   const prefix = named ? `${ownerLabel(account)} · ` : "";
   const rows = CLOUD_PROVIDERS.flatMap(provider => {
     const keys = state?.providerKeys?.[provider.id] ?? [];
-    const configured = !!state?.connections?.includes(provider.id) || keys.length > 0;
+    const placements = state?.cloudPlacements?.filter((placement) => placement.provider === provider.id) ?? [];
+    const configured = full ? !!state?.connections?.includes(provider.id) || keys.length > 0 : placements.length > 0;
     const enabled = !!state?.enabledProviders?.includes(provider.id);
     if (!full && !configured) return [];
     const active = keys.find(key => key.active) ?? keys[0];
@@ -135,8 +138,8 @@ function CloudRows({ account, full, named, open }: { account: Organization; full
       label={`${provider.name}${named ? `, ${ownerLabel(account)}` : ""}`}
       media={<RowMark><Icon /></RowMark>}
       title={provider.name}
-      description={`${prefix}${configured ? `${keys.length || 1} ${keys.length === 1 || !keys.length ? "key" : "keys"}${active ? ` · ${active.name}` : ""}` : `Add a ${provider.keyLabel} to run threads here.`}`}
-      state={state && (configured ? <StateDot on={enabled}>{enabled ? "On" : "Off"}</StateDot> : "Not set up")}
+      description={`${prefix}${configured ? full ? `${keys.length || 1} ${keys.length === 1 || !keys.length ? "key" : "keys"}${active ? ` · ${active.name}` : ""}` : placements.map((placement) => `${placement.owner} · ${placement.keyName}`).join(", ") : `Add a ${provider.keyLabel} to run threads here.`}`}
+      state={state && (configured ? <StateDot on={full ? enabled : true}>{full ? enabled ? "On" : "Off" : "Available"}</StateDot> : "Not set up")}
       onOpen={() => open(`cloud:${provider.id}`)}
     />];
   });
@@ -144,15 +147,19 @@ function CloudRows({ account, full, named, open }: { account: Organization; full
     ...(chatgpt.value?.available ? ["ChatGPT"] : []),
     ...(access.value?.providers ?? []).filter(entry => entry.enabled && entry.configured).map(entry => MODEL_ACCESS_LABELS[entry.id] ?? entry.id),
   ];
-  if (!full && !rows.length && !on.length) return null;
+  const memberConnections = account.personal || !memberAccess.value ? [] : [
+    ...memberAccess.value.providers.flatMap((provider) => provider.id === "chatgpt" ? provider.configured ? ["Your ChatGPT"] : [] : provider.keys.map((key) => `Your ${key.name}`)),
+    ...memberAccess.value.enrolled.map((entry) => `${entry.owner} · ${entry.keyName}`),
+  ];
+  if (!full && !rows.length && !on.length && !memberConnections.length) return null;
   return <>
     {rows}
     <SettingsLinkRow
       label={`Model access${named ? `, ${ownerLabel(account)}` : ""}`}
       media={<RowMark><KeyRound /></RowMark>}
       title="Model access"
-      description={`${prefix}${on.length ? `What cloud threads can run: ${on.join(", ")}` : account.personal ? "Sign in to ChatGPT or add an API key so cloud threads have a model." : "What cloud threads here can run"}`}
-      state={access.value && (on.length ? `${on.length} on` : "None on")}
+      description={`${prefix}${memberConnections.length ? memberConnections.join(", ") : on.length ? `What cloud threads can run: ${on.join(", ")}` : account.personal ? "Sign in to ChatGPT or add an API key so cloud threads have a model." : "No model connections are available to you."}`}
+      state={(access.value || memberAccess.value) && (on.length + memberConnections.length ? `${on.length + memberConnections.length} available` : "None")}
       onOpen={() => open("model-access")}
     />
   </>;

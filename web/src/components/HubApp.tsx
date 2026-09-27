@@ -287,7 +287,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
         {
           label: "Computers",
           icon: Laptop,
-          route: { name: "settings", tab: "devices", organizationId },
+          route: { name: "settings", tab: "devices", organizationId: "all" },
           selected: section === "devices",
         },
         {
@@ -297,7 +297,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           selected: section === "connections",
         },
         {
-          label: "Organization",
+          label: "Organizations",
           icon: Building2,
           route: { name:"settings", tab:"organization", organizationId },
           selected: organizationSettings,
@@ -473,7 +473,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               </div>
               <div hidden={section !== "devices"} className={section === "devices" ? "flex min-h-0 flex-1 flex-col" : undefined}>
                 <Deferred open={section === "devices"}>
-                  <Computers accounts={[organization]} all={false} />
+                  <Computers accounts={contexts} all />
                 </Deferred>
               </div>
               <div

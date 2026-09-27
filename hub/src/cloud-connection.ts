@@ -66,6 +66,17 @@ function connectionFrom(provider: CloudConnection["provider"], enabled: boolean,
   return { provider, enabled, token: key.token };
 }
 
+/// One exact named cloud credential. A grant may allow several ids; callers
+/// choose the active allowed key first, then the first allowed key.
+export function cloudConnectionForKey(provider: CloudConnection["provider"], secrets: Record<string, string>, keyId?: string) {
+  const current = parseConnection(secrets[cloudConnectionKey(provider)]);
+  if (!keyId) return current;
+  const stored = parseNamedCloudSet(secrets[namedCloudSecret(provider)]);
+  if (keyId === "legacy" && !stored?.keys.length) return current;
+  const key = stored?.keys.find((entry) => entry.id === keyId);
+  return key ? connectionFrom(provider, current?.enabled ?? true, key) : undefined;
+}
+
 function unusedName(keys: { name: string }[], wanted: string) {
   const used = new Set(keys.map((key) => key.name.toLowerCase()));
   if (!used.has(wanted.toLowerCase())) return wanted;
