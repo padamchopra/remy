@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CONTRACT_VERSION, accountProfileSchema, decodeComputerConnectionKey, encodeComputerConnectionKey, computerCapabilitiesSchema, computerHeartbeatSchema, computerRegistrationInputSchema, computerToHubFrameSchema, deviceAuthorizationSchema, hubToComputerFrameSchema, organizationDeletionImpactSchema, organizationSchema, organizationWorkspaceSchema, parseHubHealth, tokenPairSchema, uptimeCheckFrameSchema } from "./index.js";
+import { CONTRACT_VERSION, THREAD_MESSAGE_MAX_CHARACTERS, THREAD_REQUEST_MAX_BYTES, accountProfileSchema, decodeComputerConnectionKey, encodeComputerConnectionKey, computerCapabilitiesSchema, computerHeartbeatSchema, computerRegistrationInputSchema, computerToHubFrameSchema, deviceAuthorizationSchema, hubToComputerFrameSchema, organizationDeletionImpactSchema, organizationSchema, organizationWorkspaceSchema, parseHubHealth, tokenPairSchema, uptimeCheckFrameSchema } from "./index.js";
+
+test("fits every valid thread message in a hub request", () => {
+  const text = "\u0000".repeat(THREAD_MESSAGE_MAX_CHARACTERS);
+  const body = JSON.stringify({ text, messageId: `u-${crypto.randomUUID()}`, attachmentIds: [] });
+  assert.ok(Buffer.byteLength(body) > 96_000);
+  assert.ok(Buffer.byteLength(body) <= THREAD_REQUEST_MAX_BYTES);
+});
 
 test("accepts a compatible hub health response", () => {
   const health = parseHubHealth({

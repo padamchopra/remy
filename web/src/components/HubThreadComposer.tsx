@@ -11,7 +11,7 @@ import { InputGroupButton, InputGroupText } from "./ui/input-group";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "./ui/dropdown-menu";
 import { EmptyState } from "@/components/EmptyState";
 import { ModelPickerButton } from "./ModelPicker";
-import { CURSOR_CLOUD_COMPUTER_ID, cloudComputerProvider } from "@remy/contract";
+import { CURSOR_CLOUD_COMPUTER_ID, THREAD_MESSAGE_MAX_CHARACTERS, cloudComputerProvider } from "@remy/contract";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ComputerSummary } from "@remy/contract";
 import { Button } from "@/components/ui/button";
@@ -271,7 +271,7 @@ export function HubThreadComposer({
       }}
     >
       <ThreadComposerEditor
-        textarea={{ id: "hub-thread-message", maxLength: 64000, value: message, onChange: e => setMessage(e.target.value), required: true, disabled: false }}
+        textarea={{ id: "hub-thread-message", maxLength: THREAD_MESSAGE_MAX_CHARACTERS, value: message, onChange: e => setMessage(e.target.value), required: true, disabled: false }}
         canSend={!!memberId && !!workspace && !!selected && preferenceLoaded && visibilityLoaded && !!resolvedDefaults && !!message.trim() && !!catalogue.value && !catalogue.stale && !(usingCloud && !usingCursorCloud && !modelAccess.value) && !codexAccountPending && (usingCursorCloud || !(usingCloud || selectedChoice.provider) || !!choiceValid)}
         busy={false} sendLabel="Send"
         controls={modelReady

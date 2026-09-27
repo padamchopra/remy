@@ -1,6 +1,9 @@
 import { z } from "zod";
 
 export const CONTRACT_VERSION = "0.1.0" as const;
+export const THREAD_MESSAGE_MAX_CHARACTERS = 64_000 as const;
+/// JSON may escape one valid message character as six bytes. Keep request framing above that worst case.
+export const THREAD_REQUEST_MAX_BYTES = 512_000 as const;
 
 export const contractVersionSchema = z.literal(CONTRACT_VERSION);
 export type ContractVersion = z.infer<typeof contractVersionSchema>;

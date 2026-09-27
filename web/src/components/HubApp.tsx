@@ -100,6 +100,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
   const [loaded, setLoaded] = useState(false);
   const [signedOut, setSignedOut] = useState(false);
   const [error, setError] = useState("");
+  const [threadError, setThreadError] = useState("");
   const [threads, setThreads] = useState<HubThread[]>([]);
   const [create, setCreate] = useState(false);
   const [addingWorkspace, setAddingWorkspace] = useState(false);
@@ -163,10 +164,13 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
     setThreads([]);
     setThreadsLoaded(false);
     setError("");
+    setThreadError("");
     if (!organization) return;
     if (isAll) {
       const values = new Map<string, HubThread[]>();
       const settled = new Set<string>();
+      const failures = new Map<string, string>();
+      const emitFailure = () => setThreadError(failures.values().next().value ?? "");
       const emit = () => {
         const seen = new Set<string>();
         setThreads(
@@ -181,7 +185,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
         );
         setThreadsLoaded(settled.size === contexts.length);
       };
-      const off = contexts.map(owner => watchHubThreads(owner.id, value => { values.set(owner.id,value); settled.add(owner.id); emit(); }, message => { settled.add(owner.id); setError(`${owner.name}: ${message}`); emit(); }));
+      const off = contexts.map(owner => watchHubThreads(owner.id, value => { values.set(owner.id,value); settled.add(owner.id); failures.delete(owner.id); emitFailure(); emit(); }, message => { settled.add(owner.id); failures.set(owner.id, `${owner.name}: ${message}`); emitFailure(); emit(); }));
       const offOwners = contexts.map(owner => watchHubResource<{organization:Organization}>(hubThreadBase(owner.id), value => {
         if (!value) return;
         if (value.organization.personal) setPersonal(value.organization);
@@ -194,8 +198,9 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
       (value) => {
         setThreads(value);
         setThreadsLoaded(true);
+        setThreadError("");
       },
-      setError,
+      setThreadError,
     );
     const offOrganization = watchHubResource<{ organization: Organization }>(
       hubThreadBase(organization.id),
@@ -377,9 +382,9 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               </Button>
             )}
           </PaneHeader>}
-          {error && (
+          {(error || threadError) && (
             <p role="alert" className="px-4 py-2">
-              {error}
+              {error || threadError}
             </p>
           )}
           {!organization ? (

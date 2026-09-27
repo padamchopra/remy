@@ -5,6 +5,7 @@ import { setTaskEnvironment } from "./environments.js";
 import {
   canReadThread,
   canWriteThread,
+  THREAD_MESSAGE_MAX_CHARACTERS,
   threadAccessSchema,
   threadSnapshotSchema,
   type ThreadAccess,
@@ -227,7 +228,7 @@ export async function handleHubThreadRequest(
       if (
         typeof input.text !== "string" ||
         !input.text.trim() ||
-        input.text.length > 64_000
+        input.text.length > THREAD_MESSAGE_MAX_CHARACTERS
       )
         return fail(400, "Write a message of up to 64,000 characters.");
       if (
