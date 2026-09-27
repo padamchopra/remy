@@ -91,13 +91,21 @@ test("a pull request has its own address in both shells", () => {
     "/pull-requests/jup-ag/mobile/9029?organization=release",
   );
   assert.equal(formatPathLocation({ route: { name: "prs" } }), "/pull-requests");
-  for (const path of ["/pull-requests/jup-ag/mobile", "/pull-requests/jup-ag/mobile/0", "/pull-requests/jup-ag/mobile/12/files"]) {
+  const files = { ...route, view: "files" };
+  assert.equal(formatPathLocation({ route: files }), "/pull-requests/jup-ag/mobile/9029/files");
+  assert.deepEqual(parseLocation("/pull-requests/jup-ag/mobile/9029/files").route, files);
+  assert.deepEqual(parseLocation("#/pull-requests/jup-ag/mobile/9029/files").route, files);
+  for (const path of ["/pull-requests/jup-ag/mobile", "/pull-requests/jup-ag/mobile/0", "/pull-requests/jup-ag/mobile/12/commits", "/pull-requests/jup-ag/mobile/12/files/extra"]) {
     assert.deepEqual(parseLocation(path).route, { name: "prs" }, path);
   }
 });
 
-test("a retired Inbox or Agents link opens threads", () => {
-  for (const path of ["/inbox", "/inbox/remy", "/app/inbox", "/agents", "/agents/remy", "/app/agents"]) {
+test("a retired Inbox, Agents or Tasks link opens threads", () => {
+  for (const path of [
+    "/inbox", "/inbox/remy", "/app/inbox", "/agents", "/agents/remy", "/app/agents",
+    "/board", "/board/mine", "#/board", "/app/board", "/tasks", "/app/tasks",
+    "/tickets/REMY-12", "#/tickets/REMY-12", "/app/tickets/REMY-12", "/recurring/weekly",
+  ]) {
     const parsed = parseLocation(path);
     assert.equal(parsed.route.name, "threads", path);
     assert.equal(formatPathLocation(parsed), "/threads", path);
@@ -122,4 +130,27 @@ test("a hosted retired path rewrites before runtime is known", () => {
   const location = normalizeLocation();
   assert.equal(location.route.name, "threads");
   assert.equal(new URL(href.current).pathname, "/app/threads");
+});
+
+test("a hosted Tasks or ticket link rewrites to threads", () => {
+  for (const start of ["https://app.tryremy.dev/app/tickets/REMY-4", "https://app.tryremy.dev/board", "https://app.tryremy.dev/app/#/board"]) {
+    const href = { current: start };
+    globalThis.window = {
+      location: {
+        get href() { return href.current; },
+        get pathname() { return new URL(href.current).pathname; },
+        get search() { return new URL(href.current).search; },
+        get hash() { return new URL(href.current).hash; },
+      },
+      history: {
+        replaceState(_state, _title, next) {
+          href.current = new URL(next, href.current).href;
+        },
+      },
+    };
+    const location = normalizeLocation();
+    assert.equal(location.route.name, "threads", start);
+    const url = new URL(href.current);
+    assert.ok(url.pathname.endsWith("/threads") || url.hash === "#/threads", `${start} -> ${href.current}`);
+  }
 });

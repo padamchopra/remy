@@ -34,7 +34,7 @@ import {
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Tabs, TabsContent, TabsList } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { ChatView, ThreadTicket } from "@/components/ChatView";
+import { ChatView } from "@/components/ChatView";
 import { SurfaceLoading } from "@/components/Deferred";
 import { StartSubthreadDialog } from "@/components/StartSubthreadDialog";
 import { ThreadActivityTool } from "@/components/ThreadActivity";
@@ -113,7 +113,6 @@ interface Bench {
   close: (tab: WorkbenchTab) => void;
   startSubthread: () => void;
   onOpenThread: (id: string) => void;
-  onOpenTicket: (key: string) => void;
   onOpenWorkspace: (workspaceId: string) => void;
 }
 
@@ -122,7 +121,6 @@ export function ThreadWorkbench({
   focusedId,
   autoFocus = true,
   onOpenThread,
-  onOpenTicket,
   onOpenWorkspace,
   onFocusThread,
 }: {
@@ -130,7 +128,6 @@ export function ThreadWorkbench({
   focusedId?: string;
   autoFocus?: boolean;
   onOpenThread: (id: string) => void;
-  onOpenTicket: (key: string) => void;
   onOpenWorkspace: (workspaceId: string) => void;
   /// The thread you are in changed by way of a tab or a group, so the URL and
   /// the sidebar follow it.
@@ -251,7 +248,6 @@ export function ThreadWorkbench({
     close,
     startSubthread: () => setSpawnOpen(true),
     onOpenThread,
-    onOpenTicket,
     onOpenWorkspace,
   };
 
@@ -324,11 +320,7 @@ function GroupView({ group, focused, bench }: { group: TabGroup; focused: boolea
         onValueChange={(id) => bench.change((current) => activateTab(current, id))}
         className="min-h-0 flex-1 gap-0"
       >
-        <TabStrip
-          actions={activeTab?.kind === "thread" && activeChat
-            ? <ThreadTicket chatId={activeChat.id} onOpenTicket={bench.onOpenTicket} />
-            : undefined}
-        >
+        <TabStrip>
           <TabsList aria-label="Open tabs" className={tabListClass}>
             {group.tabs.map((tab) => (
               <TabTrigger
@@ -567,7 +559,6 @@ function Surface({ tab, visible, focused, bench }: { tab: WorkbenchTab; visible:
         codeReferences={bench.codeReferences[chat.id] ?? EMPTY_REFERENCES}
         onCodeReferencesChange={(references) => bench.setCodeReferences(chat.id, references)}
         onOpenLink={(href) => bench.openLink(chat.id, href)}
-        onOpenTicket={bench.onOpenTicket}
         onOpenThread={bench.onOpenThread}
         onOpenWorkspace={bench.onOpenWorkspace}
       />

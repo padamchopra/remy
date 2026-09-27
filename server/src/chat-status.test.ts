@@ -22,7 +22,6 @@ process.env.PATH = `${directory}:${process.env.PATH}`;
 const { Chat } = await import("./chat.js");
 const { patchSettings } = await import("./config.js");
 const { setProviderAdapterForTest } = await import("./provider-adapters/index.js");
-patchSettings({ notifySelf: false });
 after(() => rmSync(directory, { recursive: true, force: true }));
 
 class Session {

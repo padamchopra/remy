@@ -80,7 +80,7 @@ export function useWorkspaceWorktrees(workspace: Workspace) {
           });
         }
       }
-      if (frame.type === "hello" || frame.type === "peer-reset") refresh(serverId);
+      if (frame.type === "hello") refresh(serverId);
     }, refs.current.copies.map((copy) => `workspace:${copy.id}`));
     const offStatus = transport.onStatus((serverId, online) => { if (online) refresh(serverId); });
     const onFocus = () => refresh();

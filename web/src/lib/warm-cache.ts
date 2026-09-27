@@ -16,7 +16,7 @@
 /// - Nothing here suppresses a request. Hydration seeds the first paint; the
 ///   refresh underneath it overwrites whatever it finds.
 
-import type { Chat, ChatDetail, Project, Server, Workspace } from "../state/types";
+import type { Chat, ChatDetail, Server, Workspace } from "../state/types";
 
 /// Bump this whenever a persisted shape changes. A snapshot written by another
 /// version is discarded rather than migrated: it is a head start, and the read
@@ -31,7 +31,6 @@ export const WARM_CACHE_BOUNDS = {
   servers: 12,
   chats: 60,
   workspaces: 60,
-  projects: 40,
   details: 4,
   entriesPerDetail: 24,
   characters: 256_000,
@@ -41,15 +40,13 @@ export const WARM_CACHE_BOUNDS = {
 /// The lists a person sees before they touch anything, plus the transcripts
 /// they were last reading.
 ///
-/// Tickets are not here: they belong to a pane of their own, and a board is the
-/// one list with no natural size. Archived threads are absent for the same
-/// reason — they carry whole conversations and nothing opens on them.
+/// Archived threads are absent: they carry whole conversations and nothing
+/// opens on them.
 export interface WarmSnapshot {
   version: number;
   servers: Server[];
   chats: Chat[];
   workspaces: Workspace[];
-  projects: Project[];
   details: ChatDetail[];
 }
 
@@ -138,7 +135,6 @@ export function warmSnapshot(
     servers: readonly Server[];
     chats: readonly Chat[];
     workspaces: readonly Workspace[];
-    projects: readonly Project[];
   },
   details: readonly ChatDetail[],
 ): WarmSnapshot {
@@ -147,7 +143,6 @@ export function warmSnapshot(
     servers: state.servers.slice(0, WARM_CACHE_BOUNDS.servers).map(settledServer),
     chats: keptRows(state.chats, WARM_CACHE_BOUNDS.chats).map(settledChat),
     workspaces: state.workspaces.slice(0, WARM_CACHE_BOUNDS.workspaces),
-    projects: state.projects.slice(0, WARM_CACHE_BOUNDS.projects),
     details: details
       .flatMap((detail) => {
         const settled = settledDetail(detail);
@@ -250,7 +245,6 @@ export function readWarmCache(
         .map(settledServer),
       chats: rows<Chat>(stored.chats, WARM_CACHE_BOUNDS.chats, isChat).map(settledChat),
       workspaces: rows<Workspace>(stored.workspaces, WARM_CACHE_BOUNDS.workspaces, (w) => typeof w.path === "string"),
-      projects: rows<Project>(stored.projects, WARM_CACHE_BOUNDS.projects, (p) => typeof p.keyPrefix === "string"),
       details: rows<ChatDetail>(stored.details, WARM_CACHE_BOUNDS.details, (d) => Array.isArray(d.entries))
         .flatMap((detail) => {
           const settled = settledDetail(detail);

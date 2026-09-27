@@ -87,7 +87,6 @@ export interface SidebarThread {
   /// source — a local file on the Mac, an uploaded one on the hub.
   workspace?: { name: string; mark: ReactNode; onOpen?: () => void };
   computer?: { name: string; icon?: DeviceIconId };
-  ticket?: { key: string; title?: string; onOpen: () => void };
   children?: SidebarThread[];
   menu: SidebarThreadMenu;
   onSelect: () => void;

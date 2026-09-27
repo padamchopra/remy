@@ -507,14 +507,7 @@ export class GitHubConnection {
   /// GitHub renders for a reader, and those expire within minutes, so they are
   /// read when a pull request opens rather than kept with the list.
   async pullRequestImages(org: string, user: string, repository: string, number: number) {
-    await this.access(org, user);
-    const workspaces = await this.organizations.workspaces(org, user);
-    const known = workspaces.some((workspace) =>
-      githubRepositoryFromOrigin(workspace.origin).toLowerCase() === repository.toLowerCase());
-    const [owner, name, extra] = repository.split("/");
-    if (!known || !owner || !name || extra || !Number.isSafeInteger(number) || number < 1) {
-      throw new ConnectionError("Choose a pull request in one of your workspaces.", 404);
-    }
+    const { owner, name } = await this.workspacePullRequest(org, user, repository, number);
     const data = await this.graphql(org, user, {
       query: `query PullRequestImages($owner: String!, $name: String!, $number: Int!) {
         repository(owner: $owner, name: $name) { pullRequest(number: $number) { bodyHTML } }
@@ -523,6 +516,78 @@ export class GitHubConnection {
     });
     const pullRequest = (data.data?.repository as { pullRequest?: { bodyHTML?: unknown } } | undefined)?.pullRequest;
     return { images: signedAttachmentImages(typeof pullRequest?.bodyHTML === "string" ? pullRequest.bodyHTML : "") };
+  }
+
+  /// The files a pull request changes, with GitHub's own patch for each, so a
+  /// hosted reader can review the diff without a computer. The list is read
+  /// with the member's credential, never an installation token. GitHub lists
+  /// at most 3000 files and leaves `patch` off binary and very large files; the
+  /// answer also stops carrying patches past a byte budget so one enormous pull
+  /// request cannot become a response the browser has to swallow whole.
+  async pullRequestFiles(org: string, user: string, repository: string, number: number, changedFiles?: number) {
+    const { owner, name } = await this.workspacePullRequest(org, user, repository, number);
+    const base = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${number}/files?per_page=${PULL_REQUEST_FILES_PAGE}`;
+    const read = async (page: number) => {
+      const value = await this.api<unknown>(org, user, `${base}&page=${page}`);
+      return Array.isArray(value) ? value : [];
+    };
+    const pages: unknown[][] = [await read(1)];
+    // The count the list already knows says how many pages to ask for, so they
+    // are read a few at a time rather than one after another. Without it, or
+    // when it was stale, each full page asks for the next.
+    const expected = changedFiles && Number.isSafeInteger(changedFiles) && changedFiles > 0
+      ? Math.min(PULL_REQUEST_FILES_MAX_PAGES, Math.ceil(changedFiles / PULL_REQUEST_FILES_PAGE))
+      : 1;
+    for (let next = 2; next <= expected && pages.at(-1)!.length === PULL_REQUEST_FILES_PAGE; next += PULL_REQUEST_FILES_PARALLEL) {
+      const count = Math.min(PULL_REQUEST_FILES_PARALLEL, expected - next + 1);
+      pages.push(...await Promise.all(Array.from({ length: count }, (_, index) => read(next + index))));
+    }
+    while (pages.length < PULL_REQUEST_FILES_MAX_PAGES && pages.at(-1)!.length === PULL_REQUEST_FILES_PAGE) {
+      pages.push(await read(pages.length + 1));
+    }
+    let budget = PULL_REQUEST_PATCH_BUDGET;
+    let patchesOmitted = false;
+    const files = pages.flat().flatMap((value) => {
+      if (!value || typeof value !== "object") return [];
+      const file = value as { filename?: unknown; previous_filename?: unknown; status?: unknown; additions?: unknown; deletions?: unknown; patch?: unknown };
+      if (typeof file.filename !== "string" || !file.filename) return [];
+      const patch = typeof file.patch === "string" ? file.patch : undefined;
+      const keep = patch !== undefined && patch.length <= budget;
+      if (patch !== undefined) {
+        if (keep) budget -= patch.length;
+        else patchesOmitted = true;
+      }
+      return [{
+        path: file.filename,
+        ...(typeof file.previous_filename === "string" && file.previous_filename ? { previousPath: file.previous_filename } : {}),
+        status: PULL_REQUEST_FILE_STATUSES.has(String(file.status)) ? String(file.status) : "modified",
+        additions: Number.isSafeInteger(file.additions) ? file.additions as number : 0,
+        deletions: Number.isSafeInteger(file.deletions) ? file.deletions as number : 0,
+        ...(keep ? { patch } : {}),
+        ...(patch !== undefined && !keep ? { patchOmitted: true } : {}),
+      }];
+    });
+    const lastPage = pages.at(-1)!;
+    return {
+      files,
+      // GitHub stops at 3000 files; say so rather than pretend the list is whole.
+      truncated: pages.length >= PULL_REQUEST_FILES_MAX_PAGES && lastPage.length === PULL_REQUEST_FILES_PAGE,
+      patchesOmitted,
+    };
+  }
+
+  /// A pull request a member may read here: its repository is one of their
+  /// workspaces, whatever else their GitHub credential can see.
+  private async workspacePullRequest(org: string, user: string, repository: string, number: number) {
+    await this.access(org, user);
+    const workspaces = await this.organizations.workspaces(org, user);
+    const known = workspaces.some((workspace) =>
+      githubRepositoryFromOrigin(workspace.origin).toLowerCase() === repository.toLowerCase());
+    const [owner, name, extra] = repository.split("/");
+    if (!known || !owner || !name || extra || !Number.isSafeInteger(number) || number < 1) {
+      throw new ConnectionError("Choose a pull request in one of your workspaces.", 404);
+    }
+    return { owner, name };
   }
 
   private async graphql(
@@ -536,6 +601,14 @@ export class GitHubConnection {
     }>(org, user, "/graphql", "POST", input);
   }
 }
+
+const PULL_REQUEST_FILES_PAGE = 100;
+/// 30 pages of 100 is GitHub's 3000-file ceiling for this list.
+const PULL_REQUEST_FILES_MAX_PAGES = 30;
+const PULL_REQUEST_FILES_PARALLEL = 5;
+/// Patch text carried in one answer; files past it arrive without a patch.
+const PULL_REQUEST_PATCH_BUDGET = 3_000_000;
+const PULL_REQUEST_FILE_STATUSES = new Set(["added", "removed", "modified", "renamed", "copied", "changed", "unchanged"]);
 
 /// Fresh enough that a reopen of Pull requests does not wait on GitHub again.
 export const HOSTED_PULL_REQUEST_CACHE_FRESH_MS = 60_000;
@@ -559,6 +632,8 @@ const HOSTED_PULL_REQUEST_FRAGMENT = `fragment HostedPullRequest on PullRequest 
   repository { nameWithOwner }
   assignees(first: 10) { nodes { login } }
   reviewRequests(first: 10) { nodes { requestedReviewer { ... on User { login } } } }
+  latestReviews(first: 10) { nodes { author { login } state } }
+  labels(first: 10) { nodes { name color } }
   comments(first: 20) { nodes { author { login } body createdAt url } }
   commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 20) { nodes {
     ... on CheckRun { name conclusion status }
@@ -613,6 +688,8 @@ type HostedListedPullRequest = {
   deletions: number;
   changedFiles: number;
   checks: { name: string; state: "pass" | "fail" | "pending" | "skipping" }[];
+  reviewers: HostedPullRequestReviewer[];
+  labels: { name: string; color: string }[];
   comments: { author: string; body: string; createdAt: string; url: string }[];
   unreadComments: unknown[];
   hasUnreadActivity: boolean;
@@ -624,6 +701,11 @@ type HostedListedPullRequest = {
   worktreePath: string | null;
   stack: HostedPullRequestStack | null;
   state: string;
+};
+
+type HostedPullRequestReviewer = {
+  login: string;
+  state: "REQUESTED" | "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED";
 };
 
 type HostedPullRequestStack = {
@@ -663,6 +745,8 @@ function hostedPullRequest(
     deletions: Number(pr.deletions ?? 0),
     changedFiles: Number(pr.changedFiles ?? 0),
     checks: pullRequestChecks(pr),
+    reviewers: pullRequestReviewers(pr),
+    labels: pullRequestLabels(pr),
     comments: pullRequestComments(pr),
     unreadComments: [] as unknown[],
     hasUnreadActivity: false,
@@ -720,6 +804,33 @@ export function signedAttachmentImages(bodyHTML: string): Record<string, string>
     if (id) images[`https://github.com/user-attachments/assets/${id.toLowerCase()}`] = signed;
   }
   return images;
+}
+
+/// Who has reviewed, with their latest verdict, then who is still asked to.
+/// Someone asked again after reviewing is waiting on, so the request wins.
+function pullRequestReviewers(pr: Record<string, unknown>): HostedPullRequestReviewer[] {
+  const reviewers = new Map<string, HostedPullRequestReviewer>();
+  for (const node of nodesOf(pr.latestReviews as { nodes?: unknown[] } | undefined)) {
+    const review = node as { author?: unknown; state?: unknown } | null;
+    const login = githubLogin(loginOf(review?.author));
+    const state = String(review?.state ?? "");
+    if (!login || !["APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED"].includes(state)) continue;
+    reviewers.set(login.toLowerCase(), { login, state: state as HostedPullRequestReviewer["state"] });
+  }
+  for (const node of nodesOf(pr.reviewRequests as { nodes?: unknown[] } | undefined)) {
+    const login = githubLogin(loginOf((node as { requestedReviewer?: unknown } | null)?.requestedReviewer));
+    if (login) reviewers.set(login.toLowerCase(), { login, state: "REQUESTED" });
+  }
+  return [...reviewers.values()];
+}
+
+function pullRequestLabels(pr: Record<string, unknown>) {
+  return nodesOf(pr.labels as { nodes?: unknown[] } | undefined).flatMap((node) => {
+    const label = node as { name?: unknown; color?: unknown } | null;
+    if (typeof label?.name !== "string" || !label.name) return [];
+    const color = typeof label.color === "string" && /^[0-9a-f]{6}$/i.test(label.color) ? label.color.toLowerCase() : "";
+    return [{ name: label.name.slice(0, 100), color }];
+  });
 }
 
 function pullRequestComments(pr: Record<string, unknown>) {

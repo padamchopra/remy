@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CONTRACT_VERSION, accountProfileSchema, decodeComputerConnectionKey, encodeComputerConnectionKey, boardAppendInputSchema, boardLiveFrameSchema, boardLogEventSchema, computerHeartbeatSchema, computerRegistrationInputSchema, computerToHubFrameSchema, deviceAuthorizationSchema, hubToComputerFrameSchema, organizationDeletionImpactSchema, organizationSchema, organizationWorkspaceSchema, parseHubHealth, tokenPairSchema, uptimeCheckFrameSchema } from "./index.js";
+import { CONTRACT_VERSION, accountProfileSchema, decodeComputerConnectionKey, encodeComputerConnectionKey, boardAppendInputSchema, boardLiveFrameSchema, boardLogEventSchema, computerCapabilitiesSchema, computerHeartbeatSchema, computerRegistrationInputSchema, computerToHubFrameSchema, deviceAuthorizationSchema, hubToComputerFrameSchema, organizationDeletionImpactSchema, organizationSchema, organizationWorkspaceSchema, parseHubHealth, tokenPairSchema, uptimeCheckFrameSchema } from "./index.js";
 
 test("accepts a compatible hub health response", () => {
   const health = parseHubHealth({
@@ -104,4 +104,12 @@ test("carries one connection key from the web to a computer's terminal", () => {
   assert.throws(() => decodeComputerConnectionKey("remy_notbase64!!"), /incomplete/);
   assert.throws(() => decodeComputerConnectionKey(`remy_${btoa('{"v":1}').replace(/=+$/, "")}`), /incomplete/);
   assert.throws(() => encodeComputerConnectionKey({ v: 1, url: "not-a-url", organizationId: "org-1", ownership: "personal", key: "a".repeat(43) }));
+});
+
+test("computer capabilities carry model names and still accept ids alone", () => {
+  const base = { workspaces: [], worktrees: true, terminals: true, emulator: false };
+  const named = computerCapabilitiesSchema.parse({ ...base, providers: [{ id: "claude", models: ["sonnet"], modelInfo: [{ value: "sonnet", label: "Sonnet 5", context: "200K" }] }] });
+  assert.equal(named.providers[0]?.modelInfo?.[0]?.label, "Sonnet 5");
+  const bare = computerCapabilitiesSchema.parse({ ...base, providers: [{ id: "claude", models: ["sonnet"] }] });
+  assert.equal(bare.providers[0]?.modelInfo, undefined);
 });

@@ -1,6 +1,6 @@
-import { Boxes, ChartNoAxesCombined, GitBranch, Laptop, Link2, Monitor } from "lucide-react";
+import { Boxes, GitBranch, Laptop, Link2, Monitor } from "lucide-react";
 
-export type SettingsTab = "organization" | "environments" | "general" | "version-control" | "providers" | "devices" | "analytics" | "members" | "teams" | "connections";
+export type SettingsTab = "organization" | "environments" | "general" | "version-control" | "providers" | "devices" | "members" | "teams" | "connections";
 
 /// The settings tabs, listed here rather than beside the pane they open so the
 /// sidebar can draw them without loading it.
@@ -15,5 +15,4 @@ export const SETTINGS_SECTIONS: {
   { id: "version-control", label: "Version control", icon: GitBranch },
   { id: "providers", label: "Providers", icon: Boxes },
   { id: "devices", label: "Computers", icon: Laptop },
-  { id: "analytics", label: "Analytics", icon: ChartNoAxesCombined },
 ];

@@ -1,6 +1,4 @@
 import { usePersonalHub } from "@/lib/hub-scope";
-import {HubLinearBoard} from "./HubLinearBoard";
-import {HubLinear} from "./HubLinear";
 import { HubGitHub } from "./HubGitHub";
 import { useState } from "react";
 import { useHubResource } from "@/lib/hub-organization";
@@ -183,8 +181,6 @@ export function HubConnections({ organizationId }: { organizationId: string }) {
         </Card>
       ))}
       {value && <HubGitHub organizationId={organizationId} canManage={value.canManage} />}
-      {value && <HubLinear organizationId={organizationId} />}
-      {value && <HubLinearBoard organizationId={organizationId} />}
       <AlertDialog
         open={!!remove}
         onOpenChange={(open) => {

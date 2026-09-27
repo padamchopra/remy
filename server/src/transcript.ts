@@ -55,7 +55,7 @@ export interface ConvEntry {
   adds?: number;
   dels?: number;
   questions?: ConvQuestion[];
-  /// What a Remy tool made on this call — a ticket, a thread, a workspace —
+  /// What a Remy tool made on this call — a thread or a workspace —
   /// shown as a card under the tool row rather than left in its output.
   artifacts?: ConvArtifact[];
   /// Images sent with a user message, retained so every client renders the

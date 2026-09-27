@@ -3,6 +3,7 @@ import { ChevronRight, ImageOff, Square, SquareCheckBig } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { remarkGitHubReferences } from "@/lib/github-references";
 import { stripMarkdownHtmlComments } from "@/lib/markdown-html-comments";
 import { cn } from "@/lib/utils";
 
@@ -97,15 +98,19 @@ const COMPONENTS: Components = {
       {children}
     </pre>
   ),
+  // A wide table scrolls inside its own box rather than shrinking its text or
+  // pushing the page sideways. Cells keep a readable measure.
   table: ({ children }) => (
-    <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-xs">{children}</table>
+    <div data-slot="markdown-table" className="max-w-full overflow-x-auto rounded-lg border border-border">
+      <table className="w-full min-w-max border-collapse text-[0.93em] leading-snug">{children}</table>
     </div>
   ),
   th: ({ children }) => (
-    <th className="border border-border bg-muted/40 px-2 py-1 text-left font-medium">{children}</th>
+    <th className="max-w-[28rem] border-b border-border bg-muted/40 px-3 py-2 text-left font-medium [&:not(:last-child)]:border-r">{children}</th>
   ),
-  td: ({ children }) => <td className="border border-border px-2 py-1 align-top">{children}</td>,
+  td: ({ children }) => (
+    <td className="max-w-[28rem] border-border px-3 py-2 align-top tabular-nums whitespace-normal [&:not(:last-child)]:border-r [tr:not(:last-child)>&]:border-b">{children}</td>
+  ),
   img: ({ alt, src, width, height }) => (
     <MarkdownImage alt={alt} src={typeof src === "string" ? src : undefined} width={width} height={height} />
   ),
@@ -323,10 +328,14 @@ export const Markdown = memo(function Markdown({
   className,
   onOpenLink,
   images,
+  repository,
 }: {
   text: string;
   className?: string;
   images?: Record<string, string>;
+  /// The GitHub repository the text was written in, so `#123`, `@login` and
+  /// commit hashes link the way GitHub draws them.
+  repository?: string;
   /// A thread keeps ordinary clicks in its own work surface. Command-click is
   /// left to the anchor, which opens it outside Remy.
   onOpenLink?: (href: string) => void;
@@ -339,7 +348,7 @@ export const Markdown = memo(function Markdown({
   return (
     <div className={cn("flex flex-col gap-3 text-sm leading-relaxed", className)}>
       <ImageSources value={images}>
-        <ReactMarkdown remarkPlugins={[remarkGfm, remarkDetails, remarkImages]} components={components}>
+        <ReactMarkdown remarkPlugins={repository ? [remarkGfm, remarkDetails, remarkImages, [remarkGitHubReferences, { repository }]] : [remarkGfm, remarkDetails, remarkImages]} components={components}>
           {source}
         </ReactMarkdown>
       </ImageSources>

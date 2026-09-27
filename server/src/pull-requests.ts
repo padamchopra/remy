@@ -138,9 +138,8 @@ const mergedCache = new Map<string, { at: number; pullRequests: MergedPullReques
 /// The pull requests you have merged lately in one workspace.
 ///
 /// `listAuthoredPullRequests` asks only for open ones, and a merged pull request
-/// is a whole signal of its own — a ticket that landed — so this is a second,
-/// smaller question rather than a wider version of that one. `@me` is the same
-/// author: a pull request Remy opened for a ticket was opened from here.
+/// is a whole signal of its own — work that landed — so this is a second,
+/// smaller question rather than a wider version of that one.
 export async function listMergedPullRequests(workspace: Workspace, limit = 50): Promise<MergedPullRequest[]> {
   const cached = mergedCache.get(workspace.id);
   if (cached && Date.now() - cached.at < MERGED_CACHE_TTL_MS) return cached.pullRequests;

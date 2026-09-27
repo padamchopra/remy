@@ -1,4 +1,4 @@
-import { PROVIDERS, type ModelChoice, type Provider, type ProviderModel } from "./providers";
+import { KNOWN_MODELS, PROVIDERS, type ModelChoice, type Provider, type ProviderModel } from "./providers";
 import type { ModelAccessEntry } from "@/components/HubModelAccess";
 
 const HOSTED_LABELS: Record<string, string> = {
@@ -121,4 +121,40 @@ export function hostedExecutionChoice(choice: ModelChoice): { provider: string; 
   }
   if (choice.model.startsWith("remy:")) return { provider: "codex", model: choice.model };
   return { provider: choice.provider, model: choice.model };
+}
+
+/// What a computer says it can run, as a provider carries it on the wire.
+export interface ComputerProviderModels {
+  id: string;
+  models: string[];
+  modelInfo?: { value: string; label: string; context?: string; resolvedLabel?: string }[];
+}
+
+/// A computer's providers with their models named.
+///
+/// A current daemon sends each model's name as its CLI reports it. An older one
+/// sends ids alone, which take their name from Remy's own catalogue; an id that
+/// catalogue does not know stays as the id rather than a guessed name.
+export function computerModels(entries: ComputerProviderModels[]): Provider[] {
+  return entries.flatMap((entry) => {
+    const runtime = PROVIDERS.find((provider) => provider.id === entry.id);
+    if (!runtime) return [];
+    const named = new Map((entry.modelInfo ?? []).map((info) => [info.value, info]));
+    const models = entry.models.map((value): ProviderModel => {
+      const info = named.get(value);
+      const known = runtime.models.find((model) => model.value === value)
+        ?? KNOWN_MODELS[runtime.id]?.find((model) => model.value === value);
+      if (info) {
+        return {
+          ...known,
+          value,
+          label: info.label,
+          ...(info.context ? { context: info.context } : {}),
+          ...(info.resolvedLabel ? { resolvedLabel: info.resolvedLabel } : {}),
+        };
+      }
+      return known ?? { value, label: value || "Default" };
+    });
+    return [{ ...runtime, models }];
+  });
 }

@@ -2,13 +2,11 @@ import { HubModelDefault } from "./HubModelDefault";
 import { HubComputerModelKeys } from "./HubComputerModelKeys";
 import { HubComputerAccounts } from "./HubComputerAccounts";
 import { HubComputerConnect } from "./HubComputerConnect";
-import { PROVIDERS } from "@/lib/providers";
+import { computerModels } from "@/lib/hub-models";
 import { EmptyState } from "@/components/EmptyState";
-import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { HubPersonalContext, usePersonalHub } from "@/lib/hub-scope";
 import { Deferred } from "./Deferred";
 import { Cloud, Laptop, Plus } from "lucide-react";
-import { HubBoardSync } from "./HubBoardSync";
 import { apiError } from "@/lib/api-error";
 import { lazy, useEffect, useState } from "react";
 import type {
@@ -68,8 +66,6 @@ import { DEVICE_ICON_IDS, deviceIcon, type DeviceIconId } from "@/lib/devices";
 import { hubRequest, hubThreadBase, watchHubThreads } from "@/lib/hub-threads";
 import { watchHubComputers } from "@/lib/hub-computers";
 import { currentLocation, listenToLocationChanges, navigateLocation, parseLocation } from "@/lib/route";
-import { transport } from "@/lib/transport";
-import { useStore } from "@/state/store";
 
 const HostedComputers = lazy(() => import("./HubHostedComputers").then((m) => ({ default: m.HubHostedComputers })));
 const computerPane = () => {
@@ -77,13 +73,6 @@ const computerPane = () => {
   return route.name === "settings" && route.tab === "devices" ? route.deviceId ?? "cloud" : "cloud";
 };
 
-type Registration = {
-  computerId: string;
-  organizationId: string;
-  hubUrl: string;
-  name: string;
-  icon: string;
-};
 type Options = {
   role: string;
   members: ThreadMember[];
@@ -91,8 +80,6 @@ type Options = {
 };
 export function HubComputers({ organizationId }: { organizationId?: string }) {
   const personalContext = usePersonalHub();
-  const local = useStore((s) => s.servers.find((server) => server.local));
-  const [registration, setRegistration] = useState<Registration | null>(null);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [org, setOrg] = useState(organizationId ?? "");
   const isPersonal =
@@ -110,8 +97,7 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
   const [stale, setStale] = useState(false);
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<ComputerSummary>();
-  const [removing, setRemoving] = useState<ComputerSummary | "local">();
-  const [attach, setAttach] = useState(false);
+  const [removing, setRemoving] = useState<ComputerSummary>();
   const [busy, setBusy] = useState(false);
   const [pane, setPane] = useState(computerPane);
   useEffect(() => {
@@ -126,21 +112,6 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
     if (organizationId) setOrg(organizationId);
   }, [organizationId]);
   useEffect(() => {
-    if (!local) return;
-    void transport
-      .request<{ registration: Registration | null }>(
-        local.id,
-        "/server/hub/computer",
-      )
-      .then((value) => {
-        setRegistration(value.registration);
-        if (!organizationId && value.registration)
-          setOrg(value.registration.organizationId);
-      })
-      .catch((e) => setError(apiError(e)));
-  }, [local?.id, organizationId]);
-  useEffect(() => {
-    if (local) return;
     void Promise.all([
       hubRequest<{ organizations: Organization[] }>("/api/organizations"),
       hubRequest<{ personal: Organization }>("/api/personal"),
@@ -151,9 +122,9 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
           setOrg((current) => current || account.personal.id);
       })
       .catch(() => undefined);
-  }, [local?.id]);
+  }, []);
   useEffect(() => {
-    if (!org || local) return;
+    if (!org) return;
     setError("");
     setComputers([]);
     setComputersLoaded(false);
@@ -178,7 +149,7 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
       off();
       offThreads();
     };
-  }, [org, local?.id]);
+  }, [org]);
   const openThread = (thread: HubThread) => {
     navigateLocation({
       route: {
@@ -192,12 +163,7 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
     setBusy(true);
     setError("");
     try {
-      if (removing === "local" && local) {
-        await transport.request(local.id, "/server/hub/computer", {
-          method: "DELETE",
-        });
-        setRegistration(null);
-      } else if (removing && removing !== "local")
+      if (removing)
         await hubRequest(
           `${hubThreadBase(org)}/computers/${removing.computerId}`,
           "DELETE",
@@ -215,14 +181,6 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
         className="@container flex min-w-0 flex-col gap-4"
         aria-label="Computers"
       >
-        {local && <Field>
-          <FieldLabel>Computers</FieldLabel>
-          <FieldDescription>
-            {isPersonal
-              ? "Connect a computer to run your threads."
-              : "Choose who can use each computer."}
-          </FieldDescription>
-        </Field>}
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           {!organizationId && organizations.length > 0 && (
             <Select
@@ -252,26 +210,7 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
               </SelectContent>
             </Select>
           )}
-          {local && !registration && (
-            <Button variant="outline" onClick={() => setAttach(true)}>
-              Attach this Mac
-            </Button>
-          )}
-          {registration && (
-            <Button variant="outline" onClick={() => setRemoving("local")}>
-              Detach this Mac
-            </Button>
-          )}
         </div>
-        {local &&
-          registration?.organizationId === org &&
-          options.role !== "member" && (
-            <HubBoardSync
-              organizationId={org}
-              computerId={registration.computerId}
-              localId={local.id}
-            />
-          )}
         {error && (
           <p role="alert" className="text-sm text-destructive">
             {error}
@@ -282,20 +221,13 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
             You’re reading the last saved computer list.
           </p>
         )}
-        {!org && (
-          <EmptyState title="Connect this Mac" description="Attach this Mac to use your threads from the web." />
-        )}
-        {local && registration && <Field>
-          <FieldDescription>This Mac is connected to Remy on the web.</FieldDescription>
-          <Button asChild variant="outline"><a href={registration.hubUrl} target="_blank" rel="noreferrer">Open Remy on the web</a></Button>
-        </Field>}
         <div className="flex min-w-0 flex-col gap-6">
-          {!local && <nav aria-label="Computer settings" className="flex min-w-0 flex-wrap items-center gap-1 border-b pb-3">
+          <nav aria-label="Computer settings" className="flex min-w-0 flex-wrap items-center gap-1 border-b pb-3">
             <Button size="sm" variant={pane === "cloud" ? "secondary" : "ghost"} data-link aria-current={pane === "cloud" ? "page" : undefined} onClick={() => choosePane("cloud")}><Cloud />Cloud</Button>
             <Button size="sm" variant={pane !== "cloud" ? "secondary" : "ghost"} data-link aria-current={pane !== "cloud" ? "page" : undefined} onClick={() => choosePane("computers")}><Laptop />Connected</Button>
-          </nav>}
+          </nav>
           <div className="min-w-0">
-            {!local && pane === "general" && <section aria-label="General computer settings" className="flex max-w-xl flex-col gap-6">
+            {pane === "general" && <section aria-label="General computer settings" className="flex max-w-xl flex-col gap-6">
               <Field>
                 <FieldLabel>Connect a computer</FieldLabel>
                 <FieldDescription>Add a Mac or Linux machine to run threads using its workspaces and providers.</FieldDescription>
@@ -307,27 +239,27 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
               </Field>
               <FieldDescription>Your computer appears in Computers after you sign it in.</FieldDescription>
             </section>}
-            {org && !local && <div className={pane === "cloud" ? "" : "hidden"}>
+            {org && <div className={pane === "cloud" ? "" : "hidden"}>
               <Deferred open={pane === "cloud"}>
                 <HostedComputers key={org} organizationId={org} admin={options.role !== "member"} />
               </Deferred>
             </div>}
-            {!local && computersLoaded && !["computers", "general", "cloud"].includes(pane) && !computers.some((c) => c.computerId === pane) && <EmptyState title="Computer unavailable" description="Choose another computer or connect one.">
+            {computersLoaded && !["computers", "general", "cloud"].includes(pane) && !computers.some((c) => c.computerId === pane) && <EmptyState title="Computer unavailable" description="Choose another computer or connect one.">
               <Button variant="outline" data-link onClick={() => choosePane("computers")}>View computers</Button>
             </EmptyState>}
-        {!local && pane === "computers" && !computersLoaded && !error && <p role="status" className="text-sm text-muted-foreground">Reading computers…</p>}
-        {!local && pane === "computers" && computersLoaded && computers.length === 0 && !error && !stale && <Empty className="py-12">
+        {pane === "computers" && !computersLoaded && !error && <p role="status" className="text-sm text-muted-foreground">Reading computers…</p>}
+        {pane === "computers" && computersLoaded && computers.length === 0 && !error && !stale && <Empty className="py-12">
           <EmptyHeader>
             <EmptyTitle>No computers connected</EmptyTitle>
             <EmptyDescription>Sign a Mac or Linux machine in to run threads using its workspaces and providers.</EmptyDescription>
           </EmptyHeader>
           <Button data-link onClick={() => choosePane("general")}>Connect a computer</Button>
         </Empty>}
-        {!local && pane === "computers" && computersLoaded && computers.length > 0 && <div className="mb-4 flex justify-end">
+        {pane === "computers" && computersLoaded && computers.length > 0 && <div className="mb-4 flex justify-end">
           <Button size="sm" variant="outline" data-link onClick={() => choosePane("general")}><Plus />Add computer</Button>
         </div>}
         <ItemGroup className="gap-3">
-          {computers.filter((computer) => local || pane === "computers" || pane === computer.computerId).map((computer) => {
+          {computers.filter((computer) => pane === "computers" || pane === computer.computerId).map((computer) => {
             const Icon = deviceIcon(computer.icon as DeviceIconId);
             const running = threads.filter(
               (t) =>
@@ -348,7 +280,7 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
                 </ItemMedia>
                 <ItemContent className="min-w-0 basis-[calc(100%-3rem)] @min-[30rem]:basis-0">
                   <ItemTitle className="w-full whitespace-normal break-words">
-                    {!local && pane === "computers" ? <Button variant="link" data-link className="h-auto min-w-0 justify-start whitespace-normal p-0 text-left text-foreground" onClick={() => choosePane(computer.computerId)}>{computer.name}</Button> : computer.name}
+                    {pane === "computers" ? <Button variant="link" data-link className="h-auto min-w-0 justify-start whitespace-normal p-0 text-left text-foreground" onClick={() => choosePane(computer.computerId)}>{computer.name}</Button> : computer.name}
                   </ItemTitle>
                   <ItemDescription>
                     {computer.ownership === "personal"
@@ -365,9 +297,9 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
                         ? "Selected members and teams"
                         : "Everyone in your organization"}
                   </ItemDescription>
-                  {!local && pane === computer.computerId && computer.canUse && <HubModelDefault organizationId={org} computerId={computer.computerId} catalogue={computer.capabilities.providers.map(p=>({...PROVIDERS.find(v=>v.id===p.id)!,models:p.models.map(value=>({value,label:value || "Default"}))}))} />}
-                  {!local && pane === computer.computerId && computer.canManage && computer.ownership !== "hosted" && <HubComputerAccounts organizationId={org} computerId={computer.computerId} />}
-                  {!local && pane === computer.computerId && computer.canManage && computer.ownership !== "hosted" && <HubComputerModelKeys organizationId={org} computerId={computer.computerId} />}
+                  {pane === computer.computerId && computer.canUse && <HubModelDefault organizationId={org} computerId={computer.computerId} catalogue={computerModels(computer.capabilities.providers ?? [])} />}
+                  {pane === computer.computerId && computer.canManage && computer.ownership !== "hosted" && <HubComputerAccounts organizationId={org} computerId={computer.computerId} />}
+                  {pane === computer.computerId && computer.canManage && computer.ownership !== "hosted" && <HubComputerModelKeys organizationId={org} computerId={computer.computerId} />}
                   {running.map((thread) => (
                     <Button
                       key={thread.id}
@@ -422,19 +354,6 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
             }}
           />
         )}
-        {attach && local && (
-          <AttachComputer
-            serverId={local.id}
-            org={org}
-            hubUrl={registration?.hubUrl}
-            close={() => setAttach(false)}
-            attached={(value) => {
-              setRegistration(value);
-              setOrg(value.organizationId);
-              setAttach(false);
-            }}
-          />
-        )}
         <AlertDialog
           open={!!removing}
           onOpenChange={(open) => {
@@ -443,11 +362,7 @@ export function HubComputers({ organizationId }: { organizationId?: string }) {
         >
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>
-                {removing === "local"
-                  ? "Detach this Mac?"
-                  : "Remove this computer?"}
-              </AlertDialogTitle>
+              <AlertDialogTitle>Remove this computer?</AlertDialogTitle>
               <AlertDialogDescription>
                 Its threads keep running on the computer, but you lose access to
                 them here.
@@ -646,174 +561,6 @@ function ComputerEditor({
               Cancel
             </Button>
             <Button disabled={busy || !name.trim()}>Save computer</Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function AttachComputer({
-  serverId,
-  org,
-  hubUrl,
-  close,
-  attached,
-}: {
-  serverId: string;
-  org: string;
-  hubUrl?: string;
-  close: () => void;
-  attached: (registration: Registration) => void;
-}) {
-  const [accounts, setAccounts] = useState<Organization[]>();
-  const [address, setAddress] = useState(hubUrl ?? "https://app.tryremy.dev");
-  const [organization, setOrganization] = useState(org);
-  const personalContext = !organization || organization === "personal" || (accounts ?? []).some((account) => account.id === organization && account.personal);
-  const selectedAdmin = (accounts ?? []).some((account) => account.id === organization && ["owner", "admin"].includes(account.role));
-  const [ownership, setOwnership] = useState("personal");
-  const [code, setCode] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const submit = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      if (!code) {
-        const value = await transport.request<{ userCode: string }>(
-          serverId,
-          "/server/hub/authorize",
-          {
-            method: "POST",
-            body: { hubUrl: address, organizationId: organization === "personal" ? "" : organization, ownership },
-          },
-        );
-        setCode(value.userCode);
-      } else if (!accounts) {
-        const result = await transport.request<{ accounts: Organization[] }>(serverId, "/server/hub/authorize/accounts", { method: "POST" });
-        setAccounts(result.accounts);
-        setOrganization(result.accounts.find((account) => account.id === org)?.id ?? result.accounts.find((account) => account.personal)?.id ?? "");
-        setOwnership("personal");
-      } else {
-        const result = await transport.request<{ registration: Registration }>(
-          serverId,
-          "/server/hub/authorize/complete",
-          { method: "POST", body: { organizationId: organization, ownership } },
-        );
-        attached(result.registration);
-      }
-    } catch (e) {
-      setError(apiError(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open && !busy) close();
-      }}
-    >
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Attach this Mac</DialogTitle>
-          <DialogDescription>
-            {accounts ? "Choose which account can use this Mac." : code
-              ? "Approve this code in your browser, then choose your account."
-              : "Connect this Mac to your Remy account."}
-          </DialogDescription>
-        </DialogHeader>
-        <form
-          className="grid gap-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void submit();
-          }}
-        >
-          {!code || accounts ? (
-            <>
-              {accounts && <Field>
-                <FieldLabel>Account</FieldLabel>
-                <Select value={organization || "personal"} onValueChange={(id) => { setOrganization(id); setOwnership("personal"); }}>
-                  <SelectTrigger aria-label="Attach to account"><SelectValue placeholder="Choose an account" /></SelectTrigger>
-                  <SelectContent><SelectGroup>
-                    {!(accounts ?? []).some((account) => account.personal) && <SelectItem value="personal">Personal</SelectItem>}
-                    {(accounts ?? []).map((account) => <SelectItem key={account.id} value={account.id}>{account.personal ? "Personal" : account.name}</SelectItem>)}
-                  </SelectGroup></SelectContent>
-                </Select>
-              </Field>}
-              {!accounts && <Collapsible>
-                <CollapsibleTrigger asChild><Button type="button" variant="ghost">Advanced connection settings</Button></CollapsibleTrigger>
-                <CollapsibleContent className="pt-3"><Field>
-                  <FieldLabel htmlFor="hub-address">Remy address</FieldLabel>
-                  <Input id="hub-address" type="url" value={address} onChange={(e) => setAddress(e.target.value)} required />
-                </Field></CollapsibleContent>
-              </Collapsible>}
-              {accounts && !personalContext && (
-                <Field>
-                  <FieldLabel>Owner</FieldLabel>
-                  <Select value={ownership} onValueChange={setOwnership}>
-                    <SelectTrigger aria-label="Computer owner">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        <SelectItem value="personal">You</SelectItem>
-                        {selectedAdmin && (
-                          <>
-                            <SelectItem value="organization">
-                              Your organization
-                            </SelectItem>
-                            <SelectItem value="hosted">
-                              Hosted by your organization
-                            </SelectItem>
-                          </>
-                        )}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                  <FieldDescription>
-                    {ownership === "personal"
-                      ? "Only you can use this Mac until you share access."
-                      : "Everyone in your organization can use this computer."}
-                  </FieldDescription>
-                </Field>
-              )}
-            </>
-          ) : (
-            <>
-            <p
-              className="text-center font-mono text-2xl"
-              aria-label="Computer authorization code"
-            >
-              {code}
-            </p>
-            <Button asChild><a href={`${new URL(address).origin}/?computerCode=${encodeURIComponent(code)}`} target="_blank" rel="noreferrer">Approve in your browser</a></Button>
-            </>
-          )}
-          {error && (
-            <p role="alert" className="text-sm text-destructive">
-              {error}
-            </p>
-          )}
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={busy}
-              onClick={close}
-            >
-              Cancel
-            </Button>
-            {code && <Button type="button" variant="outline" disabled={busy} onClick={() => { setCode(""); setAccounts(undefined); setError(""); }}>Start again</Button>}
-            <Button
-              disabled={
-                busy || !address || (ownership !== "personal" && !organization)
-              }
-            >
-              {accounts ? "Finish connecting" : code ? "Choose account" : "Continue"}
-            </Button>
           </DialogFooter>
         </form>
       </DialogContent>

@@ -71,7 +71,7 @@ export function PullRequestReviewProvider({ serverId, repository, number, tab, o
     const off = transport.subscribe((_source, payload) => {
       if (!payload || typeof payload !== "object") return;
       const frame = payload as { type?: string; repository?: string; number?: number };
-      if (["hello", "peer-reset", "peers"].includes(frame.type ?? "")
+      if (frame.type === "hello"
         || frame.type === "pull-request-question" && frame.repository === repository && frame.number === number) void read();
     }, ["pull-requests", "sidebar"]);
     const offStatus = transport.onStatus((_source, online) => {

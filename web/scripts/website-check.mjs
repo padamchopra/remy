@@ -51,7 +51,7 @@ try {
   await page.locator('.mobile-section').scrollIntoViewIfNeeded();
   await page.frameLocator('iframe[title="Remy browser demo in a narrow viewport"]').locator('.demo-banner').waitFor();
   await page.getByRole('button', { name: 'Is Remy free?', exact: true }).click();
-  await page.getByText('Running Remy on your own computer is free and needs no Remy account.', { exact: false }).waitFor();
+  await page.getByText('Yes, Remy is completely free.', { exact: false }).waitFor();
   await page.screenshot({ path: `${artifacts}/full.png`, fullPage: true });
 
   const phone = await browser.newPage({ ...devices['iPhone 13'], deviceScaleFactor: 1 });
@@ -97,7 +97,7 @@ try {
   await phone.locator('.mobile-links').waitFor({ state: 'hidden' });
   await phone.getByRole('button', { name: 'Open navigation' }).click();
   await phone.locator('.mobile-links').getByRole('link', { name: 'Docs', exact: true }).click();
-  await phone.getByRole('heading', { name: 'Connect your devices' }).waitFor();
+  await phone.getByRole('heading', { name: 'Install Remy on a computer' }).waitFor();
   await phone.goto(`${url}/changelog/`);
   await phone.getByText('Unreleased', { exact: true }).waitFor();
   await phone.goto(url);

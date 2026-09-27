@@ -6,7 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs-base";
 import { PaneHeader } from "@/components/PaneHeader";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { watchHubResource } from "@/lib/hub-computers";
@@ -33,6 +33,8 @@ type PullRequestFilter = "yours" | "review";
 export interface PullRequestAddress {
   repository: string;
   number: number;
+  /// The tab in front, when it is not the summary.
+  view?: "files";
 }
 
 interface PullRequestCheck {
@@ -60,6 +62,9 @@ export interface AuthoredPullRequest {
   mergeStateStatus?: string;
   state?: string;
   checks: PullRequestCheck[];
+  /// Hosted only: who reviewed, with their latest verdict, and who is asked to.
+  reviewers?: { login: string; state: "REQUESTED" | "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED" }[];
+  labels?: { name: string; color: string }[];
   comments?: { author: string; body: string; createdAt?: string; url?: string }[];
   unreadComments: unknown[];
   hasUnreadActivity: boolean;
@@ -500,7 +505,7 @@ export function PullRequests({
     return (
       <Suspense fallback={(
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <PaneHeader sidebar crumbs={[{ label: "Pull requests", onClick: back }, { label: selected.title }]} />
+          <PaneHeader sidebar crumbs={[{ label: "Pull requests", onClick: back }, { label: `${selected.repository} #${selected.number}` }]} />
           <PullRequestDetailLoading />
         </main>
       )}>
@@ -510,6 +515,8 @@ export function PullRequests({
           organizationId={hostedOrganizationOf(selected.serverId)}
           canOpen={(number) => Boolean(members(number))}
           onOpen={(number) => open({ repository: selected.repository, number })}
+          view={selectedAddress?.view}
+          onViewChange={(view) => onSelect({ repository: selected.repository, number: selected.number, ...(view ? { view } : {}) })}
           onBack={back}
         />
       </Suspense>
@@ -599,25 +606,42 @@ export function PullRequests({
         </Button>
       </PaneHeader>
       <div className="flex min-w-0 flex-wrap items-center gap-3 px-5 py-3">
-        <ToggleGroup
-          type="single"
-          size="sm"
+        {/* A segmented control: arrows move and select at once, because the
+            list below is the only thing either choice changes. */}
+        <Tabs
           value={filter}
-          onValueChange={(value) => value && setFilter(value as PullRequestFilter)}
-          aria-label="Filter pull requests"
+          onValueChange={(value) => setFilter(value as PullRequestFilter)}
+          className="w-full sm:w-auto"
         >
-          {([
-            ["yours", "Yours"],
-            ["review", "Review requested"],
-          ] as const).map(([value, label]) => (
-            <ToggleGroupItem key={value} value={value} className="px-2.5">
-              {label}
-              {/* A count is a claim; until GitHub answers there is none to make. */}
-              {!loading && <span className="text-muted-foreground tabular-nums">{counts[value]}</span>}
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
-        <InputGroup className="ml-auto w-64 max-w-full">
+          <TabsList
+            activateOnFocus
+            aria-label="Filter pull requests"
+            className="h-9 w-full gap-0.5 rounded-lg bg-foreground/5 p-[3px] sm:w-auto"
+          >
+            {([
+              ["yours", "Yours"],
+              ["review", "Review requested"],
+            ] as const).map(([value, label]) => (
+              <TabsTrigger
+                key={value}
+                value={value}
+                className="h-full flex-1 justify-center gap-1.5 rounded-md px-3 py-0 font-medium focus-visible:ring-offset-0 data-active:bg-background data-active:text-foreground data-active:shadow-sm data-active:ring-1 data-active:ring-border dark:data-active:bg-input sm:flex-none"
+              >
+                {label}
+                {/* A count is a claim; until GitHub answers there is none to make. */}
+                {!loading && (
+                  <span
+                    data-slot="pull-request-filter-count"
+                    className="min-w-5 rounded-full bg-foreground/[0.07] px-1.5 text-center text-xs leading-5 text-muted-foreground tabular-nums"
+                  >
+                    {counts[value]}
+                  </span>
+                )}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+        <InputGroup className="w-full sm:ml-auto sm:w-64">
           <InputGroupAddon><Search /></InputGroupAddon>
           <InputGroupInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search pull requests" aria-label="Search pull requests" />
         </InputGroup>

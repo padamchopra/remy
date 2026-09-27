@@ -1,17 +1,11 @@
-import {hubLinearResolveInput,hubTicketCommentInput} from "./hub-linear-input.js";
 import {hubGitHubInput} from "./hub-github-input.js";
 import {hubOrganizationTool} from "./hub-organization-tools.js";
 import { createSdkMcpServer, tool } from "./provider-adapters/claude.js";
 import { basename } from "node:path";
 import { homedir } from "node:os";
 import { z } from "zod";
-import { listProjects, projectForWorkspace } from "./projects.js";
 import { artifactMarker, type ConvArtifact } from "./remy-artifacts.js";
-import {
-  explicitlyRequestedTicketStatus,
-  REMY_TOOL_INSTRUCTIONS,
-  THREAD_TICKET_STATUSES,
-} from "./ticket-tool-contract.js";
+import { REMY_TOOL_INSTRUCTIONS } from "./ticket-tool-contract.js";
 import { addWorkspace, listWorkspaces } from "./workspaces.js";
 import {
   browserSnapshotText,
@@ -25,20 +19,6 @@ import {
   type BrowserView,
   waitInBrowser,
 } from "./browser.js";
-import {
-  commentOnTicket,
-  createTicket,
-  getTicket,
-  linkThread,
-  listTickets,
-  setTicketStatus,
-  syncTicketFromThread,
-  ticketActivity,
-  ticketByKey,
-  ticketForChat,
-  updateTicket,
-  type TicketView,
-} from "./tickets.js";
 
 interface ThreadSummary {
   id: string;
@@ -82,38 +62,6 @@ export interface RemyThreadControl {
   }>;
 }
 
-function ticketFor(key: string | undefined, chatId: string): TicketView {
-  const ticket = key ? ticketByKey(key) : ticketForChat(chatId);
-  if (!ticket) throw new Error(key ? `No ticket called ${key}.` : "This thread is not linked to a ticket.");
-  return ticket;
-}
-
-function describe(ticket: TicketView): string {
-  const project = listProjects().find((entry) => entry.id === ticket.projectId);
-  const children = listTickets(ticket.projectId).filter((entry) => entry.parentId === ticket.id);
-  const activity = ticketActivity(ticket.id).slice(-20);
-  return [
-    `${ticket.key}: ${ticket.title}`,
-    `Workspace: ${project?.name ?? "Unknown"}`,
-    `Status: ${ticket.status}`,
-    `Priority: ${ticket.priority}`,
-    ticket.branch ? `Branch: ${ticket.branch}` : "",
-    ticket.body ? `\nDescription:\n${ticket.body}` : "\nNo description.",
-    children.length
-      ? `\nSub-tickets:\n${children.map((child) => `- ${child.key} [${child.status}] ${child.title}`).join("\n")}`
-      : "",
-    activity.length
-      ? `\nRecent activity:\n${activity.map((entry) => `- ${entry.actor} ${entry.kind}${entry.body ? `: ${entry.body}` : ""}`).join("\n")}`
-      : "",
-  ].filter(Boolean).join("\n");
-}
-
-export function ticketPromptContext(chatId: string): string | undefined {
-  const ticket = ticketForChat(chatId);
-  if (!ticket) return undefined;
-  return `<remy_ticket_context>\n${describe(ticket)}\n\nThis thread is linked to this ticket. Use the Remy ticket tools to keep its scope and activity accurate. Change its status only when the person explicitly asks for a particular status; never infer Done from finishing your work.\n</remy_ticket_context>`;
-}
-
 /// A tool's answer, and the card the feed draws under it. The marker rides in
 /// the text because that is the one thing every provider's transcript keeps.
 function ok(text: string, artifact?: ConvArtifact) {
@@ -122,10 +70,6 @@ function ok(text: string, artifact?: ConvArtifact) {
 
 function browserResult(action: string, view: BrowserView): string {
   return [action, `Page: ${view.title || "Untitled"}`, `URL: ${view.url || "about:blank"}`].join("\n");
-}
-
-function ticketCard(ticket: TicketView): ConvArtifact {
-  return { kind: "ticket", key: ticket.key, title: ticket.title, detail: ticket.status };
 }
 
 function workspaceName(path: string): string {
@@ -162,21 +106,18 @@ function describeThread(thread: ThreadDetail): string {
   ].filter(Boolean).join("\n");
 }
 
-export function inProcessTicketMcpServer(
+export function inProcessRemyMcpServer(
   chatId: string,
   threads: RemyThreadControl,
 ) {
-  const key = z.string().optional().describe("Ticket key. Omit it for this thread's linked ticket.");
   return createSdkMcpServer({
     name: "remy",
     version: "1",
     instructions: REMY_TOOL_INSTRUCTIONS,
     tools: [
-      tool("resolve_linear_ticket","Resolve a Linear ticket in this workspace.",hubLinearResolveInput,async input=>{const result=await hubOrganizationTool(chatId,"resolve_linear_ticket",input) as {artifact?:ConvArtifact};return ok(JSON.stringify(result),result.artifact);}),
-      tool("comment_organization_ticket","Comment on a shared ticket with a link to this thread.",hubTicketCommentInput,async input=>ok(JSON.stringify(await hubOrganizationTool(chatId,"comment_organization_ticket",input)))),
       tool("github_action","Create a pull request, comment or review using the linked member account.",hubGitHubInput,async input=>ok(JSON.stringify(await hubOrganizationTool(chatId,"github_action",input)))),
       ...["list_organization_computers","list_organization_workspaces"].map(action=>tool(action,"List organization resources visible to the person.",{},async()=>ok(JSON.stringify(await hubOrganizationTool(chatId,action))))),
-      ...["start_organization_thread","create_organization_ticket","move_organization_thread"].map(action=>tool(action,"Act within the person's visible organization workspaces.",{workspaceId:z.string(),prompt:z.string().optional(),title:z.string().optional(),ticketId:z.string().optional(),threadId:z.string().optional(),computerId:z.string().optional()},async input=>{const result=await hubOrganizationTool(chatId,action,input) as {artifact?:ConvArtifact};return ok(JSON.stringify(result),result.artifact);})),
+      ...["start_organization_thread","move_organization_thread"].map(action=>tool(action,"Act within the person's visible organization workspaces.",{workspaceId:z.string(),prompt:z.string().optional(),title:z.string().optional(),threadId:z.string().optional(),computerId:z.string().optional()},async input=>{const result=await hubOrganizationTool(chatId,action,input) as {artifact?:ConvArtifact};return ok(JSON.stringify(result),result.artifact);})),
       tool(
         "list_workspaces",
         "List the workspace folders registered on this machine.",
@@ -409,124 +350,6 @@ export function inProcessTicketMcpServer(
           return ok(`Stopped thread ${thread_id}.`);
         },
         { annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
-      ),
-      tool(
-        "create_ticket",
-        "Write a new ticket on a workspace's board.",
-        {
-          title: z.string().min(1).max(200),
-          body: z.string().max(20000).optional().describe("The description in markdown"),
-          workspace: z.string().optional().describe("Registered workspace name, id, path, or origin. Omit it to use this thread's folder."),
-          status: z.enum(THREAD_TICKET_STATUSES).optional().describe("Defaults to Backlog. Choose another status only when the person explicitly asks."),
-        },
-        async ({ title, body, workspace, status }) => {
-          const path = await workspacePath(workspace, threads.currentCwd);
-          const held = (await listWorkspaces()).find((entry) =>
-            entry.path === path || entry.worktrees.some((worktree) => worktree.path === path));
-          const project = held ? projectForWorkspace(held.id) : undefined;
-          if (!project) throw new Error("That folder has no board yet. Register it as a workspace first.");
-          const ticket = createTicket({
-            projectId: project.id,
-            title,
-            ...(body ? { body } : {}),
-            ...(status ? { status } : {}),
-          }, "remy");
-          return ok(`Created ${ticket.key} in ${project.name}.`, ticketCard(ticket));
-        },
-        { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
-      ),
-      tool(
-        "read_ticket",
-        "Read a ticket's current scope, status, sub-tickets, and recent activity.",
-        { key },
-        async ({ key: asked }) => ok(describe(ticketFor(asked, chatId))),
-        { annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false } },
-      ),
-      tool(
-        "attach_ticket",
-        "Link this thread to a ticket before working on it.",
-        { key: z.string().describe("The ticket key to work on") },
-        async ({ key: asked }) => {
-          const ticket = ticketFor(asked, chatId);
-          const existing = ticketForChat(chatId);
-          if (existing && existing.id !== ticket.id) throw new Error(`This thread is already linked to ${existing.key}.`);
-          const linked = existing ?? linkThread(ticket.id, { chatId, linkedBy: "runner" });
-          syncTicketFromThread(chatId, "working");
-          return ok(`Linked this thread to ${linked.key}.`, ticketCard(linked));
-        },
-        { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-      ),
-      tool(
-        "update_ticket",
-        "Rewrite a ticket's title or product scope.",
-        {
-          key,
-          title: z.string().max(200).optional(),
-          body: z.string().max(20000).optional().describe("The complete replacement description in markdown"),
-        },
-        async ({ key: asked, title, body }) => {
-          const ticket = ticketFor(asked, chatId);
-          const patch: Record<string, unknown> = {};
-          if (title !== undefined) patch.title = title;
-          if (body !== undefined) patch.body = body;
-          if (Object.keys(patch).length === 0) throw new Error("Give a title or description to update.");
-          const updated = updateTicket(ticket.id, patch);
-          return ok(`Updated ${updated.key}.`, ticketCard(updated));
-        },
-        { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-      ),
-      tool(
-        "set_ticket_status",
-        "Move a ticket only when the person explicitly asks for a particular status. Never infer Done from finishing work.",
-        {
-          key,
-          status: z.enum(THREAD_TICKET_STATUSES),
-          note: z.string().max(10000).optional(),
-          instruction: z.string().max(1000).describe("The exact words from the person's latest message that request this status"),
-        },
-        async ({ key: asked, status, note, instruction }) => {
-          const latest = [...(threads.read(chatId)?.entries ?? [])]
-            .reverse()
-            .find((entry) => entry.kind === "user")?.text;
-          if (!explicitlyRequestedTicketStatus(latest, instruction, status)) {
-            throw new Error("Change a ticket's status only when the person explicitly asks.");
-          }
-          const ticket = ticketFor(asked, chatId);
-          const moved = setTicketStatus(ticket.id, status, { actor: "remy", note });
-          return ok(`Moved ${moved.key} to ${status}.`, ticketCard(moved));
-        },
-        { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-      ),
-      tool(
-        "comment_on_ticket",
-        "Record a concise progress note, QA result, blocker, or decision on a ticket.",
-        { key, body: z.string().max(10000) },
-        async ({ key: asked, body }) => {
-          const ticket = ticketFor(asked, chatId);
-          const commented = commentOnTicket(ticket.id, body, "remy");
-          return ok(`Commented on ${commented.key}.`, ticketCard(commented));
-        },
-        { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
-      ),
-      tool(
-        "create_sub_ticket",
-        "Create a smaller piece of work beneath a ticket.",
-        {
-          key,
-          title: z.string().max(200),
-          body: z.string().max(20000).optional(),
-        },
-        async ({ key: asked, title, body }) => {
-          const parent = ticketFor(asked, chatId);
-          const child = createTicket({
-            projectId: parent.projectId,
-            parentId: parent.id,
-            title,
-            ...(body ? { body } : {}),
-          });
-          return ok(`Created ${child.key} under ${parent.key}.`, ticketCard(child));
-        },
-        { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
       ),
     ],
   });

@@ -1,17 +1,16 @@
 import { readFileSync } from "node:fs";
 import {hubOrganizationTool} from "./hub-organization-tools.js";
-import { appendHubBoard, configureHubBoard, hubBoardList, hubBoardState, importHubBoard } from "./hub-board.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { WebSocketServer } from "ws";
-import { syncHubBoard, authorizedHubAccounts, beginHubComputerAuthorization, finishHubComputerAuthorization, detachHubComputer, hubComputerRegistration, registerHubComputerWithDeviceCode, startHubComputerConnection } from "./hub-computer.js";
+import { detachHubComputer, hubComputerRegistration, registerHubComputerWithDeviceCode, startHubComputerConnection } from "./hub-computer.js";
 import { config, patchSettings, publicSettings } from "./config.js";
 import { AgentStartupError, AgentUnavailableError, agentKind, inferAgent, type AgentKind } from "./agent.js";
 import { prepareServiceRestart, pendingChatStarts, automaticUpdateStatus, automaticUpdateAction, configureAutomaticUpdates, syncAutomaticUpdates, reportAutomaticUpdate, appUpdateStatus, reportAppUpdate, requestAppUpdate } from "./app-update.js";
 import { localAnalytics } from "./analytics.js";
 import { threadAnalytics, threadPerformance } from "./thread-metrics.js";
 import { archiveChat, deleteArchivedChat, getArchivedChat, listArchivedChats, listArchivedChatSummaries } from "./archives.js";
-import { deviceId, onLocalAppend, onRemoteMerge, type LogEvent } from "./board-log.js";
+import { onLocalAppend } from "./board-log.js";
 import {
   adoptWorkspace,
   listProjects,
@@ -20,28 +19,6 @@ import {
   unbindWorkspace,
   updateProject,
 } from "./projects.js";
-import {
-  commentOnTicket,
-  createTicket,
-  deleteTicketComment,
-  deleteTicket,
-  editTicketComment,
-  getTicket,
-  linkThread,
-  listTickets,
-  moveTicket,
-  setTicketStatus,
-  syncParentTicket,
-  syncTicketFromThread,
-  ticketActivity,
-  ticketForChat,
-  unlinkThread,
-  updateTicket,
-} from "./tickets.js";
-import {
-  resumeTicketFromComment,
-  startTicketThread,
-} from "./ticket-runner.js";
 import {
   chatsUnavailable,
   archiveConversation,
@@ -71,7 +48,6 @@ import { findProjectFiles, findSkills } from "./discovery.js";
 import { discoveredProviders } from "./provider-adapters/index.js";
 import { setProviderEnabled } from "./provider-settings.js";
 import { externalMcpProvider } from "./external-mcp-auth.js";
-import { explicitlyRequestedTicketStatus } from "./ticket-tool-contract.js";
 import { installProviderMcp, providerMcpStatuses, removeProviderMcp } from "./provider-mcp.js";
 import {
   archiveCursorCloudChat,
@@ -88,8 +64,7 @@ import {
   updateCursorCloudChat,
 } from "./cursor-cloud.js";
 import { handleHookEvent } from "./events.js";
-import { attachNotifyStream, broadcast, deliverFromPeer, notificationSequence, pushSession, pushSessionList } from "./notify.js";
-import { startPeerStreamRelay } from "./peer-stream.js";
+import { attachNotifyStream, broadcast, notificationSequence, pushSession, pushSessionList } from "./notify.js";
 import {
   browserSnapshotText,
   browserView,
@@ -107,50 +82,15 @@ import {
   zoomBrowser,
 } from "./browser.js";
 import { closeTerminal, openTerminal, resizeTerminal, writeTerminal } from "./terminal.js";
-import { forgetPushDevice, pushStatus, registerPushDevice } from "./push.js";
-import { canPairWithoutConfirmation, discover, sameTailnetHost } from "./tailnet.js";
-import {
-  approvePair,
-  askToPair,
-  checkPairing,
-  denyPair,
-  forgetPairing,
-  pairStatus,
-  pendingPairRequests,
-  startPairing,
-} from "./pairing.js";
-import {
-  acceptAnnouncement,
-  acceptEvents,
-  completePair,
-  identity,
-  isAuthenticatedPeerRequest,
-  listPeers,
-  pairWith,
-  peerViews,
-  proxyToPeer,
-  removePeer,
-  startPeerSync,
-  startTailnetExposureReconciler,
-  syncAnswer,
-  syncNow,
-  thisMachineIcon,
-  thisMachineName,
-  thisMachineTint,
-  updateIdentity,
-  updatePeer,
-} from "./peers.js";
 import {
   createEnvironment,
   disableEnvironment,
   deleteEnvironment,
   deleteEnvironmentValue,
-  exportEnvironmentSync,
   importEnvironmentFile,
   listEnvironmentFiles,
   listEnvironments,
   renameEnvironment,
-  mergeEnvironmentSync,
   parseEnvironmentValues,
   selectEnvironment,
   setEnvironmentValues,
@@ -172,7 +112,6 @@ import { pullRequestFileContent, validPullRequestFileRequest } from "./pull-requ
 import { askPullRequestQuestion, discoverPullRequestQuestions, readPullRequestQuestions } from "./pull-request-questions.js";
 import { validateChatCodeReferences } from "./chat-references.js";
 import { startPullRequestMonitor } from "./pull-request-monitor.js";
-import { startTicketPullRequestSync } from "./ticket-pull-requests.js";
 import {
   clearThreadPullRequestMonitoring,
   pullRequestMonitoring,
@@ -337,15 +276,6 @@ function sameMessage(transcriptText: string | undefined, queued: string): boolea
   return key(transcriptText) === key(queued);
 }
 
-// A link can arrive from another device just after its thread changed state.
-// Replaying active local threads when peer events land closes that race; idle
-// threads are skipped so restarting a daemon cannot clear Needs input.
-function syncActiveTicketThreads(): void {
-  for (const chat of listChats()) {
-    if (chat.state !== "idle") syncTicketFromThread(chat.id, chat.state);
-  }
-}
-
 function activeChatCount(): number {
   return pendingChatStarts + listAllChats().filter((chat) => chat.state === "working" || chat.state === "needs_input").length;
 }
@@ -358,26 +288,6 @@ const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const parts = url.pathname.split("/").filter(Boolean);
 
-    // These bootstrap routes keep their opaque, expiring, single-use claims.
-    // Same-owner Serve identity can replace the target-side confirmation.
-    if (url.pathname === "/pair/request" && req.method === "POST") {
-      const body = await readJson(req);
-      try {
-        const asked = askToPair(body);
-        if (await canPairWithoutConfirmation(req.headers, req.socket.remoteAddress, body.url)) {
-          const self = await identity();
-          approvePair(asked.requestId, self.url);
-        }
-        broadcast({ type: "pair-requests" });
-        return json(res, 201, asked);
-      } catch (error) {
-        return json(res, 429, { error: (error as Error).message });
-      }
-    }
-    if (url.pathname === "/pair/status" && req.method === "GET") {
-      return json(res, 200, pairStatus(url.searchParams.get("id") ?? ""));
-    }
-
     const fullAccess = authorized(req);
     const scopedChatId = fullAccess ? undefined : remyToolChatId(req.headers.authorization);
     const externalProvider = fullAccess || scopedChatId
@@ -389,7 +299,6 @@ const server = createServer(async (req, res) => {
     if ((scopedChatId || externalProvider) && !isRemyToolRoute(req.method, url.pathname)) {
       return json(res, 403, { error: "that operation is not available to a thread" });
     }
-    const ticketActor = (): string => scopedChatId || externalProvider ? "remy" : "you";
 
     if (req.method === "POST" && url.pathname === "/server/hosted-checkpoint") {
       if (hubComputerRegistration()?.ownership !== "hosted") return json(res, 404, { error: "Computer not found." });
@@ -414,41 +323,6 @@ const server = createServer(async (req, res) => {
       // is flushed. Orphaned copies retire themselves without PID guessing.
       setTimeout(() => process.exit(0), 250);
       return json(res, 202, { ok: true });
-    }
-    if (url.pathname.startsWith("/server/hub/board")) {
-      const registration = hubComputerRegistration();
-      if (!registration) return json(res, 409, { error: "Attach this computer first." });
-      const org = registration.organizationId;
-      if (req.method === "GET" && url.pathname === "/server/hub/board") return json(res, 200, hubBoardState(org));
-      if (req.method === "PUT" && url.pathname === "/server/hub/board") {
-        const input = await readJson(req);
-        if (typeof input.enabled !== "boolean" || (input.importExisting !== undefined && typeof input.importExisting !== "boolean")) return json(res, 400, { error: "Choose whether to synchronize your Tasks." });
-        if (input.importExisting === true) importHubBoard(org);
-        configureHubBoard(org, input.enabled);
-        startHubComputerConnection();
-        return json(res, 200, hubBoardState(org));
-      }
-      if (req.method === "POST" && url.pathname === "/server/hub/board/events") { const event = appendHubBoard(org, await readJson(req)); syncHubBoard(); return json(res, 201, event); }
-      if (req.method === "GET" && url.pathname === "/server/hub/board/tickets") return json(res, 200, hubBoardList(org, "tickets"));
-      return json(res, 404, { error: "Tasks not found." });
-    }
-    if (req.method === "POST" && url.pathname === "/server/hub/authorize") {
-      const input = await readJson(req);
-      if (typeof input.hubUrl !== "string" || typeof input.organizationId !== "string" || !(typeof input.ownership === "string" && ["personal", "organization", "hosted"].includes(input.ownership))) return json(res, 400, { error: "Choose your organization and computer owner." });
-      try { return json(res, 200, await beginHubComputerAuthorization(input.hubUrl, input.organizationId, input.ownership as "personal" | "organization" | "hosted")); }
-      catch (error) { return json(res, 409, { error: (error as Error).message }); }
-    }
-    if (req.method === "POST" && url.pathname === "/server/hub/authorize/accounts") {
-      try { return json(res, 200, { accounts: await authorizedHubAccounts() }); }
-      catch (error) { return json(res, 409, { error: (error as Error).message }); }
-    }
-    if (req.method === "POST" && url.pathname === "/server/hub/authorize/complete") {
-      const input = await readJson(req);
-      const { organizationId, ownership } = input;
-      if (organizationId !== undefined && (typeof organizationId !== "string" || (ownership !== "personal" && ownership !== "organization" && ownership !== "hosted"))) return json(res, 400, { error: "Choose an account and computer owner." });
-      const choice: Parameters<typeof finishHubComputerAuthorization>[0] = typeof organizationId === "string" && (ownership === "personal" || ownership === "organization" || ownership === "hosted") ? { organizationId, ownership } : undefined;
-      try { return json(res, 201, { registration: await finishHubComputerAuthorization(choice) }); }
-      catch (error) { return json(res, 409, { error: (error as Error).message }); }
     }
     if (req.method === "POST" && url.pathname === "/server/hub/computer") {
       const input = await readJson(req);
@@ -744,251 +618,6 @@ const server = createServer(async (req, res) => {
       }
     }
 
-    // Who this machine is, and the link another machine pairs with. The token
-    // is in the answer because the caller already presented it to get here.
-    if (url.pathname === "/server/identity" && req.method === "GET") {
-      return json(res, 200, await identity());
-    }
-    // Whether anything off this machine can reach it. The daemon binds
-    // loopback, so `tailscale serve` is the whole answer — and it is what the
-    // phone and every paired machine come in through, not only pairing. Serve,
-    // never funnel: the tailnet reaches it, the public internet cannot.
-    if (url.pathname === "/server/identity" && req.method === "PATCH") {
-      const body = await readJson(req);
-      if (
-        body.exposed === undefined &&
-        body.name === undefined &&
-        body.icon === undefined &&
-        body.tint === undefined
-      ) {
-        return json(res, 400, { error: "say what should change about this machine" });
-      }
-      try {
-        return json(res, 200, await updateIdentity(body));
-      } catch (error) {
-        return json(res, 409, { error: (error as Error).message });
-      }
-    }
-
-    // iPhones that receive Apple Push from this machine when no window is open.
-    if (url.pathname === "/push/devices" && req.method === "GET") {
-      return json(res, 200, pushStatus());
-    }
-    if (url.pathname === "/push/register" && req.method === "POST") {
-      try {
-        return json(res, 200, { device: registerPushDevice(await readJson(req)) });
-      } catch (error) {
-        return json(res, 400, { error: (error as Error).message });
-      }
-    }
-    if (parts[0] === "push" && parts[1] === "devices" && parts.length === 3 && req.method === "DELETE") {
-      const token = decodeURIComponent(parts[2]);
-      if (!forgetPushDevice(token)) return json(res, 404, { error: "no such phone" });
-      return json(res, 200, { ok: true });
-    }
-
-    // Your machines on the tailnet, each marked with whether Remy answered and
-    // whether it is already paired. Tailscale already knows your devices, so
-    // nothing has to be typed or carried to get this list.
-    if (url.pathname === "/tailnet" && req.method === "GET") {
-      const found = await discover(url.searchParams.get("refresh") === "1");
-      const paired = listPeers();
-      const self = await identity();
-      return json(res, 200, {
-        devices: found
-          .filter((device) => device.host !== self.tailnetHost)
-          .map((device) => ({
-            host: device.host,
-            name: device.name,
-            os: device.os,
-            online: device.online,
-            remy: Boolean(device.url),
-            ...(device.url ? { url: device.url } : {}),
-            paired: paired.some((peer) => sameTailnetHost(peer.url, device.host)),
-          })),
-      });
-    }
-
-    // Asking a discovered machine to pair. The code comes back so this machine
-    // can show it beside the one shown over there.
-    if (url.pathname === "/pair/start" && req.method === "POST") {
-      const body = await readJson(req);
-      try {
-        const self = await identity();
-        const attempt = await startPairing({
-          url: body.url,
-          name: body.name,
-          self: { url: self.url, name: self.name, icon: self.icon, tint: self.tint },
-        });
-        const result = await checkPairing(attempt.id, completePair);
-        if (result.state === "approved") broadcast({ type: "peers" });
-        return json(res, 201, result);
-      } catch (error) {
-        return json(res, 400, { error: (error as Error).message });
-      }
-    }
-    // Where that ask has got to. Approval is also completion: the answer
-    // carries their token, so the peer lands here in the same call.
-    if (parts[0] === "pair" && parts[1] === "attempt" && parts.length === 3) {
-      const attemptId = decodeURIComponent(parts[2]);
-      if (req.method === "GET") {
-        try {
-          const attempt = await checkPairing(attemptId, completePair);
-          if (attempt.state === "approved") broadcast({ type: "peers" });
-          return json(res, 200, attempt);
-        } catch (error) {
-          return json(res, 404, { error: (error as Error).message });
-        }
-      }
-      if (req.method === "DELETE") {
-        forgetPairing(attemptId);
-        return json(res, 200, { ok: true });
-      }
-    }
-
-    // Requests from other machines, waiting on a person here.
-    if (url.pathname === "/pair/pending" && req.method === "GET") {
-      return json(res, 200, { requests: pendingPairRequests() });
-    }
-    if (parts[0] === "pair" && parts[1] === "pending" && parts.length === 4 && req.method === "POST") {
-      const requestId = decodeURIComponent(parts[2]);
-      const decision = parts[3];
-      if (decision === "deny") {
-        denyPair(requestId);
-        broadcast({ type: "pair-requests" });
-        return json(res, 200, { ok: true });
-      }
-      if (decision === "approve") {
-        try {
-          const self = await identity();
-          const approved = approvePair(requestId, self.url);
-          broadcast({ type: "pair-requests" });
-          // They collect the token on their next poll; nothing is pushed.
-          return json(res, 200, { request: { id: approved.id, state: approved.state } });
-        } catch (error) {
-          return json(res, 409, { error: (error as Error).message });
-        }
-      }
-    }
-
-    // The machines this one is paired with.
-    if (url.pathname === "/peers" && req.method === "GET") {
-      return json(res, 200, {
-        deviceId,
-        name: thisMachineName(),
-        icon: thisMachineIcon(),
-        tint: thisMachineTint(),
-        configured: {
-          name: Boolean(config.deviceName),
-          icon: Boolean(config.deviceIcon),
-          tint: Boolean(config.deviceTint),
-        },
-        peers: peerViews(),
-      });
-    }
-    if (url.pathname === "/peers" && req.method === "POST") {
-      const body = await readJson(req);
-      try {
-        const peer = await pairWith(body);
-        broadcast({ type: "peers" });
-        return json(res, 201, { peer });
-      } catch (error) {
-        return json(res, 400, { error: (error as Error).message });
-      }
-    }
-    // A peer completing its half of the pair. Authorised by this machine's own
-    // token, which it holds only because its link was pasted over there.
-    if (url.pathname === "/peers/announce" && req.method === "POST") {
-      const body = await readJson(req);
-      try {
-        const peer = acceptAnnouncement(body);
-        broadcast({ type: "peers" });
-        return json(res, 200, { peer });
-      } catch (error) {
-        return json(res, 400, { error: (error as Error).message });
-      }
-    }
-    // Board sync: the caller's gaps out, this machine's cursor back.
-    if (url.pathname === "/peers/sync" && req.method === "POST") {
-      return json(res, 200, syncAnswer(await readJson(req)));
-    }
-    if (url.pathname === "/peers/events" && req.method === "POST") {
-      const landed = acceptEvents(await readJson(req));
-      if (landed > 0) {
-        syncActiveTicketThreads();
-        broadcast({ type: "board" });
-      }
-      return json(res, 200, { landed });
-    }
-    // Environment values use a second daemon-only proof. The ordinary bearer
-    // token is also used by clients, so it is not enough for an endpoint that
-    // carries decrypted values between paired machines.
-    if (url.pathname === "/peers/environments/sync" && req.method === "POST") {
-      if (!isAuthenticatedPeerRequest(req.headers, req.method, url.pathname)) {
-        return json(res, 403, { error: "environment sync is available only to paired devices" });
-      }
-      const body = await readJson(req);
-      const landed = mergeEnvironmentSync(body.records);
-      if (landed > 0) broadcast({ type: "environments" });
-      return json(res, 200, { records: exportEnvironmentSync() });
-    }
-    // A round now, rather than at the next tick.
-    if (url.pathname === "/peers/sync-now" && req.method === "POST") {
-      return json(res, 200, { landed: await syncNow() });
-    }
-    // A notification another machine routed here.
-    if (url.pathname === "/peers/notify" && req.method === "POST") {
-      const body = await readJson(req);
-      await deliverFromPeer({
-        session: typeof body.session === "string" ? body.session : "",
-        title: typeof body.title === "string" ? body.title : "",
-        message: typeof body.message === "string" ? body.message : "",
-        highPriority: body.highPriority === true,
-        ...(typeof body.click === "string" ? { click: body.click } : {}),
-        ...(typeof body.device === "string" ? { device: body.device } : {}),
-      });
-      return json(res, 202, { ok: true });
-    }
-    if (parts[0] === "peers" && parts.length === 2 && req.method === "PATCH") {
-      const body = await readJson(req);
-      try {
-        const peer = updatePeer(decodeURIComponent(parts[1]), body);
-        broadcast({ type: "peers" });
-        return json(res, 200, { peer });
-      } catch (error) {
-        return json(res, 404, { error: (error as Error).message });
-      }
-    }
-    if (parts[0] === "peers" && parts.length === 2 && req.method === "DELETE") {
-      removePeer(decodeURIComponent(parts[1]));
-      broadcast({ type: "peers" });
-      return json(res, 200, { ok: true });
-    }
-    // Browser clients reach a paired machine through here because its token
-    // never enters the renderer and the peer exposes no CORS headers. A native
-    // phone may also use this route to bootstrap its own direct fleet link.
-    if (parts[0] === "peers" && parts[2] === "api" && parts.length >= 4) {
-      const peerId = decodeURIComponent(parts[1]);
-      const target = `/${parts.slice(3).join("/")}${url.search}`;
-      const imageUpload = req.method === "POST" && /^\/chats\/[^/]+\/upload(?:\?|$)/.test(target);
-      const rawBody = imageUpload ? await readRawBody(req, MAX_CHAT_IMAGE_BYTES) : undefined;
-      const body = req.method === "GET" || req.method === "HEAD" || imageUpload ? undefined : await readJson(req);
-      try {
-        const data = await proxyToPeer(peerId, target, {
-          method: req.method ?? "GET",
-          ...(rawBody ? {
-            rawBody,
-            filename: String(req.headers["x-filename"] ?? "image"),
-            contentType: String(req.headers["content-type"] ?? "application/octet-stream"),
-          } : {}),
-          ...(body && Object.keys(body).length > 0 ? { body } : {}),
-        });
-        return json(res, 200, data);
-      } catch (error) {
-        return json(res, 502, { error: (error as Error).message });
-      }
-    }
-
     // Refreshing repositories: what the schedule does, and what the button in
     // Settings does when you would rather not wait for it.
     if (url.pathname === "/server/repo-update" && req.method === "GET") {
@@ -1181,10 +810,10 @@ const server = createServer(async (req, res) => {
       }
     }
 
-    // ── the board ───────────────────────────────────────────────────────────
-    // Tickets and projects are folds of `board_log`, so every write here
-    // appends an event and reprojects rather than touching a row. The reply is
-    // always the projected shape, which is what a peer would compute.
+    // ── projects ─────────────────────────────────────────────────────────────
+    // A project is a fold of `board_log`, so every write here appends an event
+    // and reprojects rather than touching a row. The reply is always the
+    // projected shape.
 
     if (req.method === "GET" && url.pathname === "/projects") {
       // Binding is cheap and idempotent, so a repo added from Workspaces turns
@@ -1277,204 +906,6 @@ const server = createServer(async (req, res) => {
         return json(res, 200, await runChatEnvironmentCommand(scopedChatId, await readJson(req)));
       } catch (error) {
         return json(res, 400, { error: (error as Error).message || "the runtime command failed" });
-      }
-    }
-
-    // Everything the board pane paints, in one answer.
-    if (req.method === "GET" && url.pathname === "/board") {
-      await syncProjectBindings();
-      const projectId = url.searchParams.get("project") ?? undefined;
-      return json(res, 200, {
-        deviceId,
-        projects: listProjects(),
-        tickets: listTickets(projectId),
-      });
-    }
-
-    if (req.method === "POST" && url.pathname === "/tickets") {
-      const body = await readJson(req);
-      try {
-        const ticket = createTicket(body, ticketActor());
-        broadcast({ type: "board" });
-        return json(res, 200, { ticket });
-      } catch (error) {
-        return json(res, 400, { error: (error as Error).message || "could not create that ticket" });
-      }
-    }
-    if (parts[0] === "tickets" && parts[1]) {
-      const id = decodeURIComponent(parts[1]);
-      if (req.method === "GET" && parts.length === 2) {
-        const ticket = getTicket(id);
-        return ticket ? json(res, 200, { ticket }) : json(res, 404, { error: "no such ticket" });
-      }
-      if (req.method === "GET" && parts[2] === "activity") {
-        if (!getTicket(id)) return json(res, 404, { error: "no such ticket" });
-        return json(res, 200, { activity: ticketActivity(id) });
-      }
-      if (req.method === "POST" && parts[2] === "start") {
-        const body = await readJson(req);
-        try {
-          const checkout = body.checkout === undefined
-            ? undefined
-            : body.checkout === "main" || body.checkout === "worktree"
-              ? body.checkout
-              : null;
-          if (checkout === null) return json(res, 400, { error: "Pick Main checkout or New worktree." });
-          const chat = await startTicketThread(id, {
-            checkout,
-            ...(typeof body.provider === "string" ? { provider: body.provider } : {}),
-            ...(typeof body.model === "string" ? { model: body.model } : {}),
-            ...(typeof body.effort === "string" ? { effort: body.effort } : {}),
-          });
-          if (!chat) return json(res, 409, { error: "Couldn't start that thread." });
-          broadcast({ type: "board" });
-          return json(res, 200, { chat });
-        } catch (error) {
-          const message = (error as Error).message || "Couldn't start that thread.";
-          return json(res, /no such/.test(message) ? 404 : 409, { error: message });
-        }
-      }
-      if (req.method === "PATCH" && parts.length === 2) {
-        const body = await readJson(req);
-        try {
-          const ticket = updateTicket(id, body);
-          broadcast({ type: "board" });
-          return json(res, 200, { ticket });
-        } catch (error) {
-          const message = (error as Error).message || "could not save that ticket";
-          return json(res, /no such/.test(message) ? 404 : 400, { error: message });
-        }
-      }
-      if (req.method === "DELETE" && parts.length === 2) {
-        try {
-          deleteTicket(id);
-          broadcast({ type: "board" });
-          return json(res, 200, { ok: true });
-        } catch (error) {
-          return json(res, 404, { error: (error as Error).message || "no such ticket" });
-        }
-      }
-      // A move carries the neighbours it landed between, so ordering is one
-      // rank rather than a renumbered column.
-      if (req.method === "POST" && parts[2] === "move") {
-        const body = await readJson(req);
-        try {
-          const ticket = moveTicket(
-            id,
-            body.status,
-            typeof body.before === "string" ? body.before : undefined,
-            typeof body.after === "string" ? body.after : undefined,
-          );
-          broadcast({ type: "board" });
-          return json(res, 200, { ticket });
-        } catch (error) {
-          return json(res, 404, { error: (error as Error).message || "no such ticket" });
-        }
-      }
-      if (req.method === "POST" && parts[2] === "status") {
-        const body = await readJson(req);
-        if (scopedChatId) {
-          const latest = [...(getChat(scopedChatId)?.entries ?? [])]
-            .reverse()
-            .find((entry) => entry.kind === "user")?.text;
-          if (!explicitlyRequestedTicketStatus(latest, body.instruction, body.status)) {
-            return json(res, 403, { error: "Change a ticket's status only when the person explicitly asks." });
-          }
-        }
-        try {
-          const ticket = setTicketStatus(id, body.status, {
-            actor: ticketActor(),
-            note: typeof body.note === "string" ? body.note : undefined,
-          });
-          broadcast({ type: "board" });
-          return json(res, 200, { ticket });
-        } catch (error) {
-          return json(res, 404, { error: (error as Error).message || "no such ticket" });
-        }
-      }
-      if (req.method === "POST" && parts[2] === "comment") {
-        const body = await readJson(req);
-        try {
-          const actor = ticketActor();
-          const ticket = commentOnTicket(id, String(body.body ?? ""), actor);
-          broadcast({ type: "board" });
-          // The comment is already durable board activity, so an unavailable
-          // device cannot make posting it fail. A successful delivery appears
-          // in the linked thread as the same user turn and continues it.
-          const said = ticketActivity(id).at(-1);
-          if (actor === "you" && said?.body) {
-            void resumeTicketFromComment(id, said.body).catch((error) => {
-              console.error(`could not continue ticket ${id} from its comment:`, error);
-            });
-          }
-          return json(res, 200, { ticket });
-        } catch (error) {
-          const message = (error as Error).message || "could not add that comment";
-          return json(res, /no such/.test(message) ? 404 : 400, { error: message });
-        }
-      }
-      if (
-        (req.method === "PATCH" || req.method === "DELETE")
-        && parts[2] === "comments"
-        && parts[3]
-      ) {
-        const commentId = decodeURIComponent(parts[3]);
-        try {
-          const ticket = req.method === "PATCH"
-            ? editTicketComment(id, commentId, String((await readJson(req)).body ?? ""))
-            : deleteTicketComment(id, commentId);
-          broadcast({ type: "board" });
-          return json(res, 200, { ticket });
-        } catch (error) {
-          const message = (error as Error).message || "could not change that comment";
-          return json(res, /no such|gone/.test(message) ? 404 : 400, { error: message });
-        }
-      }
-      // Attaching an existing thread. Deliberately does not start or resume it:
-      // linking is bookkeeping, and the runner tells the two apart by `linkedBy`.
-      if (req.method === "POST" && parts[2] === "threads") {
-        if (externalProvider) {
-          return json(res, 403, { error: "that operation is available only inside a thread" });
-        }
-        const body = await readJson(req);
-        try {
-          const linkedChatId = scopedChatId ?? String(body.chatId ?? "");
-          const linkedDeviceId = scopedChatId
-            ? deviceId
-            : typeof body.deviceId === "string" ? body.deviceId : undefined;
-          const linkedState = scopedChatId ? getChat(scopedChatId)?.state : body.state;
-          const ticket = linkThread(id, {
-            chatId: linkedChatId,
-            deviceId: linkedDeviceId,
-            stage: typeof body.stage === "string" ? body.stage : undefined,
-            linkedBy: scopedChatId || body.linkedBy === "runner" ? "runner" : "you",
-          });
-          if (typeof linkedState === "string") {
-            syncTicketFromThread(
-              linkedChatId,
-              linkedState,
-              linkedDeviceId,
-            );
-          }
-          broadcast({ type: "board" });
-          return json(res, 200, { ticket: getTicket(id) ?? ticket });
-        } catch (error) {
-          const message = (error as Error).message || "could not attach that thread";
-          return json(res, /no such/.test(message) ? 404 : 409, { error: message });
-        }
-      }
-      if (req.method === "DELETE" && parts[2] === "threads" && parts[3]) {
-        try {
-          const ticket = unlinkThread(
-            id,
-            decodeURIComponent(parts[3]),
-            url.searchParams.get("device") ?? undefined,
-          );
-          broadcast({ type: "board" });
-          return json(res, 200, { ticket });
-        } catch (error) {
-          return json(res, 404, { error: (error as Error).message || "no such ticket" });
-        }
       }
     }
 
@@ -1846,44 +1277,6 @@ const server = createServer(async (req, res) => {
           return json(res, 400, { error: (error as Error).message || "could not attach that image" });
         }
       }
-      // Most work does not start on a board — it starts as a thread, and ten
-      // minutes in it turns out to be worth tracking. The ticket adopts what
-      // the thread already has rather than opening a second worktree.
-      if (req.method === "POST" && parts[2] === "ticket") {
-        const chat = getChat(id);
-        if (!chat) return json(res, 404, { error: "no such chat" });
-        const already = ticketForChat(id);
-        if (already) return json(res, 409, { error: `that thread is already on ${already.key}` });
-        const body = await readJson(req);
-        try {
-          const workspaces = await listWorkspaces();
-          // The deepest matching workspace wins, so a worktree inside a
-          // workspace resolves to that workspace rather than a shorter one.
-          const workspace = workspaces
-            .filter((candidate) => chat.cwd === candidate.path || chat.cwd.startsWith(`${candidate.path}/`))
-            .sort((a, b) => b.path.length - a.path.length)[0];
-          if (!workspace) {
-            return json(res, 400, { error: "this thread is not running in a workspace on this machine" });
-          }
-          const project = adoptWorkspace(workspace);
-          const info = await worktreeInfo(chat.cwd);
-          let ticket = createTicket({
-            projectId: project.id,
-            title: typeof body.title === "string" && body.title.trim() ? body.title : chat.title,
-            body: typeof body.body === "string" ? body.body : "",
-            ...(info.branch ? { branch: info.branch } : {}),
-          });
-          // Link before status: a ticket that is already being worked on must
-          // never be seen as one nobody has picked up.
-          ticket = linkThread(ticket.id, { chatId: id });
-          const live = chat.state === "working" || chat.state === "needs_input";
-          ticket = setTicketStatus(ticket.id, live ? "in_progress" : "todo");
-          broadcast({ type: "board" });
-          return json(res, 200, { ticket });
-        } catch (error) {
-          return json(res, 400, { error: (error as Error).message || "could not create that ticket" });
-        }
-      }
       // The composer's @file and /skill pickers, resolved against the chat's
       // own directory rather than a tmux pane's.
       if (req.method === "GET" && parts[2] === "files") {
@@ -2056,9 +1449,8 @@ const server = createServer(async (req, res) => {
       const body = await readJson(req);
       try {
         const workspace = await addWorkspace(String(body.name ?? ""), String(body.path ?? ""));
-        // A Git checkout joins the repository project immediately. Its event
-        // can then reach another device before either window happens to open
-        // the board, while the local path remains a binding only on this disk.
+        // A Git checkout joins the repository project immediately, while the
+        // local path remains a binding only on this disk.
         adoptWorkspace(workspace);
         return json(res, 200, { workspace });
       } catch (err) {
@@ -2504,8 +1896,7 @@ server.on("upgrade", (req, socket, head) => {
   }
   if (isNotify) {
     // `notify=0` subscribes to live state without becoming a notification
-    // target — the phone's role, since its banners come from Apple Push.
-    // Absent means yes, so an older desktop client keeps receiving them.
+    // target. Absent means yes.
     const notifies = url.searchParams.get("notify") !== "0";
     wss.handleUpgrade(req, socket, head, (ws) => attachNotifyStream(ws, notifies, url.searchParams));
     return;
@@ -2514,9 +1905,9 @@ server.on("upgrade", (req, socket, head) => {
   wss.handleUpgrade(req, socket, head, (ws) => attachStream(ws, name, url.searchParams));
 });
 
-// Loopback-only. External reach comes solely through `tailscale serve`, which
-// terminates TLS and restricts access to the tailnet — the process is never
-// exposed on the LAN or any public interface.
+// Loopback-only. The hub reaches this computer over the outbound connection in
+// `hub-computer.ts`; the process is never exposed on the LAN or any public
+// interface.
 configureAutomaticUpdates({
   enabled: () => config.automaticUpdates,
   busy: activeChatCount,
@@ -2526,7 +1917,6 @@ setInterval(syncAutomaticUpdates, 1_000).unref();
 
 server.listen(config.port, "127.0.0.1", () => {
   console.log(`remy server listening on 127.0.0.1:${config.port}`);
-  startTailnetExposureReconciler();
   startHubComputerConnection();
 });
 setSleepBusyCheck(() =>
@@ -2538,26 +1928,10 @@ syncRepoUpdateSchedule();
 // GitHub state belongs to registered workspaces. The monitor sends what changed
 // to the thread that asked to follow that pull request.
 startPullRequestMonitor();
-// And what GitHub says about a ticket's own pull request: ready for review, or
-// merged. Only this machine can ask about the repositories it holds.
-startTicketPullRequestSync();
-
-// Board changes can originate outside an HTTP handler: a thread changes its
-// ticket status, or a thread uses a ticket tool. Keep every open window live
-// without making each writer remember to send its own frame.
-function reconcileBoardEvent(event: LogEvent): void {
-  if (event.entity === "ticket") {
-    // A sub-ticket moving is also its parent moving. Here rather than in the
-    // writer so a sub-ticket a paired machine moved rolls its parent up too.
-    syncParentTicket(event.entityId);
-  }
-}
-
-onLocalAppend((event) => {
-  broadcast({ type: "board" });
-  reconcileBoardEvent(event);
-});
-onRemoteMerge(reconcileBoardEvent);
+// Project changes can originate outside an HTTP handler, such as a workspace
+// joining its repository. Keep every open window live without making each
+// writer remember to send its own frame.
+onLocalAppend(() => broadcast({ type: "board" }));
 
 // Who this machine is signed in as, asked once. It names the branches Remy
 // creates; Remy names itself when `gh` cannot say, so a branch always carries
@@ -2570,10 +1944,3 @@ if (!config.worktreeBranchPrefix || !config.githubLogin) {
     });
   });
 }
-// Board events flow between paired machines whether or not a window is open —
-// the daemon is what is paired, so the sync runs here rather than in a client.
-startPeerSync(() => {
-  syncActiveTicketThreads();
-  broadcast({ type: "board" });
-});
-startPeerStreamRelay();

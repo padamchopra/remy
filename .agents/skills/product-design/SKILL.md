@@ -7,29 +7,28 @@ description: Product structure, platform parity, and ownership in Remy. Use befo
 
 `ui` owns layout and interaction. `content` owns the words. `qa` owns proving the result. This skill owns the product model they express. Redesigns and new capabilities' UI use Base UI; see `ui`.
 
-## Web and desktop parity
+## The web app is the only client
 
-The hosted web app and the Mac app expose the same capabilities for the same concept by default. Match controls, navigation, editing, icon choices, defaults, and visual hierarchy. This applies to the web product, not the marketing website's page layout.
+The web app is the only client; the daemon and CLI connect computers to it. The Mac app, the phone app and the web UI's local mode are gone. A capability a person uses belongs in the hosted web app and reaches a computer through the hub; the daemon and the `remy` CLI exist to sign a computer in, keep it connected and run its threads.
 
-Before designing or changing a surface, inspect its counterpart in the running app and source. Reuse shared components and interaction patterns; adapt the data source behind them when platforms reach the same capability differently. A missing endpoint, separate implementation, or unfinished integration is work to complete, not a platform exception.
-
-Allow a difference only when the capability genuinely depends on the platform or its role: attaching the current Mac requires the desktop app; a Mac download action belongs on the web. Name the concrete constraint for every exception. Missing credentials or an unavailable computer calls for a connection or availability state, not removal of a capability the platform can support.
+Do not add a window, a browser shell against a daemon's `/api`, or a daemon-only settings screen. A setting that lives on a computer is edited from the web app through that computer's hub connection. Pairing, peers, `board_log` sync between daemons, Tailscale exposure and the device consent flows are gone; shape multi-computer work on hub computers, organizations and grants.
 
 BAD
 ```text
-Desktop: open workspace details in the main pane and select a repository image as its icon.
-Web: open an edit modal and offer only built-in icons because there is no local filesystem.
+Add a toggle to the daemon's local settings page, and pair a second Mac over the tailnet to share it.
 ```
 
 GOOD
 ```text
-Both: open workspace details in the main pane with the same icon picker and Glyph/Image choices.
-Desktop reads images from the checkout; web reads them through an authorized repository or computer connection.
+Add the toggle to the computer's page in Settings → Computers. The hub carries it to the computer.
+Each computer signs in with remy login and appears in the same account.
 ```
 
-Verify the same user journey on both surfaces, including saved state after refresh. Report remaining differences and their actual platform constraints; do not call a shared-looking subset parity. This is a design and review requirement, not an automated check.
+## Shared components
 
-Sidebar thread rows are one of those shared surfaces. Hosted `HubThreadSidebar` and Mac `AppSidebar` both render `ThreadMenu` — the same right-click `ContextMenu` and hover ⋯ `DropdownMenu`. Item order and enablement come from `threadMenuGroups` in `web/src/lib/thread-menu.ts`. A missing hosted endpoint is work to complete, not a reason to drop the item or fork the menu. Allow a difference only when the platform cannot support the action: hosted threads cannot start a subthread.
+The website's product preview draws the same components as the web app with sample state. Reuse shared components and interaction patterns rather than forking a second one for a surface; a missing endpoint, separate implementation, or unfinished integration is work to complete. Missing credentials or an unavailable computer calls for a connection or availability state, not removal of a capability the web app can support.
+
+Sidebar thread rows are one of those shared surfaces. Hosted `HubThreadSidebar` and `AppSidebar` (the website preview) both render `ThreadMenu` — the same right-click `ContextMenu` and hover ⋯ `DropdownMenu`. Item order and enablement come from `threadMenuGroups` in `web/src/lib/thread-menu.ts`. A missing hosted endpoint is work to complete, not a reason to drop the item or fork the menu. Allow a difference only when the platform cannot support the action: hosted threads cannot start a subthread.
 
 BAD
 ```text
@@ -43,7 +42,7 @@ Both: ThreadMenu. Hosted adapts pin, rename, archive, and delete onto hub routes
 Hosted omits Start subthread because that action has no hosted API.
 ```
 
-Hosted menu enablement follows hub ownership, not Mac daemon reachability. Pin, rename, archive, and delete stay usable when a cloud computer is idle, missing from the computers list, or marked stale. The hub can wake that computer. Disable an item only when the person cannot write or the thread is still pending. Copying a link does not need write access.
+Hosted menu enablement follows hub ownership, not daemon reachability. Pin, rename, archive, and delete stay usable when a cloud computer is idle, missing from the computers list, or marked stale. The hub can wake that computer. Disable an item only when the person cannot write or the thread is still pending. Copying a link does not need write access.
 
 BAD
 ```text
@@ -60,7 +59,7 @@ A missing or idle cloud computer is not a disabled menu.
 
 Remy presents one place for one user who can belong to multiple organizations. The account switcher filters that shared view: All includes Personal and every accessible organization; selecting Personal or an organization narrows the same surface.
 
-Do not divide a screen into organization sections or repeat its heading, add button, composer, or empty state per organization. Use one list or context area for the selected view across threads, workspaces, tasks, and settings. Show ownership on an item only where it helps the user make a decision.
+Do not divide a screen into organization sections or repeat its heading, add button, composer, or empty state per organization. Use one list or context area for the selected view across threads, workspaces, and settings. Show ownership on an item only where it helps the user make a decision.
 
 Viewing scope and ownership are separate. Creation lets the user choose Personal or an organization, preselecting the current filter when applicable. Existing items retain their owner and permissions; opening, editing, inviting, or deleting targets that owner without treating All as an owner or widening access. Organization administration opens explicitly from that organization's settings control.
 
@@ -192,6 +191,8 @@ Put the control where someone looks for the capability. Do not put it on the cur
 ## Scope overrides
 
 A broad owner supplies the default and a narrower owner may override it. The most specific explicit choice wins: Remy-wide → workspace → one pull request or thread.
+
+A new thread's model default lives on the workspace and the computer, never on the account or in Settings → General. The composer resolves it as: your pick → workspace default → computer default → the provider's own default. A new thread's permission has no saved default at all: it starts on Ask, and only the person, in the composer or the thread, moves it to something more permissive.
 
 Keep the same capability and state model at every scope, but use the choices the current context makes possible. Show which broader scope is being inherited and provide a way back to that default after an override. A lower scope starts from the effective values above it rather than from unrelated hard-coded defaults.
 

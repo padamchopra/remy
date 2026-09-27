@@ -35,26 +35,6 @@ Resize, selection, and memory do not have an agreed budget, so the runner record
 
 Hidden output used 1.46% raw browser CPU while the identical fixture delivery loop used 2.97%. The reported terminal cost is the non-negative difference, which removes the benchmark's own timers, payload creation, and dispatch work.
 
-## Reproduction and comparison
+## Reproduction
 
-Run the current renderer with:
-
-```sh
-npm run perf:terminal
-```
-
-Write the complete measurements as JSON with:
-
-```sh
-MC_TERMINAL_PERF_OUTPUT=/tmp/remy-terminal-performance.json npm run perf:terminal
-```
-
-Compare one or more candidate Remy web bundles with the same fixtures:
-
-```sh
-MC_TERMINAL_CANDIDATES=candidate=/absolute/path/to/index.html npm run perf:terminal
-```
-
-Separate candidates with commas. The first target is always the current bundle, and candidate results include percentage changes from it for the matching fixture and interaction.
-
-The benchmark injects the same deterministic transport into every target. It measures renderer work without opening a real terminal or changing Remy data. CPU is Chromium main-thread task time, memory is JavaScript heap usage, and dropped frames are normalized against the display capacity measured immediately before each interaction.
+The runner, `npm run perf:terminal`, drove the web UI's local mode against a mocked desktop bridge. It was removed with local mode, so this baseline cannot be re-run from `main`; check out `c2afea7` to reproduce it. A new baseline needs a runner against the hosted app.

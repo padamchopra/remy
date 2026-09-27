@@ -57,10 +57,9 @@ import {
   type ChatImageAttachment,
 } from "./transcript.js";
 import { codeReferencePrompt } from "./chat-references.js";
-import { inProcessTicketMcpServer, ticketPromptContext } from "./ticket-tools.js";
+import { inProcessRemyMcpServer } from "./ticket-tools.js";
 import { remyToolToken } from "./ticket-tool-auth.js";
 import { remyProviderInstructions } from "./ticket-tool-contract.js";
-import { forgetChat, linkTicketFromWorkPrompt, syncTicketFromThread } from "./tickets.js";
 import { readChatImage } from "./chat-attachments.js";
 import { uploadRoot } from "./uploads.js";
 import { nameDetachedWorktree } from "./workspaces.js";
@@ -199,7 +198,7 @@ const INITIAL_CHAT_WINDOW_BYTES = 96 * 1024;
 // `claude` process each for as long as the host is up.
 const IDLE_SHUTDOWN_MS = 15 * 60_000;
 // Text arrives token by token; repainting every client on every token would
-// spend the whole tailnet budget on one paragraph.
+// spend the whole relay budget on one paragraph.
 const STREAM_FLUSH_MS = 120;
 
 function nowMs(): number {
@@ -292,13 +291,6 @@ export class Chat {
     const busy = next === "working" || next === "needs_input";
     this.workingSince = busy ? (this.workingSince ?? nowMs()) : undefined;
     this.currentState = next;
-    // A ticket following this thread starts from Todo, then moves between In
-    // progress and Needs input — see `syncTicketFromThread`.
-    try {
-      syncTicketFromThread(this.record.id, next);
-    } catch (error) {
-      console.error(`chat ${this.record.id} could not update its ticket:`, error);
-    }
   }
 
   summary(): ChatSummary {
@@ -394,11 +386,8 @@ export class Chat {
     // A better name is worth having but not worth waiting for, so it runs
     // alongside the turn and lands whenever it lands.
     if (first) void this.rename(safeText);
-    const ticketOwnerId = this.record.parentChatId ?? this.record.id;
-    linkTicketFromWorkPrompt(ticketOwnerId, safeText);
-    const ticketContext = ticketPromptContext(ticketOwnerId);
     const referenceContext = codeReferencePrompt(safeReferences);
-    const agentText = [ticketContext, referenceContext, agentContext, safeText]
+    const agentText = [referenceContext, agentContext, safeText]
       .filter(Boolean)
       .join("\n\n");
     const agentPrompt: ChatPrompt = { text: agentText, attachments, environment:await taskEnvironment(this.record.cwd,this.record.id) };
@@ -576,7 +565,7 @@ export class Chat {
               : {}),
             additionalDirectories: [uploadRoot],
             developerInstructions: remyProviderInstructions(),
-            inProcessMcp: inProcessTicketMcpServer(this.record.id, {
+            inProcessMcp: inProcessRemyMcpServer(this.record.id, {
               currentCwd: this.record.cwd,
               list: listChats,
               read: getChat,
@@ -1169,7 +1158,7 @@ export function restoreArchivedChat(input: {
     provider,
     ...(conversation.model ? { model: conversation.model } : {}),
     ...(conversation.effort ? { effort: conversation.effort } : {}),
-    permissionMode: permissionMode(conversation.permissionMode, config.defaultPermissionMode),
+    permissionMode: permissionMode(conversation.permissionMode),
     ...(conversation.parentChatId ? { parentChatId: conversation.parentChatId } : {}),
     createdAt: conversation.createdAt ?? nowMs(),
     updatedAt: nowMs(),
@@ -1239,16 +1228,15 @@ export function createChat(input: {
   if (parent?.parentChatId) throw new Error("a subthread cannot start another subthread");
   const cwd = parent?.cwd ?? expandChatCwd(input.cwd ?? "~");
   if (!existsSync(cwd)) throw new Error("that directory does not exist on this machine");
-  // A workspace that runs on something of its own stands where the machine's
-  // default would.
-  const workspace = input.workspaceDefault?.provider
+  // A workspace that runs on something of its own says so; otherwise the
+  // first provider turned on answers with its own default model.
+  const inherited = input.workspaceDefault?.provider
     ? {
         provider: input.workspaceDefault.provider,
         model: input.workspaceDefault.model ?? "",
         effort: input.workspaceDefault.effort ?? "",
       }
-    : { provider: config.defaultProvider, model: config.defaultModel, effort: config.defaultEffort };
-  const inherited = workspace;
+    : { provider: config.defaultProvider, model: "", effort: "" };
   const askedProvider = providerId(parent?.provider ?? input.provider ?? inherited.provider);
   if (input.provider !== undefined && !config.enabledProviders.includes(askedProvider)) {
     throw new Error("that provider is turned off");
@@ -1272,7 +1260,8 @@ export function createChat(input: {
     ...(effort ? { effort } : {}),
     ...(parent ? { parentChatId: parent.id } : {}),
     permissionMode: parent?.permissionMode
-      ?? permissionMode(input.permissionMode, config.defaultPermissionMode),
+      // Unless the caller says otherwise, a thread asks before it acts.
+      ?? permissionMode(input.permissionMode),
     createdAt: nowMs(),
     updatedAt: nowMs(),
     entries: [],
@@ -1460,7 +1449,6 @@ export function chatCwd(id: string): string {
 
 export function deleteChat(id: string): void {
   const chat = mustGet(id);
-  forgetChat(id);
   chat.stop();
   chat.markDeleted();
   chats.delete(id);

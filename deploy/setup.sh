@@ -17,19 +17,6 @@ for bin in node npm tmux curl; do
   command -v "$bin" >/dev/null || { echo "missing dependency: $bin"; exit 1; }
 done
 
-# The macOS Tailscale GUI app doesn't put its CLI on PATH — find it.
-TAILSCALE="$(command -v tailscale || true)"
-for candidate in /Applications/Tailscale.app/Contents/MacOS/Tailscale "$HOME/Applications/Tailscale.app/Contents/MacOS/Tailscale"; do
-  [ -n "$TAILSCALE" ] && break
-  [ -x "$candidate" ] && TAILSCALE="$candidate"
-done
-[ -n "$TAILSCALE" ] || { echo "Tailscale not found — install it and sign in first."; exit 1; }
-
-if [ "${REMY_SKIP_QR:-${MISSION_CONTROL_SKIP_QR:-0}}" != "1" ] && ! command -v qrencode >/dev/null; then
-  echo "==> Installing qrencode (for pairing QR)"
-  brew install qrencode
-fi
-
 echo "==> Building server"
 cd "$SERVER_DIR"
 npm install --no-fund --no-audit
@@ -123,7 +110,6 @@ sleep 2
 STORE="$MC_DIR/store.mjs"
 TOKEN="$(node "$STORE" get config token 2>/dev/null || echo "<server did not start — check $MC_DIR/server.log>")"
 PORT="$(node "$STORE" get config port 2>/dev/null || echo 8420)"
-TS_HOST="$("$TAILSCALE" status --json 2>/dev/null | node -p 'try { JSON.parse(require("fs").readFileSync(0,"utf8")).Self.DNSName.replace(/\.$/,"") } catch { "<tailscale hostname>" }' 2>/dev/null || echo "<tailscale hostname>")"
 
 if curl -s -m 3 -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:$PORT/health" | grep -q '"ok":true'; then
   HEALTH="healthy"
@@ -131,52 +117,15 @@ else
   HEALTH="NOT RESPONDING — check $MC_DIR/server.log"
 fi
 
-# The node server is bound to 127.0.0.1 only. `tailscale serve` (NOT funnel) is
-# the sole path in from outside — tailnet devices only, TLS-terminated. Prefer
-# HTTPS; fall back to tailnet-HTTP if the tailnet hasn't enabled HTTPS certs
-# (still WireGuard-encrypted and tailnet-only, just no TLS-on-top).
-echo "==> Exposing over the tailnet with tailscale serve"
-"$TAILSCALE" serve reset >/dev/null 2>&1 || true
-if "$TAILSCALE" serve --bg --https=443 "http://127.0.0.1:$PORT" >/dev/null 2>&1; then
-  APP_URL="https://$TS_HOST"
-  SERVE_NOTE="HTTPS (TLS, tailnet-only)"
-elif "$TAILSCALE" serve --bg --http="$PORT" "http://127.0.0.1:$PORT" >/dev/null 2>&1; then
-  APP_URL="http://$TS_HOST:$PORT"
-  SERVE_NOTE="tailnet HTTP (WireGuard-encrypted, tailnet-only). Enable HTTPS certs in the Tailscale admin console for TLS, then re-run."
-else
-  APP_URL="http://$TS_HOST:$PORT"
-  SERVE_NOTE="tailscale serve FAILED — the app cannot reach the server until this is fixed (see: tailscale serve status)."
-fi
-
-# Persist the pairing values so deploy/show-pairing.sh can reprint the QR later.
-node "$STORE" set-pairing "$APP_URL" "$TOKEN"
-
-PAIR_LINK="remy://configure?url=$APP_URL&token=$TOKEN"
-
 cat <<SUMMARY
 
 ============================================================
 Remy server: $HEALTH
-Tailnet exposure:        $SERVE_NOTE
+Listening on 127.0.0.1:$PORT only.
 
-Pair another device: open Remy on it and scan this:
-============================================================
-SUMMARY
-
-if [ "${REMY_SKIP_QR:-${MISSION_CONTROL_SKIP_QR:-0}}" != "1" ]; then
-  qrencode -t ANSIUTF8 -m 2 "$PAIR_LINK"
-fi
-
-cat <<SUMMARY
-============================================================
-Or enter manually:
-  Server URL : $APP_URL
-  Token      : $TOKEN
-
-Or copy this link and paste it on the other device:
-  $PAIR_LINK
-
-Reprint this QR anytime:  ./deploy/show-pairing.sh
+Connect this computer to your Remy account:
+  remy login <key>
+Create a key in Remy on the web, under Settings → Computers → Connected.
 
 Turn off Claude Code remote control (remoteControlAtStartup: false) — Remy
 replaces it.

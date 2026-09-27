@@ -1,8 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type { WebSocket } from "ws";
-import { config } from "./config.js";
-import { forwardNotification } from "./peers.js";
-import { sendPush } from "./push.js";
 import type { RegistryEntry } from "./registry.js";
 import { attachAppUpdateHost } from "./app-update.js";
 import { attachNativeBrowserHost } from "./browser-host.js";
@@ -13,18 +10,15 @@ export interface NotifyEvent {
   title: string;
   message: string;
   highPriority: boolean;
-  /// Where tapping the push should land. Threads set their own deep link.
+  /// Where opening the notification should land. Threads set their own deep link.
   click?: string;
-  /// The machine the thread runs on when it is not this one.
-  device?: string;
-  /// Stable routing identity for a phone paired with several computers.
+  /// Stable routing identity for this computer.
   deviceId?: string;
 }
 
 interface Subscriber {
   socket: WebSocket;
   topics: Set<string>;
-  relay: boolean;
   scoped: boolean;
 }
 
@@ -53,12 +47,10 @@ const lastSent = new Map<string, number>();
 // older window silently stale.
 const subscribers = new Map<WebSocket, Subscriber>();
 const notifyTargets = new Set<WebSocket>();
-const livePeerStreams = new Set<string>();
 const alive = new WeakSet<WebSocket>();
 const streamId = randomUUID();
 const history: HistoryEntry[] = [];
 const pendingChats = new Map<string, PendingChatFrame>();
-const topicDemandListeners = new Set<(topics: string[]) => void>();
 let sequence = 0;
 
 export function notificationSequence(): number {
@@ -91,7 +83,7 @@ function topicsFor(payload: unknown): string[] {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return ["sidebar"];
   const frame = payload as Record<string, unknown>;
   const type = typeof frame.type === "string" ? frame.type : "";
-  if ((type === "reset" || type === "peer-reset") && Array.isArray(frame.topics)) {
+  if (type === "reset" && Array.isArray(frame.topics)) {
     const topics = frame.topics.filter(validTopic);
     return topics.length > 0 ? topics : ["sidebar"];
   }
@@ -108,7 +100,6 @@ function topicsFor(payload: unknown): string[] {
     return ["pull-requests"];
   }
   if (type === "settings" || type === "automatic-update") return ["settings"];
-  if (type === "hub-board") return ["board", "settings"];
   if (type === "board") return ["board", "sidebar", "settings"];
   if (type === "quick-replies" || type === "environments") return ["settings"];
   return ["sidebar"];
@@ -123,36 +114,12 @@ function send(subscriber: Subscriber, text: string): void {
   if (subscriber.socket.readyState === subscriber.socket.OPEN) subscriber.socket.send(text);
 }
 
-function demandedTopics(): string[] {
-  const topics = new Set<string>();
-  for (const subscriber of subscribers.values()) {
-    if (subscriber.relay) continue;
-    if (!subscriber.scoped) return ["*"];
-    for (const topic of subscriber.topics) topics.add(topic);
-  }
-  return [...topics].sort();
-}
-
-function reportTopicDemand(): void {
-  const topics = demandedTopics();
-  for (const listener of topicDemandListeners) listener(topics);
-}
-
-/// Calls back whenever local windows change what a peer relay should request.
-export function onTopicDemand(listener: (topics: string[]) => void): () => void {
-  topicDemandListeners.add(listener);
-  listener(demandedTopics());
-  return () => topicDemandListeners.delete(listener);
-}
-
 /// Attaches one authenticated client and its current surface ownership.
 export function attachNotifyStream(ws: WebSocket, notifies: boolean, params = new URLSearchParams()): void {
-  const relay = params.get("relay") === "1";
   const scoped = params.get("scoped") === "1";
   const subscriber: Subscriber = {
     socket: ws,
     topics: scoped ? topicsFromParams(params) : new Set(),
-    relay,
     scoped,
   };
   subscribers.set(ws, subscriber);
@@ -175,12 +142,10 @@ export function attachNotifyStream(ws: WebSocket, notifies: boolean, params = ne
     const added = [...next].filter((topic) => !subscriber.topics.has(topic));
     subscriber.topics = next;
     if (added.length > 0) send(subscriber, JSON.stringify({ type: "reset", topics: added, sequence }));
-    reportTopicDemand();
   });
   const drop = () => {
     subscribers.delete(ws);
     notifyTargets.delete(ws);
-    reportTopicDemand();
   };
   ws.on("close", drop);
   ws.on("error", drop);
@@ -202,7 +167,6 @@ export function attachNotifyStream(ws: WebSocket, notifies: boolean, params = ne
       push: true,
       streamId,
       sequence,
-      peerStreams: [...livePeerStreams],
       ...(reset ? { reset: true, topics: [...subscriber.topics] } : {}),
     }));
     if (resumable && !reset) {
@@ -211,7 +175,6 @@ export function attachNotifyStream(ws: WebSocket, notifies: boolean, params = ne
       }
     }
   }
-  reportTopicDemand();
 }
 
 function broadcastFrame(payload: unknown): void {
@@ -296,23 +259,6 @@ export function broadcast(payload: unknown): void {
   broadcastFrame(payload);
 }
 
-/// Delivers a peer's frame to local clients without sending it back out through
-/// another peer relay.
-export function broadcastPeer(serverId: string, payload: unknown): void {
-  const topics = topicsFor(payload);
-  const text = JSON.stringify({ type: "peer-frame", serverId, payload });
-  for (const subscriber of subscribers.values()) {
-    if (!subscriber.relay && accepts(subscriber, topics)) send(subscriber, text);
-  }
-}
-
-/// Keeps new local clients aware of peer streams already connected here.
-export function setPeerStreamStatus(serverId: string, connected: boolean): void {
-  if (connected) livePeerStreams.add(serverId);
-  else livePeerStreams.delete(serverId);
-  broadcastPeer(serverId, { type: connected ? "hello" : "peer-disconnected", push: connected });
-}
-
 /// Pushes hook-driven sidebar state without asking clients to refetch it.
 export function pushSession(session: string, entry: RegistryEntry | undefined): void {
   broadcast({
@@ -339,7 +285,6 @@ setInterval(() => {
       subscribers.delete(ws);
       notifyTargets.delete(ws);
       ws.terminate();
-      reportTopicDemand();
       continue;
     }
     alive.delete(ws);
@@ -353,7 +298,8 @@ export function onAddressedNotification(route: (event: NotifyEvent) => boolean):
   return () => notificationRouters.delete(route);
 }
 
-/// Routes a local notification to this machine and its opted-in peers.
+/// Routes a notification to the hub when it is about a hub thread, and to this
+/// computer's own clients otherwise.
 export async function sendNotification(evt: NotifyEvent): Promise<void> {
   evt = { ...evt, deviceId: evt.deviceId ?? deviceId };
   const throttleKey = `${evt.session}:${evt.highPriority}:${evt.message}:${evt.title}`;
@@ -361,24 +307,12 @@ export async function sendNotification(evt: NotifyEvent): Promise<void> {
   if (now - (lastSent.get(throttleKey) ?? 0) < THROTTLE_MS) return;
   lastSent.set(throttleKey, now);
   for (const route of notificationRouters) if (route(evt)) return;
-  await Promise.all([
-    config.notifySelf ? deliverHere(evt) : Promise.resolve(),
-    forwardNotification({ ...evt }),
-  ]);
+  deliverHere(evt);
 }
 
-/// Displays a notification a peer explicitly addressed to this machine.
-export async function deliverFromPeer(evt: NotifyEvent): Promise<void> {
-  await deliverHere(evt);
-}
-
-async function deliverHere(evt: NotifyEvent): Promise<void> {
-  if (notifyTargets.size > 0) {
-    const payload = JSON.stringify({ type: "notification", ...evt });
-    for (const ws of notifyTargets) {
-      if (ws.readyState === ws.OPEN) ws.send(payload);
-    }
-    return;
+function deliverHere(evt: NotifyEvent): void {
+  const payload = JSON.stringify({ type: "notification", ...evt });
+  for (const ws of notifyTargets) {
+    if (ws.readyState === ws.OPEN) ws.send(payload);
   }
-  await sendPush(evt);
 }

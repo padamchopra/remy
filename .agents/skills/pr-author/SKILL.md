@@ -36,7 +36,7 @@ BAD
 - Add a model picker.
 - Add commit selection.
 - Store guides.
-- Add peer lookup.
+- Add saved-guide lookup.
 - Add question persistence.
 
 ## Testing
@@ -52,7 +52,7 @@ Make large pull requests easier to understand with a guided review beside the ex
 ## Changes
 
 - Generate digestible change groups for selected commits, using the model you choose.
-- Reuse saved guides across paired devices and ask questions inline.
+- Reuse a saved guide when you reopen the pull request and ask questions inline.
 - Keep the same file-viewing and change-comment controls in Code and Guide.
 
 ## Review notes

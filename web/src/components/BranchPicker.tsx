@@ -55,7 +55,7 @@ export function BranchPicker({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <InputGroupButton aria-label="Branch" className="min-w-0 shrink [@media(pointer:coarse)]:h-8" disabled={busy}>
+        <InputGroupButton aria-label="Branch" className={pending ? "min-w-0 shrink disabled:opacity-100 [@media(pointer:coarse)]:h-8" : "min-w-0 shrink [@media(pointer:coarse)]:h-8"} disabled={busy} aria-busy={pending && busy ? true : undefined}>
           <GitBranch />
           {pending ? <span className="inline-block min-w-0 max-w-40 truncate">{branch}</span> : <span className="min-w-0 max-w-40 truncate">{branch}</span>}
           <ChevronDown />

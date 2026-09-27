@@ -31,7 +31,6 @@ export function useMacSidebar({
   onSection,
   onSelectChat,
   onOpenBeside,
-  onOpenTicket,
   onOpenWorkspace,
   onNewThread,
   openSettings,
@@ -49,7 +48,6 @@ export function useMacSidebar({
   onSection: (id: string) => void;
   onSelectChat: (id: string) => void;
   onOpenBeside: (id: string) => void;
-  onOpenTicket: (key: string) => void;
   onOpenWorkspace: (workspaceId: string) => void;
   onNewThread: () => void;
   openSettings: (tab?: SettingsTab) => void;
@@ -58,7 +56,6 @@ export function useMacSidebar({
 }) {
   const [limits, setLimits] = useState<Record<string, number>>({});
   const chats = useStore((state) => state.chats);
-  const tickets = useStore((state) => state.tickets);
   const avatar = useStore((state) => state.settings?.avatar);
   const stillLooking = useStore((state) => state.loading);
   const needsYou = useStore((state) => state.chats.filter((chat) => chat.state === "needs_input").length);
@@ -104,7 +101,6 @@ export function useMacSidebar({
       const workspace = workspaces[workspaceForPath(chat.cwd, workspaces)];
       const server = servers.find((entry) => entry.id === chat.serverId);
       const branch = workspace?.worktrees.find((tree) => tree.path === chat.cwd)?.branch;
-      const ticket = tickets.find((entry) => entry.threads.some((link) => link.chatId === chat.id));
       const time = chat.workingSince ? elapsedSince(chat.workingSince, now) : agoLabel(chat.updatedAt, now);
       return {
         key: chat.id,
@@ -112,7 +108,7 @@ export function useMacSidebar({
         signature: [
           chat.title, time, aggregate, chat.pinned, chat.preview, chat.provider, chat.model,
           workspace?.id, workspace?.name, workspace?.icon, workspace?.tint, branch,
-          server?.id, server?.name, server?.icon, ticket?.key, ticket?.title,
+          server?.id, server?.name, server?.icon,
         ].join("\u0000"),
         title: chat.title,
         time,
@@ -131,7 +127,6 @@ export function useMacSidebar({
             }
           : undefined,
         computer: server ? { name: server.name, icon: server.icon } : undefined,
-        ticket: ticket ? { key: ticket.key, title: ticket.title, onOpen: () => onOpenTicket(ticket.key) } : undefined,
         menu: {
           chat,
           onOpenThread: onSelectChat,
@@ -201,7 +196,7 @@ export function useMacSidebar({
       });
     }
     return built;
-  }, [chats, tickets, workspaces, servers, archived, selected, limits, now, avatar]);
+  }, [chats, workspaces, servers, archived, selected, limits, now, avatar]);
 
   const footer: SidebarFooterItem[] = [
     ...(view !== "settings" && updateAvailable

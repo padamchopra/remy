@@ -1,4 +1,3 @@
-import { profilePreferences } from "./profile-preferences.js";
 import { validProfileImage } from "./profile-image.js";
 import { HostedStartupError } from "./hosted-startup-error.js";
 import { modelDefaults } from "./model-defaults.js";
@@ -495,15 +494,6 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     if (organizationMatch) {
       const organizationId = decodeURIComponent(organizationMatch[1]); const tail = organizationMatch[2] ?? "";
       const board = () => env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${organizationId}`));
-      if (tail === "profile-preferences" && (request.method === "GET" || request.method === "PATCH")) {
-        await organizations.member(organizationId, identity.userId);
-        const response = await profilePreferences(env.DB, identity.userId, request);
-        if (request.method === "PATCH" && response.ok) {
-          const memberships = await env.DB.prepare("SELECT organization_id FROM memberships WHERE user_id=?").bind(identity.userId).all<{organization_id:string}>();
-          await Promise.all(memberships.results.map(row => env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${row.organization_id}`)).fetch(new Request("https://internal/profile/changed", {method:"POST", headers:{"x-organization-id":row.organization_id,"x-user-id":identity.userId}}))));
-        }
-        return response;
-      }
       if (tail === "github/profile" && request.method === "GET") {
         const github = await githubFor(env).api<{avatar_url:string}>(organizationId, identity.userId, "/user");
         const image = new URL(github.avatar_url);
@@ -955,15 +945,23 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         if (workspaceId) await organizations.workspace(organizationId, identity.userId, workspaceId);
         const settings = new HostedSettingsStore(env.DB, () => env.AUTH_SECRET.get());
         if (request.method === "GET" && (!workspaceId || hostedMatch[2] === "settings")) {
-          const names = await settings.secretNames(organizationId);
-          const enabledProviders = await settings.enabledProviders(organizationId);
-          const access = publicModelAccess(await settings.executionSecrets(organizationId));
+          // Every read here is independent; awaiting them one after another made
+          // this the slowest thing the new-thread composer waits on.
+          const [names, enabledProviders, executionSecrets, hostedSettings, secrets] = await Promise.all([
+            settings.secretNames(organizationId),
+            settings.enabledProviders(organizationId),
+            settings.executionSecrets(organizationId),
+            settings.settings(organizationId, workspaceId),
+            settings.secrets(organizationId),
+          ]);
+          const access = publicModelAccess(executionSecrets);
           const cloudStart: Record<string, { owner: boolean; providers: ReturnType<typeof publicStartProviders> }> = {};
-          for (const provider of enabledProviders) {
-            const grant = await cloudStartGrant(settings, organizationId, provider, identity.userId);
+          const grants = await Promise.all(enabledProviders.map((provider) => cloudStartGrant(settings, organizationId, provider, identity.userId)));
+          enabledProviders.forEach((provider, index) => {
+            const grant = grants[index]!;
             cloudStart[provider] = { owner: grant.owner, providers: publicStartProviders(grant.advertised, grant.stored) };
-          }
-          return Response.json({ settings: await settings.settings(organizationId,workspaceId), secretNames: member.role !== "member" ? names.filter(name => !name.startsWith("cloud:") && !name.startsWith("model:") && !name.startsWith("access:") && !name.startsWith("named-")) : [], enabledProviders, cloudStart, routerConfigured: !!access.find(entry => entry.id === "router")?.configured, openrouterConfigured: !!access.find(entry => entry.id === "openrouter")?.configured, connections: names.filter(name => name.startsWith("cloud:")).map(name => name.slice(6)), providerKeys: publicProviderKeys(await settings.secrets(organizationId)), available: enabledProviders.includes("cursor-cloud") || (!!env.HOSTED_IMAGE && (!!env.PROVIDER_RUNTIME || (!!env.HOSTED_CONTROL_URL && !!env.HOSTED_CONTROL_TOKEN))) });
+          });
+          return Response.json({ settings: hostedSettings, secretNames: member.role !== "member" ? names.filter(name => !name.startsWith("cloud:") && !name.startsWith("model:") && !name.startsWith("access:") && !name.startsWith("named-")) : [], enabledProviders, cloudStart, routerConfigured: !!access.find(entry => entry.id === "router")?.configured, openrouterConfigured: !!access.find(entry => entry.id === "openrouter")?.configured, connections: names.filter(name => name.startsWith("cloud:")).map(name => name.slice(6)), providerKeys: publicProviderKeys(secrets), available: enabledProviders.includes("cursor-cloud") || (!!env.HOSTED_IMAGE && (!!env.PROVIDER_RUNTIME || (!!env.HOSTED_CONTROL_URL && !!env.HOSTED_CONTROL_TOKEN))) });
         }
         if (request.method === "PUT" && (!workspaceId || hostedMatch[2] === "settings")) {
           if (member.role === "member") return jsonError("Ask an admin to change hosted computers.",403);
@@ -1000,7 +998,8 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       }
       if(tail==="computers/choice" || tail==="computers/preference") {
         await organizations.member(organizationId,identity.userId);
-        const enabledProviders=await new HostedSettingsStore(env.DB,()=>env.AUTH_SECRET.get()).enabledProviders(organizationId);
+        // Reading your saved preference needs no cloud settings; the composer
+        // asks for it first, so it stays one query.
         if(tail==="computers/preference" && request.method==="GET") {
           const workspaceId=url.searchParams.get("workspaceId");
           if(!workspaceId)return jsonError("Choose a workspace.",400);
@@ -1009,6 +1008,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           return Response.json({computerId:preference?.computer_id??null});
         }
         if(request.method==="POST") {
+          const enabledProviders=await new HostedSettingsStore(env.DB,()=>env.AUTH_SECRET.get()).enabledProviders(organizationId);
           const input=await body<{workspaceId?:string;computerId?:string|null;prewarm?:boolean;usePreference?:boolean}>(request);
           if(!input?.workspaceId)return jsonError("Choose a workspace.",400);
           const workspace=await organizations.workspace(organizationId,identity.userId,input.workspaceId);
@@ -2073,14 +2073,14 @@ export class HubCoordinator {
       const computer = await this.computers.computer(org, choice.computerId);
       if (choice.computerId === CURSOR_CLOUD_COMPUTER_ID) {
         const workspace = await new OrganizationService(new D1OrganizationStore(this.env.DB)).workspace(org, actor.id, input.workspaceId);
-        const preferences = await this.env.DB.prepare("SELECT permission_mode FROM member_preferences WHERE user_id=?").bind(actor.id).first<{permission_mode:string}>();
         const started = await this.startCursorCloudThread(org, actor, {
           workspaceId: input.workspaceId,
           origin: workspace.origin,
           ...(input.title ? { title: input.title } : {}),
           ...(input.visibility ? { visibility: input.visibility } : {}),
           ...(input.branch ? { branch: input.branch } : {}),
-          permissionMode: preferences?.permission_mode ?? "default",
+          // A new thread asks first; nothing saved on the account grants more.
+          permissionMode: "default",
         });
         await this.ctx.storage.put(key, { computerId: started.computerId, id: started.threadId });
         await this.ctx.storage.put(`thread-run:${started.threadId}`, { computerId: started.computerId, userId: actor.id });
@@ -2092,8 +2092,7 @@ export class HubCoordinator {
         const current = await this.ctx.storage.get<ManualThreadStart>(key);
         await this.ctx.storage.put(key, { ...current, started: true, phase: "preparing_branch", workspaceId: input.workspaceId, at: current?.at ?? Date.now() });
       }
-      const preferences = await this.env.DB.prepare("SELECT permission_mode FROM member_preferences WHERE user_id=?").bind(actor.id).first<{permission_mode:string}>();
-      const made = await this.dispatchComputer(choice.computerId, actor, "POST", "/hub/threads", {workspaceId:choice.workspaceId, hubTaskId:key, permissionMode:preferences?.permission_mode ?? "default", branch:input.branch, provider:input.provider, model:input.model, visibility:input.visibility ?? "private", title:typeof input.title === "string" ? input.title.slice(0,200) : undefined});
+      const made = await this.dispatchComputer(choice.computerId, actor, "POST", "/hub/threads", {workspaceId:choice.workspaceId, hubTaskId:key, permissionMode:"default", branch:input.branch, provider:input.provider, model:input.model, visibility:input.visibility ?? "private", title:typeof input.title === "string" ? input.title.slice(0,200) : undefined});
       if (!made.ok) {
         const body = await made.json().catch(() => undefined) as { error?: unknown } | undefined;
         const error = typeof body?.error === "string" && body.error.trim() ? body.error : "Your computer could not start; try again.";
@@ -2139,9 +2138,14 @@ export class HubCoordinator {
     const computerId = match ? decodeURIComponent(match[1]) : undefined;
     const id = match?.[2]; const action = match?.[3]; const attachmentId = match?.[4];
     if (url.pathname === "/threads" && request.method === "GET") {
+      // The cursor is read first so no frame between it and the list is lost;
+      // the list and the computers it is checked against are independent.
       const cursor = (await this.threads.replay()).cursor;
-      const threads = await this.visibleThreads(actor.id);
-      const availability = new Map((await this.computerService().list(request.headers.get("x-organization-id")!, actor.id)).map(computer => [computer.computerId, computer.availability]));
+      const [threads, computers] = await Promise.all([
+        this.visibleThreads(actor.id),
+        this.computerService().list(request.headers.get("x-organization-id")!, actor.id),
+      ]);
+      const availability = new Map(computers.map(computer => [computer.computerId, computer.availability]));
       return Response.json({ threads: threads.map((thread) => ({ ...thread, stale: thread.stale || availability.get(thread.computerId) === "offline" })), cursor, member: actor });
     }
     if (url.pathname === "/threads/live" && request.method === "GET") {

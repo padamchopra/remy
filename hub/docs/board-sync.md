@@ -1,6 +1,8 @@
 # Computer Tasks synchronization
 
-An organization retains the authoritative shared log in its Durable Object. A trusted computer can keep a SQLite replica under its organization id. The private local log and existing Mac-to-Mac pairing remain independent: receiving organization data never makes it eligible for private peer replication.
+An organization retains the authoritative shared log in its Durable Object. A trusted computer can keep a SQLite replica under its organization id. Receiving organization data never makes it part of the computer's private local log.
+
+The consent controls that turned this on lived in the removed local window's Computers settings, so nothing in the web app grants or starts it today. Daemon-to-daemon sync is gone; this replica is computer-to-hub and stays, with its hub grant routes and the computer's `/server/hub/board` routes, until the web app grants it or it is removed with them.
 
 | Path | Owner and behavior |
 | --- | --- |
@@ -17,14 +19,8 @@ The initial import is a separate unchecked choice. It copies the existing board 
 
 Ticket links carry both thread and computer ids. A link to another computer never means a same-named local thread.
 
-The broad offline copy is deliberately limited to admin-approved trusted computers. Member-specific web access is separate from replica permission; hosted execution uses its own thread capabilities. An imported entity remains shared after import, including later edits from paired local computers.
+The broad offline copy is deliberately limited to admin-approved trusted computers. Member-specific web access is separate from replica permission; hosted execution uses its own thread capabilities. An imported entity remains shared after import.
 
 ## Reproduce
 
-Build the current server, run `QA_COMPUTER_POLICY=1 node hub/scripts/qa-threads.mjs`, then run `VITE_REMY_HUB_URL=<printed hub URL> npm run qa:web`. Use the printed session file and web URL:
-
-```sh
-QA_SESSION=<session file> QA_WEB_URL=<web URL> node web/scripts/qa-hub-board.mjs
-```
-
-The isolated check exercises the actual consent controls, private exclusion, import-once behavior, signed grants, live exchange in both directions, wake catch-up, thread links, reload, and narrow layout. Server tests also cover multi-page catch-up, duplicate suppression and unavailable-owner reads. Stop both owned QA commands afterwards.
+The browser check for this, `qa-hub-board.mjs`, drove the removed local window and is gone. Server tests cover multi-page catch-up, duplicate suppression and unavailable-owner reads. `QA_HUB_WEB=1 QA_COMPUTER_POLICY=1 node hub/scripts/qa-threads.mjs` still attaches the current computer to a disposable hub for an exchange driven through the API.

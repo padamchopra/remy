@@ -249,7 +249,7 @@ export function HubLinearWorkspace({ organizationId, personal = false }: { organ
 
 export function LocalLinearSettings() {
   const servers = useStore((state) => state.servers);
-  const server = servers.find((item) => !item.peer && !item.cloud);
+  const server = servers.find((item) => !item.cloud);
   const [view, setView] = useState<LinearConnectionView>();
   const [busy, setBusy] = useState(false);
   const [keyFor, setKeyFor] = useState<string | undefined>();

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Folder, MessagesSquare, SquareKanban, RotateCcw } from "lucide-react";
+import { Folder, MessagesSquare, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { AppSidebar } from "@/components/sidebar/AppSidebar";
 import { useMacSidebar } from "@/components/sidebar/useMacSidebar";
@@ -21,15 +21,15 @@ import { resetDemo, scenes, workspace, sampleDiff, reviewDiff } from "./state";
 import "../ui.css";
 import "./style.css";
 
-const sections = [{ id: "chats", label: "Threads", icon: MessagesSquare }, { id: "workspaces", label: "Workspaces", icon: Folder }, { id: "tasks", label: "Tasks", icon: SquareKanban }];
-const explain = () => toast("Explore more in the installed app.");
+const sections = [{ id: "chats", label: "Threads", icon: MessagesSquare }, { id: "workspaces", label: "Workspaces", icon: Folder }];
+const explain = () => toast("Explore more in Remy on the web.");
 function WorkspacePreview() {
   const state = useWorkspaceWorktrees(workspace);
   return <div className="workspace-preview"><WorkspaceWorktrees state={state} /></div>;
 }
 function DiffPreview({ review = false }: { review?: boolean }) {
   const lines = review ? reviewDiff : sampleDiff;
-  return <aside className="diff-preview"><div className="diff-heading">{review ? "src/navigation.ts" : "src/pairing.ts"} <span>+{lines.filter((line) => line.kind === "add").length} −{lines.filter((line) => line.kind === "del").length}</span></div><ThreadDiff lines={lines} /></aside>;
+  return <aside className="diff-preview"><div className="diff-heading">{review ? "src/navigation.ts" : "src/invites.ts"} <span>+{lines.filter((line) => line.kind === "add").length} −{lines.filter((line) => line.kind === "del").length}</span></div><ThreadDiff lines={lines} /></aside>;
 }
 function Demo() {
   const requested = new URLSearchParams(location.search).get("scene") ?? "threads";
@@ -53,20 +53,20 @@ function Demo() {
   const sidebar = useMacSidebar({
     view: "app", settingsTab: "general", section: "chats", selected, servers,
     archived: [], workspaces, sections, onSection: explain, onSelectChat: select,
-    onOpenBeside: select, onOpenTicket: explain, onOpenWorkspace: explain,
+    onOpenBeside: select, onOpenWorkspace: explain,
     onNewThread: explain, openSettings: explain, closeSettings: explain,
   });
   const chat = chats.find((entry) => entry.id === selected) ?? chats[0];
   const mobile = useIsMobile();
   const surface = new URLSearchParams(location.search).has("surface");
   const compact = new URLSearchParams(location.search).has("compact") || mobile;
-  return <TooltipProvider><AppActionsProvider context={{ hasProjects: true, addTicket: explain, registerWorkspace: explain, startThread: explain }}>
+  return <TooltipProvider><AppActionsProvider context={{ registerWorkspace: explain, startThread: explain }}>
     <div className="demo-banner"><span>Remy · Sample workspace</span><Button variant="ghost" size="sm" onClick={() => { resetDemo(); select(initial); }}><RotateCcw />Reset</Button></div>
     {surface ? (scene === "worktrees" ? <WorkspacePreview /> : scene === "review" ? <DiffPreview review /> : <ChatView chat={chat} focused={false} />) : <SidebarProvider className="demo-app">
       {!compact && <AppSidebar {...sidebar} />}
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         {compact && <div className="px-3 py-2"><Select value={chat.id} onValueChange={select}><SelectTrigger className="w-full" aria-label="Sample thread"><SelectValue /></SelectTrigger><SelectContent>{chats.map((entry) => <SelectItem key={entry.id} value={entry.id}>{entry.title}</SelectItem>)}</SelectContent></Select></div>}
-        {compact ? <ChatView chat={chat} focused={false} /> : <ThreadWorkbench autoFocus={false} routeThread={chat} onOpenThread={select} onOpenTicket={explain} onOpenWorkspace={explain} onFocusThread={(_parent, id) => select(id)} />}
+        {compact ? <ChatView chat={chat} focused={false} /> : <ThreadWorkbench autoFocus={false} routeThread={chat} onOpenThread={select} onOpenWorkspace={explain} onFocusThread={(_parent, id) => select(id)} />}
       </main>
       {!compact && <div className="demo-support">{selected === "demo-worktrees" ? <WorkspacePreview /> : <DiffPreview review={selected === "demo-review"} />}</div>}
     </SidebarProvider>}<Toaster />

@@ -7,12 +7,16 @@ function ScrollArea({
   className,
   children,
   // Which way this one scrolls. Vertical is the default because almost every
-  // surface here is a list; the board is the one that runs sideways, and
-  // without a bar of its own its far columns had no affordance at all.
+  // surface here is a list; one that runs sideways needs a bar of its own, or
+  // its far edge has no affordance at all.
   orientation = "vertical",
+  viewportProps,
   ...props
 }: React.ComponentProps<typeof ScrollAreaPrimitive.Root> & {
   orientation?: "vertical" | "horizontal" | "both"
+  // `tabIndex: 0` makes the viewport the thing a click inside focuses, so
+  // Space and Page Down scroll it even when a focusable panel wraps it.
+  viewportProps?: Omit<React.ComponentProps<typeof ScrollAreaPrimitive.Viewport>, "children">
 }) {
   return (
     <ScrollAreaPrimitive.Root
@@ -22,12 +26,14 @@ function ScrollArea({
     >
       <ScrollAreaPrimitive.Viewport
         data-slot="scroll-area-viewport"
+        {...viewportProps}
         className={cn(
           "size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1",
           // Radix gives the viewport child `display: table`, whose preferred
           // width can outgrow a narrow pane. Vertical lists should follow the
           // viewport; horizontal surfaces keep Radix's intrinsic width.
           orientation === "vertical" && "[&>div]:block! [&>div]:min-w-0! [&>div]:w-full!",
+          viewportProps?.className,
         )}
       >
         {children}

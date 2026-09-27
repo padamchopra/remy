@@ -12,18 +12,15 @@ import "./index.css";
 // navigation's load waiter already sees where it landed.
 normalizeLocation();
 
-const LocalApp = lazy(() => import("./App").then((m) => ({ default: m.App })));
 const HubApp = lazy(() => import("@/components/HubApp"));
+const Unreachable = lazy(() => import("@/components/AppUnreachable"));
 const root = createRoot(document.getElementById("root")!);
 root.render(<AppLoading />);
+
 async function start() {
   const runtime = await readRuntime();
-  if (!runtime) {
-    const { useStore } = await import("@/state/store");
-    void useStore.getState().refresh().catch(() => undefined);
-  }
   root.render(
-    <StrictMode><TooltipProvider><Suspense fallback={<AppLoading />}>{runtime ? <HubApp runtime={runtime} /> : <LocalApp />}</Suspense><Toaster /></TooltipProvider></StrictMode>,
+    <StrictMode><TooltipProvider><Suspense fallback={<AppLoading />}>{runtime ? <HubApp runtime={runtime} /> : <Unreachable />}</Suspense><Toaster /></TooltipProvider></StrictMode>,
   );
 }
 void start();

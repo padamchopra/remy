@@ -6,9 +6,10 @@ security-relevant even though it's only meant to be reachable by its owner.
 
 ## Threat model
 
-- **Reachability:** the server binds to `127.0.0.1` only. The single path in
-  from outside is `tailscale serve` (not funnel) — tailnet devices only,
-  TLS-terminated, never the LAN or public internet.
+- **Reachability:** the server binds to `127.0.0.1` only and accepts no
+  connection from outside. The hub reaches it over an outbound WebSocket the
+  daemon opens, authenticated with the computer's own Ed25519 key; the hub
+  checks membership and access before relaying a request.
 - **Authentication:** a 256-bit random bearer token (`~/.remy/remy.db`,
   `chmod 600`), compared with `timingSafeEqual`, required on every request and
   on the WebSocket upgrade. Header only — never a query parameter — so it can't
@@ -63,11 +64,11 @@ security-relevant even though it's only meant to be reachable by its owner.
 
 ## Residual risks (accepted)
 
-- **No rate limiting.** Acceptable for a single-user, tailnet-only, token-gated
+- **No rate limiting.** Acceptable for a single-user, loopback-only, token-gated
   service.
 - **The agent can act in the checkout.** Inherent to running Claude Code on
   your own machine — permission mode (Ask / Auto / Accept edits / Plan /
   Bypass) is the same tradeoff as the CLI.
 - **Terminal input reaches the pane's program.** Inherent to the leftover tmux
   remote — you are typing into your own shell.
-- **Notification text transits Apple Push** when no window is open. Kept terse (thread + short reason). The APNs key lives in `~/.remy/apns.json` on the Mac that sends the push.
+- **Notification text reaches the hub** for a thread shared with it. Kept terse (thread + short reason). The hub delivers it to the thread's members.

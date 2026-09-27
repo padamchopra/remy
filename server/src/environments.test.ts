@@ -14,7 +14,6 @@ const {
   createEnvironment,
   disableEnvironment,
   deleteEnvironmentValue,
-  exportEnvironmentSync,
   importEnvironmentFile,
   listEnvironmentFiles,
   listEnvironments,
@@ -62,7 +61,7 @@ test("an environment can be renamed or disabled without revealing or removing va
 
   disableEnvironment(project.id);
   assert.equal(listEnvironments(project.id).some((entry) => entry.active), false);
-  assert.ok(exportEnvironmentSync().some((entry) => entry.kind === "selection" && entry.environmentId === ""));
+  assert.ok(db.prepare("select 1 from workspace_environment_selection where project_id = ? and environment_id = ''").get(project.id));
   selectEnvironment(project.id, environment.id);
 });
 
@@ -99,12 +98,12 @@ test("runtime commands receive values but their output and prompts are redacted"
   assert.equal(entry.activity?.output, "[REDACTED]");
 });
 
-test("sync records converge while the receiving database remains encrypted", () => {
+test("hub records converge while the receiving database remains encrypted", () => {
   const environment = listEnvironments(project.id)[0];
-  const outgoing = exportEnvironmentSync();
-  const value = outgoing.find((row) => row.kind === "value" && row.name === "API_KEY");
-  assert.equal(value?.value, "exact-secret-value");
-  assert.equal(mergeEnvironmentSync(outgoing), 0);
+  const record = { kind: "value", projectId: project.id, environmentId: environment.id, name: "HUB_KEY", deviceId: "hub" };
+  assert.equal(mergeEnvironmentSync([{ ...record, value: "hub-secret-value", updatedAt: Date.now() + 1_000 }]), 1);
+  assert.equal(mergeEnvironmentSync([{ ...record, value: "stale-value", updatedAt: 1 }]), 0);
+  assert.ok(!JSON.stringify(db.prepare("select * from workspace_environment_values").all()).includes("hub-secret-value"));
 
   deleteEnvironmentValue(project.id, environment.id, "API_KEY");
   assert.equal(listEnvironments(project.id)[0].variables.some((entry) => entry.name === "API_KEY"), false);

@@ -8,7 +8,7 @@ import { codexAdapter } from "./codex.js";
 import { cursorAdapter } from "./cursor.js";
 import type { ProviderAdapter, ProviderEvent, ProviderSessionOptions } from "./types.js";
 
-const artifact = 'Created WRK-8.\n<remy-artifact>{"kind":"ticket","key":"WRK-8","title":"Provider interface"}</remy-artifact>';
+const artifact = 'Started a thread.\n<remy-artifact>{"kind":"thread","id":"thread-8","title":"Provider interface"}</remy-artifact>';
 
 interface Fixture {
   adapter: ProviderAdapter;
@@ -41,7 +41,7 @@ for (const fixture of [claudeFixture(), codexFixture(), cursorFixture()]) {
 
     assert.equal(approvals, 1);
     assert.equal(questions, 1);
-    assert.ok(events.some((event) => event.type === "entry.updated" && event.entry.artifacts?.[0]?.key === "WRK-8"));
+    assert.ok(events.some((event) => event.type === "entry.updated" && event.entry.artifacts?.[0]?.id === "thread-8"));
     assert.ok(events.some((event) => event.type === "usage.updated" && event.tokens > 0));
     const sessionId = events.find((event): event is Extract<ProviderEvent, { type: "session.started" }> => event.type === "session.started")?.sessionId;
     assert.ok(sessionId);
@@ -172,7 +172,7 @@ rl.on("line", (line) => {
     return;
   }
   if (message.id === "approval") {
-    send({ method: "item/completed", params: { item: { id: "artifact", type: "mcpToolCall", server: "remy", tool: "create_ticket", status: "completed", result: { output: ${JSON.stringify(artifact)} } } } });
+    send({ method: "item/completed", params: { item: { id: "artifact", type: "mcpToolCall", server: "remy", tool: "start_thread", status: "completed", result: { output: ${JSON.stringify(artifact)} } } } });
     return complete();
   }
   if (message.id === "question") return complete();

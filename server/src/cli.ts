@@ -4,8 +4,8 @@
 ///
 /// A key rather than a browser: the machine holding the repositories is often
 /// one you reach over SSH, and it has nowhere to open an approval page. The
-/// daemon it runs still binds loopback, and pairing another device over a
-/// tailnet is unchanged.
+/// daemon it runs still binds loopback; the hub reaches it over the outbound
+/// connection the daemon opens.
 import { readFileSync } from "node:fs";
 import { hostname } from "node:os";
 

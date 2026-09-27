@@ -78,7 +78,7 @@ export function appUpdateStatus(busyThreads: number): AppUpdateStatus {
 }
 
 /// Asks the desktop shell on this machine to use its native signed updater.
-/// The caller may be a paired machine, but it never receives a download URL or
+/// The caller may be another client, but it never receives a download URL or
 /// a shell command; the target app chooses and installs its own architecture.
 export function requestAppUpdate(busyThreads: number): AppUpdateStatus {
   if (automatic.status.phase !== "idle" && automatic.status.phase !== "failed") throw new Error("An automatic update is already pending.");

@@ -21,7 +21,7 @@ setKv("deviceId", bootstrap.registration.computerId);
 setKv("hostedWorkspaceId", bootstrap.workspace.id);
 setKv("hubComputerPrivateKey", bootstrap.privateKey);
 const { patchSettings } = await import("../../server/dist/config.js");
-patchSettings({ notifySelf: false, defaultProvider: "claude" });
+patchSettings({ defaultProvider: "claude" });
 const { addWorkspace } = await import("../../server/dist/workspaces.js");
 const workspace = await addWorkspace(bootstrap.workspace.name, workspacePath);
 const { setProviderAdapterForTest } =

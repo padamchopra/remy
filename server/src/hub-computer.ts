@@ -1,4 +1,3 @@
-import { HubBoardSync } from "./hub-board.js";
 import { handleHubThreadRequest, hubThreadIds, hubThreadSnapshot } from "./hub-threads.js";
 import { onLocalBroadcast, onAddressedNotification } from "./notify.js";
 import { saveChatImage } from "./chat-attachments.js";
@@ -58,7 +57,18 @@ function privateKey(): { privateKey: string; publicKey: string } {
 export async function computerCapabilities(): Promise<ComputerCapabilities> {
   const [providers, status, workspaces] = await Promise.all([discoveredProviders(), tooling({ providerUpdates: false }), listWorkspaces()]);
   return {
-    providers: providers.filter((provider) => status[provider.id].available).map((provider) => ({ id: provider.id, models: provider.models.map((model) => model.value) })),
+    providers: providers.filter((provider) => status[provider.id].available).map((provider) => ({
+      id: provider.id,
+      models: provider.models.map((model) => model.value),
+      // The names the installed CLI gives its models, so every client reading
+      // this computer shows "Sonnet 5" rather than `sonnet`.
+      modelInfo: provider.models.map((model) => ({
+        value: model.value.slice(0, 200),
+        label: (model.label || model.value || "Default").slice(0, 120),
+        ...(model.context ? { context: model.context.slice(0, 16) } : {}),
+        ...(model.resolvedLabel ? { resolvedLabel: model.resolvedLabel.slice(0, 120) } : {}),
+      })).slice(0, 1000),
+    })),
     workspaces: workspaces.map(({ id, name, path, origin }) => ({ id, name, path, origin })),
     worktrees: status.git.available,
     terminals: true,
@@ -127,7 +137,6 @@ export async function registerHubComputerWithDeviceCode(hubUrl: string, organiza
 
 export class HubComputerConnection {
   private socket?: WebSocket;
-  private boardSync?: HubBoardSync;
   private stopped = false;
   private retry?: ReturnType<typeof setTimeout>;
   private heartbeat?: ReturnType<typeof setInterval>;
@@ -155,18 +164,8 @@ export class HubComputerConnection {
       this.flushNotifications();
       return true;
     });
-    this.boardSync?.stop();
-    this.boardSync = new HubBoardSync(this.registration.organizationId, async (input) => {
-      const url = new URL(`/api/organizations/${encodeURIComponent(this.registration.organizationId)}/computers/board-sync`, this.registration.hubUrl);
-      const response = await fetch(url, { method: "POST", headers: { authorization: connectionAuthorization(this.registration.organizationId, this.registration.computerId, privateKey().privateKey), "content-type": "application/json" }, body: JSON.stringify(input), signal: AbortSignal.timeout(15000), redirect: "error" });
-      if (!response.ok) throw new Error("Tasks could not synchronize.");
-      return response.json() as Promise<{ version: Record<string, number>; events: import("@remy/contract").BoardLogEvent[] }>;
-    });
-    this.boardSync.start();
     this.connect(); }
-  stop(): void { this.boardSync?.stop(); this.offNotifications?.(); this.offBroadcast?.(); for (const timer of this.snapshots.values()) clearTimeout(timer); this.snapshots.clear(); this.stopped = true; clearTimeout(this.retry); clearInterval(this.heartbeat); const socket = this.socket; this.socket = undefined; socket?.close(); for (const stream of this.subscriptions.values()) stream.close(); this.subscriptions.clear(); }
-
-  syncBoard(): void { void this.boardSync?.sync(); }
+  stop(): void { this.offNotifications?.(); this.offBroadcast?.(); for (const timer of this.snapshots.values()) clearTimeout(timer); this.snapshots.clear(); this.stopped = true; clearTimeout(this.retry); clearInterval(this.heartbeat); const socket = this.socket; this.socket = undefined; socket?.close(); for (const stream of this.subscriptions.values()) stream.close(); this.subscriptions.clear(); }
 
   private connect(): void {
     if (this.stopped) return;
@@ -180,7 +179,7 @@ export class HubComputerConnection {
       if (this.socket !== socket || this.stopped) { socket.close(); return; }
       this.attempts = 0;
       void this.hello(socket).catch(() => socket.close(1011, "Reconnect to update this computer."));
-      this.heartbeat = setInterval(() => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ kind: "heartbeat", availability: "available", observedAt: Date.now() })); this.flushNotifications(); this.boardSync?.retry(); }, COMPUTER_HEARTBEAT_INTERVAL_MS);
+      this.heartbeat = setInterval(() => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ kind: "heartbeat", availability: "available", observedAt: Date.now() })); this.flushNotifications(); }, COMPUTER_HEARTBEAT_INTERVAL_MS);
     });
     socket.on("message", (data) => { if (this.socket === socket) void this.message(socket, data.toString()).catch(() => socket.close(1011, "Reconnect to continue.")); });
     socket.on("close", (code, reason) => { if (this.socket !== socket) return; if (code === 1008 && reason.toString() === "This computer was removed.") { this.stopped = true; this.offNotifications?.(); } this.socket = undefined; this.offBroadcast?.(); for (const stream of this.subscriptions.values()) stream.close(); this.subscriptions.clear(); clearInterval(this.heartbeat); if (!this.stopped) this.scheduleReconnect(); });
@@ -190,11 +189,10 @@ export class HubComputerConnection {
   private async hello(socket: WebSocket): Promise<void> {
     const capabilities = await this.makeCapabilities();
     if (this.socket !== socket || socket.readyState !== WebSocket.OPEN) return;
-    socket.send(JSON.stringify({ kind: "hello", boardSync: true, protocolVersion: COMPUTER_PROTOCOL_VERSION, daemonVersion: DAEMON_VERSION, capabilities }));
+    socket.send(JSON.stringify({ kind: "hello", protocolVersion: COMPUTER_PROTOCOL_VERSION, daemonVersion: DAEMON_VERSION, capabilities }));
     this.introduced = true;
     void this.syncEnvironments().catch(()=>{});
     void this.syncModelKeys().catch(()=>{});
-    void this.boardSync?.sync();
     this.syncThreads(socket);
     this.flushNotifications();
   }
@@ -294,7 +292,7 @@ export class HubComputerConnection {
       this.sharedOrganizationIds = next;
       this.syncThreads(socket);
     }
-    if (parsed.data.kind === "board.changed") {void this.boardSync?.sync();void this.syncEnvironments().catch(()=>{});void this.syncModelKeys().catch(()=>{});}
+    if (parsed.data.kind === "board.changed") {void this.syncEnvironments().catch(()=>{});void this.syncModelKeys().catch(()=>{});}
     if (parsed.data.kind === "notification.ack") { const id = parsed.data.id; setKv(NOTIFICATION_OUTBOX, (getKv<QueuedHubNotification[]>(NOTIFICATION_OUTBOX) ?? []).filter((n) => n.id !== id)); }
     if (parsed.data.kind === "update_required") { this.stopped = true; socket.close(1008, "Update Remy to reconnect."); return; }
     if (parsed.data.kind === "thread.retired") { const {deleteChat}=await import("./chat.js");const shared=new Set(hubThreadIds(this.registration.organizationId));for(const id of parsed.data.threadIds)if(shared.has(id))deleteChat(id); }
@@ -395,64 +393,6 @@ export async function detachHubComputer(): Promise<void> {
   patchSettings({ hubMode: false });
 }
 
-type AuthorizedHubAccount = { id: string; name: string; role: string; personal?: boolean };
-let approvedAuthorization: { deviceCode: string; accessToken: string; expiresAt: number; accounts?: AuthorizedHubAccount[] } | undefined;
-
-export async function beginHubComputerAuthorization(hubUrl: string, organizationId: string, ownership: "personal" | "organization" | "hosted") {
-  approvedAuthorization = undefined;
-  const url = new URL(hubUrl);
-  if (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))) throw new Error("Enter a secure Remy address.");
-  if ((!organizationId && ownership !== "personal") || organizationId.length > 200) throw new Error("Choose your organization.");
-  const response = await fetch(new URL("/api/device/authorization", url.origin), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientKind: "computer", clientName: config.deviceName || hostname() }), signal: AbortSignal.timeout(15000) });
-  if (!response.ok) throw new Error("Remy could not be reached; try again.");
-  const value = await response.json() as { deviceCode: string; userCode: string; expiresIn: number };
-  if (typeof value.deviceCode !== "string" || typeof value.userCode !== "string") throw new Error("Start computer authorization again.");
-  setKv("hubPendingAuthorization", { hubUrl: url.origin, organizationId, ownership, deviceCode: value.deviceCode, expiresAt: Date.now() + value.expiresIn * 1000 });
-  return { userCode: value.userCode };
-}
-
-export async function authorizedHubAccounts(): Promise<AuthorizedHubAccount[]> {
-  const pending = getKv<{ hubUrl: string; deviceCode: string; expiresAt: number }>("hubPendingAuthorization");
-  if (!pending || pending.expiresAt <= Date.now()) throw new Error("Start computer authorization again.");
-  if (!approvedAuthorization || approvedAuthorization.deviceCode !== pending.deviceCode || approvedAuthorization.expiresAt <= Date.now()) {
-    const response = await fetch(new URL("/api/device/token", pending.hubUrl), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ deviceCode: pending.deviceCode }), signal: AbortSignal.timeout(15000), redirect: "error" });
-    if (response.status === 202) throw new Error("Approve this computer in your browser, then try again.");
-    if (response.status === 429) throw new Error("Wait a moment, then try again.");
-    if (!response.ok) throw new Error("Start computer authorization again.");
-    const token = await response.json() as { accessToken?: unknown };
-    if (typeof token.accessToken !== "string") throw new Error("Start computer authorization again.");
-    approvedAuthorization = { deviceCode: pending.deviceCode, accessToken: token.accessToken, expiresAt: pending.expiresAt };
-  }
-  const authorization = approvedAuthorization;
-  if (!authorization.accounts) {
-    const read = async (path: string) => {
-      const response = await fetch(new URL(path, pending.hubUrl), { headers: { authorization: `Bearer ${authorization.accessToken}` }, signal: AbortSignal.timeout(15000), redirect: "error" });
-      if (!response.ok) throw new Error("Your accounts could not load; try again.");
-      return response.json();
-    };
-    const [own, shared] = await Promise.all([read("/api/personal"), read("/api/organizations")]) as [{ personal: AuthorizedHubAccount }, { organizations: AuthorizedHubAccount[] }];
-    authorization.accounts = [own.personal, ...shared.organizations];
-  }
-  return authorization.accounts;
-}
-
-export async function finishHubComputerAuthorization(choice?: { organizationId: string; ownership: "personal" | "organization" | "hosted" }) {
-  const pending = getKv<{ hubUrl: string; organizationId: string; ownership: "personal" | "organization" | "hosted"; deviceCode: string; expiresAt: number }>("hubPendingAuthorization");
-  if (!pending || pending.expiresAt <= Date.now()) throw new Error("Start computer authorization again.");
-  if (choice) {
-    const accounts = await authorizedHubAccounts();
-    const account = accounts.find((account) => account.id === choice.organizationId);
-    if (!account || (choice.ownership !== "personal" && (account.personal || !["owner", "admin"].includes(account.role)))) throw new Error("Choose an account and computer owner you can manage.");
-    await registerHubComputer(pending.hubUrl, choice.organizationId, approvedAuthorization!.accessToken, choice.ownership);
-  } else {
-    await registerHubComputerWithDeviceCode(pending.hubUrl, pending.organizationId, pending.deviceCode, pending.ownership);
-  }
-  approvedAuthorization = undefined;
-  setKv("hubPendingAuthorization", null);
-  return hubComputerRegistration();
-}
-
-export function syncHubBoard(): void { connection?.syncBoard(); }
 
 export async function hostedTaskCodexTokens():Promise<{accessToken:string;chatgptAccountId:string}|null> {
   const registration=getKv<HubComputerRegistration>(REGISTRATION_KEY);

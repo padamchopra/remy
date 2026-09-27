@@ -13,7 +13,6 @@ process.env.HOME = stateDir;
 
 const {
   addWorkspace,
-  checkoutTicketWorktree,
   checkoutWorkspaceBranch,
   closeWorkspaceWorktree,
   listWorkspaceWorktrees,
@@ -83,38 +82,6 @@ test("leaves the choice alone when a patch does not mention it", async () => {
   assert.equal(saved.provider, "claude");
   assert.equal(saved.model, "haiku");
   assert.equal(saved.effort, "low");
-});
-
-test("gives a ticket a stable detached worktree from the remote default", async () => {
-  const path = mkdtempSync(join(tmpdir(), "remy-ticket-worktree-"));
-  execFileSync("git", ["init", "-b", "main", path]);
-  execFileSync("git", ["-C", path, "config", "user.name", "Remy Test"]);
-  execFileSync("git", ["-C", path, "config", "user.email", "remy@example.test"]);
-  writeFileSync(join(path, "README.md"), "ticket worktree\n");
-  execFileSync("git", ["-C", path, "add", "README.md"]);
-  execFileSync("git", ["-C", path, "commit", "-m", "Initial commit"]);
-  const remoteDefault = execFileSync("git", ["-C", path, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-  execFileSync("git", ["-C", path, "update-ref", "refs/remotes/origin/main", remoteDefault]);
-  execFileSync("git", ["-C", path, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
-  execFileSync("git", ["-C", path, "switch", "-c", "feature"]);
-  writeFileSync(join(path, "README.md"), "feature checkout\n");
-  execFileSync("git", ["-C", path, "commit", "-am", "Feature commit"]);
-
-  const added = await addWorkspace("tickets", path);
-  const first = await checkoutTicketWorktree(added, "REMY-42");
-  assert.equal(first, join(realpathSync(path), ".remy", "tickets", "remy-42"));
-  assert.equal(existsSync(first), true);
-  assert.equal(execFileSync("git", ["-C", first, "rev-parse", "--abbrev-ref", "HEAD"], { encoding: "utf8" }).trim(), "HEAD");
-  assert.equal(execFileSync("git", ["-C", first, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), remoteDefault);
-
-  const refreshed = (await listWorkspaces()).find((entry) => entry.id === added.id)!;
-  assert.equal(await checkoutTicketWorktree(refreshed, "REMY-42"), first);
-  assert.equal(refreshed.worktrees.filter((entry) => entry.path === first).length, 1);
-});
-
-test("keeps tickets in place when a folder is not a Git checkout", async () => {
-  const added = await workspace("non-git-ticket");
-  assert.equal(await checkoutTicketWorktree(added, "PLAIN-1"), added.path);
 });
 
 test("loads worktree changes on demand and protects them from safe cleanup", async () => {

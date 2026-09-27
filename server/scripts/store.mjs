@@ -34,11 +34,6 @@ if (command === "get") {
     "update_status",
     JSON.stringify({ state: key, message: fieldOrValue ?? "", updatedAt: Date.now() }),
   );
-} else if (command === "set-pairing") {
-  db.prepare("insert or replace into kv (key, value) values (?, ?)").run(
-    "pairing",
-    JSON.stringify({ appUrl: key ?? "", token: fieldOrValue ?? "" }),
-  );
 } else {
   process.exit(2);
 }

@@ -1,8 +1,8 @@
 // Screenshot harness for the web window.
 //
 // It renders states and interactions to PNGs that can be looked at directly,
-// from `npm run dev:hosted` by default, or from the URL `npm run qa:web` prints
-// when that is set in MC_URL.
+// from `npm run dev:hosted` by default, or from another URL set in MC_URL, such
+// as the hub `qa-threads.mjs` prints.
 //
 // Uses Playwright's already-cached Chromium; nothing is downloaded.
 import { chromium } from "playwright-core";
@@ -35,16 +35,6 @@ const shoot = async (name) => {
 
 console.log("captured:");
 await shoot("01-main");
-
-// The ⌘K palette.
-await page.keyboard.press("Meta+k");
-await page.waitForTimeout(350);
-await shoot("02-palette");
-await page.keyboard.type("sql");
-await page.waitForTimeout(250);
-await shoot("03-palette-filtered");
-await page.keyboard.press("Escape");
-await page.waitForTimeout(250);
 
 // The sidebar is one column of sections now, so there is no popover to float
 // and nothing to reflow.

@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { db } from "./db.js";
-import { callPeer, getPeer, peerViews } from "./peers.js";
 import { answerPullRequestQuestion } from "./pull-request-guides.js";
 import type { PullRequestDiffLine } from "./pull-requests.js";
 
@@ -55,31 +54,10 @@ export function readPullRequestQuestions(repository: string, number: number): Pu
   });
 }
 
-const discovering = new Map<string, Promise<{ questions: PullRequestQuestion[]; unavailable: boolean }>>();
-
-/// Questions are immutable and remain on the device that answered them.
-export function discoverPullRequestQuestions(repository: string, number: number) {
-  const key = JSON.stringify([repository, number]);
-  const existing = discovering.get(key);
-  if (existing) return existing;
-  const params = new URLSearchParams({ repository, number: String(number) });
-  let unavailable = false;
-  const peers = peerViews();
-  const pending = Promise.all(peers.filter((peer) => peer.online).map(async (view) => {
-    try {
-      const peer = getPeer(view.id);
-      if (!peer) return [];
-      const result = await callPeer<{ questions?: unknown }>(peer, `/pull-requests/questions?${params}`, { timeoutMs: 2500 });
-      if (!Array.isArray(result.questions)) throw new Error("Invalid question response");
-      return result.questions.filter((value) => validQuestion(value, repository, number));
-    } catch { unavailable = true; return []; }
-  })).then((batches) => ({
-    questions: [...new Map([...readPullRequestQuestions(repository, number), ...batches.flat()].map((question) => [question.id, question])).values()]
-      .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)),
-    unavailable: unavailable || peers.some((peer) => !peer.online),
-  })).finally(() => discovering.delete(key));
-  discovering.set(key, pending);
-  return pending;
+/// Questions are immutable and remain on the computer that answered them.
+/// `unavailable` stays in the answer so older clients keep their shape.
+export async function discoverPullRequestQuestions(repository: string, number: number) {
+  return { questions: readPullRequestQuestions(repository, number), unavailable: false };
 }
 
 export async function askPullRequestQuestion(input: {

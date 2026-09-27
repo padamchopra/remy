@@ -11,7 +11,6 @@ import {
   Laptop,
   MessagesSquare,
   GitPullRequest,
-  SquareKanban,
   Users,
   User,
   LogOut,
@@ -60,13 +59,13 @@ import { HubComputerApproval } from "./HubComputerApproval";
 import { HubInvitation } from "./HubInvitation";
 import { HubSignIn } from "./HubSignIn";
 import { HubNotifications } from "./HubNotifications";
+import { hubAllView, hubThreads } from "./hub-surfaces";
 const WorkspacesList = lazy(() => import("./HubWorkspaces"));
 const PullRequests = lazy(() => import("./PullRequests").then((module) => ({ default: module.PullRequests })));
 const OrganizationAdmin = lazy(() => import("./HubOrganizationAdmin"));
-const AllView = lazy(() => import("./HubAllView"));
+const AllView = hubAllView.Surface;
 const GeneralSettings = lazy(() => import("./HubGeneralSettings"));
-const Threads = lazy(() => import("./HubThreads"));
-const Board = lazy(() => import("./HubBoard"));
+const Threads = hubThreads.Surface;
 const Computers = lazy(() =>
   import("./HubComputers").then((m) => ({ default: m.HubComputers })),
 );
@@ -224,14 +223,17 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
       ? { name: "workspaces", workspaceId, organizationId: "all", ownerOrganizationId: thread.access.organizationId }
       : { name: "workspaces", workspaceId, organizationId }),
   });
+  // Threads is the surface a person opens on, so its code starts downloading
+  // with the account list rather than after it: waiting for the accounts, then
+  // the view, then the thread pane, then the composer's reads made each one a
+  // separate round trip before the composer could draw.
+  if (route.name === "threads") {
+    if (isAll) void hubAllView.preload();
+    void hubThreads.preload();
+  }
   if (!loaded && !(profile && organization)) return <AppLoading />;
   if (signedOut) return <HubSignIn runtime={runtime} />;
-  const requestedSection =
-    route.name === "board" || route.name === "ticket"
-      ? "tasks"
-      : route.name === "settings"
-        ? route.tab
-        : route.name;
+  const requestedSection = route.name === "settings" ? route.tab : route.name;
   const organizationSettings = route.name === "settings" && ["organization", "members", "teams"].includes(route.tab);
   const section = organizationSettings ? "organization" : requestedSection;
   const inSettings = route.name === "settings";
@@ -247,12 +249,6 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           icon: MessagesSquare,
           route: { name: "threads", organizationId },
           selected: section === "threads",
-        },
-        {
-          label: "Tasks",
-          icon: SquareKanban,
-          route: { name: "board", organizationId },
-          selected: section === "tasks",
         },
         {
           label: "Workspaces",
@@ -333,7 +329,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                 organization: true,
                 selected: o.id === organizationId,
                 onSelect: () => navigate({name:"threads",organizationId:o.id}),
-                onSettings: () => navigate({name:"settings",tab:"organization",organizationTab:"general",organizationId:o.id}),
+                onSettings: () => navigate({name:"settings",tab:"organization",organizationTab:"members",organizationId:o.id}),
               })),
             ],
             onCreate: () => setCreate(true),
@@ -412,7 +408,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                 </Deferred>
               </div>
           {workspacesListOpen ? null : organizationSettings && route.name === "settings" ? (
-            <Deferred open><OrganizationAdmin organizations={organizations} selectedId={isAll ? route.ownerOrganizationId : organizationId} tab={route.organizationTab ?? "general"} onSelect={owner => navigate({...route,tab:"organization",organizationId:isAll ? "all" : owner,...(isAll ? {ownerOrganizationId:owner} : {})})} onTab={organizationTab => navigate({...route,tab:"organization",organizationTab,ownerOrganizationId:isAll ? route.ownerOrganizationId ?? organizations[0]?.id : undefined})} /></Deferred>
+            <Deferred open><OrganizationAdmin organizations={organizations} selectedId={isAll ? route.ownerOrganizationId : organizationId} tab={route.organizationTab ?? "members"} onSelect={owner => navigate({...route,tab:"organization",organizationId:isAll ? "all" : owner,...(isAll ? {ownerOrganizationId:owner} : {})})} onTab={organizationTab => navigate({...route,tab:"organization",organizationTab,ownerOrganizationId:isAll ? route.ownerOrganizationId ?? organizations[0]?.id : undefined})} /></Deferred>
           ) : route.name === "prs" ? (
             <div className="flex min-h-0 flex-1"><Deferred open><PullRequests
               servers={[]}
@@ -420,14 +416,14 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               hostedOrganizationIds={isAll ? contexts.map((item) => item.id) : [organization.id]}
               onOpenThread={() => undefined}
               onOpenWorkspace={() => undefined}
-              selected={route.repository && route.number ? { repository: route.repository, number: route.number } : undefined}
+              selected={route.repository && route.number ? { repository: route.repository, number: route.number, ...(route.view ? { view: route.view } : {}) } : undefined}
               onSelect={(address) => navigate({ name: "prs", organizationId: route.organizationId, ...address })}
             /></Deferred></div>
           ) : isAll ? (
             <Deferred open><AllView organizations={contexts} route={route} navigate={navigate} threads={threads} threadsLoaded={threadsLoaded} /></Deferred>
           ) : (
             <div key={organization.id} className="flex min-h-0 flex-1 flex-col">
-              <div hidden={section !== "general"} className="min-h-0 overflow-auto px-5 py-6"><Deferred open={section === "general"}><GeneralSettings organizationId={organization.id} showModelDefault={organization.personal === true} /></Deferred></div>
+              <div hidden={section !== "general"} className="min-h-0 overflow-auto px-5 py-6"><Deferred open={section === "general"}><GeneralSettings organizationId={organization.id} /></Deferred></div>
               <div
                 hidden={section !== "threads"}
                 className={
@@ -442,20 +438,6 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                     threadId={
                       route.name === "threads" ? route.threadId : undefined
                     }
-                    navigate={navigate}
-                  />
-                </Deferred>
-              </div>
-              <div
-                hidden={section !== "tasks"}
-                className={
-                  section === "tasks" ? "flex min-h-0 flex-1" : undefined
-                }
-              >
-                <Deferred open={section === "tasks"}>
-                  <Board
-                    organizationId={organization.id}
-                    ticketId={route.name === "ticket" ? route.key : undefined}
                     navigate={navigate}
                   />
                 </Deferred>

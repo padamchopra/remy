@@ -1,6 +1,5 @@
-import { lazy, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import type {
-  BoardProjection,
   ComputerSummary,
   HubThread,
   Organization,
@@ -9,8 +8,10 @@ import type { Route } from "@/lib/route";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { useThreadStarts } from "@/lib/hub-thread-start";
 import { watchHubResource } from "@/lib/hub-computers";
+import { cacheHubWorkspaces, cachedHubWorkspaces, hasCachedHubWorkspaces } from "@/lib/hub-workspace-cache";
 import { HubPersonalContext } from "@/lib/hub-scope";
 import { HubModelFavorites } from "./HubModelFavorites";
+import { hubThreads } from "./hub-surfaces";
 import { Deferred } from "./Deferred";
 import { PaneHeader } from "./PaneHeader";
 import { Button } from "./ui/button";
@@ -18,7 +19,6 @@ import { EmptyState } from "./EmptyState";
 import { Spinner } from "./ui/spinner";
 import {
   Item,
-  ItemActions,
   ItemContent,
   ItemDescription,
   ItemGroup,
@@ -33,7 +33,6 @@ import {
   SelectValue,
 } from "./ui/select";
 import {
-  Circle,
   Github,
   Laptop,
   ListTodo,
@@ -59,8 +58,7 @@ import { Field, FieldLabel } from "./ui/field";
 import { toast } from "sonner";
 import { apiError } from "@/lib/api-error";
 
-const Threads = lazy(() => import("./HubThreads"));
-const Board = lazy(() => import("./HubBoard"));
+const Threads = hubThreads.Surface;
 const Computers = lazy(() =>
   import("./HubComputers").then((module) => ({ default: module.HubComputers })),
 );
@@ -82,10 +80,15 @@ type Owned<T> = {
   error: string;
 };
 
+function rememberWorkspaces(organizationId: string, value: { workspaces: Omit<HubThreadWorkspaceOption, "key" | "organizationId" | "label">[] }) {
+  cacheHubWorkspaces(organizationId, value.workspaces.map((workspace) => ({ ...workspace, organizationId })));
+}
+
 function useOwnedResources<T>(
   organizations: Organization[],
   path: string,
   livePath = "/live",
+  remember?: (organizationId: string, value: T) => void,
 ) {
   const key = organizations.map((organization) => organization.id).join(",");
   const [resources, setResources] = useState<Map<string, Owned<T>>>(new Map());
@@ -103,6 +106,7 @@ function useOwnedResources<T>(
       return watchHubResource<T>(
         `${base}${path}`,
         (value, stale) => {
+          if (value && !stale) remember?.(organization.id, value);
           setResources((current) => {
             const next = new Map(current);
             next.set(organization.id, {
@@ -197,22 +201,46 @@ function AllThreads({
   organizations: Organization[];
   navigate: (route: Route) => void;
 }) {
-  const resources = useOwnedResources<{ workspaces: Omit<HubThreadWorkspaceOption, "key" | "organizationId" | "label">[] }>(organizations, "/workspaces");
-  const workspaceOptions = resources.flatMap(({ organization, value }) => (value?.workspaces ?? []).map((workspace) => ({
+  const resources = useOwnedResources<{ workspaces: Omit<HubThreadWorkspaceOption, "key" | "organizationId" | "label">[] }>(organizations, "/workspaces", "/live", rememberWorkspaces);
+  // An account still answering lends the list this device last saw for it, so
+  // the composer draws its workspace on the first frame instead of waiting for
+  // every account's catalogue. The fresh read replaces it.
+  const lists = resources.map(({ organization, value, error }) => ({
+    organization,
+    settled: !!value || !!error,
+    workspaces: value?.workspaces ?? (error ? [] : cachedHubWorkspaces(organization.id)),
+    known: !!value || !!error || hasCachedHubWorkspaces(organization.id),
+  }));
+  // A row names its account only when another account lists a workspace of
+  // the same name; otherwise the icon and name are enough to pick it.
+  const nameCounts = new Map<string, number>();
+  for (const { workspaces } of lists) for (const workspace of workspaces) nameCounts.set(workspace.name, (nameCounts.get(workspace.name) ?? 0) + 1);
+  const workspaceOptions = lists.flatMap(({ organization, workspaces }) => workspaces.map((workspace) => ({
     ...workspace,
     key: `${organization.id}:${workspace.id}`,
     organizationId: organization.id,
-    label: `${workspace.name} · ${organization.personal ? "Personal" : organization.name}`,
+    label: workspace.name,
+    ...((nameCounts.get(workspace.name) ?? 0) > 1 ? { detail: organization.personal ? "Personal" : organization.name } : {}),
   })));
   const [workspaceKey, setWorkspaceKey] = useState("");
   const [message, setMessage] = useState("");
   const [visibility, setVisibility] = useState<"private" | "open">("private");
+  // The default is the first workspace of the first account that has one. It
+  // is known once every account before it has answered, or has a saved list.
+  const firstWithWorkspaces = lists.findIndex(({ workspaces }) => workspaces.length > 0);
+  const defaultKnown = firstWithWorkspaces >= 0
+    ? lists.slice(0, firstWithWorkspaces + 1).every(({ known }) => known)
+    : lists.every(({ settled }) => settled);
   const selectedWorkspace = workspaceOptions.find((workspace) => workspace.key === workspaceKey) ?? workspaceOptions[0];
   const owner = organizations.find((organization) => organization.id === selectedWorkspace?.organizationId) ?? organizations.find((organization) => organization.personal) ?? organizations[0];
-  const loaded = resources.every((resource) => resource.value || resource.error);
+  const loaded = defaultKnown;
+  // Hold the default once the accounts before it have answered for real, so a
+  // workspace added later does not move the composer. A default drawn from a
+  // saved list is not held: the fresh one may disagree.
+  const defaultSettled = firstWithWorkspaces >= 0 && lists.slice(0, firstWithWorkspaces + 1).every(({ settled }) => settled);
   useEffect(() => {
-    if (selectedWorkspace && selectedWorkspace.key !== workspaceKey) setWorkspaceKey(selectedWorkspace.key);
-  }, [selectedWorkspace, workspaceKey]);
+    if (defaultSettled && selectedWorkspace && selectedWorkspace.key !== workspaceKey) setWorkspaceKey(selectedWorkspace.key);
+  }, [defaultSettled, selectedWorkspace, workspaceKey]);
   if (!owner) return <EmptyState title="Your account is unavailable" />;
   if (!loaded) return <div className="flex min-h-0 flex-1 items-center justify-center"><Spinner aria-label="Loading workspaces" /></div>;
   const scoped = (next: Route) => navigate({
@@ -223,6 +251,9 @@ function AllThreads({
   return (
     <HubPersonalContext value={owner.personal === true}>
       <HubModelFavorites organizationId={owner.id}>
+        {/* Its own boundary, so the thread pane arriving never hides and
+            remounts the catalogue reads above it. */}
+        <Suspense fallback={<div className="flex min-h-0 flex-1 items-center justify-center"><Spinner aria-label="Loading workspaces" /></div>}>
         <Threads
           key={owner.id}
           organizationId={owner.id}
@@ -244,151 +275,9 @@ function AllThreads({
           newThreadWorkspaceId={selectedWorkspace?.id}
           onNewThreadWorkspaceChange={workspace => setWorkspaceKey(workspace.key)}
         />
+        </Suspense>
       </HubModelFavorites>
     </HubPersonalContext>
-  );
-}
-
-function AllTasks({
-  organizations,
-  navigate,
-}: {
-  organizations: Organization[];
-  navigate: (route: Route) => void;
-}) {
-  const resources = useOwnedResources<{ items: BoardProjection[] }>(
-    organizations,
-    "/board/tickets",
-    "/board/live",
-  );
-  const [saving, setSaving] = useState("");
-  const [writeError, setWriteError] = useState("");
-  const items = useMemo(
-    () =>
-      resources.flatMap((resource) =>
-        (resource.value?.items ?? []).map((item) => ({
-          organization: resource.organization,
-          item,
-        })),
-      ),
-    [resources],
-  );
-  const loaded = resources.every((resource) => resource.value || resource.error);
-  const error = writeError || resources.find((resource) => resource.error)?.error;
-  return (
-    <section
-      className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-6"
-      aria-label="Tasks"
-    >
-      <div className="flex items-center justify-end">
-        <AccountAction
-          organizations={organizations}
-          label="Create ticket"
-          title="Create ticket"
-          description="Choose who owns this ticket."
-          action="Choose account"
-          onSelect={(organizationId) =>
-            navigate({
-              name: "board",
-              organizationId: "all",
-              ownerOrganizationId: organizationId,
-            })
-          }
-        />
-      </div>
-      {error && <p role="alert">{error}</p>}
-      {!loaded ? (
-        <p role="status">Reading your Tasks…</p>
-      ) : items.length ? (
-        <ItemGroup>
-          {items.map(({ organization, item }) => {
-            const key = item.fields.keyPrefix
-              ? `${item.fields.keyPrefix}-${item.fields.number}`
-              : "";
-            const itemKey = `${organization.id}:${item.id}`;
-            return (
-              <Item key={itemKey} variant="outline">
-                <ItemMedia>
-                  <Circle />
-                </ItemMedia>
-                <ItemContent className="min-w-0">
-                  <ItemTitle>
-                    <Button
-                      variant="link"
-                      className="h-auto justify-start whitespace-normal p-0 text-left"
-                      data-link
-                      onClick={() =>
-                        navigate({
-                          name: "ticket",
-                          key: item.id,
-                          organizationId: "all",
-                          ownerOrganizationId: organization.id,
-                        })
-                      }
-                    >
-                      {key ? `${key} · ` : ""}
-                      {String(item.fields.title)}
-                    </Button>
-                  </ItemTitle>
-                  <ItemDescription>
-                    <OwnerDescription
-                      organization={organization}
-                      detail={`Updated by ${item.lastActor.label}`}
-                    />
-                  </ItemDescription>
-                </ItemContent>
-                <ItemActions>
-                  <Select
-                    value={String(item.fields.status ?? "backlog")}
-                    disabled={saving === itemKey}
-                    onValueChange={(status) => {
-                      setSaving(itemKey);
-                      setWriteError("");
-                      void hubRequest(
-                        `${hubThreadBase(organization.id)}/board/events`,
-                        "POST",
-                        {
-                          entity: "ticket",
-                          entityId: item.id,
-                          kind: "status",
-                          payload: { status },
-                        },
-                      )
-                        .catch((caught) =>
-                          setWriteError(
-                            caught instanceof Error
-                              ? caught.message
-                              : "This ticket could not be updated.",
-                          ),
-                        )
-                        .finally(() => setSaving(""));
-                    }}
-                  >
-                    <SelectTrigger aria-label={`Status for ${item.fields.title}`}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="backlog">Backlog</SelectItem>
-                      <SelectItem value="todo">Todo</SelectItem>
-                      <SelectItem value="in_progress">In progress</SelectItem>
-                      <SelectItem value="needs_input">Needs input</SelectItem>
-                      <SelectItem value="pr_review">PR review</SelectItem>
-                      <SelectItem value="done">Done</SelectItem>
-                      <SelectItem value="cancelled">Cancelled</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </ItemActions>
-              </Item>
-            );
-          })}
-        </ItemGroup>
-      ) : (
-        <EmptyState
-          title="No tickets yet"
-          description="Create a ticket to plan the next outcome."
-        />
-      )}
-    </section>
   );
 }
 
@@ -754,7 +643,7 @@ export default function HubAllView({
                   data-link
                   onClick={() =>
                     navigate({
-                      name: route.name === "ticket" ? "board" : route.name,
+                      name: route.name,
                       ...(route.name === "settings" ? { tab: route.tab } : {}),
                       organizationId: "all",
                     } as Route)
@@ -795,13 +684,6 @@ export default function HubAllView({
                   />
                 </>
               )}
-              {(section === "board" || section === "ticket") && (
-                <Board
-                  organizationId={selectedOwner.id}
-                  ticketId={route.name === "ticket" ? route.key : undefined}
-                  navigate={scoped}
-                />
-              )}
               {section === "devices" && (
                 <div className="p-6">
                   <Computers organizationId={selectedOwner.id} />
@@ -839,8 +721,6 @@ export default function HubAllView({
         navigate={navigate}
       />
     );
-  if (route.name === "board")
-    return <AllTasks organizations={organizations} navigate={navigate} />;
   if (route.name === "settings" && (route.tab === "general" || route.tab === "devices")) {
     const personal =
       organizations.find((organization) => organization.personal) ??

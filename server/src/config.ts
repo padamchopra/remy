@@ -15,7 +15,6 @@ import {
 } from "./providers.js";
 // Type-only, so this module keeps no runtime dependency on the one that runs a
 // thread — chat.ts already depends on this one.
-import type { ChatPermissionMode } from "./chat.js";
 
 export { configDir } from "./paths.js";
 
@@ -42,36 +41,22 @@ export interface Config {
   /// Directory that holds Remy's `.remy` worktree folder. Empty means each
   /// workspace holds its own, at `<workspace>/.remy`.
   worktreeRoot: string;
-  /// The model a new thread starts with, in `defaultProvider`'s own naming.
-  /// Empty leaves the choice to whatever that tool is configured with.
-  defaultModel: string;
-  /// How much reasoning a new thread asks its selected model to use. Empty
-  /// leaves the choice to that provider's configuration.
-  defaultEffort: string;
-  /// What a new thread thinks with. The pair is validated together: a provider
-  /// only ever holds one of its own models.
+  /// The provider a new thread runs on when neither its workspace nor the
+  /// composer names one: the first provider turned on, at its own default
+  /// model. It is derived, not a setting — there is no machine-wide default
+  /// model, and a stored one from an older Remy is ignored.
   defaultProvider: ProviderId;
   /// Providers offered for new work on this machine. Existing threads keep
   /// their provider so their history remains readable.
   enabledProviders: ProviderId[];
-  /// What a new thread may do without being asked. A thread can still say
-  /// otherwise; this is where one starts when it has not.
-  defaultPermissionMode: ChatPermissionMode;
   /// The face on your messages: empty for the default, `preset:<id>` for one
   /// of the built-in ones, or a `data:` URL for a picture you chose.
   avatar: string;
-  /// How this machine introduces itself to a newly paired device. Empty values
-  /// fall back to the hostname and the ordinary laptop mark.
+  /// How this computer introduces itself to the hub. Empty values fall back to
+  /// the hostname and the ordinary laptop mark.
   deviceName: string;
   deviceIcon: string;
   deviceTint: string;
-  /// The order this client should try paired devices for work with no
-  /// workspace. Unknown devices stay at the end until someone places them.
-  devicePreferenceOrder: string[];
-  /// Whether this machine should keep its daemon exposed through Tailscale
-  /// Serve. The observed mapping can disappear or point at an older port, so
-  /// the preference has to outlive the mapping it asks for.
-  tailscaleServeEnabled: boolean;
   /// What Remy puts in front of a branch it creates for a worktree. Seeded
   /// from the GitHub login at boot, so a branch someone else sees says who
   /// made it.
@@ -81,13 +66,9 @@ export interface Config {
   /// How often Remy refreshes the repositories it knows about. `off` never
   /// does, which is the setting for anyone who wants git touched only by them.
   repoUpdate: RepoUpdateEvery;
-  /// Whether notifications raised on this machine are shown on this machine.
-  /// Off routes them only to the paired devices that asked for them, which is
-  /// the setting for a machine that runs the work while you watch from another.
-  notifySelf: boolean;
   /// What Remy runs its own small jobs on — naming a thread, and whatever else
-  /// comes to need a model later. Separate from `defaultModel`, which is what
-  /// your threads think with: this one should stay cheap. `off` declines them
+  /// comes to need a model later. Separate from what your threads think with:
+  /// this one should stay cheap. `off` declines them
   /// altogether.
   remyProvider: ProviderId;
   remyModel: string;
@@ -103,7 +84,6 @@ export type RepoUpdateEvery = "off" | "hourly" | "sixHourly" | "daily";
 
 /// Listed here rather than imported, so the type above can stay type-only. The
 /// same shape `agents.ts` keeps, and for the same reason.
-const PERMISSION_MODES: ChatPermissionMode[] = ["default", "auto", "acceptEdits", "plan", "bypassPermissions"];
 
 const SLEEP_MODES: PreventSleepMode[] = ["off", "whileBusy", "always"];
 const CHECKOUT_MODES: CheckoutMode[] = ["main", "worktree"];
@@ -215,24 +195,6 @@ function deviceNameValue(value: unknown): string {
   return typeof value === "string" ? value.trim().slice(0, 80) : "";
 }
 
-export function devicePreferenceOrder(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return [...new Set(value.flatMap((entry) => {
-    if (typeof entry !== "string") return [];
-    const id = entry.trim().slice(0, 128);
-    return id ? [id] : [];
-  }))].slice(0, 100);
-}
-
-let tailscaleServePreferenceStored = false;
-
-/// Older installs persisted the Tailscale mapping itself, but not the intent
-/// behind it. Startup uses this distinction once to adopt an existing Remy
-/// mapping without turning a deliberately disabled one back on later.
-export function hasTailscaleServePreference(): boolean {
-  return tailscaleServePreferenceStored;
-}
-
 /// A GitHub login, held to what GitHub itself allows. It ends up on the right
 /// of an `@` in every commit an agent signs, so anything else is dropped rather
 /// than passed through.
@@ -258,14 +220,11 @@ export function branchPrefix(value: unknown): string | undefined {
 
 function load(): Config {
   const parsed = getKv<Partial<Config> & { preventSleepWhileBusy?: boolean }>("config") ?? {};
-  tailscaleServePreferenceStored = typeof parsed.tailscaleServeEnabled === "boolean";
   const hubMode = parsed.hubMode === true;
   const enabled = enabledProviders(parsed.enabledProviders, hubMode);
-  const parsedDefaultProvider = providerId(parsed.defaultProvider);
-  const defaultProvider = enabled.includes(parsedDefaultProvider) ? parsedDefaultProvider : enabled[0];
+  const defaultProvider = enabled[0];
   const parsedRemyProvider = providerId(parsed.remyProvider);
   const remyProvider = enabled.includes(parsedRemyProvider) ? parsedRemyProvider : defaultProvider;
-  const defaultModel = providerModel(defaultProvider, parsed.defaultModel);
   const remyModel = remyModelValue(remyProvider, parsed.remyModel ?? "haiku");
   const config: Config = {
     port: Number(parsed.port) || 8420,
@@ -278,10 +237,7 @@ function load(): Config {
     worktreeBase: oneOf(WORKTREE_BASES, parsed.worktreeBase, "remote"),
     worktreeRoot: worktreeRootPath(parsed.worktreeRoot),
     defaultProvider,
-    defaultModel,
-    defaultEffort: providerEffort(defaultProvider, defaultModel, parsed.defaultEffort),
     enabledProviders: enabled,
-    defaultPermissionMode: oneOf(PERMISSION_MODES, parsed.defaultPermissionMode, "default"),
     remyProvider,
     remyModel,
     remyEffort: remyModel === OFF ? "" : providerEffort(remyProvider, remyModel, parsed.remyEffort),
@@ -293,17 +249,8 @@ function load(): Config {
     deviceName: deviceNameValue(parsed.deviceName),
     deviceIcon: deviceAppearanceValue(parsed.deviceIcon, DEVICE_ICONS),
     deviceTint: deviceAppearanceValue(parsed.deviceTint, DEVICE_TINTS),
-    devicePreferenceOrder: devicePreferenceOrder(parsed.devicePreferenceOrder),
-    tailscaleServeEnabled: parsed.tailscaleServeEnabled === true,
-    // Absent means this is the only device, so it is the one to buzz.
-    notifySelf: parsed.notifySelf !== false,
   };
-  if (tailscaleServePreferenceStored) {
-    setKv("config", config);
-  } else {
-    const { tailscaleServeEnabled: _tailscaleServeEnabled, ...withoutUnchosenTailnetPreference } = config;
-    setKv("config", withoutUnchosenTailnetPreference);
-  }
+  setKv("config", config);
   return config;
 }
 
@@ -316,11 +263,8 @@ export interface PublicSettings {
   defaultCheckout: CheckoutMode;
   worktreeBase: WorktreeBase;
   worktreeRoot: string;
-  defaultModel: string;
-  defaultEffort: string;
   defaultProvider: ProviderId;
   enabledProviders: ProviderId[];
-  defaultPermissionMode: ChatPermissionMode;
   remyProvider: ProviderId;
   remyModel: string;
   remyEffort: string;
@@ -331,9 +275,6 @@ export interface PublicSettings {
   deviceName: string;
   deviceIcon: string;
   deviceTint: string;
-  devicePreferenceOrder: string[];
-  tailscaleServeEnabled: boolean;
-  notifySelf: boolean;
 }
 
 export function publicSettings(): PublicSettings {
@@ -344,11 +285,8 @@ export function publicSettings(): PublicSettings {
     defaultCheckout: config.defaultCheckout,
     worktreeBase: config.worktreeBase,
     worktreeRoot: config.worktreeRoot,
-    defaultModel: config.defaultModel,
-    defaultEffort: config.defaultEffort,
     defaultProvider: config.defaultProvider,
     enabledProviders: config.enabledProviders,
-    defaultPermissionMode: config.defaultPermissionMode,
     remyProvider: config.remyProvider,
     remyModel: config.remyModel,
     remyEffort: config.remyEffort,
@@ -359,9 +297,6 @@ export function publicSettings(): PublicSettings {
     deviceName: config.deviceName,
     deviceIcon: config.deviceIcon,
     deviceTint: config.deviceTint,
-    devicePreferenceOrder: config.devicePreferenceOrder,
-    tailscaleServeEnabled: config.tailscaleServeEnabled,
-    notifySelf: config.notifySelf,
   };
 }
 
@@ -394,19 +329,6 @@ export function patchSettings(patch: Record<string, unknown>): PublicSettings {
   if (patch.worktreeRoot !== undefined) {
     set("worktreeRoot", worktreeRootPath(patch.worktreeRoot));
   }
-  // A provider and a model are one choice, so they are validated as one: a
-  // patch that moves to Codex and keeps `sonnet` lands on Codex's default
-  // rather than on a model Codex has never heard of.
-  if (patch.defaultProvider !== undefined || patch.defaultModel !== undefined || patch.defaultEffort !== undefined) {
-    const asked = patch.defaultProvider === undefined
-      ? config.defaultProvider
-      : providerId(patch.defaultProvider, config.defaultProvider);
-    const provider = config.enabledProviders.includes(asked) ? asked : config.defaultProvider;
-    const model = modelFor(provider, patch.defaultModel, config.defaultModel);
-    set("defaultProvider", provider);
-    set("defaultModel", model);
-    set("defaultEffort", effortFor(provider, model, patch.defaultEffort, config.defaultEffort));
-  }
   if (patch.remyProvider !== undefined || patch.remyModel !== undefined || patch.remyEffort !== undefined) {
     const asked = patch.remyProvider === undefined
       ? config.remyProvider
@@ -422,9 +344,6 @@ export function patchSettings(patch: Record<string, unknown>): PublicSettings {
   if (patch.favoriteModels !== undefined) {
     set("favoriteModels", favoriteModels(patch.favoriteModels));
   }
-  if (patch.defaultPermissionMode !== undefined) {
-    set("defaultPermissionMode", oneOf(PERMISSION_MODES, patch.defaultPermissionMode, config.defaultPermissionMode));
-  }
   if (patch.repoUpdate !== undefined) {
     set("repoUpdate", oneOf(REPO_UPDATES, patch.repoUpdate, config.repoUpdate));
   }
@@ -439,16 +358,6 @@ export function patchSettings(patch: Record<string, unknown>): PublicSettings {
   }
   if (patch.deviceTint !== undefined) {
     set("deviceTint", deviceAppearanceValue(patch.deviceTint, DEVICE_TINTS));
-  }
-  if (patch.devicePreferenceOrder !== undefined) {
-    set("devicePreferenceOrder", devicePreferenceOrder(patch.devicePreferenceOrder));
-  }
-  if (patch.tailscaleServeEnabled !== undefined) {
-    set("tailscaleServeEnabled", patch.tailscaleServeEnabled === true);
-    tailscaleServePreferenceStored = true;
-  }
-  if (patch.notifySelf !== undefined) {
-    set("notifySelf", patch.notifySelf === true);
   }
   // Seeded from `gh` at boot rather than typed, but it has to be settable for
   // that seeding to persist it.
@@ -473,16 +382,12 @@ export function setProviderEnabled(value: unknown, enabled: boolean): PublicSett
   else next.delete(selected.id);
   if (next.size === 0) throw new Error("keep at least one provider on");
   config.enabledProviders = PROVIDERS.map((entry) => entry.id).filter((id) => next.has(id));
-  if (!next.has(config.defaultProvider)) {
-    config.defaultProvider = config.enabledProviders[0];
-    config.defaultModel = "";
-    config.defaultEffort = "";
-  }
+  config.defaultProvider = config.enabledProviders[0];
   if (!next.has(config.remyProvider)) {
     config.remyProvider = config.defaultProvider;
     if (config.remyModel !== OFF) {
-      config.remyModel = config.defaultModel;
-      config.remyEffort = config.defaultEffort;
+      config.remyModel = "";
+      config.remyEffort = "";
     }
   }
   setKv("config", config);

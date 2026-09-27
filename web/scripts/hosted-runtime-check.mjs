@@ -35,7 +35,7 @@ try {
       const savedKeys=new Map();
       const providerKeys={};
       const favorites = new Set();
-      const profile={id:"reader",name:"Reader",image:null}; let permissionMode="default";
+      const profile={id:"reader",name:"Reader",image:null};
       let lastMessage;
       let threadInput;
       let startCalls=0, messageCalls=0, startStatusCalls=0, startReleased=false;
@@ -60,7 +60,7 @@ try {
       const workspaceRead = new Promise(resolve => { releaseWorkspaces = resolve; });
       const computerRead = new Promise(resolve => { releaseComputers = resolve; });
       const composerReads = new Promise(resolve => { releaseComposer = resolve; });
-      let remyDefault=null, workspaceDefault=null; const computerDefaults=new Map();
+      let workspaceDefault=null; const computerDefaults=new Map();
       const connections = new Set();
       const enabledProviders = new Set();
       const computerName = returning ? "Studio-Mac-with-a-long-unbroken-name-for-release-and-preview-builds" : "Studio Mac";
@@ -81,10 +81,6 @@ try {
         const org = path.startsWith("/api/organizations/team") ? team : personal;
         const base = `/api/organizations/${org.id}`;
         if (holdComposerReads && (path === `${base}/model-access` || path === `${base}/computers/preference` || path === `${base}/github/workspace-branches` || path.startsWith(`${base}/model-defaults`))) await composerReads;
-        if(path === `${base}/profile-preferences`) {
-          if(route.request().method() === "PATCH") permissionMode=route.request().postDataJSON().permissionMode;
-          return route.fulfill({json:{permissionMode}});
-        }
         if(path === `${base}/github/profile`) return route.fulfill({json:{image:"https://avatars.githubusercontent.com/u/1"}});
         if(path === `${base}/compute-shares/computers/personal-mac` && ["PUT","PATCH","DELETE"].includes(route.request().method())) {sharedComputer=route.request().method()!=="DELETE";return route.fulfill({json:{ok:true}});}
         if(path === `${base}/compute-shares/cloud/modal` && ["PUT","PATCH","DELETE"].includes(route.request().method())) {sharedCloud=route.request().method()!=="DELETE";return route.fulfill({json:{ok:true}});}
@@ -124,8 +120,10 @@ try {
         if(path === `${base}/model-defaults`) {
           const workspace=new URL(route.request().url()).searchParams.get("workspace");
           const computer=new URL(route.request().url()).searchParams.get("computer");
-          if(route.request().method()==="PATCH") {if(computer)computerDefaults.set(computer,route.request().postDataJSON().choice);else if(workspace)workspaceDefault=route.request().postDataJSON().choice;else remyDefault=route.request().postDataJSON().choice;for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"model-defaults.changed"}));}catch{}}
-          return route.fulfill({json:{remy:remyDefault,workspace:workspace?workspaceDefault:null,computer:computerDefaults.get(computer)??null}});
+          // There is no account-wide default: a PATCH names a workspace or a computer.
+          if(route.request().method()==="PATCH" && !!workspace===!!computer) return route.fulfill({status:400,json:{error:"Choose one default to change."}});
+          if(route.request().method()==="PATCH") {if(computer)computerDefaults.set(computer,route.request().postDataJSON().choice);else workspaceDefault=route.request().postDataJSON().choice;for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"model-defaults.changed"}));}catch{}}
+          return route.fulfill({json:{workspace:workspace?workspaceDefault:null,computer:computerDefaults.get(computer)??null}});
         }
         if(path === `${base}/model-favorites`) {
           if(route.request().method()==="PATCH") { const {key,enabled}=route.request().postDataJSON(); if(enabled)favorites.add(key);else favorites.delete(key); }
@@ -217,12 +215,9 @@ try {
           [`${base}/workspaces`]: { workspaces: hasWorkspace && !(process.env.QA_SCOPE_ONLY === "1" && org.personal)?[{id:"repo",name:"Example",origin:"https://github.com/example/repo",icon:"icon.png"},{id:"remy",name:"remy",origin:"https://github.com/padamchopra/remy",icon:"folder"}]:[], canManage: true },
           [`${base}/notifications`]: { notifications: [], devices: [] },
           [`${base}/environments`]: { environments: [], assignments: [], workspaces: [] },
-          [`${base}/board/tickets`]: {items:process.env.QA_SCOPE_ONLY === "1"?[{id:`${org.id}-ticket`,entity:"ticket",fields:{title:org.personal?"Personal ticket":"Studio ticket",status:"todo",number:1,keyPrefix:org.personal?"PER":"STD"},lastActor:{id:"reader",label:"Reader"},activity:[]}]:[]},
           [`${base}/github/pull-requests`]: {pullRequests:[]},
           [`${base}/connections`]: {canManage:true,providers:[],connections:process.env.QA_SCOPE_ONLY === "1"?[{id:"github-general",organization_id:"personal",provider:"github",subject:"reader",external_id:"padamchopra",label:"padamchopra",status:"connected",updated_at:1,availability:"all"}]:[],linearAccounts:process.env.QA_SCOPE_ONLY === "1"?[{id:"linear-general",externalId:"linear-remy",label:"Remy",status:"connected",updatedAt:1,general:true,organizationIds:[]}]:[]},
           [`${base}/github`]: {repositories:[],activity:[]},
-          [`${base}/linear`]: {canManage:true,connected:false,catalog:{teams:[],projects:[],users:[]},mappings:[],matches:[],members:[],workspaces:[],teams:[],columns:[]},
-          [`${base}/linear-board`]: {settings:[],labels:{},rule:""},
           [`${base}/linear-workspace`]: {accounts:[],link:null},
           [`${base}/linear-access`]: {notice:null},
           [`${base}/compute-shares`]: {canManage:true,computers:[{id:"personal-mac",name:"Personal Mac",icon:"laptop",platform:"darwin",shared:sharedComputer,available:true,sharedBy:sharedComputer?"Reader":null,canShare:true,canRevoke:true,providers:sharedComputer?[{id:"claude",label:"Claude",allowed:true},{id:"codex",label:"Codex",allowed:true}]:[]}],cloudConnections:[{provider:"fly-sprites",shared:true,available:true,sharedBy:"Reader",canShare:true,canRevoke:true,providers:[{id:"openrouter",label:"OpenRouter",allowed:true}]},{provider:"modal",shared:sharedCloud,available:true,sharedBy:sharedCloud?"Reader":null,canShare:true,canRevoke:true,providers:sharedCloud?[{id:"anthropic",label:"Anthropic",allowed:true},{id:"openrouter",label:"OpenRouter",allowed:true}]:[]}]},
@@ -237,13 +232,13 @@ try {
           holdComposerReads=true;
           const anthropic=modelEntries.find(p=>p.id==="anthropic");anthropic.enabled=true;anthropic.configured=true;
           const entry=modelEntries.find(p=>p.id==="openrouter");entry.enabled=true;entry.configured=true;entry.models=["openrouter/auto","test/model-a","test/model-b","anthropic/claude-opus-5.5"];
-          remyDefault={provider:"openrouter",model:"openrouter/auto"};preference="cloud:fly-sprites";
+          computerDefaults.set("cloud:fly-sprites",{provider:"openrouter",model:"openrouter/auto"});preference="cloud:fly-sprites";
         }
         if(process.env.QA_SCOPE_ONLY === "1") {
           profile.image="preset:cobalt-cyclops";
           const entry=modelEntries.find(p=>p.id==="openrouter");
           entry.enabled=true;entry.configured=true;entry.models=["openrouter/auto"];
-          remyDefault={provider:"openrouter",model:"openrouter/auto"};
+          computerDefaults.set("cloud:fly-sprites",{provider:"openrouter",model:"openrouter/auto"});
           preference="cloud:fly-sprites";
         }
         const target=new URL(url);target.hash="/threads?organization=personal";await page.goto(target.href);
@@ -423,14 +418,12 @@ try {
           if(artifacts)await page.screenshot({path:`${artifacts}/thread-url-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
           assert.equal(await page.getByRole("button",{name:"Back to all",exact:true}).count(),0,"Thread details do not add a second navigation row");
           assert.equal(await page.getByText("This computer is offline; you’re reading its last saved update.",{exact:true}).count(),0,"Offline threads do not add a redundant status row");
-          await page.goto(clean("/board"));
-          await page.getByText("Personal ticket",{exact:false}).waitFor();
-          await page.getByText("Studio ticket",{exact:false}).waitFor();
-          assert.equal(await page.locator('[data-slot="pane-header"]').count(),1,"Tasks uses the shared pane header");
-          assert.equal(await page.getByRole("heading",{name:"Tasks",exact:true}).count(),0,"Tasks does not repeat the pane title");
-          assert.equal(await page.getByRole("button",{name:"Create ticket",exact:true}).count(),1);
-          assert.equal(await page.getByRole("region",{name:"Tasks",exact:true}).count(),1);
-          if(artifacts)await page.screenshot({path:`${artifacts}/unified-tasks-${mobile?'phone':'desktop'}.png`});
+          for(const retired of ["/board","/tasks","/tickets/REMY-1"]){
+            await page.goto(clean(retired));
+            await page.waitForURL((current)=>/\/threads$/.test(current.pathname));
+            assert.match(new URL(page.url()).pathname,/\/threads$/,`A retired ${retired} link opens threads`);
+          }
+          assert.equal(await page.getByRole("button",{name:"Tasks",exact:true}).count(),0,"Tasks is gone from the sidebar");
           assert.equal(await page.getByRole("button",{name:"Agents",exact:true}).count(),0,"Agents is gone from the sidebar");
           assert.equal(await page.getByRole("button",{name:"Routing",exact:true}).count(),0,"Routing is gone from the sidebar");
           await page.goto(clean("/inbox"));
@@ -539,7 +532,7 @@ try {
           await page.getByText("Studio · https://github.com/example/repo",{exact:true}).waitFor();
           await page.goto(clean("/settings/general"));
           const generalSettings=page.getByRole("region",{name:"General settings",exact:true});
-          await generalSettings.getByText("Default model",{exact:true}).waitFor();
+          await generalSettings.getByText("Notify me",{exact:true}).waitFor();
           const generalTitlebar=page.locator('[data-slot="pane-header"]');
           assert.equal(await generalTitlebar.count(),1,"General uses the shared pane header");
           const titlebarLayout=await generalTitlebar.evaluate(header=>{
@@ -550,7 +543,10 @@ try {
           });
           assert.ok(titlebarLayout,"The shared titlebar owns the sidebar trigger");
           if(mobile) assert.ok(titlebarLayout.visible && titlebarLayout.toggle<titlebarLayout.breadcrumb,"The sidebar trigger stays left of the title");
-          assert.equal(await generalSettings.getByText("Default model",{exact:true}).count(),1,"General has one default model setting");
+          assert.equal(await generalSettings.getByText("Default model",{exact:true}).count(),0,"General has no account default model");
+          assert.equal(await generalSettings.locator("[data-model-picker]").count(),0,"General has no model picker");
+          assert.equal(await generalSettings.getByRole("combobox",{name:"Default permission level",exact:true}).count(),0,"General has no account default permission");
+          assert.equal(await generalSettings.getByText("Appearance",{exact:true}).count(),0,"General has no Appearance card");
           assert.equal(await page.getByText("Personal default model",{exact:true}).count(),0);
           assert.equal(await page.getByText("Studio default model",{exact:true}).count(),0);
           assert.equal(await page.getByRole("region",{name:"Account defaults",exact:true}).count(),0);
@@ -575,15 +571,14 @@ try {
           assert.equal(await connectionSettings.getByRole("button",{name:"Connect another account",exact:true}).count(),1,"Connections has one Linear add action");
           await page.goto(clean("/settings/general?organization=team"));
           await page.getByRole("region",{name:"General settings",exact:true}).waitFor();
-          assert.equal(await page.getByText("Default model",{exact:true}).count(),0,"Organization-filtered General does not duplicate the organization default");
+          assert.equal(await page.getByText("Default model",{exact:true}).count(),0,"Organization-filtered General has no default model");
+          // An organization has no General tab; an older link to it opens Members.
           await page.goto(clean("/settings/organization?section=general&owner=team"));
-          const organizationGeneral=page.getByRole("region",{name:"Organization general settings",exact:true});
-          await organizationGeneral.getByText("Default model",{exact:true}).waitFor();
+          const organizationSettings=page.getByRole("region",{name:"Organization settings",exact:true});
+          await organizationSettings.getByRole("tab",{name:"Members",exact:true,selected:true}).waitFor();
           assert.equal(await page.locator('[data-slot="pane-header"]').count(),1,"Organization settings uses the shared pane header");
-          assert.equal(await organizationGeneral.getByText("Default model",{exact:true}).count(),1,"Organization settings owns its default model");
-          assert.equal(await organizationGeneral.getByText("Linear",{exact:true}).count(),0,"Organization General does not contain Linear settings");
-          await page.reload();
-          await organizationGeneral.getByText("Default model",{exact:true}).waitFor();
+          assert.equal(await organizationSettings.getByRole("tab",{name:"General",exact:true}).count(),0,"Organization settings has no General tab");
+          assert.equal(await page.getByText("Default model",{exact:true}).count(),0,"Organization settings has no default model");
           await page.goto(clean("/settings/devices"));
           await page.getByRole("region",{name:"Computers",exact:true}).waitFor();
           await page.getByRole("region",{name:"Cloud settings",exact:true}).waitFor();
@@ -661,16 +656,17 @@ try {
           await page.getByRole("button",{name:"Change",exact:true}).click();
           await page.getByRole("button",{name:"Remove picture",exact:true}).click();
           await page.getByRole("dialog").waitFor({state:"hidden"});assert.equal(profile.image,null);
-          await page.getByRole("combobox",{name:"Default permission level",exact:true}).click();
-          await page.getByRole("option",{name:"Plan",exact:true}).click();
-          await page.reload();await page.getByRole("combobox",{name:"Default permission level",exact:true}).getByText("Plan",{exact:true}).waitFor();
-          assert.equal(permissionMode,"plan");assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+          assert.equal(await page.getByRole("combobox",{name:"Default permission level",exact:true}).count(),0,"General has no account default permission");
+          assert.equal(await page.getByText("Default model",{exact:true}).count(),0,"General has no account default model");
+          assert.equal(await page.getByText("Appearance",{exact:true}).count(),0,"General has no Appearance card");
+          if(artifacts)await page.screenshot({path:`${artifacts}/general-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
+          assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
           assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);
           await context.close();console.log(`General settings passed: ${returning?'saved':'fresh'}, ${mobile?'phone':'desktop'}.`);continue;
         }
         if(process.env.QA_START_ONLY === "1") {
           const entry=modelEntries.find(p=>p.id==="openrouter");entry.enabled=true;entry.configured=true;entry.models=["openrouter/auto"];
-          remyDefault={provider:"openrouter",model:"openrouter/auto"};preference="cloud:fly-sprites";
+          preference="cloud:fly-sprites";
           await page.reload();await page.getByRole("button",{name:"Branch",exact:true}).getByText("main",{exact:true}).waitFor();
           await page.locator("#hub-thread-message").fill("Hello startup QA");
           const at=Date.now();await page.getByRole("button",{name:"Send",exact:true}).click();
@@ -776,7 +772,7 @@ try {
         }
         if(process.env.QA_COMPUTER_DEFAULTS_ONLY === "1") {
           const entry=modelEntries.find(p=>p.id==="openrouter");entry.enabled=true;entry.configured=true;entry.models=["openrouter/auto","test/computer","test/workspace","test/manual"];
-          remyDefault={provider:"openrouter",model:"openrouter/auto"};preference="cloud:fly-sprites";
+          preference="cloud:fly-sprites";
           const settingsTarget=new URL(url);settingsTarget.hash="/settings/devices?device=cloud&organization=personal";await page.goto(settingsTarget.href);
           const provider=page.getByRole("form",{name:"Fly.io Sprites connection"});
           await provider.locator('[data-model-picker]').click();await page.getByRole("option",{name:/test\/computer/}).click();
@@ -794,9 +790,8 @@ try {
         if(process.env.QA_DEFAULTS_ONLY === "1") {
           const entry=modelEntries.find(p=>p.id==="openrouter");entry.enabled=true;entry.configured=true;entry.models=["openrouter/auto","test/workspace","test/manual"];
           const settingsTarget=new URL(url);settingsTarget.hash="/settings/general?organization=personal";await page.goto(settingsTarget.href);
-          await page.locator("[data-model-picker]:visible").click();await page.getByRole("option",{name:/openrouter\/auto/}).click();
-          await page.locator("[data-model-picker]:visible").getByText("openrouter/auto",{exact:true}).waitFor();
-          assert.equal(remyDefault.model,"openrouter/auto");
+          await page.getByRole("region",{name:"General settings",exact:true}).getByText("Notify me",{exact:true}).waitFor();
+          assert.equal(await page.locator("[data-model-picker]:visible").count(),0,"General has no default model to set");
           await page.goto(target.href);
           const model=page.getByRole("button",{name:"Model",exact:true});
           await page.reload();await model.getByText("openrouter/auto",{exact:true}).waitFor();
@@ -1110,12 +1105,18 @@ try {
         await composer.getByRole("button",{name:"Model",exact:true}).click();
         await page.getByPlaceholder("Search providers and models",{exact:true}).fill("OpenRouter");
         await page.getByRole("button",{name:"Add test/model-b to favorites",exact:true}).click();
-        await page.getByRole("group",{name:"Favorites",exact:true}).waitFor();
+        await page.getByPlaceholder("Search providers and models",{exact:true}).fill("");
+        await page.getByRole("tab",{name:"Favorites",exact:true}).waitFor();
         assert.equal(favorites.size,1);
         await page.keyboard.press("Escape");
+        await page.waitForFunction(()=>document.activeElement?.hasAttribute("data-model-picker"),null,{timeout:3000});
         await page.reload();
         await composer.getByRole("button",{name:"Model",exact:true}).click();
-        await page.getByRole("group",{name:"Favorites",exact:true}).getByText("test/model-b",{exact:true}).click();
+        const popover=page.locator('[data-slot="popover-content"]');
+        const trigger=await composer.getByRole("button",{name:"Model",exact:true}).boundingBox(),box=await popover.boundingBox();
+        assert.ok(trigger && box && (Math.abs((box.y+box.height)-trigger.y)<24 || Math.abs(box.y-(trigger.y+trigger.height))<24),"The model picker opens beside its button");
+        await page.getByRole("tab",{name:"Favorites",exact:true}).click();
+        await page.getByRole("tabpanel").getByText("test/model-b",{exact:true}).click();
         await composer.getByRole("button",{name:"Model",exact:true}).getByText("test/model-b",{exact:true}).waitFor();
         await composer.getByLabel("Message",{exact:true}).fill("Test selected model");
         await composer.getByRole("button",{name:"Send",exact:true}).click();
@@ -1130,8 +1131,9 @@ try {
         await composer.getByRole("button",{name:"Model",exact:true}).click();
         disconnectLive = true;
         await Promise.all(liveSockets.splice(0).map(socket => socket.close()));
-        await page.getByRole("group",{name:"Favorites",exact:true}).getByRole("button",{name:"Remove test/model-b from favorites",exact:true}).click();
-        await page.getByRole("group",{name:"Favorites",exact:true}).waitFor({state:"hidden"});
+        await page.getByRole("tab",{name:"Favorites",exact:true}).click();
+        await page.getByRole("tabpanel").getByRole("button",{name:"Remove test/model-b from favorites",exact:true}).click();
+        await page.getByRole("tab",{name:"Favorites",exact:true}).waitFor({state:"hidden"});
         assert.equal(favorites.size,0);
         disconnectLive = false;
         await page.keyboard.press("Escape");

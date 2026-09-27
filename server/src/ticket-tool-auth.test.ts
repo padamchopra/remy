@@ -16,8 +16,16 @@ test("a Remy capability names only the thread it was minted for", () => {
 
 test("a Remy capability reaches orchestration without reaching administration", () => {
   assert.equal(isRemyToolRoute("POST", "/organization-tools/github_action"), true);
-  assert.equal(isRemyToolRoute("POST", "/organization-tools/resolve_linear_ticket"), true);
-  assert.equal(isRemyToolRoute("POST", "/organization-tools/comment_organization_ticket"), true);
+  // Tasks are gone, so neither Remy's own tickets nor Linear's ticket mirror
+  // are a capability.
+  assert.equal(isRemyToolRoute("POST", "/organization-tools/resolve_linear_ticket"), false);
+  assert.equal(isRemyToolRoute("POST", "/organization-tools/comment_organization_ticket"), false);
+  assert.equal(isRemyToolRoute("POST", "/organization-tools/create_organization_ticket"), false);
+  assert.equal(isRemyToolRoute("GET", "/board"), false);
+  assert.equal(isRemyToolRoute("POST", "/tickets"), false);
+  assert.equal(isRemyToolRoute("POST", "/tickets/one/comment"), false);
+  assert.equal(isRemyToolRoute("POST", "/tickets/one/status"), false);
+  assert.equal(isRemyToolRoute("PATCH", "/tickets/one"), false);
   assert.equal(isRemyToolRoute("POST", "/organization-tools/configure_linear"), false);
   assert.equal(isRemyToolRoute("GET", "/server/linear"), false);
   assert.equal(isRemyToolRoute("POST", "/server/linear/accounts"), false);
@@ -25,15 +33,9 @@ test("a Remy capability reaches orchestration without reaching administration", 
   assert.equal(isRemyToolRoute("PUT", "/server/linear/link"), false);
   assert.equal(isRemyToolRoute("POST", "/organization-tools/github_installation"), false);
   assert.equal(isRemyToolRoute("GET", "/organization-tools/github_action"), false);
-  assert.equal(isRemyToolRoute("GET", "/board"), true);
   assert.equal(isRemyToolRoute("POST", "/server/update/shutdown"), false);
-  assert.equal(isRemyToolRoute("POST", "/server/hub/authorize/accounts"), false);
-  assert.equal(isRemyToolRoute("POST", "/server/hub/authorize/complete"), false);
-  assert.equal(isRemyToolRoute("POST", "/tickets/one/comment"), true);
-  assert.equal(isRemyToolRoute("POST", "/tickets/one/status"), true);
   assert.equal(isRemyToolRoute("PATCH", "/tickets/one/comments/two"), false);
   assert.equal(isRemyToolRoute("DELETE", "/tickets/one/comments/two"), false);
-  assert.equal(isRemyToolRoute("PATCH", "/tickets/one"), true);
   assert.equal(isRemyToolRoute("GET", "/workspaces"), true);
   assert.equal(isRemyToolRoute("GET", "/pull-requests/stack"), false);
   assert.equal(isRemyToolRoute("POST", "/pull-requests/stack"), false);
@@ -76,7 +78,6 @@ test("a Remy capability reaches orchestration without reaching administration", 
   assert.equal(isRemyToolRoute("GET", "/routing"), false);
   assert.equal(isRemyToolRoute("PUT", "/routing"), false);
   assert.equal(isRemyToolRoute("POST", "/chats/chat-2/read"), false);
-  assert.equal(isRemyToolRoute("POST", "/organization-tools/create_organization_ticket"), true);
   assert.equal(isRemyToolRoute("POST", "/organization-tools/explain_routing"), false);
   assert.equal(isRemyToolRoute("POST", "/organization-tools/create_organization_routine"), false);
   assert.equal(isRemyToolRoute("POST", "/agents"), false);

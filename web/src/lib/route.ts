@@ -1,12 +1,13 @@
-import type { AnalyticsTab } from "@/components/AnalyticsSettings";
 import { isHostedRuntime } from "@/lib/hub-session";
 import type { SettingsTab } from "@/lib/settings-sections";
 
 /// Where the window is, written down so a reload lands back on it.
 ///
-/// The local window keeps routes in the hash, so a reload never needs a server rule.
-/// The hosted app uses normal paths and its server returns the app shell for a
-/// direct route, so browser URLs stay clean without weakening desktop reloads.
+/// The web app uses normal paths and its server returns the app shell for a
+/// direct route. An older `#/` link still parses and is rewritten to its path
+/// once the hosted runtime is known. Outside it — the website's product preview,
+/// or the moment before `/api/runtime` answers — routes stay in the hash, so the
+/// page never navigates somewhere its server cannot answer.
 
 export type Route = (
   // `focus` names the thread in front when the one the URL opens on has more
@@ -14,16 +15,17 @@ export type Route = (
   // workbench's, kept on this device rather than in the address.
   | { name: "threads"; threadId?: string; focus?: string; organizationId?: string; computerId?: string }
   | { name: "workspaces"; workspaceId?: string }
-  | { name: "board"; scope?: string }
-  | { name: "ticket"; key: string }
   // A pull request is addressed by its repository and number, which is what
   // GitHub calls it and what someone pastes.
-  | { name: "prs"; repository?: string; number?: number }
-  | { name: "settings"; tab: SettingsTab; organizationTab?: "general" | "members" | "teams" | "computers"; analyticsTab?: AnalyticsTab; deviceId?: string; organizationId?: string }) & { organizationId?: string; ownerOrganizationId?: string };
+  // `view` is the tab in front: the summary, or the files it changes.
+  | { name: "prs"; repository?: string; number?: number; view?: "files" }
+  | { name: "settings"; tab: SettingsTab; organizationTab?: "general" | "members" | "teams" | "computers"; deviceId?: string; organizationId?: string }) & { organizationId?: string; ownerOrganizationId?: string };
 
 export interface AppLocation {
   route: Route;
 }
+
+const RETIRED_SECTIONS = new Set(["inbox", "agents", "board", "tasks", "tickets", "recurring"]);
 
 const SETTINGS_TABS: SettingsTab[] = [
   "organization",
@@ -31,13 +33,12 @@ const SETTINGS_TABS: SettingsTab[] = [
   "version-control",
   "providers",
   "devices",
-  "environments", "analytics", "members", "teams", "connections",
+  "environments", "members", "teams", "connections",
 ];
 
 /// The section a route belongs to, which is what the sidebar highlights.
-export function sectionOf(route: Route): "chats" | "workspaces" | "prs" | "tasks" {
+export function sectionOf(route: Route): "chats" | "workspaces" | "prs" {
   if (route.name === "threads" || route.name === "settings") return "chats";
-  if (route.name === "board" || route.name === "ticket") return "tasks";
   return route.name;
 }
 
@@ -48,9 +49,10 @@ function pullRequestRoute(path: string): Route {
   } catch {
     return { name: "prs" };
   }
-  const [, owner, name, number, extra] = parts;
+  const [, owner, name, number, view, extra] = parts;
   if (!owner || !name || extra !== undefined || !/^[1-9]\d{0,9}$/.test(number ?? "")) return { name: "prs" };
-  return { name: "prs", repository: `${owner}/${name}`, number: Number(number) };
+  if (view !== undefined && view !== "files") return { name: "prs" };
+  return { name: "prs", repository: `${owner}/${name}`, number: Number(number), ...(view ? { view } : {}) };
 }
 
 function parseRoute(hash: string): AppLocation {
@@ -62,22 +64,14 @@ function parseRoute(hash: string): AppLocation {
   const [head, tail] = trimmed.replace(/^\/+/, "").split("/");
   const rest = tail ? decodeURIComponent(tail) : undefined;
 
-  // Inbox and Agents are gone, so an older link opens the threads it was
+  // Inbox, Agents and Tasks are gone, so an older link opens the threads it was
   // always one click from.
-  if (head === "inbox" || head === "agents") return { route: { name: "threads" } };
+  if (RETIRED_SECTIONS.has(head ?? "")) return { route: { name: "threads" } };
   if (head === "workspaces") return { route: { name: "workspaces", workspaceId: rest } };
   if (head === "pull-requests") return { route: pullRequestRoute(trimmed) };
-  // Older links to recurring tickets land on the board.
-  if (head === "recurring") return { route: { name: "board", scope: rest } };
-  if (head === "board") return { route: { name: "board", scope: rest } };
-  // Tickets are addressed by key rather than id, so a link someone pastes reads
-  // as the thing it opens.
-  if (head === "tickets" && rest) return { route: { name: "ticket", key: rest } };
   if (head === "settings") {
     const tab = SETTINGS_TABS.includes(rest as SettingsTab) ? (rest as SettingsTab) : "general";
     const params = new URLSearchParams(query);
-    const askedAnalyticsTab = params.get("tab");
-    const analyticsTab: AnalyticsTab = askedAnalyticsTab === "usage" ? "usage" : "general";
     const deviceId = params.get("device") || undefined;
     return {
       route: {
@@ -85,7 +79,6 @@ function parseRoute(hash: string): AppLocation {
         tab,
         ...(tab === "devices" && params.get("organization") ? { organizationId: params.get("organization")! } : {}),
         ...(tab === "organization" ? {organizationTab: params.get("section") === "members" ? "members" as const : params.get("section") === "teams" ? "teams" as const : params.get("section") === "computers" ? "computers" as const : "general" as const} : {}),
-        ...(tab === "analytics" ? { analyticsTab } : {}),
         ...((tab === "providers" || tab === "devices") && deviceId ? { deviceId } : {}),
       },
     };
@@ -111,19 +104,14 @@ export function formatPathLocation({ route }: AppLocation): string {
       ? `/threads${route.threadId ? `/${encodeURIComponent(route.threadId)}` : ""}`
       : route.name === "workspaces"
         ? `/workspaces${route.workspaceId ? `/${encodeURIComponent(route.workspaceId)}` : ""}`
-        : route.name === "board"
-          ? `/board${route.scope ? `/${encodeURIComponent(route.scope)}` : ""}`
-          : route.name === "ticket"
-            ? `/tickets/${encodeURIComponent(route.key)}`
-          : route.name === "settings"
+        : route.name === "settings"
               ? `/settings/${route.tab}`
               : route.repository && route.number
-                ? `/pull-requests/${route.repository.split("/").map(encodeURIComponent).join("/")}/${route.number}`
+                ? `/pull-requests/${route.repository.split("/").map(encodeURIComponent).join("/")}/${route.number}${route.view ? `/${route.view}` : ""}`
                 : "/pull-requests";
   const params = new URLSearchParams();
   const threadId = route.name === "threads" ? route.threadId : undefined;
   if (route.name === "threads" && route.focus) params.set("focus", route.focus);
-  if (route.name === "settings" && route.tab === "analytics" && route.analyticsTab === "usage") params.set("tab", "usage");
   if (route.name === "settings" && (route.tab === "providers" || route.tab === "devices") && route.deviceId) params.set("device", route.deviceId);
   if (route.organizationId && route.organizationId !== "all" && !threadId) params.set("organization", route.organizationId);
   if (route.name === "settings" && route.tab === "organization" && route.organizationTab) params.set("section", route.organizationTab);
@@ -154,7 +142,7 @@ function pathInsideHostedBase(): string {
   return window.location.pathname.slice(hostedBasePath().length) || "/";
 }
 
-const RETIRED = /(?:^|\/)(?:inbox|agents)(?:\/|$)/;
+const RETIRED = /^\/*(?:app\/)?(?:inbox|agents|board|tasks|tickets|recurring)(?:\/|$)/;
 
 function retiredFromPath(): string | undefined {
   const path = pathInsideHostedBase();

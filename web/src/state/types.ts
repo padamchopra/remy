@@ -2,7 +2,7 @@ import type { DeviceIconId } from "~/lib/devices";
 import type { TintId } from "~/lib/tints";
 
 /// Shapes mirroring what `server/src` already returns. Kept deliberately narrow:
-/// only the fields the desktop UI reads, so a server change that adds a field
+/// only the fields the shared thread components read, so a server change that adds a field
 /// doesn't ripple through here.
 
 export type ChatState = "idle" | "working" | "needs_input" | "error";
@@ -15,42 +15,13 @@ export interface Server {
   online: boolean;
   icon: DeviceIconId;
   tint?: TintId;
-  /// This machine's own daemon, started with the app. It cannot be unpaired.
+  /// The daemon this page's `/api` reaches.
   local?: boolean;
-  /// A machine paired with this one, reached through the daemon here.
-  peer?: boolean;
-  /// Whether notifications raised on this machine are shown on that one.
-  notify?: boolean;
-  /// When that machine last answered.
-  lastSeen?: number;
   /// A hosted runtime presented beside physical devices.
   cloud?: boolean;
   /// Cloud runtimes need a repository rather than a home directory.
   workspaceOnly?: boolean;
   cloudConnected?: boolean;
-}
-
-/// A machine asking to pair with this one. It is waiting on a person here, so
-/// the code is what they compare before allowing it.
-export interface PairRequest {
-  id: string;
-  code: string;
-  fromDeviceId: string;
-  fromName: string;
-  fromUrl: string;
-  at: number;
-}
-
-/// One of your machines on the tailnet, and whether Remy answered on it.
-export interface TailnetDevice {
-  host: string;
-  name: string;
-  os: string;
-  online: boolean;
-  /// Remy answered here, so it can be paired with.
-  remy: boolean;
-  url?: string;
-  paired: boolean;
 }
 
 export interface Chat {
@@ -340,14 +311,12 @@ export interface PullRequestTimelineItem {
   line?: number | null;
 }
 
-/// Something a Remy tool made — a ticket, thread, or workspace — with enough
-/// on it to draw a card and open the thing it names.
+/// Something a Remy tool made — a thread or workspace — with enough on it to
+/// draw a card and open the thing it names.
 export interface ConvArtifact {
   organizationId?: string;
   computerId?: string;
-  kind: "ticket" | "thread" | "workspace";
-  /// A ticket is addressed by key, a thread and a workspace by id.
-  key?: string;
+  kind: "thread" | "workspace";
   id?: string;
   title: string;
   detail?: string;
@@ -455,8 +424,6 @@ export interface ServerSettings {
   defaultCheckout: "main" | "worktree";
   worktreeBase: "remote" | "local";
   worktreeRoot: string;
-  defaultModel: string;
-  defaultEffort: string;
   /// What Remy runs its own small jobs on, as opposed to what your chats think
   /// with. Kept cheap on purpose, and `off` declines them altogether.
   remyProvider: string;
@@ -464,7 +431,6 @@ export interface ServerSettings {
   remyEffort: string;
   favoriteModels: string[];
   repoUpdate: "off" | "hourly" | "sixHourly" | "daily";
-  notifySelf?: boolean;
   preventSleepSupported?: boolean;
   worktreeBranchPrefix: string;
   /// Your face: empty for the default, `preset:<id>`, or a `data:` URL.
@@ -472,16 +438,11 @@ export interface ServerSettings {
   deviceName: string;
   deviceIcon: string;
   deviceTint: string;
-  /// Preferred devices for work that is not tied to a workspace.
-  devicePreferenceOrder: string[];
-  tailscaleServeEnabled: boolean;
-  /// What a new thread thinks with. It pairs with `defaultModel`: a provider
-  /// only ever holds one of its own models.
+  /// The provider a new thread falls back to when neither its workspace nor
+  /// the composer names one: the first provider turned on, at its own default
+  /// model. Derived by the daemon, not a setting.
   defaultProvider: string;
   enabledProviders: string[];
-  /// What a new thread may do without being asked. A workspace or the thread
-  /// itself can still say otherwise.
-  defaultPermissionMode: string;
 }
 
 /// What one repository did the last time Remy refreshed them.
@@ -524,74 +485,3 @@ export interface ProviderMcpStatus {
   configured: boolean;
 }
 
-/// A repository, as the board knows it — what a ticket belongs to, rather than
-/// the folder holding it on any one machine.
-export interface Project {
-  id: string;
-  serverId: string;
-  name: string;
-  /// The letters in front of a ticket key. Editable, and every ticket in the
-  /// project follows it.
-  keyPrefix: string;
-  origin?: string;
-  icon?: string | null;
-  tint?: string | null;
-  /// Workspaces on that machine which are this project. Empty means the repo is
-  /// not cloned there.
-  workspaceIds: string[];
-}
-
-export type TicketStatus =
-  | "backlog"
-  | "todo"
-  | "in_progress"
-  | "needs_input"
-  | "pr_review"
-  | "done"
-  | "cancelled";
-
-export interface TicketThread {
-  ticketId: string;
-  deviceId: string;
-  chatId: string;
-  stage?: string;
-  /// `runner` when the board started it, `you` when you attached it by hand.
-  linkedBy: "runner" | "you";
-  createdAt: number;
-}
-
-export interface Ticket {
-  id: string;
-  serverId: string;
-  /// Its own number. `key` is that behind the project's slug, so renaming the
-  /// slug renames every key.
-  number: number;
-  key: string;
-  projectId: string;
-  title: string;
-  body: string;
-  status: TicketStatus;
-  priority: number;
-  parentId?: string;
-  rank: string;
-  /// The machine that runs this ticket's work.
-  deviceId?: string;
-  branch?: string;
-  createdAt: number;
-  updatedAt: number;
-  startedAt?: number;
-  closedAt?: number;
-  threads: TicketThread[];
-}
-
-/// One line of a ticket's story. The feed and the log the board syncs are the
-/// same record, so nothing here can drift from what actually happened.
-export interface TicketActivity {
-  id: string;
-  at: number;
-  actor: string;
-  kind: string;
-  body?: string;
-  editedAt?: number;
-  detail?: Record<string, unknown>;
-}

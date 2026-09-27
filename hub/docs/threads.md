@@ -51,9 +51,7 @@ ready, preselects the resulting concrete computer or cloud provider, and submits
 that explicit choice.
 Its picker contains only available execution choices; it has no automatic value.
 These routes use a same-origin
-hub session, with native API clients using their bearer session. The existing
-local thread sidebar stays available. Full organization sign-in/navigation and
-the native phone's hub navigation remain owned by their later roadmap tickets.
+hub session, with native API clients using their bearer session.
 
 Snapshots contain the latest eight turns, bounded to 96 KB of detail, while the
 computer retains its existing complete stored history. The hub retains 128 live
@@ -67,7 +65,8 @@ Install the repository dependencies and build the computer:
 ```sh
 npm run install:all
 npm run build --prefix server
-node hub/scripts/qa-threads.mjs
+npm run build --prefix web && npm run build:website --prefix web && node web/scripts/assemble-hub.mjs
+QA_HUB_WEB=1 node hub/scripts/qa-threads.mjs
 ```
 
 The command prints a disposable hub address, route and path to its session file.
@@ -76,16 +75,12 @@ The hub uses actual Workers, D1, R2, member authentication and computer sockets;
 only the language-model provider is a deterministic fixture. Its loopback control
 endpoint can disconnect, reconnect and evict the isolated coordinator.
 
-In another terminal, start the current UI and an isolated local computer:
+`QA_HUB_WEB=1` makes the hub serve the web app in `web/dist` from the same
+origin, in the deployed layout `assemble-hub.mjs` produces. Run the UI scenario
+against the printed hub address:
 
 ```sh
-VITE_REMY_HUB_URL=<printed hub URL> npm run qa:web
-```
-
-Then run the UI scenario with the two printed values:
-
-```sh
-QA_SESSION=<printed session file> QA_WEB_URL=<printed UI URL> node web/scripts/qa-hub-threads.mjs
+QA_SESSION=<printed session file> QA_WEB_URL=<printed hub URL> node web/scripts/qa-hub-threads.mjs
 ```
 
 The scenario checks attributed remote messages without navigation or catalogue
@@ -93,5 +88,5 @@ refreshes, permission and question responses, duplicate response rejection,
 R2 image upload and rendering, offline readable state and rejected writes,
 computer reconnect, client reconnect, coordinator restart, deep-link reload,
 and desktop/mobile overflow. It saves original recordings and screenshots under
-`/tmp/remy-pr-artifacts/wrk-10`. Stop both QA commands to remove their temporary
-state. None of these commands stops the packaged computer on port 8420.
+`/tmp/remy-pr-artifacts/wrk-10`. Stop the hub command to remove its temporary
+state. It never stops the packaged computer on port 8420.

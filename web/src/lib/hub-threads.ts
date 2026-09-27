@@ -25,9 +25,14 @@ function hubFailureMessage(result: unknown): string {
 }
 
 const pendingReads = new Map<string, Promise<unknown>>();
+let writes = 0;
+/// How many writes this window has sent. A value read before the latest one
+/// may be out of date even if nothing announced a change.
+export const hubWrites = () => writes;
 
 export function hubRequest<T>(path: string, method = "GET", body?: unknown): Promise<T> {
   if (method !== "GET") {
+    writes += 1;
     pendingReads.clear();
     return readHubResponse<T>(path, method, body);
   }

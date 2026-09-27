@@ -1,8 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 
 export type AppActionContext = {
-  hasProjects: boolean;
-  addTicket: () => void;
   startThread: () => void;
   registerWorkspace: () => void;
 };

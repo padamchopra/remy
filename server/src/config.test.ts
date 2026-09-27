@@ -11,8 +11,6 @@ process.env.MC_CONFIG_DIR = stateDir;
 process.env.HOME = stateDir;
 
 const {
-  hasTailscaleServePreference,
-  devicePreferenceOrder,
   patchSettings,
   publicSettings,
   setProviderEnabled,
@@ -38,16 +36,16 @@ test("starts on the defaults a fresh install should have", () => {
   assert.equal(settings.defaultCheckout, "main");
   assert.equal(settings.worktreeBase, "remote");
   assert.equal(settings.worktreeRoot, "");
-  assert.equal(settings.defaultModel, "");
-  assert.equal(settings.defaultEffort, "");
+  assert.equal("defaultModel" in settings, false);
+  assert.equal("defaultPermissionMode" in settings, false);
   // Remy's own jobs are small and frequent, so they start on the cheap model
   // rather than on whatever the chats are using.
   assert.equal(settings.remyModel, "haiku");
   assert.equal(settings.deviceName, "");
   assert.equal(settings.deviceIcon, "");
   assert.equal(settings.deviceTint, "");
-  assert.deepEqual(settings.devicePreferenceOrder, []);
-  assert.equal(settings.tailscaleServeEnabled, false);
+  assert.equal("devicePreferenceOrder" in settings, false);
+  assert.equal("tailscaleServeEnabled" in settings, false);
   assert.deepEqual(settings.favoriteModels, []);
   assert.deepEqual(settings.enabledProviders, ["claude", "codex", "cursor"]);
 });
@@ -57,19 +55,14 @@ test("keeps hub mode behind an explicit setting", () => {
   assert.equal(patchSettings({ hubMode: "true" }).hubMode, false);
 });
 
-test("remembers whether Tailnet reachability was explicitly chosen", () => {
-  assert.equal(hasTailscaleServePreference(), false);
-  assert.equal(patchSettings({ tailscaleServeEnabled: true }).tailscaleServeEnabled, true);
-  assert.equal(hasTailscaleServePreference(), true);
-  assert.equal(patchSettings({ tailscaleServeEnabled: false }).tailscaleServeEnabled, false);
-});
-
 test("keeps at least one provider on and moves defaults off a disabled provider", () => {
-  patchSettings({ defaultProvider: "cursor", defaultModel: "auto", remyProvider: "cursor", remyModel: "auto" });
-  let settings = setProviderEnabled("cursor", false);
+  patchSettings({ remyProvider: "cursor", remyModel: "auto" });
+  let settings = setProviderEnabled("claude", false);
+  assert.equal(settings.defaultProvider, "codex", "A new thread falls to the first provider still on");
+  setProviderEnabled("claude", true);
+  settings = setProviderEnabled("cursor", false);
   assert.deepEqual(settings.enabledProviders, ["claude", "codex"]);
   assert.equal(settings.defaultProvider, "claude");
-  assert.equal(settings.defaultModel, "");
   assert.equal(settings.remyProvider, "claude");
   assert.equal(settings.remyModel, "");
 
@@ -78,7 +71,7 @@ test("keeps at least one provider on and moves defaults off a disabled provider"
   assert.throws(() => setProviderEnabled("claude", false), /keep at least one provider on/);
   setProviderEnabled("codex", true);
   setProviderEnabled("cursor", true);
-  patchSettings({ defaultProvider: "claude", defaultModel: "", remyProvider: "claude", remyModel: "haiku" });
+  patchSettings({ remyProvider: "claude", remyModel: "haiku" });
 });
 
 test("keeps valid model favorites and drops values no provider accepts", () => {
@@ -105,78 +98,30 @@ test("stores only a usable device identity", () => {
   assert.equal(settings.deviceTint, "");
 });
 
-test("keeps a unique bounded device preference order", () => {
-  assert.deepEqual(devicePreferenceOrder([" mac ", "mini", "mac", "", 42]), ["mac", "mini"]);
-  assert.deepEqual(
-    patchSettings({ devicePreferenceOrder: ["peer-2", "local", "peer-2"] }).devicePreferenceOrder,
-    ["peer-2", "local"],
-  );
-});
-
-test("starts a thread on Ask until the machine is told otherwise", () => {
-  assert.equal(publicSettings().defaultPermissionMode, "default");
-  assert.equal(patchSettings({ defaultPermissionMode: "acceptEdits" }).defaultPermissionMode, "acceptEdits");
-  // A mode this machine has never heard of keeps the one it had, rather than
-  // quietly landing a thread on something more permissive than was asked for.
-  assert.equal(patchSettings({ defaultPermissionMode: "yolo" }).defaultPermissionMode, "acceptEdits");
-  assert.equal(patchSettings({ defaultPermissionMode: "default" }).defaultPermissionMode, "default");
-});
-
-test("keeps Remy's own model separate from the chat default", () => {
-  patchSettings({ defaultModel: "opus" });
-  assert.equal(publicSettings().remyModel, "haiku");
-  patchSettings({ remyModel: "sonnet" });
-  assert.equal(publicSettings().defaultModel, "opus");
-  assert.equal(publicSettings().remyModel, "sonnet");
-});
-
-test("stores effort with the selected provider model", () => {
-  let settings = patchSettings({ defaultProvider: "claude", defaultModel: "opus", defaultEffort: "high" });
-  assert.equal(settings.defaultEffort, "high");
-
-  settings = patchSettings({ defaultEffort: "not-real" });
-  assert.equal(settings.defaultEffort, "high");
-
-  settings = patchSettings({ defaultProvider: "codex", defaultModel: "gpt-5.6-sol", defaultEffort: "ultra" });
-  assert.equal(settings.defaultEffort, "ultra");
-  patchSettings({ defaultProvider: "claude", defaultModel: "opus", defaultEffort: "high" });
+test("has no machine-wide default model or permission to save", () => {
+  // A new thread's model comes from its workspace or the composer, and it
+  // always starts on Ask; a patch naming the old keys changes nothing.
+  const settings = patchSettings({ defaultProvider: "codex", defaultModel: "opus", defaultEffort: "high", defaultPermissionMode: "bypassPermissions" });
+  assert.equal(settings.defaultProvider, "claude");
+  assert.equal("defaultModel" in settings, false);
+  assert.equal("defaultEffort" in settings, false);
+  assert.equal("defaultPermissionMode" in settings, false);
 });
 
 test("patches only the keys the caller sent", () => {
-  patchSettings({ defaultCheckout: "worktree", defaultModel: "opus" });
+  patchSettings({ defaultCheckout: "worktree" });
   assert.equal(publicSettings().defaultCheckout, "worktree");
-  assert.equal(publicSettings().defaultModel, "opus");
 
   // A client that knows about one setting must not reset the others.
   patchSettings({ worktreeBase: "local" });
   assert.equal(publicSettings().worktreeBase, "local");
   assert.equal(publicSettings().defaultCheckout, "worktree");
-  assert.equal(publicSettings().defaultModel, "opus");
 });
 
 test("keeps the current value when a patch is not a value it knows", () => {
   patchSettings({ defaultCheckout: "worktree" });
   patchSettings({ defaultCheckout: "nonsense" });
   assert.equal(publicSettings().defaultCheckout, "worktree");
-
-  patchSettings({ defaultModel: "gpt-4" });
-  assert.equal(publicSettings().defaultModel, "opus");
-});
-
-test("a provider and a model change together", () => {
-  patchSettings({ defaultProvider: "claude", defaultModel: "sonnet" });
-  assert.equal(publicSettings().defaultModel, "sonnet");
-
-  // Moving to Codex cannot keep a Claude alias Codex would refuse.
-  patchSettings({ defaultProvider: "codex" });
-  assert.equal(publicSettings().defaultProvider, "codex");
-  assert.equal(publicSettings().defaultModel, "");
-
-  patchSettings({ defaultModel: "gpt-5.6-terra" });
-  assert.equal(publicSettings().defaultModel, "gpt-5.6-terra");
-
-  patchSettings({ defaultProvider: "claude", defaultModel: "opus" });
-  assert.equal(publicSettings().defaultModel, "opus");
 });
 
 test("Remy's own jobs can be declined, and follow their own provider", () => {
@@ -187,16 +132,20 @@ test("Remy's own jobs can be declined, and follow their own provider", () => {
   patchSettings({ remyProvider: "codex", remyModel: "gpt-5.6-luna" });
   assert.equal(publicSettings().remyProvider, "codex");
   assert.equal(publicSettings().remyModel, "gpt-5.6-luna");
-  // And the chats' own default is untouched by any of it.
-  assert.equal(publicSettings().defaultModel, "opus");
 });
 
-test("survives a round trip through the database", async () => {
-  patchSettings({ worktreeRoot: "/vol/trees", defaultModel: "haiku" });
+test("survives a round trip through the database, without an older Remy's defaults", async () => {
+  const { getKv, setKv } = await import("./db.js");
+  patchSettings({ worktreeRoot: "/vol/trees" });
+  // A row saved by an older Remy still holds a machine-wide model and
+  // permission; neither may keep applying after the upgrade.
+  setKv("config", { ...getKv<Record<string, unknown>>("config"), defaultProvider: "codex", defaultModel: "gpt-5.6-sol", defaultPermissionMode: "bypassPermissions" });
   // A second module instance reads the same row a restart would.
   const reloaded = await import(`./config.js?reload=${Date.now()}`);
   assert.equal(reloaded.publicSettings().worktreeRoot, "/vol/trees");
-  assert.equal(reloaded.publicSettings().defaultModel, "haiku");
+  assert.equal(reloaded.publicSettings().defaultProvider, "claude");
+  assert.equal("defaultModel" in reloaded.config, false);
+  assert.equal("defaultPermissionMode" in reloaded.config, false);
 });
 
 

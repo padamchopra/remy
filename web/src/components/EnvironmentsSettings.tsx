@@ -104,8 +104,8 @@ export function EnvironmentsSettings({
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <FieldDescription>
-        Define values once and assign them to your workspaces; tasks use them on
-        local and cloud computers.
+        Define values once and assign them to your workspaces; threads use them
+        on local and cloud computers.
       </FieldDescription>
       <Card>
         <CardHeader>
@@ -208,7 +208,7 @@ export function EnvironmentsSettings({
               <FieldDescription>
                 {managed
                   ? "Manage this environment in your organization settings."
-                  : "Your stored values stay hidden; tasks and their commands can use them."}
+                  : "Your stored values stay hidden; threads and their commands can use them."}
               </FieldDescription>
               <ul className="flex min-w-0 flex-col gap-2">
                 {profile.variables.map((v) => (

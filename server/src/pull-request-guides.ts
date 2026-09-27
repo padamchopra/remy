@@ -4,7 +4,6 @@ import { agentCommand } from "./agent.js";
 import { getChat } from "./chat.js";
 import { config } from "./config.js";
 import { db } from "./db.js";
-import { callPeer, getPeer, peerViews } from "./peers.js";
 import { parsePullRequestPatch, pullRequestDiff, type PullRequestDiffLine } from "./pull-requests.js";
 import { providerEffort, providerId, providerModel, type ProviderId } from "./providers.js";
 import { providerAnswer } from "./provider-adapters/index.js";
@@ -75,33 +74,15 @@ const GUIDE_TIMEOUT_MS = 90_000;
 const GUIDE_PROMPT_CHARS = 80_000;
 const MAX_PATCH_CHARS = 600_000;
 const UNCOVERED_STEP_ID = "uncovered";
-const discoveringGuides = new Map<string, Promise<SavedPullRequestGuide>>();
 const generatingGuides = new Map<string, Promise<PullRequestGuide>>();
 
 export interface SavedPullRequestGuide {
   guide?: PullRequestGuide;
-  peerId?: string;
 }
 
-export function discoverPullRequestGuide(repository: string, number: number): Promise<SavedPullRequestGuide> {
-  const local = readSavedPullRequestGuide(repository, number);
-  if (local) return Promise.resolve({ guide: local });
-  const key = JSON.stringify([repository, number]);
-  const existing = discoveringGuides.get(key);
-  if (existing) return existing;
-  const params = new URLSearchParams({ repository, number: String(number) });
-  const reads = peerViews().filter((peer) => peer.online).map(async (view): Promise<SavedPullRequestGuide> => {
-    const peer = getPeer(view.id);
-    if (!peer) throw new Error("that device is no longer paired");
-    const result = await callPeer<{ guide?: unknown }>(peer, `/pull-requests/guide/saved?${params}`, { timeoutMs: 2_500 });
-    if (!isSavedGuide(result?.guide, repository, number)) throw new Error("that device has no saved guide");
-    return { guide: result.guide, peerId: peer.id };
-  });
-  const pending = Promise.any(reads)
-    .catch((): SavedPullRequestGuide => ({}))
-    .finally(() => { discoveringGuides.delete(key); });
-  discoveringGuides.set(key, pending);
-  return pending;
+export async function discoverPullRequestGuide(repository: string, number: number): Promise<SavedPullRequestGuide> {
+  const guide = readSavedPullRequestGuide(repository, number);
+  return guide ? { guide } : {};
 }
 
 export async function pullRequestGuideContext(
@@ -354,7 +335,7 @@ function fastDefault(choice: PullRequestGuideChoice): PullRequestGuideChoice {
 }
 
 function machineChoice(): PullRequestGuideChoice {
-  return { provider: config.defaultProvider, model: config.defaultModel, effort: config.defaultEffort };
+  return { provider: config.defaultProvider, model: "", effort: "" };
 }
 
 function validateChoice(value: { provider?: unknown; model?: unknown; effort?: unknown }, fallback: PullRequestGuideChoice): PullRequestGuideChoice {

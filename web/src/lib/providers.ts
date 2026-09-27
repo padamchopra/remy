@@ -100,6 +100,18 @@ export const PROVIDERS: Provider[] = [
   },
 ];
 
+/// Names for models a computer may report that Remy does not offer on its own,
+/// kept in step with `server/src/providers.ts`. A computer whose daemon predates
+/// sending names reports ids alone; these, with `PROVIDERS`, name them.
+export const KNOWN_MODELS: Partial<Record<string, ProviderModel[]>> = {
+  codex: [
+    { value: "gpt-5.5", label: "GPT-5.5" },
+    { value: "gpt-5.4", label: "GPT-5.4" },
+    { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
+    { value: "gpt-5.3-codex-spark", label: "GPT-5.3 Codex Spark" },
+  ],
+};
+
 /// A provider and one of its models. What every picker in Remy reads and writes,
 /// because picking a model is picking the thing that runs it.
 export interface ModelChoice {
@@ -122,7 +134,7 @@ export function modelLabel(providers: Provider[], choice: ModelChoice): string {
   const provider = providerOf(providers, choice.provider);
   const model = provider?.models.find((entry) => entry.value === (choice.model ?? ""));
   if (!model) return choice.model || (provider?.label ?? "Default");
-  if (!model.value) return `${provider?.label ?? "Default"} default`;
+  if (!model.value) return model.resolvedLabel ? `Default · ${model.resolvedLabel}` : `${provider?.label ?? "Default"} default`;
   return model.context ? `${model.label} (${model.context})` : model.label;
 }
 

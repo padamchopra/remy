@@ -31,7 +31,7 @@ Fonts are Inter and Geist Mono, mono for branches, SHAs, counts and code.
 
 Read the component before drawing its frame. The hosted shell's sidebar is
 `web/src/components/HubApp.tsx` — an account picker with a chevron, a new-thread
-pencil and the collapse trigger; then Threads, Tasks, Workspaces; then
+pencil and the collapse trigger; then Threads, Workspaces; then
 **Recent threads** with `ThreadSidebarRow`; then Settings and the account row in
 the footer. Its width is `--sidebar-width`, 15rem. The pane's header is
 `PaneHeader.tsx`: breadcrumbs, last crumb semibold.
@@ -69,7 +69,7 @@ marked `proposed`.
 
 A state one shell already has is a state the other one owes. Hovering a Mac
 thread row opens the `ThreadContext` hover card in `AppSidebar.tsx` — the whole
-title, the machine, the workspace, the branch, the model and the ticket, because
+title, the machine, the workspace, the branch and the model, because
 the row itself had to truncate all of it. A hosted mockup that leaves it out is
 proposing a row with less behind it than the one people use today, so draw it.
 
