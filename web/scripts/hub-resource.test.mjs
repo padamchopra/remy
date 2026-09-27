@@ -3,6 +3,10 @@ import test from 'node:test';
 import {build} from 'esbuild';
 const bundled=await build({entryPoints:['web/src/lib/hub-computers.ts'],bundle:true,write:false,platform:'node',format:'esm',plugins:[{name:'transport',setup(b){b.onResolve({filter:/^\.\/transport$/},()=>({path:'transport',namespace:'stub'}));b.onLoad({filter:/.*/,namespace:'stub'},()=>({contents:'export const hubTransport={request:(...args)=>globalThis.__hubTestRequest(...args)}'}));}}]});
 const {watchHubResource}=await import(`data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString('base64')}`);
+// Closing waits on two zero-delay timers, one per shared subscription, so a
+// busy runner can put a fixed sleep between them. Wait for the close itself.
+const settled=()=>new Promise(r=>setTimeout(()=>setTimeout(r,0),0));
+const until=async(done,ms=2000)=>{const end=Date.now()+ms;while(!done()&&Date.now()<end)await new Promise(r=>setTimeout(r,1));};
 test('resources share a live channel and independently refresh and lose access',async()=>{
   const sockets=[],reads=[],updates=[],errors=[];
   globalThis.window={location:{origin:'http://localhost'}};
@@ -16,8 +20,7 @@ test('resources share a live channel and independently refresh and lose access',
   sockets[0].onclose({code:1008});
   assert.equal(errors.length,2);
   assert.deepEqual(updates.slice(-1)[0],['b',undefined,true]);
-  const settle=()=>new Promise(r=>setTimeout(r,5));
-  a();await settle();assert.equal(sockets[0].closed,undefined);b();await settle();assert.equal(sockets[0].closed,true);
+  a();await settled();assert.equal(sockets[0].closed,undefined);b();await until(()=>sockets[0].closed);assert.equal(sockets[0].closed,true);
   delete globalThis.window;delete globalThis.WebSocket;delete globalThis.__hubTestRequest;
 });
 test('watchers of one resource share a read, and the greeting reset is not a change',async()=>{
@@ -43,6 +46,6 @@ test('watchers of one resource share a read, and the greeting reset is not a cha
   const d=watchHubResource('/d',()=>{},()=>{},'/org/live');
   await flush();
   assert.deepEqual(reads,['/c','/c','/d'],'Joining an open channel replays open, not the last message');
-  a();b();c();d();await new Promise(r=>setTimeout(r,5));assert.equal(sockets[0].closed,true);
+  a();b();c();d();await until(()=>sockets[0].closed);assert.equal(sockets[0].closed,true);
   delete globalThis.window;delete globalThis.WebSocket;delete globalThis.__hubTestRequest;
 });
