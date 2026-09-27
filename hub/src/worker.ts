@@ -17,6 +17,7 @@ import { cancelClaudeAccount, claudeAccountStatus, claudeComputerEnvironment, co
 import { encodeComputerConnectionKey } from "@remy/contract";
 import { personalSpace } from "./personal-space.js";
 import { ChatGPTAccounts, RECONNECT_CODEX, chatgptConnected, chatgptEnabled, isChatGPTModel, setChatGPTEnabled } from "./chatgpt-account.js";
+import { OWN_MODEL_CLOUD_ONLY, OWN_MODEL_THREAD, OwnModelAccessError, isOwnKeyProvider, isOwnModelId, ownModelAccess, ownModelEnvironment, ownModelError, ownModelSecrets, setOwnModelAccess, type OwnModelTask } from "./own-model-access.js";
 import {linearAccountRoute, linearAccountsFor} from "./linear-routes.js";
 import { githubFor, githubRoute } from "./github-routes.js";
 import { connectionRoute, connectionWebhook, isGitHubConnectionCallback } from "./connection-routes.js";
@@ -255,6 +256,8 @@ async function identityFor(request: Request, service: AccountService) {
   return service.authenticate(bearerToken(request) ?? "");
 }
 
+/// What a connected computer running an older daemon answers Connect Codex with.
+export const CODEX_NEEDS_UPDATE = "Run remy update on this computer, then connect Codex again.";
 const REVIEW_ON_CURSOR_CLOUD = "A review agent needs Remy's tools, which Cursor Cloud threads do not have. Choose another computer.";
 
 export function createRouteHandler(dependencies: AccountRouteDependencies = {}) {
@@ -567,6 +570,29 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         const connected = await chatgptConnected(env.DB, identity.userId);
         const enabled = await chatgptEnabled(env.DB, organizationId, identity.userId);
         return Response.json({ connected, enabled, personal, available: connected && enabled }, { headers: { "cache-control": "no-store" } });
+      }
+      const ownModel = /^own-model-access(?:\/([^/]+))?$/.exec(tail);
+      if (ownModel) {
+        // Your own Personal keys, one switch each per organization. Only the
+        // threads you start here may use one, and nobody else sees it.
+        await organizations.member(organizationId, identity.userId);
+        if (identity.clientKind === "computer") return jsonError("Open organization settings in Remy.", 403);
+        const settings = new HostedSettingsStore(env.DB, () => env.AUTH_SECRET.get());
+        if (!ownModel[1]) {
+          if (request.method !== "GET") return jsonError("This action is unavailable.", 405);
+          return Response.json(await ownModelAccess(env.DB, settings, organizationId, identity.userId), { headers: { "cache-control": "no-store" } });
+        }
+        const id = decodeURIComponent(ownModel[1]);
+        if (!isOwnModelId(id) || (request.method !== "PUT" && request.method !== "DELETE")) return jsonError("This model action is unavailable.", 405);
+        if (!allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Open organization settings in Remy.", 403);
+        try {
+          const access = await setOwnModelAccess(env.DB, settings, organizationId, identity.userId, id, request.method === "PUT");
+          await organizationObject().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId } }));
+          return Response.json(access, { headers: { "cache-control": "no-store" } });
+        } catch (error) {
+          if (error instanceof OwnModelAccessError) return jsonError(error.message, error.status);
+          throw error;
+        }
       }
       if (tail === "compute-shares" && request.method === "GET") {
         const member = await organizations.member(organizationId, identity.userId);
@@ -1511,6 +1537,9 @@ export class HubCoordinator {
       if (!(request.method === "GET" && !computerCodex[2]) && !(request.method === "POST" && computerCodex[2])) return jsonError("This account action is unavailable.", 405);
       const response = await this.dispatchComputer(computerId, { id: user, label: "Admin" }, request.method,
         `/hub/codex-account${computerCodex[2] ? `/${computerCodex[2]}` : ""}`, {});
+      // A daemon from before Codex sign-in on your own computers refuses
+      // anything but a hosted task; a current one never refuses a connected computer.
+      if (response.status === 403) return jsonError(CODEX_NEEDS_UPDATE, 403);
       return new Response(response.body, { status: response.status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
     }
     const hostedMatch=/^\/hosted\/([^/]+)$/.exec(url.pathname);
@@ -1768,7 +1797,7 @@ export class HubCoordinator {
     const preference=await this.env.DB.prepare("SELECT computer_id FROM member_computer_preferences WHERE organization_id=? AND user_id=? AND workspace_id=?").bind(org,userId,workspaceId).first<{computer_id:string}>();
     return chooseComputer(await this.computerService().list(org,userId),{workspaceId,origin:workspace.origin,enabledProviders,...(override !== undefined ? (override ? {override} : {}) : preference ? {override:preference.computer_id} : {})});
   }
-  private async taskComputer(userId:string, workspaceId:string, taskId:string, title?:string, override?:string|null, modelChoice?:{provider?:string;model?:string}, chatgpt=false) {
+  private async taskComputer(userId:string, workspaceId:string, taskId:string, title?:string, override?:string|null, modelChoice?:{provider?:string;model?:string}, chatgpt=false, ownModel?:OwnModelTask["provider"]) {
     const org = (await this.ctx.storage.get<string>("organizationId"))!;
     let choice = await this.routeFor(userId, workspaceId, override);
     const target = choice.computerId ? await this.computers.computer(org, choice.computerId) : undefined;
@@ -1784,19 +1813,27 @@ export class HubCoordinator {
     }
     if (choice.hostedWorkspaceId || target?.ownership === "hosted") {
       const settings = await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSettings(org,workspaceId,choice.hostedProvider);
-      const ownChatGPT = chatgpt && !isCursorCloudProvider(settings.provider);
+      const ownChatGPT = !ownModel && chatgpt && !isCursorCloudProvider(settings.provider);
+      if (ownModel) {
+        // Your own key bypasses the share's start allowlist, like your ChatGPT.
+        if (isCursorCloudProvider(settings.provider)) throw Error(OWN_MODEL_CLOUD_ONLY);
+        const ownError = await ownModelError(this.env.DB,new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()),org,userId,ownModel);
+        if (ownError) throw Error(ownError);
+      }
       if(ownChatGPT && !await chatgptReady(this.env.DB,org,userId)) throw Error(CHATGPT_SIGN_IN);
-      if(!ownChatGPT && !await canStartOnCloud(new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()),org,userId,settings.provider,modelChoice?.provider,modelChoice?.model)) throw Error(START_PROVIDER_DENIED);
+      if(!ownChatGPT && !ownModel && !await canStartOnCloud(new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()),org,userId,settings.provider,modelChoice?.provider,modelChoice?.model)) throw Error(START_PROVIDER_DENIED);
       if (isCursorCloudProvider(settings.provider)) {
         if (modelChoice?.provider && modelChoice.provider !== "cursor") throw Error(START_PROVIDER_DENIED);
         return {computerId:CURSOR_CLOUD_COMPUTER_ID,workspaceId,reason:choice.reason};
       }
       await this.ctx.storage.put(`hosted-task-owner:${taskId}`, userId);
       if (ownChatGPT) await this.ctx.storage.put(`hosted-task-chatgpt:${taskId}`, true);
+      if (ownModel) await this.ctx.storage.put(`hosted-task-own-model:${taskId}`, { userId, provider: ownModel } satisfies OwnModelTask);
+      else await this.ctx.storage.delete(`hosted-task-own-model:${taskId}`);
       const state = await this.hostedService().ensure(workspaceId,settings,taskId,title);
       const computer = await this.computers.computer(org,state.computerId);
       choice = {computerId:state.computerId,workspaceId:computer?.capabilities.workspaces[0]?.id ?? workspaceId,reason:"A separate computer for your task."};
-    }
+    } else if (ownModel) throw Error(OWN_MODEL_CLOUD_ONLY);
     if (!choice.computerId || !choice.workspaceId) throw Error(choice.reason ?? "No eligible computer is available.");
     return {computerId:choice.computerId,workspaceId:choice.workspaceId,reason:choice.reason};
   }
@@ -1889,7 +1926,12 @@ export class HubCoordinator {
       }
       const actual=await this.computers.computer(org,state.computerId);
       const secrets=await settings.executionSecrets(org);
-      const environment={...modelSecrets(secrets),MC_CONFIG_DIR:"/data/remy",REMY_HOSTED_BOOTSTRAP:JSON.stringify({registration:{...actual,hubUrl:this.env.BETTER_AUTH_URL},privateKey:keys.privateKey,...(state.taskId?{taskId:state.taskId}:{}),workspace:{id:workspace.id,name:workspace.name,origin:workspace.origin}})};
+      // A thread started on its starter's own key keeps that key for its life,
+      // while the starter is still a member and still allows it here.
+      const ownModel = state.taskId ? await this.ctx.storage.get<OwnModelTask>(`hosted-task-own-model:${state.taskId}`) : undefined;
+      if (ownModel && await ownModelError(this.env.DB,settings,org,ownModel.userId,ownModel.provider)) throw new HostedStartupError(OWN_MODEL_THREAD);
+      const models = ownModel ? await ownModelEnvironment(this.env.DB,settings,modelSecrets(secrets),ownModel) : modelSecrets(secrets);
+      const environment={...models,MC_CONFIG_DIR:"/data/remy",REMY_HOSTED_BOOTSTRAP:JSON.stringify({registration:{...actual,hubUrl:this.env.BETTER_AUTH_URL},privateKey:keys.privateKey,...(state.taskId?{taskId:state.taskId}:{}),workspace:{id:workspace.id,name:workspace.name,origin:workspace.origin}})};
       const domains=[new URL(this.env.BETTER_AUTH_URL).hostname,"api.anthropic.com","console.anthropic.com","claude.ai","api.openai.com","api.router.com","openrouter.ai","api.openrouter.ai","auth.openai.com","chatgpt.com","ab.chatgpt.com","github.com","api.github.com","codeload.github.com","objects.githubusercontent.com","release-assets.githubusercontent.com","github-releases.githubusercontent.com","ghcr.io","pkg-containers.githubusercontent.com","registry.npmjs.org"];
       return {organizationId:org,computerId:state.computerId,settings:state.settings,image:this.env.HOSTED_IMAGE,archive:this.env.HOSTED_ARCHIVE??"",environment,allowedDomains:domains};
     }, async id=>{
@@ -2010,6 +2052,7 @@ export class HubCoordinator {
       model?: string | undefined;
       review?: HubReview | undefined;
       chatgpt?: boolean | undefined;
+      ownModel?: OwnModelTask["provider"] | undefined;
     },
     key: string,
   ): Promise<void> {
@@ -2025,6 +2068,7 @@ export class HubCoordinator {
           ...(input.model ? { model: input.model } : {}),
         },
         input.chatgpt === true,
+        input.ownModel,
       );
       const computer = await this.computers.computer(org, choice.computerId);
       // Cursor Cloud threads run without Remy's tools, so a review there could
@@ -2177,7 +2221,7 @@ export class HubCoordinator {
     }
     if (url.pathname === "/threads" && request.method === "POST") {
       const org = request.headers.get("x-organization-id")!;
-      const input = await body<{workspaceId?: string; title?: string; requestId?: string; computerId?:string|null; provider?:string; model?:string; branch?:string; visibility?:string; review?:unknown}>(request);
+      const input = await body<{workspaceId?: string; title?: string; requestId?: string; computerId?:string|null; provider?:string; model?:string; modelSource?:unknown; branch?:string; visibility?:string; review?:unknown}>(request);
       if (!input || typeof input.workspaceId !== "string" || typeof input.requestId !== "string" || !/^[0-9a-f-]{36}$/.test(input.requestId)) return jsonError("Choose a workspace and retry your thread.", 400);
       const workspace = await new OrganizationService(new D1OrganizationStore(this.env.DB)).workspace(org, actor.id, input.workspaceId);
       // A review is a thread with a pull request attached. The pull request is
@@ -2202,11 +2246,25 @@ export class HubCoordinator {
       if(start.model !== undefined && (typeof start.model !== "string" || start.model.length>512))return jsonError("Choose a model.",400);
       if(input.branch !== undefined && (typeof input.branch !== "string" || !input.branch || input.branch.length > 255)) return jsonError("Choose a branch.",400);
       if(input.visibility !== undefined && input.visibility !== "private" && input.visibility !== "open") return jsonError("Choose who can read this thread.",400);
+      if(input.modelSource !== undefined && input.modelSource !== "own" && input.modelSource !== "organization") return jsonError("Choose where your model comes from.",400);
+      const settingsStore=new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get());
+      // Your own Personal key runs only the cloud threads you start, and only
+      // where you turned it on. It is not the organization's to allow or share.
+      let ownModel: OwnModelTask["provider"] | undefined;
+      if(input.modelSource === "own") {
+        if(!isOwnKeyProvider(input.provider)) return jsonError("Choose a provider.",400);
+        const cloud=input.computerId ? cloudComputerProvider(input.computerId) : undefined;
+        const hostedTarget=input.computerId && !cloud ? (await this.computers.computer(org,input.computerId))?.ownership === "hosted" : false;
+        if(!(cloud && !isCursorCloudProvider(cloud)) && !hostedTarget) return jsonError(OWN_MODEL_CLOUD_ONLY,409);
+        const ownError=await ownModelError(this.env.DB,settingsStore,org,actor.id,input.provider);
+        if(ownError)return jsonError(ownError,409);
+        ownModel=input.provider;
+      }
       // Plain Codex on a cloud computer is the starter's own ChatGPT; API keys go through a `remy:` gateway model.
-      const chatgpt=input.provider==="codex" && !(input.model ?? "").startsWith("remy:");
-      const gatewayError=hostedGatewayError(start.provider,start.model,await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSecrets(org));
+      const chatgpt=!ownModel && input.provider==="codex" && !(input.model ?? "").startsWith("remy:");
+      const gatewayError=hostedGatewayError(start.provider,start.model,ownModel ? await ownModelSecrets(this.env.DB,settingsStore,actor.id,ownModel) : await settingsStore.executionSecrets(org));
       if(gatewayError)return jsonError(gatewayError,400);
-      if(input.computerId) {
+      if(input.computerId && !ownModel) {
         const cloud=cloudComputerProvider(input.computerId);
         if(cloud) {
           if(isCursorCloudProvider(cloud) && start.provider && start.provider !== "cursor") return jsonError(START_PROVIDER_DENIED,403);
@@ -2237,6 +2295,7 @@ export class HubCoordinator {
         model: start.model,
         review,
         chatgpt,
+        ownModel,
       }, key);
       this.manualStarts.set(key, work);
       this.ctx.waitUntil(work.finally(() => { if (this.manualStarts.get(key) === work) this.manualStarts.delete(key); }));
@@ -2298,6 +2357,9 @@ export class HubCoordinator {
         const org=request.headers.get("x-organization-id")!;
         const state=(await this.hostedService().list()).find(s=>s.computerId===computerId);
         if(state?.settings.provider && !await canStartOnCloud(new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()),org,actor.id,state.settings.provider,start.provider,start.model)) return jsonError(START_PROVIDER_DENIED,403);
+        // A computer booted on someone's own key runs only the thread they started.
+        const own=state?.taskId ? await this.ctx.storage.get<OwnModelTask>(`hosted-task-own-model:${state.taskId}`) : undefined;
+        if(own && own.userId !== actor.id) return jsonError(START_PROVIDER_DENIED,403);
       }
     }
     let input:Record<string,unknown>={};

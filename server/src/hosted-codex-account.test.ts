@@ -67,6 +67,39 @@ test("a connected computer can start Codex account when the CLI is missing", asy
   }
 });
 
+test("a computer you connected signs Codex in under its own CODEX_HOME, even with a stale hosted workspace", async () => {
+  const previousPath = process.env.PATH;
+  const previousHome = process.env.HOME;
+  const previousCodexHome = process.env.CODEX_HOME;
+  try {
+    const { closeHostedCodexAccount } = await import("./hosted-codex-account.js");
+    closeHostedCodexAccount();
+    process.env.PATH = home;
+    process.env.HOME = home;
+    delete process.env.CODEX_HOME;
+    // What `remy login` stores, plus a value a hosted task would have left.
+    setKv("hubComputerRegistration", { computerId: "apollo", ownership: "personal" });
+    setKv("hostedWorkspaceId", "left-over-workspace");
+    const response = await hostedCodexAccountRequest("GET", "/hub/codex-account", () => {});
+    const body = (await response.json()) as { error: string };
+    assert.notEqual(body.error, "Choose a hosted computer.");
+    assert.match(body.error, /not installed/, "it reaches Codex on this machine rather than refusing");
+
+    setKv("hubComputerRegistration", { computerId: "task", ownership: "hosted" });
+    closeHostedCodexAccount();
+    const task = await hostedCodexAccountRequest("GET", "/hub/codex-account", () => {});
+    assert.equal(task.status, 403, "a hosted task without its CODEX_HOME still refuses");
+  } finally {
+    process.env.PATH = previousPath;
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+    setKv("hubComputerRegistration", null);
+    setKv("hostedWorkspaceId", null);
+  }
+});
+
 test("Router uses its own endpoint and environment key", () => {
   const previousKey=process.env.RAMP_ROUTER_API_KEY,previousModel=process.env.RAMP_ROUTER_MODEL;
   try {

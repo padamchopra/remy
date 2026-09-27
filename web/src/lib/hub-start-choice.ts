@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CLOUD_COMPUTERS, cloudComputerProvider, type ComputerSummary } from "@remy/contract";
 import { useHubModelDefaults } from "@/components/HubModelDefault";
 import type { ModelAccessResponse } from "@/components/HubModelAccess";
-import { cloudShareAllowsProvider, computerModels, executionToChoice, hostedComposerChoice, hostedExecutionChoice, hostedModels } from "./hub-models";
+import { cloudShareAllowsProvider, computerModels, executionToChoice, hostedComposerChoice, hostedExecutionChoice, hostedModels, ownModels, type OwnModelAccessResponse } from "./hub-models";
 import { useHubResource } from "./hub-organization";
 import { hubRequest, hubThreadBase } from "./hub-threads";
 import { composerSnapshot } from "./hub-composer-cache";
@@ -144,18 +144,25 @@ export function useHubStartChoice({
   // Your own ChatGPT sign-in, when you allow it in this organization. Nobody else's shows here.
   const codexAccount = useHubResource<{ available: boolean }>(organizationId, usingCloud && !usingCursorCloud ? "/chatgpt" : null, "/computers/live");
   const chatgpt = codexAccount.value?.available === true;
+  // Your own API keys, where you turned them on for this organization.
+  const ownAccess = useHubResource<OwnModelAccessResponse>(organizationId, usingCloud && !usingCursorCloud ? "/own-model-access" : null, "/computers/live");
+  const own = ownAccess.value?.personal ? [] : ownAccess.value?.providers ?? [];
   const codexAccountPending = usingCloud && !usingCursorCloud && !codexAccount.value && !codexAccount.error;
   const cloudStart = usingCloud ? cloudConnections.value?.cloudStart?.[cloudComputerProvider(selected) ?? ""] : undefined;
   const allowedCloudRuntimes = cloudStart && !cloudStart.owner ? new Set(cloudStart.providers.filter(provider => provider.allowed).map(provider => provider.id)) : undefined;
-  const resolvedChoice = hostedComposerChoice(modelAccess.value?.providers ?? [], inheritedModel, chatgpt);
+  const resolvedChoice = hostedComposerChoice(modelAccess.value?.providers ?? [], inheritedModel, chatgpt, own);
   const preferredModel = known && selected === known.computerId && known.provider && known.model
     ? executionToChoice(known.provider, known.model, usingCloud)
     : undefined;
   const modelChoice = pickedModel?.workspaceId === workspaceId ? pickedModel.choice : preferredModel ?? resolvedChoice;
-  const cloudModels = hostedModels(modelAccess.value?.providers ?? [], modelChoice, chatgpt).filter(provider => (chatgpt && provider.id === "codex") || cloudShareAllowsProvider(allowedCloudRuntimes, provider.id));
+  // Your own keys are yours to start with, so a share's allowlist does not narrow them.
+  const cloudModels = [
+    ...hostedModels(modelAccess.value?.providers ?? [], modelChoice, chatgpt).filter(provider => (chatgpt && provider.id === "codex") || cloudShareAllowsProvider(allowedCloudRuntimes, provider.id)),
+    ...ownModels(own, modelChoice),
+  ];
   const localModels = computerModels(computers.find(c => c.computerId === selected)?.capabilities.providers ?? []);
   const modelCatalogue = usingCursorCloud ? [] : usingCloud || !selected ? cloudModels : localModels;
-  const cataloguePending = usingCloud && ((!modelAccess.value && !modelAccess.error) || codexAccountPending);
+  const cataloguePending = usingCloud && ((!modelAccess.value && !modelAccess.error) || codexAccountPending || (!usingCursorCloud && !ownAccess.value && !ownAccess.error));
   const selectedChoice = modelCatalogue.some(p => p.id === modelChoice.provider && p.models.some(m => m.value === modelChoice.model))
     ? modelChoice
     : { provider: modelCatalogue[0]?.id ?? modelChoice.provider, model: modelCatalogue[0]?.models[0]?.value ?? modelChoice.model };

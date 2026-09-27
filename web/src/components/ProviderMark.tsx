@@ -9,7 +9,9 @@ import { cn } from "@/lib/utils";
 /// Each is its own brand glyph, so a row is recognised rather than read. Claude
 /// wears the clay it wears on claude.ai; Codex is a monochrome mark and takes
 /// the foreground.
-export function ProviderMark({ provider, className }: { provider?: string; className?: string }) {
+export function ProviderMark({ provider: named, className }: { provider?: string; className?: string }) {
+  // Your own key for a provider wears that provider's mark.
+  const provider = named?.startsWith("own:") ? named.slice(4) : named;
   if (provider === "codex") return <CodexMark className={cn("text-foreground", className)} />;
   if (provider === "cursor") return <CursorMark className={cn("text-foreground", className)} />;
   if (provider === "router" || provider === "openrouter" || provider === "openai") return <Network className={className} />;

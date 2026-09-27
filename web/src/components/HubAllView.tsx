@@ -415,6 +415,18 @@ export default function HubAllView({
     });
   if (route.name === "threads" && route.threadId && !threadsLoaded && !pendingStart && !route.ownerOrganizationId)
     return <div className="flex min-h-0 flex-1 items-center justify-center"><Spinner aria-label="Loading threads" /></div>;
+  // Computers is one list across every account, and names the owner of the
+  // page it opens itself, so it never narrows to that owner here.
+  if (route.name === "settings" && route.tab === "devices") {
+    const personal = organizations.find((organization) => organization.personal) ?? organizations[0];
+    return (
+      <HubModelFavorites organizationId={personal?.id}>
+        <Deferred open>
+          <Computers accounts={organizations} all />
+        </Deferred>
+      </HubModelFavorites>
+    );
+  }
   if (threadOwnerId && !selectedOwner)
     return <EmptyState title="This account is unavailable" />;
   if (route.name === "threads" && route.threadId && !selectedOwner)
@@ -472,11 +484,6 @@ export default function HubAllView({
                   />
                 </>
               )}
-              {section === "devices" && (
-                <div className="p-6">
-                  <Computers organizationId={selectedOwner.id} />
-                </div>
-              )}
               {section === "connections" && (
                 <Connections organizationId={selectedOwner.id} />
               )}
@@ -509,24 +516,16 @@ export default function HubAllView({
         navigate={navigate}
       />
     );
-  if (route.name === "settings" && (route.tab === "general" || route.tab === "devices")) {
+  if (route.name === "settings" && route.tab === "general") {
     const personal =
       organizations.find((organization) => organization.personal) ??
       organizations[0];
     return personal ? (
       <HubPersonalContext value={personal.personal === true}>
         <HubModelFavorites organizationId={personal.id}>
-          {route.tab === "devices" ? (
-            <div className="min-h-0 overflow-auto p-6">
-              <Deferred open>
-                <Computers organizationId={personal.id} />
-              </Deferred>
-            </div>
-          ) : (
-            <div className="min-h-0 overflow-auto px-5 py-6">
-              <General organizationId={personal.id} />
-            </div>
-          )}
+          <div className="min-h-0 overflow-auto px-5 py-6">
+            <General organizationId={personal.id} />
+          </div>
         </HubModelFavorites>
       </HubPersonalContext>
     ) : (

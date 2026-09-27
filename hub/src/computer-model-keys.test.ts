@@ -52,13 +52,17 @@ test("management reads say what is configured and never the value", async () => 
   assert.deepEqual(publicComputerModelKeys(["ANTHROPIC_API_KEY"]), [
     { id: "anthropic", label: "Anthropic", runtime: "Claude", configured: true },
     { id: "openai", label: "OpenAI", runtime: "Codex", configured: false },
+    { id: "cursor", label: "Cursor", runtime: "Cursor", configured: false },
   ]);
   assert.equal(computerModelKeyName("openai"), "OPENAI_API_KEY");
+  assert.equal(computerModelKeyName("cursor"), "CURSOR_API_KEY");
+  assert.equal(publicComputerModelKeys(["CURSOR_API_KEY"]).find((key) => key.id === "cursor")?.configured, true);
 });
 
 test("only the provider keys Remy delivers can be written", () => {
   assert.equal(computerModelKeyWrite.safeParse({ id: "anthropic", apiKey: "test-value" }).success, true);
   assert.equal(computerModelKeyWrite.safeParse({ id: "anthropic", apiKey: null }).success, true);
+  assert.equal(computerModelKeyWrite.safeParse({ id: "cursor", apiKey: "test-value" }).success, true);
   assert.equal(computerModelKeyWrite.safeParse({ id: "router", apiKey: "test-value" }).success, false);
   assert.equal(computerModelKeyWrite.safeParse({ id: "anthropic", apiKey: "" }).success, false);
   assert.equal(computerModelKeyWrite.safeParse({ id: "anthropic", apiKey: "a".repeat(8193) }).success, false);
