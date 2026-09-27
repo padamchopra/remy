@@ -101,16 +101,16 @@ export function WorkspaceMark({
   home: boolean;
   workspace?: WorkspaceIconSource;
   server?: Server;
-  size: "sm" | "md" | "lg";
+  size: "sm" | "row" | "md" | "lg";
   organizationId?: string;
 }) {
-  const glyph = size === "lg" ? "size-[0.65em]" : size === "md" ? "size-4" : "size-3";
+  const glyph = size === "lg" ? "size-[0.65em]" : size === "md" ? "size-4" : size === "row" ? "size-3.5" : "size-3";
   if (home || !workspace) {
     const Icon = deviceIcon(server?.icon);
     if (size === "lg") {
       return <Icon className="block shrink-0 size-[1em]" />;
     }
-    const box = size === "md" ? "size-10" : "size-4";
+    const box = size === "md" ? "size-10" : size === "row" ? "size-7" : "size-4";
     // Same slot as a project well, so names in a list share one x.
     return (
       <span className={cn("inline-flex shrink-0 items-center justify-center", box)}>

@@ -1,17 +1,8 @@
-import { WorkspaceIcon, WorkspaceMark } from "./WorkspaceIcon";
-import { IconPicker } from "./IconPicker";
-import { HubWorkspaceComputers } from "./HubWorkspaceComputers";
-import { PROJECT_ICON_IDS, projectIcon } from "@/lib/projects";
-import type { ComputerSummary } from "@remy/contract";
-import { HubAddWorkspace } from "./HubAddWorkspace";
-import { EmptyState } from "@/components/EmptyState";
 import { AvatarFrom } from "@/components/UserAvatar";
-import { usePersonalHub } from "@/lib/hub-scope";
 import { useEffect, useState } from "react";
-import { Trash2, Users } from "lucide-react";
+import { Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field,
   FieldGroup,
@@ -49,7 +40,6 @@ import {
   ItemGroup,
   ItemContent,
   ItemTitle,
-  ItemDescription,
   ItemMedia,
   ItemActions,
 } from "@/components/ui/item";
@@ -59,59 +49,31 @@ import { apiError } from "@/lib/api-error";
 import {
   useHubResource,
   type HubMember,
-  type HubWorkspace,
 } from "@/lib/hub-organization";
-import { cacheHubWorkspaces, cachedHubWorkspaces } from "@/lib/hub-workspace-cache";
 import type { OrganizationTeam } from "@remy/contract";
 import { HubWorkspaceAccess, type WorkspaceAccess } from "./HubWorkspaceAccess";
 
 type Edit = {
   id?: string;
   name: string;
-  origin: string;
-  restricted: boolean;
-  icon?: string;
-  tint?: string;
   access: WorkspaceAccess;
 };
+/// Members and teams of an organization.
 export default function HubOrganizationSettings({
   organizationId,
   kind,
   role,
-  onOpenWorkspace,
-  workspaceListOnly = false,
-  workspaceOwnerLabel,
 }: {
   organizationId: string;
-  kind: "members" | "teams" | "workspaces";
+  kind: "members" | "teams";
   role: string;
-  onOpenWorkspace: (workspaceId: string) => void;
-  workspaceListOnly?: boolean;
-  workspaceOwnerLabel?: string;
 }) {
-  const isPersonal = usePersonalHub();
-  const members = useHubResource<{ members: HubMember[] }>(
-    organizationId,
-    kind === "workspaces" ? null : "/members",
-  );
-  const teams = useHubResource<{ teams: OrganizationTeam[] }>(
-    organizationId,
-    kind === "workspaces" ? null : "/teams",
-  );
-  const workspaces = useHubResource<{ workspaces: HubWorkspace[] }>(
-    organizationId,
-    "/workspaces",
-  );
-  useEffect(() => {
-    if (workspaces.value) cacheHubWorkspaces(organizationId, workspaces.value.workspaces);
-  }, [organizationId, workspaces.value]);
-  const computers = useHubResource<{computers:ComputerSummary[]}>(organizationId, kind === "workspaces" ? "/computers" : null);
-  const cloud = useHubResource<{enabledProviders?:string[]}>(organizationId, kind === "workspaces" ? "/hosted" : null);
+  const members = useHubResource<{ members: HubMember[] }>(organizationId, "/members");
+  const teams = useHubResource<{ teams: OrganizationTeam[] }>(organizationId, "/teams");
   const people = {
     members: members.value?.members ?? [],
     teams: teams.value?.teams ?? [],
   };
-  const [addingWorkspace, setAddingWorkspace] = useState(false);
   const [edit, setEdit] = useState<Edit>();
   const [remove, setRemove] = useState<{ id: string; name: string }>();
   const [busy, setBusy] = useState(false);
@@ -134,47 +96,17 @@ export default function HubOrganizationSettings({
       setBusy(false);
     }
   };
-  const open = async (item?: HubWorkspace | OrganizationTeam, manual = false) => {
-    if (!item && kind === "workspaces" && !manual) { setAddingWorkspace(true); return; }
+  const open = async (item?: OrganizationTeam) => {
     if (!item) {
       setTeamMembers([]);
       setInvite("");
-      setEdit({
-        name: "",
-        origin: "",
-        restricted: false,
-        access: { userIds: [], teamIds: [] },
-      });
+      setEdit({ name: "", access: { userIds: [], teamIds: [] } });
       return;
     }
     try {
-      if (kind === "teams") {
-        const result = await hubRequest<{ userIds: string[] }>(
-          `${base}/teams/${item.id}/members`,
-        );
-        const ids = result.userIds;
-        setTeamMembers(ids);
-        setEdit({
-          id: item.id,
-          name: item.name,
-          origin: "",
-          restricted: false,
-          access: { userIds: ids, teamIds: [] },
-        });
-      } else {
-        const value = await hubRequest<HubWorkspace>(
-          `${base}/workspaces/${item.id}`,
-        );
-        setEdit({
-          id: value.id,
-          name: value.name,
-          icon: value.icon,
-          tint: value.tint,
-          origin: value.origin,
-          restricted: value.restricted,
-          access: value.access ?? { userIds: [], teamIds: [] },
-        });
-      }
+      const result = await hubRequest<{ userIds: string[] }>(`${base}/teams/${item.id}/members`);
+      setTeamMembers(result.userIds);
+      setEdit({ id: item.id, name: item.name, access: { userIds: result.userIds, teamIds: [] } });
     } catch (e) {
       toast.error("Couldn't open that", { description: apiError(e) });
     }
@@ -198,21 +130,6 @@ export default function HubOrganizationSettings({
             ? "Your invitation link is ready."
             : "Your invitation is sent.",
         );
-      } else if (kind === "workspaces") {
-        await hubRequest(
-          `${base}/workspaces${edit.id ? `/${edit.id}` : ""}`,
-          edit.id ? "PATCH" : "POST",
-          {
-            name: edit.name,
-            ...(edit.id ? { icon: edit.icon, tint: edit.tint } : {}),
-            ...(!edit.id ? { origin: edit.origin } : {}),
-            ...(edit.restricted
-              ? { access: edit.access }
-              : edit.id
-                ? { access: null }
-                : {}),
-          },
-        );
       } else {
         const result = await hubRequest<{ id: string }>(
           `${base}/teams${edit.id ? `/${edit.id}` : ""}`,
@@ -230,50 +147,34 @@ export default function HubOrganizationSettings({
       }
       setEdit(undefined);
     }, kind === "members" ? "Couldn't send that invitation" : "Couldn't save those changes");
-  const title =
-    kind === "members" ? "Members" : kind === "teams" ? "Teams" : "Workspaces";
-  const workspaceItems = workspaces.value?.workspaces
-    ?? cachedHubWorkspaces(organizationId) as HubWorkspace[];
-  const items =
+  const title = kind === "members" ? "Members" : "Teams";
+  const items: (OrganizationTeam | (HubMember & { id: string }))[] =
     kind === "members"
       ? people.members.map((m) => ({ ...m, id: m.userId }))
-      : kind === "teams"
-        ? people.teams
-        : workspaceItems;
-  const emptyWorkspace = kind === "workspaces" && !!workspaces.value && items.length === 0;
+      : people.teams;
   return (
-    <section className={`flex min-w-0 flex-col gap-4 ${workspaceListOnly ? "" : emptyWorkspace ? "p-4" : "p-6"}`} aria-label={title}>
-      {kind !== "workspaces" && <Field>
+    <section className="flex min-w-0 flex-col gap-4 p-6" aria-label={title}>
+      <Field>
         <FieldLabel>{title}</FieldLabel>
         <FieldDescription>
           Manage the people you work with.
         </FieldDescription>
-      </Field>}
-      {emptyWorkspace && !workspaceListOnly && <EmptyState
-        title={admin ? "Add your first workspace" : "No workspaces available"}
-        description={admin ? "Choose a repository for your first thread." : "Ask an organization administrator to add a workspace or give you access."}
-      >
-        {admin && <Button disabled={busy} onClick={() => void open()}>Add a workspace</Button>}
-      </EmptyState>}
-      {(members.error || teams.error || workspaces.error) && (
+      </Field>
+      {(members.error || teams.error) && (
         <p role="alert">
-          {members.error || teams.error || workspaces.error}
+          {members.error || teams.error}
         </p>
       )}
-      {(members.stale || teams.stale || workspaces.stale) && (
+      {(members.stale || teams.stale) && (
         <p role="status">You’re reading the last saved settings.</p>
       )}
-      {admin && !emptyWorkspace && !workspaceListOnly && (
+      {admin && (
         <Button
           className="self-start"
           disabled={busy}
           onClick={() => void open()}
         >
-          {kind === "members"
-            ? "Invite member"
-            : kind === "teams"
-              ? "Create team"
-              : "Add workspace"}
+          {kind === "members" ? "Invite member" : "Create team"}
         </Button>
       )}
       {invite && (
@@ -293,33 +194,23 @@ export default function HubOrganizationSettings({
       <ItemGroup>
         {items.map((item) => {
           const member = item as HubMember;
-          const workspace = item as HubWorkspace;
           return (
-          <Item key={item.id} variant="outline" className="relative">
-            {kind === "workspaces" && <Button variant="ghost" className="absolute inset-0 h-full w-full" data-link aria-label={`Open ${item.name} workspace details`} onClick={() => onOpenWorkspace(workspace.id)} />}
-            <ItemMedia className={kind === "workspaces" ? "pointer-events-none" : undefined}>
+          <Item key={item.id} variant="outline">
+            <ItemMedia>
               {kind === "members" ? (
                 <AvatarFrom
                   avatar={member.image ?? ""}
                   label={item.name}
                   className="size-8"
                 />
-              ) : kind === "teams" ? (
-                <Users />
               ) : (
-                <WorkspaceMark home={false} workspace={workspace} size="md" organizationId={organizationId} />
+                <Users />
               )}
             </ItemMedia>
-            <ItemContent className={`min-w-0 ${kind === "workspaces" ? "pointer-events-none" : ""}`}>
+            <ItemContent className="min-w-0">
               <ItemTitle className="break-words">{item.name}</ItemTitle>
-              {"origin" in item && (
-                <ItemDescription className="break-words">
-                  {workspaceOwnerLabel ? `${workspaceOwnerLabel} · ` : ""}{String(item.origin)}
-                </ItemDescription>
-              )}
             </ItemContent>
-            <ItemActions className="relative">
-              {kind === "workspaces" && <HubWorkspaceComputers origin={workspace.origin} computers={computers.value?.computers ?? []} cloudEnabled={!!cloud.value?.enabledProviders?.length} />}
+            <ItemActions>
               {kind === "members" && "role" in item ? (
                 <Select
                   value={item.role as string}
@@ -353,11 +244,11 @@ export default function HubOrganizationSettings({
                   </SelectContent>
                 </Select>
               ) : (
-                admin && kind !== "workspaces" && (
+                admin && (
                   <Button
                     variant="outline"
                     onClick={() =>
-                      void open(item as HubWorkspace | OrganizationTeam)
+                      void open(item as OrganizationTeam)
                     }
                   >
                     Edit
@@ -365,8 +256,8 @@ export default function HubOrganizationSettings({
                 )
               )}
               {admin && !("role" in item && item.role === "owner") && (
-                <Button variant="ghost" size={kind === "workspaces" ? "icon" : "default"} aria-label={`Remove ${item.name}`} title={`Remove ${item.name}`} onClick={() => setRemove(item)}>
-                  {kind === "workspaces" ? <Trash2 className="size-4" /> : "Remove"}
+                <Button variant="ghost" aria-label={`Remove ${item.name}`} onClick={() => setRemove(item)}>
+                  Remove
                 </Button>
               )}
             </ItemActions>
@@ -374,7 +265,6 @@ export default function HubOrganizationSettings({
           );
         })}
       </ItemGroup>
-      <HubAddWorkspace organizationId={organizationId} open={addingWorkspace} onOpenChange={setAddingWorkspace} onManual={() => {setAddingWorkspace(false);void open(undefined, true);}} />
       <Dialog
         open={!!edit}
         onOpenChange={(v) => {
@@ -382,22 +272,14 @@ export default function HubOrganizationSettings({
         }}
       >
         <DialogContent>
-          <DialogHeader className={kind === "workspaces" ? "text-center sm:text-center" : undefined}>
+          <DialogHeader>
             <DialogTitle>
-              {kind === "members"
-                ? "Invite member"
-                : kind === "teams"
-                  ? "Edit team"
-                  : edit?.id ? "Workspace details" : "Add a workspace"}
+              {kind === "members" ? "Invite member" : "Edit team"}
             </DialogTitle>
-            <DialogDescription className={kind === "workspaces" && edit?.id ? "sr-only" : undefined}>
+            <DialogDescription>
               {kind === "members"
                 ? "Send an invitation to your organization."
-                : kind === "workspaces" && edit?.id
-                  ? edit.origin
-                : isPersonal
-                  ? "Choose a name and repository for your workspace."
-                  : "Choose a name and who can use it."}
+                : "Choose a name and who can use it."}
             </DialogDescription>
           </DialogHeader>
           {edit && (
@@ -408,8 +290,7 @@ export default function HubOrganizationSettings({
               }}
             >
               <FieldGroup>
-              <fieldset className="flex flex-col gap-6" disabled={kind === "workspaces" && !admin}>
-                {kind === "workspaces" && edit.id && <div className="flex justify-center"><IconPicker label="Change workspace icon" icon={edit.icon ?? "folder"} tint={edit.tint} icons={PROJECT_ICON_IDS} renderIcon={projectIcon} preview={<WorkspaceIcon organizationId={organizationId} workspaceId={edit.id} icon={edit.icon} className="size-4" fileClassName="size-full object-cover" />} onChange={patch => setEdit({ ...edit, ...patch })} /></div>}
+              <fieldset className="flex flex-col gap-6">
                 <Field>
                   <FieldLabel htmlFor="entity-name">
                     {kind === "members" ? "Email (optional)" : "Name"}
@@ -439,44 +320,9 @@ export default function HubOrganizationSettings({
                     </Select>
                   </Field>
                 )}
-                {kind === "workspaces" && (
-                  <>
-                    <Field>
-                      <FieldLabel htmlFor="origin">
-                        Repository origin
-                      </FieldLabel>
-                      <Input
-                        id="origin"
-                        disabled={!!edit.id}
-                        required
-                        value={edit.origin}
-                        onChange={(e) =>
-                          setEdit({ ...edit, origin: e.target.value })
-                        }
-                      />
-                    </Field>
-                    {!isPersonal && (
-                      <Field orientation="horizontal">
-                        <Checkbox
-                          id="restrict-workspace"
-                          checked={edit.restricted}
-                          onCheckedChange={(v) =>
-                            setEdit({ ...edit, restricted: v === true })
-                          }
-                        />
-                        <FieldLabel htmlFor="restrict-workspace">
-                          Restrict to selected members and teams
-                        </FieldLabel>
-                      </Field>
-                    )}
-                  </>
-                )}
-                {(kind === "teams" ||
-                  (kind === "workspaces" && edit.restricted)) && (
+                {kind === "teams" && (
                   <HubWorkspaceAccess
-                    people={
-                      kind === "teams" ? { ...people, teams: [] } : people
-                    }
+                    people={{ ...people, teams: [] }}
                     value={edit.access}
                     onChange={(access) => setEdit({ ...edit, access })}
                   />
@@ -490,8 +336,8 @@ export default function HubOrganizationSettings({
                   >
                     Cancel
                   </Button>
-                  <Button disabled={busy || (kind === "workspaces" && !admin)} type="submit">
-                    {kind === "members" ? (edit.name.trim() ? "Send invitation" : "Create invitation link") : kind === "workspaces" && !edit?.id ? "Add workspace" : "Save changes"}
+                  <Button disabled={busy} type="submit">
+                    {kind === "members" ? (edit.name.trim() ? "Send invitation" : "Create invitation link") : "Save changes"}
                   </Button>
                 </DialogFooter>
               </FieldGroup>

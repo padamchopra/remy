@@ -445,26 +445,21 @@ try {
           assert.ok(requests.includes("/api/organizations/team/github/pull-requests"), "All reads organization GitHub pull requests");
           if(artifacts)await page.screenshot({path:`${artifacts}/unified-pull-requests-${mobile?'phone':'desktop'}.png`});
           await page.goto(clean("/workspaces"));
-          await page.getByText("Studio · https://github.com/example/repo",{exact:true}).waitFor();
+          const workspaceRows=page.locator('main section[aria-label="Workspaces"] [data-slot="item"]');
+          await workspaceRows.filter({hasText:"example/repo"}).filter({hasText:"Studio"}).first().waitFor();
           assert.equal(await page.getByRole("status",{name:"Loading workspaces",exact:true}).count(),0,"Loaded workspaces do not keep a loading status");
           assert.equal(await page.locator('[data-slot="pane-header"]').count(),1,"Workspace list uses the shared pane header");
           assert.equal(await page.getByRole("heading",{name:"Workspaces",exact:true}).count(),0,"Workspaces does not repeat the pane title");
-          assert.equal(await page.getByText("Personal · https://github.com/example/repo",{exact:true}).count(),0);
+          assert.equal(await workspaceRows.filter({hasText:"Personal"}).count(),0,"Personal has no workspaces in this account");
           assert.equal(await page.getByRole("button",{name:"Add workspace",exact:true}).count(),1);
+          assert.equal(await page.locator('[data-slot="pane-header"]').getByRole("button",{name:"Add workspace",exact:true}).count(),1,"Add workspace sits in the pane header");
           assert.equal(await page.getByRole("heading",{name:"Personal",exact:true}).count(),0);
           assert.equal(await page.getByRole("heading",{name:"Studio",exact:true}).count(),0);
           const workspaceSection=page.locator('main section[aria-label="Workspaces"]').first();
-          const workspaceLayout=await workspaceSection.evaluate(section=>{
-            const button=section.querySelector(':scope > button');
-            const item=section.querySelector('[data-slot="item"]');
-            const outer=section.getBoundingClientRect(),action=button.getBoundingClientRect(),row=item.getBoundingClientRect();
-            return {top:action.top-outer.top,bottom:row.top-action.bottom,right:row.right-action.right,overflow:section.scrollWidth-section.clientWidth};
-          });
-          assert.ok(Math.abs(workspaceLayout.right)<1,"Add workspace aligns with the workspace rows");
-          assert.ok(Math.abs(workspaceLayout.top-workspaceLayout.bottom)<1,"Add workspace has equal space above and below");
-          assert.ok(workspaceLayout.overflow<=0,"Workspace actions do not overflow the pane");
-          const remyWorkspace=page.locator('[data-slot="item"]',{hasText:"github.com/padamchopra/remy"});
-          await remyWorkspace.getByRole("button",{name:"Open remy workspace details",exact:true}).waitFor();
+          const workspaceLayout=await workspaceSection.evaluate(section=>({overflow:section.scrollWidth-section.clientWidth}));
+          assert.ok(workspaceLayout.overflow<=0,"Workspace rows do not overflow the pane");
+          const remyWorkspace=workspaceRows.filter({hasText:"padamchopra/remy"});
+          await remyWorkspace.getByRole("button",{name:"Open remy",exact:true}).waitFor();
           const listMark=remyWorkspace.locator('[data-slot="workspace-mark"]');
           await listMark.locator("svg").waitFor();
           const listIcon=await listMark.evaluate(mark=>{
@@ -473,10 +468,10 @@ try {
             const box=mark.getBoundingClientRect(), glyph=svg?.getBoundingClientRect();
             return {svg:svg?.innerHTML??"",well:style.backgroundColor,fg:style.color,radius:style.borderRadius,width:box.width,height:box.height,glyph:glyph?.width??0};
           });
-          assert.equal(listIcon.width,40,"Workspace list icon well is 40px wide");
-          assert.equal(listIcon.height,40,"Workspace list icon well is 40px tall");
+          assert.equal(listIcon.width,28,"Workspace list icon well is 28px wide");
+          assert.equal(listIcon.height,28,"Workspace list icon well is 28px tall");
           if(artifacts && !mobile) await remyWorkspace.screenshot({path:`${artifacts}/workspace-list-icon.png`});
-          await remyWorkspace.getByRole("button",{name:"Open remy workspace details",exact:true}).click();
+          await remyWorkspace.getByRole("button",{name:"Open remy",exact:true}).click();
           await page.waitForURL(/\/app\/workspaces\/remy\?owner=team$/);
           const remyButton=page.getByRole("button",{name:"Change icon for remy",exact:true});
           const detailMark=remyButton.locator('[data-slot="workspace-mark"]');
@@ -490,17 +485,14 @@ try {
           assert.equal(detailIcon.svg,listIcon.svg,"List and detail use the same folder glyph");
           assert.equal(detailIcon.well,listIcon.well,"List and detail share the well fill");
           assert.equal(detailIcon.fg,listIcon.fg,"List and detail share the glyph color");
-          assert.equal(detailIcon.width,listIcon.width,"List and detail wells are the same width");
-          assert.equal(detailIcon.height,listIcon.height,"List and detail wells are the same height");
-          assert.ok(Math.abs(detailIcon.glyph-listIcon.glyph)<1,"List and detail glyphs are the same size");
+          assert.equal(detailIcon.width,40,"The detail well is 40px wide");
           if(artifacts && !mobile) {
             await remyButton.screenshot({path:`${artifacts}/workspace-detail-icon.png`});
             await page.locator("main .flex.items-center.gap-3.rounded-lg.border").first().screenshot({path:`${artifacts}/workspace-detail-row.png`});
           }
           await page.getByRole("navigation",{name:"breadcrumb",exact:true}).getByRole("button",{name:"Workspaces",exact:true}).click();
-          await page.getByText("Studio · https://github.com/example/repo",{exact:true}).waitFor();
-          const studioWorkspace=page.locator('[data-slot="item"]',{hasText:"Studio · https://github.com/example/repo"});
-          await studioWorkspace.getByRole("button",{name:"Open Example workspace details",exact:true}).click();
+          const studioWorkspace=workspaceRows.filter({hasText:"example/repo"}).filter({hasText:"Studio"}).first();
+          await studioWorkspace.getByRole("button",{name:"Open Example",exact:true}).click();
           await page.waitForURL(/\/app\/workspaces\/repo\?owner=team$/);
           await page.getByText("Repository",{exact:true}).waitFor();
           await page.getByText("github.com/example/repo",{exact:true}).waitFor();
@@ -529,7 +521,7 @@ try {
           await page.getByText("Repository",{exact:true}).waitFor();
           workspaceBreadcrumb=page.getByRole("navigation",{name:"breadcrumb",exact:true});
           await workspaceBreadcrumb.getByRole("button",{name:"Workspaces",exact:true}).click();
-          await page.getByText("Studio · https://github.com/example/repo",{exact:true}).waitFor();
+          await workspaceRows.filter({hasText:"example/repo"}).first().waitFor();
           await page.goto(clean("/settings/general"));
           const generalSettings=page.getByRole("region",{name:"General settings",exact:true});
           await generalSettings.getByText("Notify me",{exact:true}).waitFor();
