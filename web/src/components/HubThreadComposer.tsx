@@ -36,6 +36,8 @@ export type HubThreadWorkspaceOption = {
   icon?: string;
   tint?: string;
   label: string;
+  /// The account, shown muted only to tell apart workspaces with the same name.
+  detail?: string;
 };
 export function HubThreadComposer({
   organizationId,
@@ -135,7 +137,7 @@ export function HubThreadComposer({
   const modelAccess = useHubResource<ModelAccessResponse>(organizationId,"/model-access");
   const cloudConnections = useHubResource<{settings?:{provider?:string};enabledProviders?: string[];cloudStart?: Record<string, {owner:boolean;providers:{id:string;allowed:boolean}[]}>}>(organizationId, "/hosted");
   const cloudOptions = useMemo(() => CLOUD_COMPUTERS.filter(c => cloudConnections.value?.enabledProviders?.includes(c.provider)), [cloudConnections.value?.enabledProviders]);
-  const workspaceChoices = workspaceOptions ?? workspaces.map((item) => ({
+  const workspaceChoices: HubThreadWorkspaceOption[] = workspaceOptions ?? workspaces.map((item) => ({
     ...item,
     key: item.id,
     organizationId,
@@ -330,7 +332,7 @@ export function HubThreadComposer({
         </ComposerWorkspaceTrigger>
         <DropdownMenuContent>
           {workspaceChoices.map(w => <DropdownMenuItem key={w.key} onSelect={() => { if (onWorkspaceChange) onWorkspaceChange(w); else setWorkspace(w.id); pick(undefined); }}>
-            <WorkspaceMark home={false} workspace={w} size="sm" organizationId={w.organizationId} />{w.label}{w.organizationId === organizationId && w.id === workspaceId && <Check className="ml-auto" />}
+            <WorkspaceMark home={false} workspace={w} size="sm" organizationId={w.organizationId} />{w.label}{w.detail && <span className="text-muted-foreground">{w.detail}</span>}{w.organizationId === organizationId && w.id === workspaceId && <Check className="ml-auto" />}
           </DropdownMenuItem>)}
         </DropdownMenuContent>
       </DropdownMenu>

@@ -215,11 +215,16 @@ function AllThreads({
     workspaces: value?.workspaces ?? (error ? [] : cachedHubWorkspaces(organization.id)),
     known: !!value || !!error || hasCachedHubWorkspaces(organization.id),
   }));
+  // A row names its account only when another account lists a workspace of
+  // the same name; otherwise the icon and name are enough to pick it.
+  const nameCounts = new Map<string, number>();
+  for (const { workspaces } of lists) for (const workspace of workspaces) nameCounts.set(workspace.name, (nameCounts.get(workspace.name) ?? 0) + 1);
   const workspaceOptions = lists.flatMap(({ organization, workspaces }) => workspaces.map((workspace) => ({
     ...workspace,
     key: `${organization.id}:${workspace.id}`,
     organizationId: organization.id,
-    label: `${workspace.name} · ${organization.personal ? "Personal" : organization.name}`,
+    label: workspace.name,
+    ...((nameCounts.get(workspace.name) ?? 0) > 1 ? { detail: organization.personal ? "Personal" : organization.name } : {}),
   })));
   const [workspaceKey, setWorkspaceKey] = useState("");
   const [message, setMessage] = useState("");
