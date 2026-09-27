@@ -313,9 +313,14 @@ test("repository OAuth reuses sign-in configuration with isolated callback state
 
 test("a member can connect a private Linear API key without organization administration", async () => {
   const f = fixture();
+  let tokenType = "";
   f.provider.id = "linear";
-  f.provider.identity = async (token) => ({ id: "linear-studio", label: token === "linear-key" ? "Studio" : "Wrong" });
+  f.provider.identity = async (token, _send, tokens) => {
+    tokenType = tokens.token_type ?? "";
+    return { id: "linear-studio", label: token === "linear-key" ? "Studio" : "Wrong" };
+  };
   await f.service.linearToken("studio", "grace", "linear-key");
+  assert.equal(tokenType, "api-key");
   await assert.rejects(
     f.service.begin("studio", "ada", "linear", "", "https://hub.example"),
     /belong to you/,
@@ -326,4 +331,16 @@ test("a member can connect a private Linear API key without organization adminis
   assert.equal(ada.linearAccounts.length, 0);
   assert.ok(!JSON.stringify(grace).includes("linear-key"));
   assert.equal((await f.service.linearToken("other", "grace", "linear-key").then(() => true, () => false)), false);
+});
+
+test("Linear sends the authentication scheme that matches the credential", async () => {
+  const provider = connectionProviders({} as Env).find((candidate) => candidate.id === "linear")!;
+  const authorizations: string[] = [];
+  const send = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    authorizations.push(new Headers(init?.headers).get("authorization") ?? "");
+    return Response.json({ data: { organization: { id: "linear-studio", name: "Studio" }, viewer: { id: "ada" } } });
+  }) as typeof fetch;
+  await provider.identity("linear-key", send, { access_token: "linear-key", token_type: "api-key" });
+  await provider.identity("oauth-token", send, { access_token: "oauth-token", token_type: "Bearer" });
+  assert.deepEqual(authorizations, ["linear-key", "Bearer oauth-token"]);
 });
