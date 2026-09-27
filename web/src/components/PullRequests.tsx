@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { Check, CircleDot, GitPullRequest, Layers, RefreshCw, Search, X } from "lucide-react";
+import { Check, CircleDot, GitPullRequest, RefreshCw, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
@@ -8,6 +8,7 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/in
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs-base";
 import { PaneHeader } from "@/components/PaneHeader";
+import { PullRequestStackHeader, PullRequestStackIcon, PullRequestStackItem, PullRequestStackRows, pullRequestStackState } from "@/components/PullRequestStack";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { watchHubResource } from "@/lib/hub-computers";
 import type { HubWorkspace } from "@/lib/hub-organization";
@@ -663,26 +664,36 @@ export function PullRequests({
               const stacked = group.key.startsWith("stack:");
               const lead = group.members[0];
               if (!stacked || !lead?.stack) return renderTile(lead!);
-              const shown = group.members.length;
-              const size = lead.stack.size;
+              const tile = pullRequestTileWorkspace(
+                lead,
+                workspaces.filter((entry) => entry.serverId === lead.serverId && entry.id === lead.workspaceId),
+                hostedWorkspaces,
+              );
               return (
                 <section
                   key={group.key}
                   data-slot="pull-request-stack"
                   aria-label={`Stack #${lead.stack.number}`}
-                  className="mx-3 my-1.5 overflow-hidden rounded-lg ring-1 ring-border"
+                  className="flex min-w-0 flex-col gap-2.5 px-5 py-3"
                 >
-                  <div className="flex min-w-0 items-center gap-2 border-b border-border bg-muted/40 px-2 py-1.5 text-xs text-muted-foreground">
-                    <Layers className="size-3.5 shrink-0" />
-                    <span className="font-medium text-foreground">Stack #{lead.stack.number}</span>
-                    {/* How many of the stack are in this list — not a position,
-                        which each row carries for itself. */}
-                    <span>· {shown === size ? `${size} pull requests` : `${shown} of ${size} pull requests`}</span>
-                    {lead.stack.baseRefName && (
-                      <span className="min-w-0 truncate">· into <span className="font-mono">{lead.stack.baseRefName}</span></span>
-                    )}
-                  </div>
-                  {group.members.map((pullRequest, index) => renderTile(pullRequest, true, index))}
+                  <PullRequestStackHeader
+                    number={lead.stack.number}
+                    detail={lead.stack.baseRefName ? `Merge from the bottom up into ${lead.stack.baseRefName}` : "Merge from the bottom up"}
+                  >
+                    <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                      <WorkspaceMark
+                        home={false}
+                        workspace={tile.workspace}
+                        server={servers.find((entry) => entry.id === lead.serverId)}
+                        size="sm"
+                        organizationId={tile.organizationId}
+                      />
+                      <span className="truncate">{tile.name}</span>
+                    </span>
+                  </PullRequestStackHeader>
+                  <PullRequestStackRows>
+                    {group.members.map((pullRequest, index) => renderTile(pullRequest, true, index))}
+                  </PullRequestStackRows>
                 </section>
               );
             })}
@@ -725,15 +736,52 @@ function PullRequestListItem({
   const failed = pullRequest.checks.some((check) => check.state === "fail");
   const total = pullRequest.checks.length;
   const tile = pullRequestTileWorkspace(pullRequest, workspace ? [workspace] : [], hostedWorkspaces);
+  const threadLink = thread ? (
+    <button type="button" data-link className="flex max-w-44 min-w-0 shrink-0 items-center gap-1.5 text-xs" onClick={() => onOpenThread(thread.id)}>
+      <CircleDot className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className="truncate">{thread.title}</span>
+    </button>
+  ) : null;
+  const trailing = (
+    <>
+      <span data-slot="pull-request-tile-checks" className="flex w-[4.5rem] shrink-0 items-center justify-end gap-1 font-mono text-xs text-muted-foreground">
+        {failed ? <X className="size-3.5 text-destructive" /> : <Check className="size-3.5 text-success-foreground" />}
+        {total > 0 ? `${passed}/${total}` : "—"}
+      </span>
+      <span className="w-[6.5rem] shrink-0 text-right font-mono text-xs">
+        <span className="text-success-foreground">+{pullRequest.additions}</span>{" "}
+        <span className="text-destructive">−{pullRequest.deletions}</span>
+      </span>
+      <span className="w-12 shrink-0 text-right text-xs text-muted-foreground">{relativeDate(pullRequest.updatedAt)}</span>
+    </>
+  );
+  // A stack member is one line, as the stack draws it: the stack's header
+  // already names the workspace, and the row ends with its place in the stack.
+  if (stacked && pullRequest.stack) {
+    return (
+      <PullRequestStackItem>
+        {/* On a phone the title keeps the first line to itself. */}
+        <div
+          data-slot="pull-request-tile"
+          data-stack-index={String(stackIndex)}
+          className="flex min-h-[42px] min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 px-3.5 py-2.5 hover:bg-accent/50 sm:flex-nowrap sm:py-2"
+        >
+          <button type="button" data-link className="flex min-w-0 basis-full items-start gap-2.5 text-left sm:flex-1 sm:basis-0" onClick={onOpen}>
+            <PullRequestStackIcon state="OPEN" isDraft={pullRequest.isDraft} />
+            <span className="shrink-0 font-mono text-xs leading-[18px] text-muted-foreground tabular-nums">#{pullRequest.number}</span>
+            <span data-slot="pull-request-title" className="line-clamp-2 min-w-0 flex-1 text-[13px] leading-[18px] wrap-break-word sm:block sm:truncate">{pullRequest.title}</span>
+          </button>
+          <span data-slot="pull-request-stack-position" className="min-w-0 flex-1 pl-[23px] text-xs whitespace-nowrap text-muted-foreground sm:order-last sm:w-[5.5rem] sm:flex-none sm:pl-0 sm:text-right">
+            {pullRequest.stack.position} of {pullRequest.stack.size} · {pullRequestStackState("OPEN", pullRequest.isDraft)}
+          </span>
+          {threadLink}
+          {trailing}
+        </div>
+      </PullRequestStackItem>
+    );
+  }
   return (
-    <div
-      data-slot="pull-request-tile"
-      data-stack-index={stacked ? String(stackIndex) : undefined}
-      className={cn(
-        "flex min-w-0 items-center gap-3 py-2 hover:bg-accent/60",
-        stacked ? "px-2" : "px-5",
-      )}
-    >
+    <div data-slot="pull-request-tile" className="flex min-w-0 items-center gap-3 px-5 py-2 hover:bg-accent/60">
       <button type="button" data-link className="flex min-w-0 flex-1 items-start gap-2 text-left" onClick={onOpen}>
         <GitPullRequest className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 overflow-hidden">
@@ -756,21 +804,8 @@ function PullRequestListItem({
           </span>
         </span>
       </button>
-      {thread ? (
-        <button type="button" data-link className="flex max-w-44 min-w-0 shrink-0 items-center gap-1.5 text-xs" onClick={() => onOpenThread(thread.id)}>
-          <CircleDot className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="truncate">{thread.title}</span>
-        </button>
-      ) : null}
-      <span className="flex w-[4.5rem] shrink-0 items-center justify-end gap-1 font-mono text-xs text-muted-foreground">
-        {failed ? <X className="size-3.5 text-destructive" /> : <Check className="size-3.5 text-success-foreground" />}
-        {total > 0 ? `${passed}/${total}` : "—"}
-      </span>
-      <span className="w-[6.5rem] shrink-0 text-right font-mono text-xs">
-        <span className="text-success-foreground">+{pullRequest.additions}</span>{" "}
-        <span className="text-destructive">−{pullRequest.deletions}</span>
-      </span>
-      <span className="w-12 shrink-0 text-right text-xs text-muted-foreground">{relativeDate(pullRequest.updatedAt)}</span>
+      {threadLink}
+      {trailing}
     </div>
   );
 }

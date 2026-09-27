@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
-import { ChevronDown, ExternalLink, GitMerge, GitPullRequest, GitPullRequestClosed, Layers } from "lucide-react";
+import { ChevronDown, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
-import { Popover, PopoverContent, PopoverDescription, PopoverHeader, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
+import { Popover, PopoverContent, PopoverDescription, PopoverTrigger } from "@/components/ui/popover-base";
+import { PullRequestStackEntry, PullRequestStackHeader, PullRequestStackRows, stackEntriesInOrder } from "@/components/PullRequestStack";
 import { transport } from "@/lib/transport";
-import { cn } from "@/lib/utils";
 import type { PullRequestStack } from "@/state/types";
 
 /// Without a computer to ask, as in hosted Remy, the stack is what the list
@@ -74,52 +73,37 @@ export function PullRequestStackInfo({ serverId, repository, number, initialStac
 
   return (
     <Popover>
-      <PopoverTrigger asChild>
-        <Button variant="ghost" size="sm" aria-label={`Stack #${stack.number}, ${stack.position} of ${stack.size}`}>
-          <Layers data-icon="inline-start" />
-          Stack #{stack.number}
-          <span className="text-muted-foreground">· {stack.position} of {stack.size}</span>
-          <ChevronDown data-icon="inline-end" />
-        </Button>
+      <PopoverTrigger
+        render={<Button variant="ghost" size="sm" aria-label={`Stack #${stack.number}, ${stack.position} of ${stack.size}`} />}
+      >
+        <Layers data-icon="inline-start" />
+        Stack #{stack.number}
+        <span className="text-muted-foreground">· {stack.position} of {stack.size}</span>
+        <ChevronDown data-icon="inline-end" />
       </PopoverTrigger>
-      <PopoverContent align="end" className="max-h-[60vh] w-96 max-w-[calc(100vw-2rem)] overflow-y-auto p-2" aria-label={`Stack #${stack.number}`}>
-        <PopoverHeader className="px-2 py-2">
-          <PopoverTitle>Stack #{stack.number}</PopoverTitle>
-          <PopoverDescription className="break-words">Bottom to top · Targets {stack.baseRefName}</PopoverDescription>
-          {unavailable && <p role="status" className="text-xs text-muted-foreground">Stack information may be out of date.</p>}
-        </PopoverHeader>
-        <ItemGroup className="gap-0">
-          {stack.entries?.map((entry) => {
-            const Icon = entry.state === "MERGED" ? GitMerge : entry.state === "CLOSED" ? GitPullRequestClosed : GitPullRequest;
-            const current = entry.number === number;
-            const inApp = !current && onOpen && canOpen?.(entry.number);
-            const content = (
-              <>
-                <ItemMedia><Icon /></ItemMedia>
-                <ItemContent className="min-w-0">
-                  <ItemTitle className="w-full min-w-0 whitespace-normal break-words">#{entry.number} {entry.title}</ItemTitle>
-                  <ItemDescription>
-                    {entry.position} of {stack.size} · {entry.state === "MERGED" ? "Merged" : entry.state === "CLOSED" ? "Closed" : entry.isDraft ? "Draft" : "Open"}{current ? " · Current PR" : ""}
-                  </ItemDescription>
-                </ItemContent>
-                {!inApp && !current && <ExternalLink className="size-3 shrink-0 text-muted-foreground" />}
-              </>
-            );
-            return (
-              <Item key={entry.number} asChild size="sm" className={cn("min-w-0 px-2 py-2", current && "bg-accent")}>
-                {inApp ? (
-                  <button type="button" data-link className="w-full text-left hover:bg-accent/50" onClick={() => onOpen(entry.number)}>{content}</button>
-                ) : (
-                  <a href={`https://github.com/${repository}/pull/${entry.number}`} target="_blank" rel="noreferrer" data-link aria-current={current ? "true" : undefined}>
-                    {content}
-                  </a>
-                )}
-              </Item>
-            );
-          })}
-        </ItemGroup>
+      <PopoverContent align="end" className="flex max-h-[min(60vh,var(--available-height))] w-[28rem] flex-col gap-2.5 overflow-y-auto p-3" aria-label={`Stack #${stack.number}`}>
+        <PullRequestStackHeader
+          number={stack.number}
+          detail={`${stack.position} of ${stack.size} · Merge from the bottom up into ${stack.baseRefName}`}
+        />
+        {unavailable && <PopoverDescription className="text-xs">Stack information may be out of date.</PopoverDescription>}
+        {stack.entries?.length ? (
+          <PullRequestStackRows>
+            {stackEntriesInOrder(stack.entries).map((entry) => (
+              <PullRequestStackEntry
+                key={entry.number}
+                repository={repository}
+                entry={entry}
+                size={stack.size}
+                current={entry.number === number}
+                canOpen={canOpen}
+                onOpen={onOpen}
+              />
+            ))}
+          </PullRequestStackRows>
+        ) : null}
         {serverId && (!stack.entries || stack.entries.length < stack.size || unavailable) && (
-          <Button variant="ghost" size="sm" disabled={loading} onClick={() => setRetry((value) => value + 1)}>Refresh stack</Button>
+          <Button variant="ghost" size="sm" className="self-start" disabled={loading} onClick={() => setRetry((value) => value + 1)}>Refresh stack</Button>
         )}
       </PopoverContent>
     </Popover>
