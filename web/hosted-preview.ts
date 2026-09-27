@@ -11,7 +11,19 @@ const REFRESH_RETRY_MAX_MS = 60_000;
 /// fault worth a stack trace on every reconnect.
 const DISCONNECTS = new Set(['EPIPE', 'ECONNRESET', 'ECONNABORTED']);
 
-export function hostedPreview(target: string): { plugin: Plugin; proxy: ProxyOptions } {
+/// Time as the refresh schedule sees it. Tests pass their own to fire a due
+/// refresh on demand instead of racing a real timer.
+export type PreviewClock = {now: () => number; schedule: (run: () => void, delay: number) => () => void};
+const systemClock: PreviewClock = {
+  now: Date.now,
+  schedule(run, delay) {
+    const timer = setTimeout(run, Math.max(0, delay));
+    timer.unref();
+    return () => clearTimeout(timer);
+  },
+};
+
+export function hostedPreview(target: string, clock: PreviewClock = systemClock): { plugin: Plugin; proxy: ProxyOptions } {
   const hub = new URL(target);
   if (hub.protocol !== 'https:' && !['127.0.0.1', 'localhost'].includes(hub.hostname)) throw Error('Use HTTPS for the hosted service.');
   const agent = new (hub.protocol === 'https:' ? HttpsAgent : HttpAgent)({keepAlive:true, autoSelectFamilyAttemptTimeout:2000});
@@ -21,7 +33,7 @@ export function hostedPreview(target: string): { plugin: Plugin; proxy: ProxyOpt
   let expiresAt = 0;
   let deviceCode = '';
   let refreshing: Promise<void> | undefined;
-  let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let cancelRefresh = () => {};
   let retryDelay = REFRESH_RETRY_MS;
   const call = async (path: string, body: unknown) => {
     const response = await fetch(new URL(path, hub), {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body)});
@@ -31,25 +43,24 @@ export function hostedPreview(target: string): { plugin: Plugin; proxy: ProxyOpt
   };
   const forget = () => {
     token = ''; refreshToken = ''; expiresAt = 0;
-    clearTimeout(refreshTimer);
+    cancelRefresh();
   };
-  const due = () => !!token && !!refreshToken && Date.now() > expiresAt - REFRESH_MARGIN_MS;
+  const due = () => !!token && !!refreshToken && clock.now() > expiresAt - REFRESH_MARGIN_MS;
   const later = (delay: number) => {
-    clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(() => void refresh(), Math.max(0, delay));
-    refreshTimer.unref();
+    cancelRefresh();
+    cancelRefresh = clock.schedule(() => void refresh(), delay);
   };
   const accept = (result: {accessToken?: unknown; refreshToken?: unknown; expiresIn?: unknown}) => {
     if (typeof result.accessToken !== 'string' || !result.accessToken || typeof result.expiresIn !== 'number') throw Error('Could not sign in; try again.');
     token = result.accessToken;
     refreshToken = typeof result.refreshToken === 'string' ? result.refreshToken : '';
-    expiresAt = Date.now() + result.expiresIn * 1000;
+    expiresAt = clock.now() + result.expiresIn * 1000;
     retryDelay = REFRESH_RETRY_MS;
     // Refresh ahead of expiry rather than on the next request. A page that is
     // only listening on live sockets sends none, and the hub closes those
     // sockets with "Sign in again." once the session's access has lapsed.
-    if (refreshToken) later(expiresAt - REFRESH_MARGIN_MS - Date.now());
-    else clearTimeout(refreshTimer);
+    if (refreshToken) later(expiresAt - REFRESH_MARGIN_MS - clock.now());
+    else cancelRefresh();
   };
   /// Only a hub that rejects the refresh token ends the session. A network
   /// failure or a hub error keeps it and tries again, backing off.
@@ -84,7 +95,7 @@ export function hostedPreview(target: string): { plugin: Plugin; proxy: ProxyOpt
     configureServer(server) {
       origin = `http://127.0.0.1:${server.config.server.port}`;
       const httpServer = server.httpServer;
-      httpServer?.once('close', () => { agent.destroy(); clearTimeout(refreshTimer); });
+      httpServer?.once('close', () => { agent.destroy(); cancelRefresh(); });
       // A websocket upgrade never passes through the middleware below, so a
       // reconnect after a sleep would carry an expired token. Hold a due
       // upgrade until the refresh settles, then hand it to Vite's proxy.
@@ -135,7 +146,7 @@ export function hostedPreview(target: string): { plugin: Plugin; proxy: ProxyOpt
           if (!token) return json(response, 401, {error:'Sign in to continue.'});
           if (due()) await refresh();
           if (!token) return json(response, 401, {error:'Sign in again.'});
-          if (Date.now() >= expiresAt) {
+          if (clock.now() >= expiresAt) {
             // Still refreshable: the hub was unreachable, not the session gone.
             if (refreshToken) return json(response, 502, {error:'Could not connect to Remy; try again.'});
             forget();
@@ -164,7 +175,7 @@ export function hostedPreview(target: string): { plugin: Plugin; proxy: ProxyOpt
       if (incoming.url === '/api/sessions/current' && incoming.method === 'DELETE') forget();
     });
     proxy.on('proxyReqWs', (outgoing, incoming) => {
-      if (!trusted(incoming) || !token || Date.now() >= expiresAt) { outgoing.destroy(); return; }
+      if (!trusted(incoming) || !token || clock.now() >= expiresAt) { outgoing.destroy(); return; }
       outgoing.removeHeader('cookie');
       outgoing.setHeader('authorization',`Bearer ${token}`);
     });

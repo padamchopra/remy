@@ -97,10 +97,19 @@ test('preview password sign-in uses environment secrets and keeps them off the p
 });
 
 test('preview stays signed in across access-token expiry until the hub rejects the refresh token', async () => {
- // An access token that lasts just past the refresh margin, so a refresh is
- // due at once and each answer from the hub can be chosen.
- const lifetime=60.4;
+ // The preview runs on the test's clock: time moves only when the test says,
+ // and a refresh timer fires only when time reaches it, so no refresh can land
+ // between a request and the assertion about which token it carried.
+ const lifetime=3600, margin=60_000;
+ const clock={at:0,timer:undefined,schedules:0,
+  now:()=>clock.at,
+  schedule(run,delay){const timer={run,due:clock.at+Math.max(0,delay)};clock.timer=timer;clock.schedules+=1;return()=>{if(clock.timer===timer)clock.timer=undefined;};},
+ };
+ // Move time just past the scheduled refresh and fire it, as a real timer would.
+ const fire=()=>{const timer=clock.timer;assert.ok(timer,'a refresh is scheduled');clock.at=timer.due+1;clock.timer=undefined;timer.run();};
+ const waitFor=async(check,label)=>{const deadline=Date.now()+5000;while(!check()){if(Date.now()>deadline)assert.fail(`timed out waiting for ${label}`);await new Promise(resolve=>setTimeout(resolve,5));}};
  let mode='ok', issued=1, refreshToken='refresh-1';
+ const current=()=>`Bearer access-${issued}`;
  const refreshes=[], forwarded=[], upgrades=[];
  const upstream=createServer(async(req,res)=>{
   let raw=''; for await (const data of req) raw+=data;
@@ -126,7 +135,6 @@ test('preview stays signed in across access-token expiry until the hub rejects t
  const reserve=createServer();await new Promise(resolve=>reserve.listen(0,'127.0.0.1',resolve));
  const port=reserve.address().port; await new Promise(resolve=>reserve.close(resolve));
  const origin=`http://127.0.0.1:${port}`;
- const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
  const upgrade=()=>new Promise((resolve,reject)=>{
   const req=request({host:'127.0.0.1',port,path:'/api/organizations/team/live',headers:{origin,connection:'Upgrade',upgrade:'websocket','sec-websocket-version':'13','sec-websocket-key':'dGhlIHNhbXBsZSBub25jZQ=='}});
   req.on('upgrade',(_res,socket)=>{socket.destroy();resolve();});
@@ -135,41 +143,55 @@ test('preview stays signed in across access-token expiry until the hub rejects t
   req.end();
  });
  try {
-  const p=hostedPreview(`http://127.0.0.1:${upstream.address().port}`);
+  const p=hostedPreview(`http://127.0.0.1:${upstream.address().port}`,clock);
   const actual=await vite({configFile:false,plugins:[p.plugin],server:{host:'127.0.0.1',port,strictPort:true,hmr:false,proxy:{'/api':p.proxy}}});
   await actual.listen();
   try {
    const call=(path,method='GET')=>fetch(origin+path,{method,headers:{origin}});
    await call('/api/preview/sign-in','POST');
    assert.deepEqual(await (await call('/api/preview/complete','POST')).json(),{status:'approved'});
+   assert.equal(clock.timer?.due,lifetime*1000-margin);
 
    // Refreshed on its own, without a request from the page: live sockets carry
    // no requests, and the hub closes them once the session's access lapses.
-   await wait(800);
+   let schedules=clock.schedules;
+   fire();
+   await waitFor(()=>clock.schedules>schedules,'the timed refresh');
    assert.deepEqual(refreshes,['refresh-1']);
+   assert.equal(forwarded.length,0);
+   assert.equal(current(),'Bearer access-2');
    assert.equal((await call('/api/profile')).status,200);
-   assert.equal(forwarded.at(-1),`Bearer access-${issued}`);
+   assert.equal(forwarded.at(-1),current());
 
-   // A hub that cannot answer keeps the session and its current token.
+   // A hub that cannot answer keeps the session and its current token, and
+   // tries again: on its timer, and when a request finds the refresh due.
    mode='unavailable';
-   await wait(600);
-   const kept=issued, attempts=refreshes.length;
+   const kept=current();
+   schedules=clock.schedules;
+   fire();
+   await waitFor(()=>clock.schedules>schedules,'the retry after an outage');
+   assert.equal(refreshes.length,2);
+   assert.ok(clock.timer,'a retry is scheduled');
    assert.equal((await call('/api/profile')).status,200);
-   assert.ok(refreshes.length>attempts);
-   assert.equal(forwarded.at(-1),`Bearer access-${kept}`);
+   assert.equal(refreshes.length,3);
+   assert.equal(forwarded.at(-1),kept);
 
    // A websocket upgrade waits for the due refresh rather than carrying a stale token.
    mode='ok';
    await upgrade();
-   assert.ok(issued>kept);
-   assert.equal(upgrades.at(-1),`Bearer access-${issued}`);
+   assert.equal(refreshes.length,4);
+   assert.equal(current(),'Bearer access-3');
+   assert.equal(upgrades.at(-1),current());
 
    // Only a refresh token the hub rejects ends the session.
    mode='reject';
-   await wait(600);
+   const attempts=refreshes.length;
+   fire();
+   await waitFor(()=>refreshes.length>attempts&&!clock.timer,'the rejected refresh');
    assert.equal((await call('/api/profile')).status,401);
    mode='ok';
    assert.equal((await call('/api/profile')).status,401);
+   assert.equal(refreshes.length,attempts+1);
   } finally {await actual.close();}
  } finally {await new Promise(resolve=>upstream.close(resolve));}
 });
