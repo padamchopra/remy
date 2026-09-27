@@ -82,7 +82,7 @@ export function resetDemo() {
   useStore.setState({ servers, chats: structuredClone(baseChats), workspaces: [workspace], details: initialDetails(),
     catalogLoading: false, loading: false, connected: true, openIds: [], detailLoading: {}, historyLoading: {},
     providers: PROVIDERS.map((provider) => ({ ...provider, installed: true })),
-    openChat: async () => {}, closeChat: () => {}, readChat: async () => {}, loadBoard: async () => {},
+    openChat: async () => {}, closeChat: () => {}, readChat: async () => {},
     async loadWorkspaceWorktrees() { return structuredClone(workspace.worktrees); },
     async sendMessage(id, text) {
       const detail = useStore.getState().details[id];

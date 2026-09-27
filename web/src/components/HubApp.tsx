@@ -11,7 +11,6 @@ import {
   Laptop,
   MessagesSquare,
   GitPullRequest,
-  SquareKanban,
   Users,
   User,
   LogOut,
@@ -67,7 +66,6 @@ const OrganizationAdmin = lazy(() => import("./HubOrganizationAdmin"));
 const AllView = hubAllView.Surface;
 const GeneralSettings = lazy(() => import("./HubGeneralSettings"));
 const Threads = hubThreads.Surface;
-const Board = lazy(() => import("./HubBoard"));
 const Computers = lazy(() =>
   import("./HubComputers").then((m) => ({ default: m.HubComputers })),
 );
@@ -235,12 +233,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
   }
   if (!loaded && !(profile && organization)) return <AppLoading />;
   if (signedOut) return <HubSignIn runtime={runtime} />;
-  const requestedSection =
-    route.name === "board" || route.name === "ticket"
-      ? "tasks"
-      : route.name === "settings"
-        ? route.tab
-        : route.name;
+  const requestedSection = route.name === "settings" ? route.tab : route.name;
   const organizationSettings = route.name === "settings" && ["organization", "members", "teams"].includes(route.tab);
   const section = organizationSettings ? "organization" : requestedSection;
   const inSettings = route.name === "settings";
@@ -256,12 +249,6 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           icon: MessagesSquare,
           route: { name: "threads", organizationId },
           selected: section === "threads",
-        },
-        {
-          label: "Tasks",
-          icon: SquareKanban,
-          route: { name: "board", organizationId },
-          selected: section === "tasks",
         },
         {
           label: "Workspaces",
@@ -451,20 +438,6 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                     threadId={
                       route.name === "threads" ? route.threadId : undefined
                     }
-                    navigate={navigate}
-                  />
-                </Deferred>
-              </div>
-              <div
-                hidden={section !== "tasks"}
-                className={
-                  section === "tasks" ? "flex min-h-0 flex-1" : undefined
-                }
-              >
-                <Deferred open={section === "tasks"}>
-                  <Board
-                    organizationId={organization.id}
-                    ticketId={route.name === "ticket" ? route.key : undefined}
                     navigate={navigate}
                   />
                 </Deferred>

@@ -1,4 +1,4 @@
-export type SharedResource = "providers" | "settings" | "board" | "identity";
+export type SharedResource = "providers" | "settings" | "identity";
 
 interface PendingRead {
   revision: number;
@@ -23,13 +23,11 @@ interface ReadOptions {
 }
 
 /// Every resource is fresh for one mount wave. Provider, settings and identity
-/// writes seed or invalidate their entry; board pushes invalidate
-/// theirs. Once the bound expires, the next consumer performs a fresh read, so
+/// writes seed or invalidate their entry. Once the bound expires, the next consumer performs a fresh read, so
 /// this never becomes an unbounded session cache.
 export const SHARED_RESOURCE_FRESHNESS_MS: Record<SharedResource, number> = {
   providers: 1_000,
   settings: 1_000,
-  board: 1_000,
   identity: 1_000,
 };
 

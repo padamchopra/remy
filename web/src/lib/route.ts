@@ -15,8 +15,6 @@ export type Route = (
   // workbench's, kept on this device rather than in the address.
   | { name: "threads"; threadId?: string; focus?: string; organizationId?: string; computerId?: string }
   | { name: "workspaces"; workspaceId?: string }
-  | { name: "board"; scope?: string }
-  | { name: "ticket"; key: string }
   // A pull request is addressed by its repository and number, which is what
   // GitHub calls it and what someone pastes.
   // `view` is the tab in front: the summary, or the files it changes.
@@ -26,6 +24,8 @@ export type Route = (
 export interface AppLocation {
   route: Route;
 }
+
+const RETIRED_SECTIONS = new Set(["inbox", "agents", "board", "tasks", "tickets", "recurring"]);
 
 const SETTINGS_TABS: SettingsTab[] = [
   "organization",
@@ -37,9 +37,8 @@ const SETTINGS_TABS: SettingsTab[] = [
 ];
 
 /// The section a route belongs to, which is what the sidebar highlights.
-export function sectionOf(route: Route): "chats" | "workspaces" | "prs" | "tasks" {
+export function sectionOf(route: Route): "chats" | "workspaces" | "prs" {
   if (route.name === "threads" || route.name === "settings") return "chats";
-  if (route.name === "board" || route.name === "ticket") return "tasks";
   return route.name;
 }
 
@@ -65,17 +64,11 @@ function parseRoute(hash: string): AppLocation {
   const [head, tail] = trimmed.replace(/^\/+/, "").split("/");
   const rest = tail ? decodeURIComponent(tail) : undefined;
 
-  // Inbox and Agents are gone, so an older link opens the threads it was
+  // Inbox, Agents and Tasks are gone, so an older link opens the threads it was
   // always one click from.
-  if (head === "inbox" || head === "agents") return { route: { name: "threads" } };
+  if (RETIRED_SECTIONS.has(head ?? "")) return { route: { name: "threads" } };
   if (head === "workspaces") return { route: { name: "workspaces", workspaceId: rest } };
   if (head === "pull-requests") return { route: pullRequestRoute(trimmed) };
-  // Older links to recurring tickets land on the board.
-  if (head === "recurring") return { route: { name: "board", scope: rest } };
-  if (head === "board") return { route: { name: "board", scope: rest } };
-  // Tickets are addressed by key rather than id, so a link someone pastes reads
-  // as the thing it opens.
-  if (head === "tickets" && rest) return { route: { name: "ticket", key: rest } };
   if (head === "settings") {
     const tab = SETTINGS_TABS.includes(rest as SettingsTab) ? (rest as SettingsTab) : "general";
     const params = new URLSearchParams(query);
@@ -111,11 +104,7 @@ export function formatPathLocation({ route }: AppLocation): string {
       ? `/threads${route.threadId ? `/${encodeURIComponent(route.threadId)}` : ""}`
       : route.name === "workspaces"
         ? `/workspaces${route.workspaceId ? `/${encodeURIComponent(route.workspaceId)}` : ""}`
-        : route.name === "board"
-          ? `/board${route.scope ? `/${encodeURIComponent(route.scope)}` : ""}`
-          : route.name === "ticket"
-            ? `/tickets/${encodeURIComponent(route.key)}`
-          : route.name === "settings"
+        : route.name === "settings"
               ? `/settings/${route.tab}`
               : route.repository && route.number
                 ? `/pull-requests/${route.repository.split("/").map(encodeURIComponent).join("/")}/${route.number}${route.view ? `/${route.view}` : ""}`
@@ -153,7 +142,7 @@ function pathInsideHostedBase(): string {
   return window.location.pathname.slice(hostedBasePath().length) || "/";
 }
 
-const RETIRED = /(?:^|\/)(?:inbox|agents)(?:\/|$)/;
+const RETIRED = /^\/*(?:app\/)?(?:inbox|agents|board|tasks|tickets|recurring)(?:\/|$)/;
 
 function retiredFromPath(): string | undefined {
   const path = pathInsideHostedBase();

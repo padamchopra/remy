@@ -1,8 +1,6 @@
 import { create } from "zustand";
 import type { Provider } from "~/lib/providers";
-import { applyProjectIdentity } from "~/lib/projects";
 import { invalidateSharedResource, readSharedResource, seedSharedResource } from "~/lib/shared-read";
-import { byRank } from "~/lib/tickets";
 import { transport } from "~/lib/transport";
 import { isHostedRuntime } from "~/lib/hub-session";
 import { clearOptimisticUser, registerOptimisticUser, uniqueEntries } from "~/lib/thread-entry-merge";
@@ -23,21 +21,17 @@ import type {
   GitBranch,
   GitWorktree,
   PathSuggestion,
-  Project,
   ProviderMcpStatus,
   Server,
   ServerSettings,
-  Ticket,
-  TicketActivity,
-  TicketStatus,
   Tooling,
   UpdateRun,
   Workspace,
   WorkspaceIconMatch,
 } from "./types";
 
-/// The state the shared thread components read: servers, threads, workspaces
-/// and the board as a daemon reports them.
+/// The state the shared thread components read: servers, threads and
+/// workspaces as a daemon reports them.
 ///
 /// Nothing in the web app starts a daemon sync any more; the hosted app reads
 /// the hub. The website's product preview seeds this store with sample state,
@@ -123,12 +117,6 @@ export interface State {
   /// Which ordinary provider sessions can use Remy's separately scoped MCP.
   mcpProviders?: Record<string, ProviderMcpStatus>;
   repoRun?: UpdateRun;
-  projects: Project[];
-  tickets: Ticket[];
-  /// Which daemon each board device id belongs to. A ticket names the machine
-  /// it runs on by that id rather than by a server row.
-  boardDevices: { deviceId: string; serverId: string }[];
-  boardLoading: boolean;
   /// A fleet catalogue read is still waiting on at least one device. This is
   /// separate from `loading`, which clears as soon as there is anything useful
   /// to paint.
@@ -199,39 +187,8 @@ export interface State {
   deleteArchivedThread(id: string, serverId: string): Promise<void>;
   deleteThread(id: string): Promise<void>;
 
-  /// The board. Read on demand by the pane that shows it rather than on every
-  /// poll — a board nobody is looking at costs nothing.
-  loadBoard(options?: { fresh?: boolean }): Promise<void>;
-  createTicket(input: {
-    projectId: string;
-    title: string;
-    body?: string;
-    parentId?: string;
-  }): Promise<Ticket>;
-  startTicket(
-    id: string,
-    options?: { provider?: string; model?: string; effort?: string; checkout?: "main" | "worktree" },
-  ): Promise<{ id: string; serverId: string }>;
-  updateTicket(id: string, patch: Record<string, unknown>): Promise<void>;
-  moveTicket(id: string, status: TicketStatus, before?: string, after?: string): Promise<void>;
-  commentOnTicket(id: string, body: string): Promise<void>;
-  editTicketComment(id: string, commentId: string, body: string): Promise<void>;
-  deleteTicketComment(id: string, commentId: string): Promise<void>;
-  deleteTicket(id: string): Promise<void>;
-  ticketActivity(id: string): Promise<TicketActivity[]>;
-  attachThread(ticketId: string, chatId: string): Promise<void>;
-  detachThread(ticketId: string, chatId: string, deviceId: string): Promise<void>;
-  /// Turns a thread you are already in into a ticket, adopting its worktree and
-  /// branch rather than opening new ones.
-  ticketFromThread(chatId: string): Promise<Ticket>;
   /// Clears a thread's unread mark.
   readChat(id: string): Promise<void>;
-  /// Renames a project, or the slug its tickets are keyed by. Changing the slug
-  /// re-keys every ticket it has, so the whole board is read back after.
-  saveProject(
-    id: string,
-    patch: { name?: string; keyPrefix?: string; icon?: string | null; tint?: string | null },
-  ): Promise<Project>;
 }
 
 const DETAIL_CACHE_LIMIT = 12;
@@ -297,10 +254,6 @@ export const useStore = create<State>((set, get) => ({
   chats: useFixture ? fixtureChats : warm?.chats ?? [],
   archived: [],
   workspaces: useFixture ? fixtureWorkspaces : warm?.workspaces ?? [],
-  projects: warm?.projects ?? [],
-  tickets: [],
-  boardDevices: [],
-  boardLoading: false,
   // A warm window has something to show while every device is still answering,
   // so it is not "Connecting…" — but the catalogue is still out, and that is a
   // separate flag for a separate reason.
@@ -409,13 +362,12 @@ export const useStore = create<State>((set, get) => ({
             .catch(() => {});
 
           const workspaces = transport.request<{ workspaces?: RawWorkspace[] }>(server.id, "/workspaces")
-            .then((listed) => set((current) => {
-              const nextWorkspaces = [
+            .then((listed) => set((current) => ({
+              workspaces: [
                 ...current.workspaces.filter((workspace) => workspace.serverId !== server.id),
                 ...(listed.workspaces ?? []).map((raw) => toWorkspace(raw, server.id)),
-              ];
-              return { workspaces: applyProjectIdentity(nextWorkspaces, current.projects) };
-            }))
+              ],
+            })))
             .catch(() => {});
 
           return [chats, archives, workspaces];
@@ -773,7 +725,6 @@ export const useStore = create<State>((set, get) => ({
     set({ settings });
     await get().loadProviders();
     await get().refresh();
-    await get().loadBoard({ fresh: true });
   },
 
   async loadMcpProviders() {
@@ -1136,250 +1087,6 @@ export const useStore = create<State>((set, get) => ({
     await transport.request(chat.serverId, `/chats/${encodeURIComponent(id)}`, { method: "DELETE" });
     detailCache.delete(detailKey(id, chat.serverId));
     await get().refresh();
-    // The thread let go of any ticket it was on, so the board is stale.
-    await get().loadBoard({ fresh: true }).catch(() => {});
-  },
-
-  // ── the board ─────────────────────────────────────────────────────────────
-  // Every machine answers with its own whole board. Once daemons replicate to
-  // each other those answers are the same board, and merging by id here is what
-  // keeps that from showing up twice.
-
-  async loadBoard(options) {
-    if (useFixture) return;
-    const servers = await transport.servers();
-    const asked = servers.filter((server) => !server.cloud);
-    if (asked.length === 0) {
-      set({ projects: [], tickets: [], boardDevices: [], boardLoading: false });
-      return;
-    }
-    if (options?.fresh) {
-      for (const server of asked) invalidateSharedResource("board", server.id);
-    }
-    if (get().tickets.length === 0) set({ boardLoading: true });
-    const results = await Promise.all(
-      asked.map(async (server) => {
-        try {
-          const board = await readSharedResource(
-            "board",
-            server.id,
-            () => transport.request<{
-              deviceId?: string;
-              projects?: RawProject[];
-              tickets?: RawTicket[];
-            }>(server.id, "/board"),
-          );
-          return {
-            serverId: server.id,
-            devices: board.deviceId ? [{ deviceId: board.deviceId, serverId: server.id }] : [],
-            projects: (board.projects ?? []).map((raw) => ({
-              ...raw,
-              serverId: server.id,
-              workspaceIds: raw.workspaceIds ?? [],
-            }) as Project),
-            tickets: (board.tickets ?? []).map((raw) => ({
-              ...raw,
-              serverId: server.id,
-              threads: raw.threads ?? [],
-            }) as Ticket),
-          };
-        } catch {
-          // A failed device contributes no replacement rows. Its useful board
-          // state remains in the store until a successful read can replace it.
-          return undefined;
-        }
-      }),
-    );
-    const dedupe = <T extends { id: string }>(rows: T[]): T[] => [
-      ...new Map(rows.map((row) => [row.id, row])).values(),
-    ];
-    set((current) => {
-      const answered = results.filter((result): result is NonNullable<typeof result> => result !== undefined);
-      const answeredServerIds = new Set(answered.map((result) => result.serverId));
-      const projects = dedupe([
-        ...current.projects.filter((row) => !answeredServerIds.has(row.serverId)),
-        ...answered.flatMap((result) => result.projects),
-      ]);
-      const tickets = dedupe([
-        ...current.tickets.filter((row) => !answeredServerIds.has(row.serverId)),
-        ...answered.flatMap((result) => result.tickets),
-      ]);
-      return {
-        projects,
-        workspaces: applyProjectIdentity(current.workspaces, projects),
-        tickets: tickets.sort(byRank),
-        boardDevices: [
-          ...current.boardDevices.filter((entry) => !answeredServerIds.has(entry.serverId)),
-          ...answered.flatMap((result) => result.devices),
-        ],
-        boardLoading: false,
-      };
-    });
-  },
-
-  async createTicket(input) {
-    const server = boardServer(get().servers, get().projects, input.projectId);
-    const body = await transport.request<{ ticket: RawTicket }>(server, "/tickets", {
-      method: "POST",
-      body: input,
-    });
-    const ticket = toTicket(body.ticket, server);
-    set((current) => ({ tickets: withTicket(current.tickets, ticket) }));
-    void get().loadBoard({ fresh: true }).catch(() => {});
-    return ticket;
-  },
-
-  async startTicket(id, options = {}) {
-    const ticket = get().tickets.find((entry) => entry.id === id);
-    if (!ticket) throw new Error("That ticket is gone.");
-    const target = ticket.deviceId
-      ? get().boardDevices.find((entry) => entry.deviceId === ticket.deviceId)?.serverId
-      : ticket.serverId;
-    if (!target) throw new Error("That device isn't connected.");
-    const body = await transport.request<{ chat?: RawChat }>(
-      target,
-      `/tickets/${encodeURIComponent(id)}/start`,
-      { method: "POST", body: options },
-    );
-    const chatId = body.chat?.id;
-    if (!chatId) throw new Error("Couldn't start that thread.");
-    await Promise.all([get().refresh(), get().loadBoard({ fresh: true })]);
-    return { id: chatId, serverId: target };
-  },
-
-  async updateTicket(id, patch) {
-    const ticket = get().tickets.find((entry) => entry.id === id);
-    if (!ticket) return;
-    const body = await transport.request<{ ticket: RawTicket }>(
-      ticket.serverId,
-      `/tickets/${encodeURIComponent(id)}`,
-      { method: "PATCH", body: patch },
-    );
-    // The answer *is* the ticket, so the pane repaints from it now rather than
-    // waiting on a read of the whole board. That read still happens, behind the
-    // change, for what a write moves elsewhere — a parent's progress ring, a
-    // sub-ticket, a sibling's rank.
-    set((current) => ({ tickets: withTicket(current.tickets, toTicket(body.ticket, ticket.serverId)) }));
-    void get().loadBoard({ fresh: true }).catch(() => {});
-  },
-
-  async moveTicket(id, status, before, after) {
-    const ticket = get().tickets.find((entry) => entry.id === id);
-    if (!ticket) return;
-    // Optimistic, because dragging a card that snaps back while the request
-    // flies reads as the app refusing the move.
-    set((current) => ({
-      tickets: current.tickets.map((entry) => (entry.id === id ? { ...entry, status } : entry)),
-    }));
-    try {
-      const body = await transport.request<{ ticket: RawTicket }>(
-        ticket.serverId,
-        `/tickets/${encodeURIComponent(id)}/move`,
-        { method: "POST", body: { status, before, after } },
-      );
-      set((current) => ({ tickets: withTicket(current.tickets, toTicket(body.ticket, ticket.serverId)) }));
-    } finally {
-      void get().loadBoard({ fresh: true }).catch(() => {});
-    }
-  },
-
-  async commentOnTicket(id, body) {
-    const ticket = get().tickets.find((entry) => entry.id === id);
-    if (!ticket) return;
-    const answer = await transport.request<{ ticket: RawTicket }>(
-      ticket.serverId,
-      `/tickets/${encodeURIComponent(id)}/comment`,
-      { method: "POST", body: { body } },
-    );
-    set((current) => ({ tickets: withTicket(current.tickets, toTicket(answer.ticket, ticket.serverId)) }));
-    void get().loadBoard({ fresh: true }).catch(() => {});
-  },
-
-  async editTicketComment(id, commentId, body) {
-    const ticket = get().tickets.find((entry) => entry.id === id);
-    if (!ticket) return;
-    await transport.request(
-      ticket.serverId,
-      `/tickets/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
-      { method: "PATCH", body: { body } },
-    );
-  },
-
-  async deleteTicketComment(id, commentId) {
-    const ticket = get().tickets.find((entry) => entry.id === id);
-    if (!ticket) return;
-    await transport.request(
-      ticket.serverId,
-      `/tickets/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
-      { method: "DELETE" },
-    );
-  },
-
-  async deleteTicket(id) {
-    const ticket = get().tickets.find((entry) => entry.id === id);
-    if (!ticket) return;
-    await transport.request(ticket.serverId, `/tickets/${encodeURIComponent(id)}`, { method: "DELETE" });
-    set((current) => ({ tickets: current.tickets.filter((entry) => entry.id !== id) }));
-    void get().loadBoard({ fresh: true }).catch(() => {});
-  },
-
-  async ticketActivity(id) {
-    const ticket = get().tickets.find((entry) => entry.id === id);
-    if (!ticket) return [];
-    const body = await transport.request<{ activity?: TicketActivity[] }>(
-      ticket.serverId,
-      `/tickets/${encodeURIComponent(id)}/activity`,
-    );
-    return body.activity ?? [];
-  },
-
-  async attachThread(ticketId, chatId) {
-    const ticket = get().tickets.find((entry) => entry.id === ticketId);
-    const chat = get().chats.find((entry) => entry.id === chatId);
-    if (!ticket) return;
-    if (!chat) throw new Error("That thread is gone.");
-    const threadDevice = get().boardDevices.find((entry) => entry.serverId === chat.serverId)?.deviceId;
-    if (!threadDevice) throw new Error("That thread's device is not connected.");
-    const body = await transport.request<{ ticket: RawTicket }>(
-      ticket.serverId,
-      `/tickets/${encodeURIComponent(ticketId)}/threads`,
-      {
-        method: "POST",
-        body: {
-          chatId,
-          deviceId: threadDevice,
-          state: chat.state,
-        },
-      },
-    );
-    set((current) => ({ tickets: withTicket(current.tickets, toTicket(body.ticket, ticket.serverId)) }));
-    void get().loadBoard({ fresh: true }).catch(() => {});
-  },
-
-  async detachThread(ticketId, chatId, deviceId) {
-    const ticket = get().tickets.find((entry) => entry.id === ticketId);
-    if (!ticket) return;
-    const body = await transport.request<{ ticket: RawTicket }>(
-      ticket.serverId,
-      `/tickets/${encodeURIComponent(ticketId)}/threads/${encodeURIComponent(chatId)}?device=${encodeURIComponent(deviceId)}`,
-      { method: "DELETE" },
-    );
-    set((current) => ({ tickets: withTicket(current.tickets, toTicket(body.ticket, ticket.serverId)) }));
-    void get().loadBoard({ fresh: true }).catch(() => {});
-  },
-
-  async ticketFromThread(chatId) {
-    const chat = get().chats.find((entry) => entry.id === chatId);
-    if (!chat) throw new Error("That thread is gone.");
-    const body = await transport.request<{ ticket: RawTicket }>(
-      chat.serverId,
-      `/chats/${encodeURIComponent(chatId)}/ticket`,
-      { method: "POST", body: {} },
-    );
-    const ticket = toTicket(body.ticket, chat.serverId);
-    set((current) => ({ tickets: withTicket(current.tickets, ticket) }));
-    void get().loadBoard({ fresh: true }).catch(() => {});
-    return ticket;
   },
 
   async readChat(id) {
@@ -1395,18 +1102,6 @@ export const useStore = create<State>((set, get) => ({
         // A mark that did not save comes back on the next refresh, which is a
         // smaller wrong than a toast about a bold row.
       });
-  },
-
-  async saveProject(id, patch) {
-    const project = get().projects.find((entry) => entry.id === id);
-    if (!project) throw new Error("That workspace isn't on the board.");
-    const body = await transport.request<{ project: RawProject }>(
-      project.serverId,
-      `/projects/${encodeURIComponent(id)}`,
-      { method: "PATCH", body: patch },
-    );
-    await get().loadBoard({ fresh: true });
-    return { ...body.project, serverId: project.serverId, workspaceIds: project.workspaceIds } as Project;
   },
 
   async setChatOptions(id, patch) {
@@ -1689,41 +1384,9 @@ function localServer(servers: Server[]): Server | undefined {
   return servers.find((server) => server.local) ?? servers.find((server) => server.online) ?? servers[0];
 }
 
-/// Which machine owns a project's tickets. A project belongs to whichever
-/// server answered with it, so a write goes back to that one rather than to
-/// whichever machine happens to be local.
 /// The computer a thread with no workspace starts on: the first available one.
 function preferredServer(servers: Server[]): Server | undefined {
   return servers.find((server) => server.online && !server.cloud);
-}
-
-function boardServer(servers: Server[], projects: Project[], projectId: string): string {
-  const project = projects.find((entry) => entry.id === projectId);
-  const server = project?.serverId ?? localServer(servers)?.id;
-  if (!server) throw new Error("This machine isn't connected.");
-  return server;
-}
-
-type RawProject = Omit<Project, "serverId" | "workspaceIds"> & { workspaceIds?: string[] };
-type RawTicket = Omit<Ticket, "serverId" | "threads"> & { threads?: Ticket["threads"] };
-
-function toTicket(raw: RawTicket, serverId: string): Ticket {
-  return { ...raw, serverId, threads: raw.threads ?? [] } as Ticket;
-}
-
-/// Puts the row a write answered with back where it came from.
-///
-/// A write already holds the record it made, so the pane it is on repaints from
-/// that rather than from a read of the whole board — which is a round trip the
-/// person is watching.
-function withRow<T extends { id: string }>(rows: T[], row: T): T[] {
-  return rows.some((entry) => entry.id === row.id)
-    ? rows.map((entry) => (entry.id === row.id ? row : entry))
-    : [...rows, row];
-}
-
-function withTicket(rows: Ticket[], row: Ticket): Ticket[] {
-  return withRow(rows, row).sort(byRank);
 }
 
 function nameFromPath(path: string): string {

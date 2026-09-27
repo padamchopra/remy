@@ -1,7 +1,7 @@
 import { modelSwitch, speaker } from "@/lib/thread-message";
 import { BranchName } from "./BranchName";
 import { ReplyComposer, replyComposerFrame, replyComposerForm } from "./ReplyComposer";
-import { organizationArtifactRoute } from "@/lib/artifact-route";
+import { organizationArtifactRoute, shownArtifacts } from "@/lib/artifact-route";
 import { LinearThreadNotice } from "./LinearConnection";
 import { navigateLocation } from "@/lib/route";
 import type { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, ReactNode, RefObject } from "react";
@@ -28,8 +28,6 @@ import {
   FileCode2,
   Folder,
   MessagesSquare,
-  SquareKanban,
-  Ticket as TicketIcon,
   Wrench,
   X,
 } from "lucide-react";
@@ -90,20 +88,6 @@ import {
   QuestionnaireSubmit,
   QuestionnaireTitle,
 } from "@/components/ui/questionnaire";
-import {
-  Command,
-  CommandDialog,
-  CommandEmpty,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { ComposerMenu } from "@/components/ComposerMenu";
 import {
   InlineImageComposer,
@@ -162,7 +146,6 @@ export function ChatView({
   onOpenLink,
   codeReferences: liftedReferences,
   onCodeReferencesChange,
-  onOpenTicket,
   onOpenThread,
   onOpenWorkspace,
   onRestored,
@@ -184,7 +167,6 @@ export function ChatView({
   /// one holds it. Kept by the workbench so the two tabs share it.
   codeReferences?: ChatCodeReference[];
   onCodeReferencesChange?: (references: ChatCodeReference[]) => void;
-  onOpenTicket?: (key: string) => void;
   /// Where a card in the feed goes when a Remy tool made a thread or registered
   /// a workspace. Without these the card is still drawn; it just does not open.
   onOpenThread?: (id: string) => void;
@@ -228,7 +210,6 @@ export function ChatView({
   const transcriptRef = useRef<VirtualTranscriptHandle>(null);
   const [activeCheckpoint, setActiveCheckpoint] = useState<string | undefined>(undefined);
   const composerRef = useRef<InlineImageComposerHandle>(null);
-  const stableOpenTicket = useStableOptionalCallback(onOpenTicket);
   const stableOpenThread = useStableOptionalCallback(onOpenThread);
   const stableOpenWorkspace = useStableOptionalCallback(onOpenWorkspace);
   const stableOpenLink = useStableOptionalCallback(onOpenLink);
@@ -405,7 +386,6 @@ export function ChatView({
           ),
         }]}
       >
-        {onOpenTicket && !archived && <ThreadTicket chatId={chat.id} onOpenTicket={onOpenTicket} />}
         {headerEnd}
       </PaneHeader>}
 
@@ -464,7 +444,6 @@ export function ChatView({
                 name={provider?.label ?? "Claude"}
                 conversational={conversational}
                 archived={Boolean(archived)}
-                onOpenTicket={stableOpenTicket}
                 onOpenThread={stableOpenThread}
                 onOpenWorkspace={stableOpenWorkspace}
                 onOpenLink={stableOpenLink}
@@ -1068,7 +1047,6 @@ interface TranscriptTurnProps {
   name: string;
   conversational: boolean;
   archived: boolean;
-  onOpenTicket?: (key: string) => void;
   onOpenThread?: (id: string) => void;
   onOpenWorkspace?: (workspaceId: string) => void;
   onOpenLink?: (href: string) => void;
@@ -1104,7 +1082,6 @@ const TranscriptTurn = memo(function TranscriptTurn({
   name,
   conversational,
   archived,
-  onOpenTicket,
   onOpenThread,
   onOpenWorkspace,
   onOpenLink,
@@ -1117,7 +1094,6 @@ const TranscriptTurn = memo(function TranscriptTurn({
       key={`tools:${item.entries[0].id}`}
       entries={item.entries}
       working={item.entries[0].id === workingToolId}
-      onOpenTicket={onOpenTicket}
       onOpenThread={onOpenThread}
       onOpenWorkspace={onOpenWorkspace}
     />
@@ -1163,7 +1139,6 @@ const TranscriptTurn = memo(function TranscriptTurn({
   && previous.name === next.name
   && previous.conversational === next.conversational
   && previous.archived === next.archived
-  && previous.onOpenTicket === next.onOpenTicket
   && previous.onOpenThread === next.onOpenThread
   && previous.onOpenWorkspace === next.onOpenWorkspace
   && previous.onOpenLink === next.onOpenLink
@@ -1520,14 +1495,13 @@ function Entry({
 }
 
 const ARTIFACT_ICON = {
-  ticket: SquareKanban,
   thread: MessagesSquare,
   workspace: Folder,
 } as const;
 
 /// What a Remy tool just made, as a thing rather than a sentence.
 ///
-/// A tool result is a line of prose the reader has to parse; a ticket is
+/// A tool result is a line of prose the reader has to parse; a thread is
 /// something you open. The card carries what it is and what it is called, and
 /// it opens the thing itself where this feed knows how to.
 function ArtifactCard({
@@ -1548,7 +1522,6 @@ function ArtifactCard({
       <ItemContent className="gap-0.5">
         <ItemTitle className="w-full whitespace-normal break-words">{artifact.title}</ItemTitle>
         <ItemDescription className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-          {artifact.key && <span className="shrink-0 font-mono">{artifact.key}</span>}
           {artifact.detail && <span className="min-w-0 break-words">{artifact.detail}</span>}
         </ItemDescription>
       </ItemContent>
@@ -1689,13 +1662,11 @@ function ToolEntry({ entry }: { entry: ConvEntry }) {
 function ToolGroup({
   entries,
   working,
-  onOpenTicket,
   onOpenThread,
   onOpenWorkspace,
 }: {
   entries: ConvEntry[];
   working: boolean;
-  onOpenTicket?: (key: string) => void;
   onOpenThread?: (id: string) => void;
   onOpenWorkspace?: (workspaceId: string) => void;
 }) {
@@ -1727,18 +1698,16 @@ function ToolGroup({
         </CollapsibleContent>
       </Collapsible>
 
-      {entries.flatMap((entry) => entry.artifacts ?? []).map((artifact, index) => (
+      {entries.flatMap((entry) => shownArtifacts(entry.artifacts)).map((artifact, index) => (
         <ArtifactCard
-          key={`${artifact.kind}:${artifact.key ?? artifact.id ?? index}`}
+          key={`${artifact.kind}:${artifact.id ?? index}`}
           artifact={artifact}
           onOpen={
-            artifact.kind === "ticket" && artifact.key && onOpenTicket
-              ? () => onOpenTicket(artifact.key!)
-              : artifact.kind === "thread" && artifact.id && onOpenThread
-                ? () => onOpenThread(artifact.id!)
-                : artifact.kind === "workspace" && artifact.id && onOpenWorkspace
-                  ? () => onOpenWorkspace(artifact.id!)
-                  : undefined
+            artifact.kind === "thread" && artifact.id && onOpenThread
+              ? () => onOpenThread(artifact.id!)
+              : artifact.kind === "workspace" && artifact.id && onOpenWorkspace
+                ? () => onOpenWorkspace(artifact.id!)
+                : undefined
           }
         />
       ))}
@@ -1915,95 +1884,6 @@ function QuestionCard({
         </QuestionnaireActions>
       </Questionnaire>
     </Card>
-  );
-}
-
-/// The bridge between a thread and the board, in both directions.
-///
-/// A thread that is already on a ticket shows its key and opens it. One that is
-/// not offers to make a ticket from it — adopting the worktree and branch it is
-/// already in rather than opening new ones — or to file it under a ticket that
-/// already exists. Neither starts or resumes anything: linking is bookkeeping.
-/// The ticket this thread works, as a chip that opens it. In the workbench it
-/// sits in the tab strip beside the thread's tab.
-export function ThreadTicket({ chatId, onOpenTicket }: { chatId: string; onOpenTicket: (key: string) => void }) {
-  const tickets = useStore((s) => s.tickets);
-  const loadBoard = useStore((s) => s.loadBoard);
-  const ticketFromThread = useStore((s) => s.ticketFromThread);
-  const attachThread = useStore((s) => s.attachThread);
-  const [picking, setPicking] = useState(false);
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    void loadBoard().catch(() => {
-      // The board is a nicety here; the thread works without one.
-    });
-  }, [loadBoard]);
-
-  const onTicket = tickets.find((ticket) => ticket.threads.some((link) => link.chatId === chatId));
-  const open = tickets.filter((ticket) => ticket.status !== "done" && ticket.status !== "cancelled");
-
-  if (onTicket) return null;
-
-  const create = async () => {
-    setBusy(true);
-    try {
-      const ticket = await ticketFromThread(chatId);
-      toast.success(`Tracking as ${ticket.key}`);
-      onOpenTicket(ticket.key);
-    } catch (error) {
-      toast.error("Couldn't make a ticket from this thread", { description: apiError(error) });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const attach = async (ticketId: string, key: string) => {
-    try {
-      await attachThread(ticketId, chatId);
-      setPicking(false);
-      toast.success(`Attached to ${key}`);
-    } catch (error) {
-      toast.error("Couldn't attach this thread", { description: apiError(error) });
-    }
-  };
-
-  return (
-    <>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" disabled={busy}>
-            <TicketIcon />
-            Track
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem onSelect={() => void create()}>New ticket from this thread</DropdownMenuItem>
-          <DropdownMenuItem disabled={open.length === 0} onSelect={() => setPicking(true)}>
-            Add to a ticket
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-
-      <CommandDialog open={picking} onOpenChange={setPicking} title="Add to a ticket">
-        <Command>
-          <CommandInput placeholder="Find a ticket…" />
-          <CommandList>
-            <CommandEmpty>No open tickets.</CommandEmpty>
-            {open.map((ticket) => (
-              <CommandItem
-                key={ticket.id}
-                value={`${ticket.key} ${ticket.title}`}
-                onSelect={() => void attach(ticket.id, ticket.key)}
-              >
-                <span className="font-mono text-xs text-muted-foreground">{ticket.key}</span>
-                <span className="truncate">{ticket.title}</span>
-              </CommandItem>
-            ))}
-          </CommandList>
-        </Command>
-      </CommandDialog>
-    </>
   );
 }
 

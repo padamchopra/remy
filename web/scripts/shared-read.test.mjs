@@ -70,18 +70,18 @@ test("uses the explicit freshness window and reads again after it expires", asyn
   const source = async () => ++reads;
   const options = { now: () => time };
 
-  assert.equal(await readSharedResource("board", "local", source, options), 1);
+  assert.equal(await readSharedResource("identity", "local", source, options), 1);
   time = 1_999;
-  assert.equal(await readSharedResource("board", "local", source, options), 1);
+  assert.equal(await readSharedResource("identity", "local", source, options), 1);
   time = 2_000;
-  assert.equal(await readSharedResource("board", "local", source, options), 2);
+  assert.equal(await readSharedResource("identity", "local", source, options), 2);
 });
 
 test("does not let a read from before invalidation replace the next revision", async () => {
   let finishStale;
   let active = 0;
   let mostActive = 0;
-  const stale = readSharedResource("board", "local", () => {
+  const stale = readSharedResource("identity", "local", () => {
     active += 1;
     mostActive = Math.max(mostActive, active);
     return new Promise((resolve) => {
@@ -91,14 +91,14 @@ test("does not let a read from before invalidation replace the next revision", a
       };
     });
   });
-  invalidateSharedResource("board", "local");
-  const fresh = readSharedResource("board", "local", async () => {
+  invalidateSharedResource("identity", "local");
+  const fresh = readSharedResource("identity", "local", async () => {
     active += 1;
     mostActive = Math.max(mostActive, active);
     active -= 1;
     return "fresh";
   });
-  const alsoFresh = readSharedResource("board", "local", async () => "duplicate");
+  const alsoFresh = readSharedResource("identity", "local", async () => "duplicate");
   assert.equal(fresh, alsoFresh);
   await Promise.resolve();
   assert.equal(active, 1);
@@ -106,6 +106,6 @@ test("does not let a read from before invalidation replace the next revision", a
 
   assert.equal(await stale, "stale");
   assert.equal(await fresh, "fresh");
-  assert.equal(await readSharedResource("board", "local", async () => "unexpected"), "fresh");
+  assert.equal(await readSharedResource("identity", "local", async () => "unexpected"), "fresh");
   assert.equal(mostActive, 1);
 });

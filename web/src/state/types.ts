@@ -311,14 +311,12 @@ export interface PullRequestTimelineItem {
   line?: number | null;
 }
 
-/// Something a Remy tool made — a ticket, thread, or workspace — with enough
-/// on it to draw a card and open the thing it names.
+/// Something a Remy tool made — a thread or workspace — with enough on it to
+/// draw a card and open the thing it names.
 export interface ConvArtifact {
   organizationId?: string;
   computerId?: string;
-  kind: "ticket" | "thread" | "workspace";
-  /// A ticket is addressed by key, a thread and a workspace by id.
-  key?: string;
+  kind: "thread" | "workspace";
   id?: string;
   title: string;
   detail?: string;
@@ -487,74 +485,3 @@ export interface ProviderMcpStatus {
   configured: boolean;
 }
 
-/// A repository, as the board knows it — what a ticket belongs to, rather than
-/// the folder holding it on any one machine.
-export interface Project {
-  id: string;
-  serverId: string;
-  name: string;
-  /// The letters in front of a ticket key. Editable, and every ticket in the
-  /// project follows it.
-  keyPrefix: string;
-  origin?: string;
-  icon?: string | null;
-  tint?: string | null;
-  /// Workspaces on that machine which are this project. Empty means the repo is
-  /// not cloned there.
-  workspaceIds: string[];
-}
-
-export type TicketStatus =
-  | "backlog"
-  | "todo"
-  | "in_progress"
-  | "needs_input"
-  | "pr_review"
-  | "done"
-  | "cancelled";
-
-export interface TicketThread {
-  ticketId: string;
-  deviceId: string;
-  chatId: string;
-  stage?: string;
-  /// `runner` when the board started it, `you` when you attached it by hand.
-  linkedBy: "runner" | "you";
-  createdAt: number;
-}
-
-export interface Ticket {
-  id: string;
-  serverId: string;
-  /// Its own number. `key` is that behind the project's slug, so renaming the
-  /// slug renames every key.
-  number: number;
-  key: string;
-  projectId: string;
-  title: string;
-  body: string;
-  status: TicketStatus;
-  priority: number;
-  parentId?: string;
-  rank: string;
-  /// The machine that runs this ticket's work.
-  deviceId?: string;
-  branch?: string;
-  createdAt: number;
-  updatedAt: number;
-  startedAt?: number;
-  closedAt?: number;
-  threads: TicketThread[];
-}
-
-/// One line of a ticket's story. The feed and the log the board syncs are the
-/// same record, so nothing here can drift from what actually happened.
-export interface TicketActivity {
-  id: string;
-  at: number;
-  actor: string;
-  kind: string;
-  body?: string;
-  editedAt?: number;
-  detail?: Record<string, unknown>;
-}

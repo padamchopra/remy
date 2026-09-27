@@ -8,8 +8,8 @@ export function EditableName({
   value,
   onCommit,
   label,
-  // The type this name is set in. A sidebar row and a ticket's title are the
-  // same control at two sizes, so the size is the caller's to say.
+  // The type this name is set in. The same control appears at more than one
+  // size, so the size is the caller's to say.
   className = "text-sm font-medium",
 }: {
   value: string;

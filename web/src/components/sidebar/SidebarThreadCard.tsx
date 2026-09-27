@@ -59,17 +59,6 @@ export function SidebarThreadCard({ thread }: { thread: SidebarThread }) {
           </span>
         )}
       </div>
-      {thread.ticket && (
-        <button
-          type="button"
-          data-link
-          className="flex flex-col gap-0.5 rounded border-t border-border pt-2 text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-          onClick={thread.ticket.onOpen}
-        >
-          <span className="font-mono text-[11px] text-muted-foreground">{thread.ticket.key}</span>
-          {thread.ticket.title && <span className="text-xs leading-snug hover:underline">{thread.ticket.title}</span>}
-        </button>
-      )}
     </div>
   );
 }

@@ -7,8 +7,8 @@ function ScrollArea({
   className,
   children,
   // Which way this one scrolls. Vertical is the default because almost every
-  // surface here is a list; the board is the one that runs sideways, and
-  // without a bar of its own its far columns had no affordance at all.
+  // surface here is a list; one that runs sideways needs a bar of its own, or
+  // its far edge has no affordance at all.
   orientation = "vertical",
   viewportProps,
   ...props

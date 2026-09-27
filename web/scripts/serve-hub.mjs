@@ -4,7 +4,7 @@ import { extname, join, normalize, resolve } from "node:path";
 
 const root = resolve(process.argv[2] ?? new URL("../dist", import.meta.url).pathname);
 const port = Number(process.env.PORT ?? process.argv[3] ?? 5180);
-const appRoute = /^\/(?:app\/)?(?:threads|inbox|workspaces|board|tickets|pull-requests|settings)(?:\/|$)/;
+const appRoute = /^\/(?:app\/)?(?:threads|inbox|workspaces|board|tasks|tickets|pull-requests|settings)(?:\/|$)/;
 const types = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",

@@ -215,12 +215,9 @@ try {
           [`${base}/workspaces`]: { workspaces: hasWorkspace && !(process.env.QA_SCOPE_ONLY === "1" && org.personal)?[{id:"repo",name:"Example",origin:"https://github.com/example/repo",icon:"icon.png"},{id:"remy",name:"remy",origin:"https://github.com/padamchopra/remy",icon:"folder"}]:[], canManage: true },
           [`${base}/notifications`]: { notifications: [], devices: [] },
           [`${base}/environments`]: { environments: [], assignments: [], workspaces: [] },
-          [`${base}/board/tickets`]: {items:process.env.QA_SCOPE_ONLY === "1"?[{id:`${org.id}-ticket`,entity:"ticket",fields:{title:org.personal?"Personal ticket":"Studio ticket",status:"todo",number:1,keyPrefix:org.personal?"PER":"STD"},lastActor:{id:"reader",label:"Reader"},activity:[]}]:[]},
           [`${base}/github/pull-requests`]: {pullRequests:[]},
           [`${base}/connections`]: {canManage:true,providers:[],connections:process.env.QA_SCOPE_ONLY === "1"?[{id:"github-general",organization_id:"personal",provider:"github",subject:"reader",external_id:"padamchopra",label:"padamchopra",status:"connected",updated_at:1,availability:"all"}]:[],linearAccounts:process.env.QA_SCOPE_ONLY === "1"?[{id:"linear-general",externalId:"linear-remy",label:"Remy",status:"connected",updatedAt:1,general:true,organizationIds:[]}]:[]},
           [`${base}/github`]: {repositories:[],activity:[]},
-          [`${base}/linear`]: {canManage:true,connected:false,catalog:{teams:[],projects:[],users:[]},mappings:[],matches:[],members:[],workspaces:[],teams:[],columns:[]},
-          [`${base}/linear-board`]: {settings:[],labels:{},rule:""},
           [`${base}/linear-workspace`]: {accounts:[],link:null},
           [`${base}/linear-access`]: {notice:null},
           [`${base}/compute-shares`]: {canManage:true,computers:[{id:"personal-mac",name:"Personal Mac",icon:"laptop",platform:"darwin",shared:sharedComputer,available:true,sharedBy:sharedComputer?"Reader":null,canShare:true,canRevoke:true,providers:sharedComputer?[{id:"claude",label:"Claude",allowed:true},{id:"codex",label:"Codex",allowed:true}]:[]}],cloudConnections:[{provider:"fly-sprites",shared:true,available:true,sharedBy:"Reader",canShare:true,canRevoke:true,providers:[{id:"openrouter",label:"OpenRouter",allowed:true}]},{provider:"modal",shared:sharedCloud,available:true,sharedBy:sharedCloud?"Reader":null,canShare:true,canRevoke:true,providers:sharedCloud?[{id:"anthropic",label:"Anthropic",allowed:true},{id:"openrouter",label:"OpenRouter",allowed:true}]:[]}]},
@@ -421,14 +418,12 @@ try {
           if(artifacts)await page.screenshot({path:`${artifacts}/thread-url-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
           assert.equal(await page.getByRole("button",{name:"Back to all",exact:true}).count(),0,"Thread details do not add a second navigation row");
           assert.equal(await page.getByText("This computer is offline; you’re reading its last saved update.",{exact:true}).count(),0,"Offline threads do not add a redundant status row");
-          await page.goto(clean("/board"));
-          await page.getByText("Personal ticket",{exact:false}).waitFor();
-          await page.getByText("Studio ticket",{exact:false}).waitFor();
-          assert.equal(await page.locator('[data-slot="pane-header"]').count(),1,"Tasks uses the shared pane header");
-          assert.equal(await page.getByRole("heading",{name:"Tasks",exact:true}).count(),0,"Tasks does not repeat the pane title");
-          assert.equal(await page.getByRole("button",{name:"Create ticket",exact:true}).count(),1);
-          assert.equal(await page.getByRole("region",{name:"Tasks",exact:true}).count(),1);
-          if(artifacts)await page.screenshot({path:`${artifacts}/unified-tasks-${mobile?'phone':'desktop'}.png`});
+          for(const retired of ["/board","/tasks","/tickets/REMY-1"]){
+            await page.goto(clean(retired));
+            await page.waitForURL((current)=>/\/threads$/.test(current.pathname));
+            assert.match(new URL(page.url()).pathname,/\/threads$/,`A retired ${retired} link opens threads`);
+          }
+          assert.equal(await page.getByRole("button",{name:"Tasks",exact:true}).count(),0,"Tasks is gone from the sidebar");
           assert.equal(await page.getByRole("button",{name:"Agents",exact:true}).count(),0,"Agents is gone from the sidebar");
           assert.equal(await page.getByRole("button",{name:"Routing",exact:true}).count(),0,"Routing is gone from the sidebar");
           await page.goto(clean("/inbox"));

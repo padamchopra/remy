@@ -26,8 +26,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { PaneLoading } from "@/components/PaneLoading";
 import { PaneHeader } from "@/components/PaneHeader";
 import { usePersonalHub } from "@/lib/hub-scope";
-import { organizationArtifactRoute } from "@/lib/artifact-route";
-import type { ConvArtifact } from "@/state/types";
+import { organizationArtifactRoute, shownArtifacts } from "@/lib/artifact-route";
 import { HubThreadComposer, type HubThreadWorkspaceOption } from "./HubThreadComposer";
 import { watchHubComputers } from "@/lib/hub-computers";
 import { HubNotifications } from "./HubNotifications";
@@ -329,7 +328,7 @@ export default function HubThreads({
                         {String(entry.text ?? entry.output ?? entry.arg ?? "")}
                       </BubbleContent>
                     </Bubble>
-                    {(Array.isArray(entry.artifacts) ? entry.artifacts as ConvArtifact[] : []).map((artifact, index) => {
+                    {shownArtifacts(entry.artifacts).map((artifact, index) => {
                       const route = organizationArtifactRoute(artifact);
                       return <Button key={index} data-link variant="outline" className="h-auto justify-start whitespace-normal text-left" disabled={!route} onClick={() => route && navigate(route)}>
                         {artifact.title}
