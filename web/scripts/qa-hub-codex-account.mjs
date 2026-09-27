@@ -45,7 +45,7 @@ const click=async locator=>{await locator.scrollIntoViewIfNeeded();const box=awa
 const threads=[];
 const startThread=async(user,title,choice={provider:'codex',model:'gpt-5.6-sol'})=>{
  const requestId=crypto.randomUUID();
- let response=await call(user,'/threads','POST',{workspaceId:workspace.id,title,requestId,...choice,computerId:`cloud:${provider}`,visibility:'open'});
+ let response=await call(user,'/threads','POST',{workspaceId:workspace.id,title,message:title,requestId,...choice,computerId:`cloud:${provider}`,visibility:'open'});
  for(let n=0;n<600 && response.status<400 && !response.body?.id;n++){await new Promise(r=>setTimeout(r,100));response=await call(user,`/threads/starts/${requestId}`);}
  return response;
 };

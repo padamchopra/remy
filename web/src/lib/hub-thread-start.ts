@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { HubRequestError, hubRequest, hubThreadBase, hubThreadPath } from "./hub-threads";
+import { HubRequestError, hubRequest, hubThreadBase } from "./hub-threads";
 import { threadStartProgressLabel, type ThreadStartProgress } from "./thread-start-progress";
 
 type StartedThread = { id: string; computerId: string; phase?: string; error?: string };
@@ -28,7 +28,7 @@ const storageKey = "remy:pending-hosted-threads";
 let starts: ThreadStart[] = [];
 try {
   const saved = JSON.parse(sessionStorage.getItem(storageKey) ?? "[]") as ThreadStart[];
-  if (Array.isArray(saved)) starts = saved.filter(s => s.at > Date.now() - 86_400_000).slice(-10).map(s => ({...s, visibility: s.visibility ?? "private", ...(s.phase === "starting" ? {phase: "failed" as const, error: "Startup was interrupted. Retry to continue your thread."} : {})}));
+  if (Array.isArray(saved)) starts = saved.filter(s => s.at > Date.now() - 86_400_000).slice(-10).map(s => ({...s, visibility: s.visibility ?? "private"}));
 } catch {}
 const listeners = new Set<() => void>();
 export const threadStarts = () => starts;
@@ -61,7 +61,7 @@ async function waitForCreated(start: ThreadStart): Promise<StartedThread | undef
   let current = applyProgress(start, "creating");
   const created = await hubRequest<StartedThread>(`${hubThreadBase(start.organizationId)}/threads`, "POST", {
     workspaceId: start.workspaceId, computerId: start.computerId,
-    title: start.message.slice(0, 200), requestId: start.requestId,
+    title: start.message.slice(0, 200), message: start.message, requestId: start.requestId,
     branch: start.branch, provider: start.provider, model: start.model,
     visibility: start.visibility,
     ...(start.review ? { review: start.review } : {}),
@@ -84,20 +84,13 @@ async function waitForCreated(start: ThreadStart): Promise<StartedThread | undef
 export async function retryHubThread(start: ThreadStart) {
   if (running.has(start.requestId)) return;
   running.add(start.requestId);
-  let current: ThreadStart = {...start, phase: "starting", progress: start.created ? "sending" : "creating", error: undefined};
+  let current: ThreadStart = {...start, phase: "starting", progress: "creating", error: undefined};
   update(current);
   try {
-    if (!current.created) {
-      const created = await waitForCreated(current);
-      if (!created) return;
-      current = {...current, created, progress: "sending"};
-      update(current);
-    }
-    current = applyProgress(current, "sending");
-    await hubRequest(`${hubThreadPath(start.organizationId, current.created!.computerId, current.created!.id)}/message`, "POST", {
-      text: start.message, messageId: `u-${start.requestId}`, attachmentIds: [],
-    });
-    update({...current, phase: "ready", progress: "sending"});
+    const created = await waitForCreated(current);
+    if (!created) return;
+    current = {...current, created};
+    update({...current, phase: "ready", progress: "ready"});
   } catch (error) {
     if (!starts.some(item => item.requestId === start.requestId)) return;
     update({...current, phase: "failed", error: error instanceof Error ? error.message : "Your thread could not start. Retry to continue."});
@@ -107,4 +100,8 @@ export function forgetThreadStart(id: string) {
   starts = starts.filter(s => s.requestId !== id);
   try { sessionStorage.setItem(storageKey, JSON.stringify(starts)); } catch {}
   listeners.forEach(fn => fn());
+}
+
+for (const start of starts) {
+  if (start.phase === "starting") queueMicrotask(() => void retryHubThread(start));
 }

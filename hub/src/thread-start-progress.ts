@@ -5,6 +5,7 @@ export type ThreadStartProgress =
   | "starting_runtime"
   | "connecting"
   | "preparing_branch"
+  | "sending"
   | "ready"
   | "failed";
 
@@ -14,8 +15,10 @@ export type ManualThreadStart = {
   workspaceId?: string;
   computerId?: string;
   id?: string;
+  messageSent?: boolean;
   error?: string;
   at?: number;
+  updatedAt?: number;
 };
 
 const HOSTED_PROGRESS: Record<string, ThreadStartProgress> = {
@@ -33,8 +36,9 @@ export function threadStartProgress(input: {
   record?: ManualThreadStart | undefined;
 }): ThreadStartProgress {
   const record = input.record;
-  if (record?.id && record.computerId) return "ready";
   if (record?.error || record?.phase === "failed") return "failed";
+  if (record?.phase === "ready" && record.id && record.computerId && record.messageSent) return "ready";
+  if (record?.phase === "sending") return "sending";
   const hosted = input.hostedPhase ? HOSTED_PROGRESS[input.hostedPhase] : undefined;
   if (hosted) return hosted;
   if (record?.phase === "preparing_branch") return "preparing_branch";

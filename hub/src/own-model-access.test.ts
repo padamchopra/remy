@@ -173,7 +173,7 @@ test("thread starts keep the exact cloud and model connections independently", a
     const { values, state } = memoryState();
     const coordinator = new HubCoordinator(state, env as never);
     const handle = (coordinator as unknown as { threadRequest: (request: Request) => Promise<Response | undefined> }).threadRequest.bind(coordinator);
-    const start = (payload: Record<string, unknown>, actor = "ada") => handle(new Request("https://internal/threads", { method: "POST", headers: { "content-type": "application/json", "x-thread-member": encodeURIComponent(JSON.stringify({ id: actor, label: actor })), "x-organization-id": "org" }, body: JSON.stringify({ workspaceId: "org-release", requestId: crypto.randomUUID(), visibility: "private", ...payload }) }));
+    const start = (payload: Record<string, unknown>, actor = "ada") => handle(new Request("https://internal/threads", { method: "POST", headers: { "content-type": "application/json", "x-thread-member": encodeURIComponent(JSON.stringify({ id: actor, label: actor })), "x-organization-id": "org" }, body: JSON.stringify({ workspaceId: "org-release", requestId: crypto.randomUUID(), message: "Test.", visibility: "private", ...payload }) }));
     const error = async (response: Response | undefined) => ((await response!.json()) as { error: string }).error;
     const cloudId = `cloud:modal:${gracePersonal.id}:legacy`;
 

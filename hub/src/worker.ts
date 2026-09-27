@@ -40,6 +40,7 @@ import {
   COMPUTER_HEARTBEAT_INTERVAL_MS,
   COMPUTER_HEARTBEAT_TIMEOUT_MS,
   COMPUTER_PROTOCOL_VERSION,
+  THREAD_MESSAGE_MAX_CHARACTERS,
   THREAD_REQUEST_MAX_BYTES,
   computerRegistrationSchema,
   computerRegistrationInputSchema,
@@ -107,6 +108,26 @@ export interface Env extends ApplePushConfig {
 }
 
 type LogEvent = RequestOutcome | HubErrorEvent;
+type ManualThreadStartCommand = {
+  actor: ThreadMember;
+  workspaceId: string;
+  requestId: string;
+  message: string;
+  title?: string;
+  computerId?: string | null;
+  branch?: string;
+  visibility?: string;
+  provider?: string;
+  model?: string;
+  review?: HubReview;
+  chatgpt?: boolean;
+  ownModel?: OwnModelTask;
+  cloudTask?: CloudConnectionTask;
+};
+type DurableManualThreadStart = ManualThreadStart & {
+  command: ManualThreadStartCommand;
+  reviewRecorded?: boolean;
+};
 type HandlerDependencies = {
   log: (event: LogEvent) => void;
   now: () => number;
@@ -1936,6 +1957,7 @@ export class HubCoordinator {
   }
 
   private async startCursorCloudThread(org: string, actor: ThreadMember, input: {
+    threadId: string;
     workspaceId: string;
     origin: string;
     title?: string;
@@ -1948,6 +1970,7 @@ export class HubCoordinator {
     const settings = new HostedSettingsStore(this.env.DB, () => this.env.AUTH_SECRET.get());
     const apiKey = await cursorCloudApiKey(this.env.DB, settings, org, actor.id, input.cloudTask);
     const snapshot = await this.cursorCloudThreads().create({
+      id: input.threadId,
       organizationId: org,
       actor,
       workspaceId: input.workspaceId,
@@ -2120,9 +2143,10 @@ export class HubCoordinator {
     }
   }
 
-  private async manualThreadProgress(userId: string, requestId: string, record?: ManualThreadStart) {
+  private async manualThreadProgress(userId: string, requestId: string, record?: DurableManualThreadStart) {
     const key = `manual-task:${userId}:${requestId}`;
-    const stored = record ?? await this.ctx.storage.get<ManualThreadStart>(key);
+    const stored = record ?? await this.ctx.storage.get<DurableManualThreadStart>(key);
+    if (stored?.command && stored.phase !== "ready" && stored.phase !== "failed") await this.resumeManualThread(key, stored);
     const hosted = stored?.workspaceId
       ? await this.hostedService().get(stored.workspaceId, `${userId}:${requestId}`)
       : undefined;
@@ -2130,36 +2154,41 @@ export class HubCoordinator {
     if (phase === "failed") {
       return { phase, error: stored?.error ?? hosted?.error ?? "Your computer could not start; try again." };
     }
-    if (stored?.id && stored.computerId) return { phase: "ready" as const, id: stored.id, computerId: stored.computerId };
+    if (phase === "ready" && stored?.id && stored.computerId) return { phase, id: stored.id, computerId: stored.computerId };
     return { phase };
   }
 
+  private async saveManualThreadStart(key: string, patch: Partial<DurableManualThreadStart>): Promise<DurableManualThreadStart> {
+    const current = await this.ctx.storage.get<DurableManualThreadStart>(key);
+    if (!current?.command) throw new Error("This thread start is no longer available.");
+    const next = { ...current, ...patch, updatedAt: Date.now() } satisfies DurableManualThreadStart;
+    await this.ctx.storage.put(key, next);
+    return next;
+  }
+
+  private async resumeManualThread(key: string, record: DurableManualThreadStart): Promise<void> {
+    if (record.phase === "ready" || record.phase === "failed" || this.manualStarts.has(key)) return;
+    await this.scheduleAlarm(Date.now() + 15_000);
+    const work = this.finishManualThread(key);
+    this.manualStarts.set(key, work);
+    this.ctx.waitUntil(work.finally(() => { if (this.manualStarts.get(key) === work) this.manualStarts.delete(key); }));
+  }
+
   private async finishManualThread(
-    org: string,
-    actor: ThreadMember,
-    input: {
-      workspaceId: string;
-      requestId: string;
-      title?: string | undefined;
-      computerId?: string | null | undefined;
-      branch?: string | undefined;
-      visibility?: string | undefined;
-      provider?: string | undefined;
-      model?: string | undefined;
-      review?: HubReview | undefined;
-      chatgpt?: boolean | undefined;
-      ownModel?: OwnModelTask | undefined;
-      cloudTask?: CloudConnectionTask | undefined;
-    },
     key: string,
   ): Promise<void> {
     try {
+      let record = await this.ctx.storage.get<DurableManualThreadStart>(key);
+      if (!record?.command || record.phase === "ready") return;
+      const input = record.command;
+      const org = (await this.ctx.storage.get<string>("organizationId"))!;
+      const actor = input.actor;
       const choice = await this.taskComputer(
         actor.id,
         input.workspaceId,
         `${actor.id}:${input.requestId}`,
         input.title,
-        input.computerId,
+        record.computerId ?? input.computerId,
         {
           ...(input.provider ? { provider: input.provider } : {}),
           ...(input.model ? { model: input.model } : {}),
@@ -2168,62 +2197,66 @@ export class HubCoordinator {
         input.ownModel,
         input.cloudTask,
       );
+      record = await this.saveManualThreadStart(key, { computerId: choice.computerId });
       const computer = await this.computers.computer(org, choice.computerId);
       // Cursor Cloud threads run without Remy's tools, so a review there could
       // not report what it found.
       if (input.review && choice.computerId === CURSOR_CLOUD_COMPUTER_ID) throw Error(REVIEW_ON_CURSOR_CLOUD);
       if (choice.computerId === CURSOR_CLOUD_COMPUTER_ID) {
         const workspace = await new OrganizationService(new D1OrganizationStore(this.env.DB)).workspace(org, actor.id, input.workspaceId);
-        const started = await this.startCursorCloudThread(org, actor, {
-          workspaceId: input.workspaceId,
-          origin: workspace.origin,
-          ...(input.title ? { title: input.title } : {}),
-          ...(input.visibility ? { visibility: input.visibility } : {}),
-          ...(input.branch ? { branch: input.branch } : {}),
-          // A new thread asks first; nothing saved on the account grants more.
-          permissionMode: "default",
-          ...(input.cloudTask ? { cloudTask: input.cloudTask } : {}),
-        });
-        await this.ctx.storage.put(key, { computerId: started.computerId, id: started.threadId });
-        await this.ctx.storage.put(`thread-run:${started.threadId}`, { computerId: started.computerId, userId: actor.id });
-        this.invalidateComputers();
-        await this.scheduleAlarm(Date.now()+60_000);
-        return;
+        if (!record.id) {
+          const started = await this.startCursorCloudThread(org, actor, {
+            threadId: input.requestId,
+            workspaceId: input.workspaceId,
+            origin: workspace.origin,
+            ...(input.title ? { title: input.title } : {}),
+            ...(input.visibility ? { visibility: input.visibility } : {}),
+            ...(input.branch ? { branch: input.branch } : {}),
+            permissionMode: "default",
+            ...(input.cloudTask ? { cloudTask: input.cloudTask } : {}),
+          });
+          record = await this.saveManualThreadStart(key, { computerId: started.computerId, id: started.threadId, phase: "sending" });
+        }
+      } else if (!record.id) {
+        if (input.branch && computer?.ownership !== "hosted") record = await this.saveManualThreadStart(key, { phase: "preparing_branch" });
+        const made = await this.dispatchComputer(choice.computerId, actor, "POST", "/hub/threads", {threadId:input.requestId, workspaceId:choice.workspaceId, hubTaskId:key, permissionMode:"default", branch:input.branch, provider:input.provider, model:input.model, visibility:input.visibility ?? "private", title:typeof input.title === "string" ? input.title.slice(0,200) : undefined, ...(input.review ? {hubReview:input.review} : {})});
+        if (!made.ok) throw new Error(await this.computerFailure(made));
+        const thread = threadSnapshotSchema.parse(await made.json());
+        await this.threads.snapshot(choice.computerId, thread);
+        record = await this.saveManualThreadStart(key, { computerId: choice.computerId, id: thread.id, phase: "sending" });
       }
-      if (input.branch && computer?.ownership !== "hosted") {
-        const current = await this.ctx.storage.get<ManualThreadStart>(key);
-        await this.ctx.storage.put(key, { ...current, started: true, phase: "preparing_branch", workspaceId: input.workspaceId, at: current?.at ?? Date.now() });
-      }
-      const made = await this.dispatchComputer(choice.computerId, actor, "POST", "/hub/threads", {workspaceId:choice.workspaceId, hubTaskId:key, permissionMode:"default", branch:input.branch, provider:input.provider, model:input.model, visibility:input.visibility ?? "private", title:typeof input.title === "string" ? input.title.slice(0,200) : undefined, ...(input.review ? {hubReview:input.review} : {})});
-      if (!made.ok) {
-        const body = await made.json().catch(() => undefined) as { error?: unknown } | undefined;
-        const error = typeof body?.error === "string" && body.error.trim() ? body.error : "Your computer could not start; try again.";
-        const current = await this.ctx.storage.get<ManualThreadStart>(key);
-        await this.ctx.storage.put(key, { ...current, started: true, phase: "failed", error, workspaceId: input.workspaceId, at: current?.at ?? Date.now() });
-        return;
-      }
-      const thread = threadSnapshotSchema.parse(await made.json());
-      await this.threads.snapshot(choice.computerId, thread);
-      if (input.review) {
+      const threadId = record.id;
+      if (!threadId) throw new Error("Your computer did not return the new thread.");
+      if (input.review && !record.reviewRecorded) {
         const review = input.review;
-        await new ReviewAgent(this.env.DB).record({ organization_id: org, computer_id: choice.computerId, thread_id: thread.id, user_id: actor.id, workspace_id: input.workspaceId, repository: review.repository, pull_number: review.number, title: review.title, base_ref: review.baseRef, head_ref: review.headRef, started_sha: review.headSha, provider: input.provider ?? null, model: input.model ?? null, rules_applied: review.rules.length });
-        this.reviewsChanged(actor.id, { kind: "review", computerId: choice.computerId, threadId: thread.id });
+        await new ReviewAgent(this.env.DB).record({ organization_id: org, computer_id: choice.computerId, thread_id: threadId, user_id: actor.id, workspace_id: input.workspaceId, repository: review.repository, pull_number: review.number, title: review.title, base_ref: review.baseRef, head_ref: review.headRef, started_sha: review.headSha, provider: input.provider ?? null, model: input.model ?? null, rules_applied: review.rules.length });
+        this.reviewsChanged(actor.id, { kind: "review", computerId: choice.computerId, threadId });
+        record = await this.saveManualThreadStart(key, { reviewRecorded: true });
       }
-      await this.ctx.storage.put(key, { computerId: choice.computerId, id: thread.id });
-      await this.ctx.storage.put(`thread-run:${thread.id}`, { computerId: choice.computerId, userId: actor.id });
+      if (!record.messageSent) {
+        const sent = choice.computerId === CURSOR_CLOUD_COMPUTER_ID
+          ? await this.cursorCloudThreads().handle(threadId, actor, "POST", "message", { text: input.message, messageId: `u-${input.requestId}` }, await cursorCloudApiKey(this.env.DB, new HostedSettingsStore(this.env.DB, () => this.env.AUTH_SECRET.get()), org, actor.id, input.cloudTask))
+          : await this.dispatchComputer(choice.computerId, actor, "POST", `/hub/threads/${threadId}/message`, { text: input.message, messageId: `u-${input.requestId}`, attachmentIds: [] });
+        if (!sent.ok) throw new Error(await this.computerFailure(sent, "Your message could not be sent; retry your thread."));
+        const updated = threadSnapshotSchema.safeParse(await sent.clone().json().catch(() => undefined));
+        if (updated.success) await this.threads.snapshot(choice.computerId, updated.data);
+        record = await this.saveManualThreadStart(key, { messageSent: true });
+      }
+      await this.saveManualThreadStart(key, { phase: "ready", id: threadId, computerId: choice.computerId, messageSent: true });
+      await this.ctx.storage.put(`thread-run:${threadId}`, { computerId: choice.computerId, userId: actor.id });
       this.invalidateComputers();
       await this.scheduleAlarm(Date.now()+60_000);
     } catch (error) {
-      const current = await this.ctx.storage.get<ManualThreadStart>(key);
-      await this.ctx.storage.put(key, {
-        ...current,
-        started: true,
-        phase: "failed",
-        error: error instanceof Error ? error.message : "Your computer could not start; try again.",
-        workspaceId: input.workspaceId,
-        at: current?.at ?? Date.now(),
-      });
+      const current = await this.ctx.storage.get<DurableManualThreadStart>(key);
+      if (!current?.command || current.phase === "ready") return;
+      const message = error instanceof Error ? error.message : "Your computer could not start; try again.";
+      await this.ctx.storage.put(key, { ...current, started: true, phase: "failed", error: message, updatedAt: Date.now() } satisfies DurableManualThreadStart);
     }
+  }
+
+  private async computerFailure(response: Response, fallback = "Your computer could not start; try again."): Promise<string> {
+    const body = await response.json().catch(() => undefined) as { error?: unknown } | undefined;
+    return typeof body?.error === "string" && body.error.trim() ? body.error : fallback;
   }
 
   /// The review routes, as the review's owner: their findings, proposals and
@@ -2320,8 +2353,9 @@ export class HubCoordinator {
     }
     if (url.pathname === "/threads" && request.method === "POST") {
       const org = request.headers.get("x-organization-id")!;
-      const input = await body<{workspaceId?: string; title?: string; requestId?: string; computerId?:string|null; provider?:string; model?:string; modelSource?:unknown; modelProvider?:unknown; modelConnection?:unknown; branch?:string; visibility?:string; review?:unknown}>(request);
+      const input = await body<{workspaceId?: string; title?: string; message?: string; requestId?: string; computerId?:string|null; provider?:string; model?:string; modelSource?:unknown; modelProvider?:unknown; modelConnection?:unknown; branch?:string; visibility?:string; review?:unknown}>(request);
       if (!input || typeof input.workspaceId !== "string" || typeof input.requestId !== "string" || !/^[0-9a-f-]{36}$/.test(input.requestId)) return jsonError("Choose a workspace and retry your thread.", 400);
+      if (typeof input.message !== "string" || !input.message.trim() || input.message.length > THREAD_MESSAGE_MAX_CHARACTERS) return jsonError("Write a message of up to 64,000 characters.", 400);
       const workspace = await new OrganizationService(new D1OrganizationStore(this.env.DB)).workspace(org, actor.id, input.workspaceId);
       // A review is a thread with a pull request attached. The pull request is
       // read with your own GitHub connection and must be this workspace's.
@@ -2382,31 +2416,38 @@ export class HubCoordinator {
         }
       }
       const key = `manual-task:${actor.id}:${input.requestId}`;
-      const previous = await this.ctx.storage.get<ManualThreadStart>(key);
-      if (previous?.id && previous.computerId) return Response.json({computerId: previous.computerId, id: previous.id, phase: "ready"}, {status: 201});
-      const stale = !previous?.at || Date.now() - previous.at > 5 * 60_000;
-      if ((previous?.started || this.manualStarts.has(key)) && !previous?.error && !stale) {
-        const progress = await this.manualThreadProgress(actor.id, input.requestId, previous);
-        return Response.json(progress, { status: progress.id ? 201 : 202 });
-      }
-      await this.ctx.storage.put(key, { started: true, phase: "creating", workspaceId: workspace.id, at: Date.now() } satisfies ManualThreadStart);
-      const work = this.finishManualThread(org, actor, {
+      const previous = await this.ctx.storage.get<DurableManualThreadStart>(key);
+      if (previous?.phase === "ready" && previous.id && previous.computerId && previous.messageSent) return Response.json({computerId: previous.computerId, id: previous.id, phase: "ready"}, {status: 201});
+      const command = previous?.command ?? {
+        actor,
         workspaceId: workspace.id,
         requestId: input.requestId,
-        title: input.title,
-        computerId: input.computerId,
-        branch: input.branch,
-        visibility: input.visibility,
-        provider: start.provider,
-        model: start.model,
-        review,
-        chatgpt,
-        ownModel,
-        cloudTask,
-      }, key);
-      this.manualStarts.set(key, work);
-      this.ctx.waitUntil(work.finally(() => { if (this.manualStarts.get(key) === work) this.manualStarts.delete(key); }));
-      return Response.json({ phase: "creating" }, { status: 202 });
+        message: input.message,
+        ...(input.title ? { title: input.title } : {}),
+        ...(input.computerId !== undefined ? { computerId: input.computerId } : {}),
+        ...(input.branch ? { branch: input.branch } : {}),
+        ...(input.visibility ? { visibility: input.visibility } : {}),
+        ...(start.provider ? { provider: start.provider } : {}),
+        ...(start.model ? { model: start.model } : {}),
+        ...(review ? { review } : {}),
+        ...(chatgpt ? { chatgpt } : {}),
+        ...(ownModel ? { ownModel } : {}),
+        ...(cloudTask ? { cloudTask } : {}),
+      } satisfies ManualThreadStartCommand;
+      const { error: _previousError, ...retryable } = previous ?? {};
+      const record = {
+        ...retryable,
+        command,
+        started: true,
+        phase: previous?.id ? "sending" : "creating",
+        workspaceId: workspace.id,
+        at: previous?.at ?? Date.now(),
+        updatedAt: Date.now(),
+      } satisfies DurableManualThreadStart;
+      await this.ctx.storage.put(key, record);
+      await this.resumeManualThread(key, record);
+      const progress = await this.manualThreadProgress(actor.id, input.requestId, record);
+      return Response.json(progress, { status: progress.id ? 201 : 202 });
     }
     if (!computerId) return jsonError("This action is not available.", 404);
     if (computerId === CURSOR_CLOUD_COMPUTER_ID) {
@@ -2511,6 +2552,13 @@ export class HubCoordinator {
   }
 
   async alarm(): Promise<void> {
+    let manualStartDue: number | undefined;
+    for (const [key, record] of await this.ctx.storage.list<DurableManualThreadStart>({ prefix: "manual-task:" })) {
+      if (!record.command || record.phase === "ready" || record.phase === "failed") continue;
+      await this.resumeManualThread(key, record);
+      manualStartDue = Date.now() + 15_000;
+    }
+
     await this.hostedService().idle();
     const hostedDue=(await this.hostedService().list()).length ? Date.now()+60_000 : undefined;
 
@@ -2520,6 +2568,7 @@ export class HubCoordinator {
     const pushDue = notificationOrg ? await this.env.DB.prepare("SELECT MIN(next_attempt_at) AS due FROM notification_pushes WHERE organization_id=?").bind(notificationOrg).first<{ due: number | null }>() : null;
     let next: number | undefined = pushDue?.due ? Math.max(Date.now() + 1000, pushDue.due) : undefined;
     if(hostedDue) next=Math.min(next ?? hostedDue,hostedDue);
+    if(manualStartDue) next=Math.min(next ?? manualStartDue,manualStartDue);
     for (const socket of this.ctx.getWebSockets()) {
       const attachment = socket.deserializeAttachment() as { kind?: string; lastSeenAt?: number } | null;
       if (attachment?.kind !== "computer" || !attachment.lastSeenAt) continue;

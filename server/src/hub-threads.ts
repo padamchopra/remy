@@ -133,6 +133,8 @@ export async function handleHubThreadRequest(
   const [, id, action] = match;
   try {
     if (!id && method === "POST") {
+      if (input.threadId !== undefined && (typeof input.threadId !== "string" || !/^[0-9a-f-]{36}$/i.test(input.threadId)))
+        return fail(400, "Start this thread again.");
       const taskKey=typeof input.hubTaskId==="string"?`hubTask:${organizationId}:${actor.id}:${input.hubTaskId}`:undefined;
       const prior=taskKey?getKv<string>(taskKey):undefined;
       if(prior){const snapshot=hubThreadSnapshot(prior,organizationId);if(snapshot)return Response.json(snapshot,{status:201});}
@@ -168,6 +170,7 @@ export async function handleHubThreadRequest(
         catch { return fail(409, `This computer could not check out pull request #${review.number}. Check that ${workspace.name} can fetch from origin, then try again.`); }
       }
       const chat = createChat({
+        ...(typeof input.threadId === "string" ? { id: input.threadId } : {}),
         permissionMode: input.permissionMode,
         cwd,
         title: typeof input.title === "string" ? input.title : undefined,

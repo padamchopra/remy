@@ -72,6 +72,7 @@ test("cursor cloud creates a thread, streams a run, and refuses a missing key", 
   const threads = new CursorCloudThreads(new ThreadStore(storage), storage, work => { pending.push(work); });
   await assert.rejects(
     threads.create({
+      id: "00000000-0000-4000-8000-000000000001",
       organizationId: "org",
       actor,
       workspaceId: "repo",
@@ -81,6 +82,7 @@ test("cursor cloud creates a thread, streams a run, and refuses a missing key", 
     /Connect Cursor Cloud/,
   );
   const snapshot = await threads.create({
+    id: "00000000-0000-4000-8000-000000000002",
     organizationId: "org",
     actor,
     workspaceId: "repo",
@@ -89,17 +91,28 @@ test("cursor cloud creates a thread, streams a run, and refuses a missing key", 
     apiKey: "cursor-secret",
   });
   assert.equal(snapshot.detail.provider, "cursor");
+  assert.equal((await threads.create({
+    id: snapshot.id,
+    organizationId: "org",
+    actor,
+    workspaceId: "repo",
+    origin: "https://github.com/studio/android.git",
+    apiKey: "cursor-secret",
+  })).id, snapshot.id);
   assert.equal(snapshot.detail.title, "Fix the login");
   const stored = await new ThreadStore(storage).get(CURSOR_CLOUD_COMPUTER_ID, snapshot.id);
   assert.equal(stored?.computerId, CURSOR_CLOUD_COMPUTER_ID);
-  const sent = await threads.handle(snapshot.id, actor, "POST", "message", { text: "Ship the fix." }, "cursor-secret");
+  const messageId = "u-00000000-0000-4000-8000-000000000003";
+  const sent = await threads.handle(snapshot.id, actor, "POST", "message", { text: "Ship the fix.", messageId }, "cursor-secret");
   assert.equal(sent.status, 202);
   const refused = await threads.handle(snapshot.id, actor, "POST", "message", { text: "x", codeReferences: "all of it" }, "cursor-secret");
   assert.equal(refused.status, 400);
   await Promise.all(pending);
+  assert.equal((await threads.handle(snapshot.id, actor, "POST", "message", { text: "Ship the fix.", messageId }, "cursor-secret")).status, 202);
   const finished = await threads.get(snapshot.id);
   assert.equal(finished?.detail.state, "idle");
   assert.ok((finished?.detail.entries as { kind?: string; text?: string }[]).some(entry => entry.kind === "assistant" && entry.text?.includes("Opened the change.")));
+  assert.equal((finished?.detail.entries as { id?: string }[]).filter(entry => entry.id === messageId).length, 1);
   assert.ok(apiCalls.some(call => call.startsWith("create:https://github.com/studio/android:")));
   assert.equal(cursorCloudRepoUrl("github.com/studio/android"), "https://github.com/studio/android");
   await verifyCursorCloudKey("cursor-secret");

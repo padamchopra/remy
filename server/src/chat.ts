@@ -1217,6 +1217,7 @@ function expandChatCwd(raw: string): string {
 }
 
 export function createChat(input: {
+  id?: string;
   cwd?: string;
   title?: string;
   provider?: unknown;
@@ -1251,7 +1252,7 @@ export function createChat(input: {
   const model = providerModel(provider, parent?.model ?? input.model ?? inherited.model);
   const effort = providerEffort(provider, model, parent?.effort ?? input.effort ?? inherited.effort);
   const record: ChatRecord = {
-    id: randomUUID(),
+    id: input.id ?? randomUUID(),
     title: input.title?.trim() || "New chat",
     cwd,
     provider,
