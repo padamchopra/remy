@@ -32,16 +32,14 @@ const { patchSettings } = await import("./config.js");
 
 const cwd = mkdtempSync(join(tmpdir(), "remy-chat-cwd-"));
 
-test("a new thread starts on this machine's default", () => {
-  patchSettings({ defaultProvider: "claude", defaultModel: "opus", defaultEffort: "high" });
+test("a new thread with no pick starts on the first provider's own default", () => {
   const chat = createChat({ cwd });
   assert.equal(chat.provider, "claude");
-  assert.equal(chat.model, "opus");
-  assert.equal(chat.effort, "high");
+  assert.equal(chat.model, undefined);
+  assert.equal(chat.effort, undefined);
 });
 
 test("a workspace with a provider of its own stands in for the machine's", () => {
-  patchSettings({ defaultProvider: "claude", defaultModel: "opus" });
   const chat = createChat({
     cwd,
     workspaceDefault: { provider: "codex", model: "gpt-5.6-terra", effort: "xhigh" },
@@ -57,15 +55,13 @@ test("Cursor can be the workspace provider", () => {
   assert.equal(chat.model, "auto");
 });
 
-test("a workspace that follows the machine changes nothing", () => {
-  patchSettings({ defaultProvider: "claude", defaultModel: "haiku" });
+test("a workspace that follows the computer changes nothing", () => {
   const chat = createChat({ cwd, workspaceDefault: { provider: null, model: null } });
   assert.equal(chat.provider, "claude");
-  assert.equal(chat.model, "haiku");
+  assert.equal(chat.model, undefined);
 });
 
 test("what the caller asked for outranks both", () => {
-  patchSettings({ defaultProvider: "claude", defaultModel: "opus" });
   const chat = createChat({
     cwd,
     provider: "codex",
@@ -79,9 +75,8 @@ test("what the caller asked for outranks both", () => {
 });
 
 test("asking for a provider's own default is a choice, not a gap", () => {
-  patchSettings({ defaultProvider: "claude", defaultModel: "opus" });
   // Picking Default in the window means "whatever Claude Code is set to", so it
-  // must not be quietly filled in with the machine's model.
+  // must not be quietly filled in with another model.
   const chat = createChat({ cwd, provider: "claude", model: "" });
   assert.equal(chat.provider, "claude");
   assert.equal(chat.model, undefined);
@@ -124,10 +119,9 @@ test("a thread can be pinned and restored from its archive", () => {
   assert.equal(restored.pinned, undefined);
 });
 
-test("a new thread starts on the permission mode this machine was set to", () => {
-  assert.equal(createChat({ cwd }).permissionMode, "default");
+test("a new thread starts on Ask unless the caller picks a permission mode", () => {
+  // A stored default from an older Remy is ignored.
   patchSettings({ defaultPermissionMode: "acceptEdits" });
-  assert.equal(createChat({ cwd }).permissionMode, "acceptEdits");
-  // Whatever the caller asks for still wins, the way the model does.
+  assert.equal(createChat({ cwd }).permissionMode, "default");
   assert.equal(createChat({ cwd, permissionMode: "plan" }).permissionMode, "plan");
 });
