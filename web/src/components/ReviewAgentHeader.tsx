@@ -11,7 +11,10 @@ import { cn } from "@/lib/utils";
 // The popover's computers, models and defaults arrive the first time it opens.
 const ReviewAgentStart = lazy(() => import("@/components/ReviewAgentStart").then((module) => ({ default: module.ReviewAgentStart })));
 
-const HEADER_BUTTON = "h-7 gap-[7px] rounded-lg border border-input bg-accent px-2.5 text-xs font-[450] [&_svg]:size-[13px]";
+/// One look for every labelled button in a pull request's header, so the
+/// workspace chip, Open thread and the review button read as a set.
+export const PULL_REQUEST_HEADER_BUTTON = "h-7 gap-[7px] rounded-lg border border-input bg-accent px-2.5 text-xs font-[450]";
+const HEADER_BUTTON = `${PULL_REQUEST_HEADER_BUTTON} [&_svg]:size-[13px]`;
 
 /// The Start review popover, opened from whatever button it wraps: the
 /// header's Review with agent, or a stack note's Review #n too.

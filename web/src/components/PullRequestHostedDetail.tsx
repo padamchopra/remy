@@ -27,7 +27,7 @@ import { LinkedThreadChip, ThreadDot } from "@/components/PullRequestLinkedThrea
 import { PullRequestStackEntry, PullRequestStackRows, stackEntriesInOrder } from "@/components/PullRequestStack";
 import { LinkedTicketChip } from "@/components/PullRequestLinkedTicket";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
-import { ReviewAgentHeaderButton } from "@/components/ReviewAgentHeader";
+import { PULL_REQUEST_HEADER_BUTTON, ReviewAgentHeaderButton } from "@/components/ReviewAgentHeader";
 import type { ReviewTarget } from "@/components/ReviewAgentStart";
 import type { ReviewPaneView } from "@/components/ReviewAgentPane";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -446,11 +446,11 @@ export function PullRequestHostedDetail({
           <div className="flex shrink-0 items-center gap-2.5">
             <Button
               type="button"
-              variant="outline"
+              variant="secondary"
               data-link
               disabled={!onOpenWorkspace}
               onClick={() => onOpenWorkspace?.(workspaceOrganization, pullRequest.workspaceId)}
-              className="h-7 max-w-44 gap-[7px] rounded-lg bg-transparent px-2.5 text-xs font-[450] shadow-none max-sm:hidden dark:bg-transparent"
+              className={cn(PULL_REQUEST_HEADER_BUTTON, "max-w-44 max-sm:hidden")}
             >
               <WorkspaceMark home={false} workspace={workspace.workspace} size="sm" organizationId={workspace.organizationId} />
               <span className="truncate">{workspace.name}</span>
@@ -462,7 +462,7 @@ export function PullRequestHostedDetail({
                 data-link
                 onClick={() => onOpenThread(thread)}
                 aria-label={`Open thread: ${thread.detail.title || "Untitled thread"}`}
-                className="h-7 gap-[7px] rounded-lg border border-input bg-accent px-2.5 text-xs font-[450]"
+                className={PULL_REQUEST_HEADER_BUTTON}
               >
                 <ThreadDot state={thread.detail.state} />
                 Open thread
