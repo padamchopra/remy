@@ -27,7 +27,7 @@ const faqs = [
   ["Do I have to install anything?", "No. Open Remy in your browser, sign in, and use a cloud computer. Choose Cloud in Computers to enable one and configure your provider credentials; cloud availability depends on your Remy service."],
   ["Does Remy upload my repositories?", "On a computer you connect, your repositories stay on that computer. When you choose a hosted computer, your repository runs in the cloud. Remy on the web shows your threads, and your coding provider receives the context it needs in either setup."],
   ["Can I use more than one computer?", "Yes. Connect each one to your Remy account with the Remy CLI. Each thread runs on the computer that holds its workspace, and you follow them all from Remy on the web."],
-  ["Is Remy free?", "Remy’s source is on GitHub. You need a Remy account to use Remy on the web. Your coding provider’s own subscription or usage charges still apply."],
+  ["Is Remy free?", "Yes, Remy is completely free. You bring your own paid pieces: your Claude, Codex or Cursor subscription, model API keys such as OpenRouter, and cloud provider keys such as Fly.io."],
   ["Does it run on Windows or Linux?", "The Remy CLI runs on macOS and Linux. Use the web app from any of them, and from Windows with a cloud computer or a computer you connected."],
 ];
 function OpenRemy({ large = false }: { large?: boolean }) {
