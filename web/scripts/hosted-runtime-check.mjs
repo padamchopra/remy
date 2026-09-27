@@ -222,7 +222,8 @@ try {
           [`${base}/workspaces/remy`]: {id:"remy",name:"remy",origin:"github.com/padamchopra/remy",icon:"folder"},
           [`${base}/workspaces`]: { workspaces: hasWorkspace && !(process.env.QA_SCOPE_ONLY === "1" && org.personal)?[{id:"repo",name:"Example",origin:"https://github.com/example/repo",icon:"icon.png"},{id:"remy",name:"remy",origin:"https://github.com/padamchopra/remy",icon:"folder"}]:[], canManage: true },
           [`${base}/notifications`]: { notifications: [], devices: [] },
-          [`${base}/environments`]: { environments: [], assignments: [], workspaces: [] },
+          [`${base}/workspaces/repo/environment`]: { values: [] },
+          [`${base}/workspaces/remy/environment`]: { values: [] },
           [`${base}/github/pull-requests`]: {pullRequests:[]},
           [`${base}/connections`]: {canManage:true,providers:[],connections:process.env.QA_SCOPE_ONLY === "1"?[{id:"github-general",organization_id:"personal",provider:"github",subject:"reader",external_id:"padamchopra",label:"padamchopra",status:"connected",updated_at:1,availability:"all"}]:[],linearAccounts:process.env.QA_SCOPE_ONLY === "1"?[{id:"linear-general",externalId:"linear-remy",label:"Remy",status:"connected",updatedAt:1,general:true,organizationIds:[]}]:[]},
           [`${base}/github`]: {repositories:[],activity:[]},
@@ -1156,10 +1157,10 @@ try {
         hasWorkspace=false;
         online = false;
         if (mobile) await page.locator('[data-mobile="true"]').waitFor({ state: "hidden" });
-        target.hash = `/settings/environments?organization=${org.id}`;
+        target.hash = `/workspaces/repo?organization=${org.id}`;
         await page.goto(target.href);
-        await page.getByText("Define values once", { exact: false }).waitFor();
-        assert.ok(requests.includes(`/api/organizations/${org.id}/environments`));
+        await page.getByText("No values yet", { exact: true }).waitFor();
+        assert.ok(requests.includes(`/api/organizations/${org.id}/workspaces/repo/environment`));
       }
       assert.deepEqual(unexpected, [], "Hosted navigation must not request local APIs or unknown endpoints");
       assert.deepEqual(errors, []);

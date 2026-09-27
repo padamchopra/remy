@@ -325,6 +325,40 @@ export const organizationInviteSchema = z.object({ id: z.string().min(1), organi
 export type OrganizationInvite = z.infer<typeof organizationInviteSchema>;
 export const organizationWorkspaceSchema = z.object({ icon: z.string().optional(), tint: z.string().optional(), id: z.string().min(1), organizationId: z.string().min(1), name: z.string().min(1), origin: z.string().min(1), createdAt: z.number().int(), updatedAt: z.number().int() });
 export type OrganizationWorkspace = z.infer<typeof organizationWorkspaceSchema>;
+/// Environment variable names a workspace may set. Remy's own settings and
+/// the variables that steer a provider's runtime stay out of reach.
+export const ENVIRONMENT_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
+export const ENVIRONMENT_BLOCKED_KEY = /^(?:__proto__$|constructor$|prototype$|MC_|REMY_|NODE_OPTIONS$|CODEX_HOME$|CLAUDE_CONFIG_DIR$)/;
+export const ENVIRONMENT_VALUE_LIMIT = 32_768;
+export const isEnvironmentKey = (key: string) => ENVIRONMENT_KEY_PATTERN.test(key) && !ENVIRONMENT_BLOCKED_KEY.test(key);
+export const environmentValueKindSchema = z.enum(["variable", "secret"]);
+export const environmentValueScopeSchema = z.enum(["workspace", "personal"]);
+/// One value as a browser sees it. A secret never carries its value.
+export const workspaceEnvironmentValueSchema = z.object({
+  id: z.string().min(1),
+  key: z.string().min(1),
+  kind: environmentValueKindSchema,
+  scope: environmentValueScopeSchema,
+  value: z.string().optional(),
+  createdBy: z.object({ id: z.string(), name: z.string() }),
+  createdAt: z.number().int(),
+  /// A Personal value whose key this workspace already sets; the Workspace value wins.
+  overridden: z.boolean().optional(),
+  /// Whether the viewer may delete it: any Workspace value, and only their own Personal ones.
+  removable: z.boolean(),
+});
+export type WorkspaceEnvironmentValue = z.infer<typeof workspaceEnvironmentValueSchema>;
+export const workspaceEnvironmentSchema = z.object({ values: z.array(workspaceEnvironmentValueSchema) });
+export type WorkspaceEnvironment = z.infer<typeof workspaceEnvironmentSchema>;
+export const workspaceEnvironmentWriteSchema = z.object({
+  values: z.array(z.object({
+    key: z.string().refine(isEnvironmentKey),
+    value: z.string().max(ENVIRONMENT_VALUE_LIMIT),
+    kind: environmentValueKindSchema,
+    scope: environmentValueScopeSchema,
+  })).min(1).max(100),
+});
+export type WorkspaceEnvironmentWrite = z.infer<typeof workspaceEnvironmentWriteSchema>;
 export const organizationDeletionImpactSchema = z.object({ organizationId: z.string().min(1), name: z.string().min(1), members: z.number().int().nonnegative(), teams: z.number().int().nonnegative(), invites: z.number().int().nonnegative(), workspaces: z.number().int().nonnegative(), deletes: z.array(z.string().min(1)) });
 export type OrganizationDeletionImpact = z.infer<typeof organizationDeletionImpactSchema>;
 
@@ -344,6 +378,7 @@ export const hubRoutes = {
   organizationComputers: { method: "GET", path: "/api/organizations/:organizationId/computers", response: z.object({ computers: z.array(computerSummarySchema) }) },
   connectComputer: { method: "GET", path: "/api/organizations/:organizationId/computers/connect", response: hubToComputerFrameSchema },
   organizationWorkspace: { method: "GET", path: "/api/organizations/:organizationId/workspaces/:workspaceId", response: organizationWorkspaceSchema },
+  workspaceEnvironment: { method: "GET", path: "/api/organizations/:organizationId/workspaces/:workspaceId/environment", response: workspaceEnvironmentSchema },
   organizationDeletionImpact: { method: "GET", path: "/api/organizations/:organizationId/deletion-impact", response: organizationDeletionImpactSchema },
 } as const;
 

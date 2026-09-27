@@ -107,36 +107,11 @@ function migrate(database: DatabaseSync): void {
       workspace_id text not null,
       primary key (project_id, workspace_id)
     );
-    -- Shared workspace environments are encrypted independently on each
-    -- machine. Values from the hub arrive over the authenticated computer
-    -- channel and are re-encrypted with this machine's key.
-    create table if not exists workspace_environments (
-      id text primary key,
-      project_id text not null,
-      name text not null,
-      updated_at integer not null,
-      device_id text not null,
-      deleted integer not null default 0
-    );
-    create index if not exists workspace_environments_project
-      on workspace_environments(project_id, deleted, name);
-    create table if not exists workspace_environment_values (
-      environment_id text not null,
-      name text not null,
-      ciphertext text,
-      iv text,
-      tag text,
-      updated_at integer not null,
-      device_id text not null,
-      deleted integer not null default 0,
-      primary key (environment_id, name)
-    );
-    create table if not exists workspace_environment_selection (
-      project_id text primary key,
-      environment_id text not null,
-      updated_at integer not null,
-      device_id text not null
-    );
+    -- A thread's environment arrives from the hub with each turn and rests,
+    -- sealed, under that thread's id. Named environments are gone.
+    drop table if exists workspace_environment_values;
+    drop table if exists workspace_environment_selection;
+    drop table if exists workspace_environments;
     create table if not exists cursor_cloud_chats (
       id text primary key,
       title text not null,

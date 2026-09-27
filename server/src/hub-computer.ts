@@ -191,28 +191,11 @@ export class HubComputerConnection {
     if (this.socket !== socket || socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify({ kind: "hello", protocolVersion: COMPUTER_PROTOCOL_VERSION, daemonVersion: DAEMON_VERSION, capabilities }));
     this.introduced = true;
-    void this.syncEnvironments().catch(()=>{});
     void this.syncModelKeys().catch(()=>{});
     this.syncThreads(socket);
     this.flushNotifications();
   }
 
-  private environmentSync?:Promise<void>;
-  private environmentSyncPending=false;
-  private async syncEnvironments():Promise<void> {
-    this.environmentSyncPending=true;
-    if(this.environmentSync)return this.environmentSync;
-    const work=(async()=>{
-      while(this.environmentSyncPending) {
-      this.environmentSyncPending=false;
-      const response=await fetch(new URL(`/api/organizations/${encodeURIComponent(this.registration.organizationId)}/computers/environments`,this.registration.hubUrl),{method:"POST",headers:{authorization:connectionAuthorization(this.registration.organizationId,this.registration.computerId,privateKey().privateKey)},signal:AbortSignal.timeout(10000),redirect:"error"});
-      if(!response.ok)throw Error("Your workspace environments could not sync.");
-      const {applyHubEnvironments}=await import("./environments.js");
-      await applyHubEnvironments(this.registration.organizationId,await response.json());
-      }
-    })();this.environmentSync=work;
-    try{await work;}finally{if(this.environmentSync===work)this.environmentSync=undefined;}
-  }
   /// Provider keys are pulled rather than pushed: the hub only says they moved,
   /// so a computer that was asleep still comes back with the current ones.
   private async syncModelKeys(): Promise<void> {
@@ -292,7 +275,7 @@ export class HubComputerConnection {
       this.sharedOrganizationIds = next;
       this.syncThreads(socket);
     }
-    if (parsed.data.kind === "board.changed") {void this.syncEnvironments().catch(()=>{});void this.syncModelKeys().catch(()=>{});}
+    if (parsed.data.kind === "board.changed") void this.syncModelKeys().catch(()=>{});
     if (parsed.data.kind === "notification.ack") { const id = parsed.data.id; setKv(NOTIFICATION_OUTBOX, (getKv<QueuedHubNotification[]>(NOTIFICATION_OUTBOX) ?? []).filter((n) => n.id !== id)); }
     if (parsed.data.kind === "update_required") { this.stopped = true; socket.close(1008, "Update Remy to reconnect."); return; }
     if (parsed.data.kind === "thread.retired") { const {deleteChat}=await import("./chat.js");const shared=new Set(hubThreadIds(this.registration.organizationId));for(const id of parsed.data.threadIds)if(shared.has(id))deleteChat(id); }

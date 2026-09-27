@@ -44,7 +44,7 @@ Start a thread in a workspace, pick a model and how much it may do unasked, and 
 
 A thread runs on the computer you pick, or on the one you last used for that workspace — there is nothing to configure.
 
-Settings → Environments lets you define reusable values and assign one environment to several workspaces. Threads inherit the selected values on the computer that runs them, including local computers and optional hosted computers. Values are encrypted at rest and management screens return names only. Providers and their commands can read assigned values. Remy redacts exact values from supported output paths, but encoded or transformed values are not recognised; this is not a boundary against a hostile command.
+Each workspace has one environment, under Environment on its page: variables and secrets, each either Workspace or Personal. A Workspace value reaches every thread in that workspace, whoever starts it. A Personal value belongs to you and reaches every thread you start, in any workspace, on any computer, including optional hosted computers; nobody else sees it or receives it. A Workspace value wins over a Personal one with the same key. Values are encrypted at rest and a secret is never shown again. Providers and their commands can read the values their thread receives. Remy redacts exact secret values from supported output paths, but encoded or transformed values are not recognised; this is not a boundary against a hostile command.
 
 Connect Linear in Settings → Connections and a thread can read and update your issues through Linear's own tools, signed in as you.
 

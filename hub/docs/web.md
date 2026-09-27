@@ -36,6 +36,8 @@ QA_SESSION=<printed session file> node web/scripts/qa-hub-web.mjs
 
 The test signs in two people, creates an organization, delivers and accepts an invitation, checks that a member sees the organization's workspace, creates a team, changes roles, reloads deep links, switches organizations, and checks a narrow viewport. Capture authorization and invitation setup outside any reviewer recording.
 
+`QA_SESSION=<file> QA_WEB_URL=<hub URL> node web/scripts/qa-workspace-environment.mjs` drives a workspace's environment: the empty state, the Add values dialog with a pasted `.env`, secrets that never reach a browser, Ada's and Grace's views, the struck-through Personal value, removal, and a phone width. It then starts a fixture thread for each of them and asks which values reached it (the fixture answers "Which values reach this thread: KEY=? KEY" with values for `=?` keys and only set or not set for the rest), proving Workspace values reach both, Ada's Personal secret reaches only hers, and a removed value leaves the next turn. Screenshots land in `/tmp/remy-pr-artifacts/workspace-environments`.
+
 ### Real GitHub, Linear and models
 
 Pull requests, reviews and the review agent are verified on this same disposable hub, against a sandbox repository and a real model, not on production and not against fixtures. Every variable is optional; with none set the hub behaves as above. They need `QA_HUB_WEB=1`. `qa-threads.mjs` reads `hub/.qa.env` (`KEY=VALUE` lines, git-ignored) first, and a variable already in the environment wins. `QA_ENV_FILE=<path>` reads another file, and `QA_ENV_FILE=0` skips it for a fixture-only run such as `qa-hub-threads.mjs`, which expects the fixture workspace.

@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import type { GitBranch as Branch } from "@/state/types";
 import { WorkspaceIcon } from "./WorkspaceIcon";
 import { PaneHeader } from "./PaneHeader";
+import { WorkspaceEnvironment } from "./WorkspaceEnvironment";
 import { PaneLoading } from "./PaneLoading";
 import { EditableName } from "./EditableName";
 import { IconPicker } from "./IconPicker";
@@ -112,7 +113,8 @@ export default function HubWorkspaceDetails({ organizationId, workspaceId, owner
             </ItemActions>
           </Item>
         </section>
-        {/* Environment (phase 3) and Worktrees and branches (phase 4) go here, between Owner and Remove. */}
+        <WorkspaceEnvironment organizationId={organizationId} workspaceId={workspaceId} workspaceName={value.name} organizationName={owner.name} personal={!!owner.personal} />
+        {/* Worktrees and branches (phase 4) go here, between Environment and Remove. */}
         {admin && <RemoveWorkspace organizationId={organizationId} workspace={value} onRemoved={onBack} />}
       </div>}
   </main>;
