@@ -1,18 +1,8 @@
-import { cloudConnectionSchema } from "./cloud-connection.js";
+import { cloudConnectionForKey, cloudConnectionSchema, publicCloudKeys } from "./cloud-connection.js";
 import { hostedSettingsSchema, type HostedSettings } from "@remy/contract";
 const encode = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
 const decode = (text: string) =>
   Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
-const modelSecretName = (name: string) =>
-  name.startsWith("access:") ||
-  name.startsWith("account:") ||
-  name.startsWith("model:") ||
-  name === "ANTHROPIC_API_KEY" ||
-  name === "OPENAI_API_KEY" ||
-  name === "RAMP_ROUTER_API_KEY" ||
-  name === "OPENROUTER_API_KEY" ||
-  name === "RAMP_ROUTER_MODELS" ||
-  name === "OPENROUTER_MODELS";
 export class HostedSettingsStore {
   constructor(
     private readonly db: D1Database,
@@ -64,45 +54,28 @@ export class HostedSettingsStore {
     if (direct) return direct;
     const share = await this.cloudShare(org, provider);
     if (!share) return;
-    return this.ownConnection(share.source_organization_id, provider);
+    const secrets = await this.secrets(share.source_organization_id);
+    const allowed = parseIds(share.key_ids);
+    const keys = publicCloudKeys(provider, secrets).filter((key) => !allowed || allowed.includes(key.id));
+    const selected = keys.find((key) => key.active) ?? keys[0];
+    return selected ? cloudConnectionForKey(provider, secrets, selected.id) : undefined;
   }
 
-  /// First enabled Personal share for this cloud provider. Named keys stay on
-  /// the source account; this grant still uses that account's active connection.
+  /// First enabled Personal enrollment for this cloud provider.
   async cloudShare(org: string, provider: HostedSettings["provider"]) {
-    const shares = await this.db.prepare("SELECT source_organization_id,shared_by,start_providers FROM organization_cloud_shares WHERE organization_id=? AND provider=? ORDER BY created_at").bind(org, provider).all<{source_organization_id:string;shared_by:string;start_providers:string|null}>();
+    const shares = await this.db.prepare("SELECT source_organization_id,shared_by,start_providers,key_ids FROM organization_cloud_shares WHERE organization_id=? AND provider=? ORDER BY created_at").bind(org, provider).all<{source_organization_id:string;shared_by:string;start_providers:string|null;key_ids:string|null}>();
     for (const share of shares.results) {
-      if (await this.ownConnection(share.source_organization_id, provider)) return share;
+      const secrets = await this.secrets(share.source_organization_id);
+      const allowed = parseIds(share.key_ids);
+      const keys = publicCloudKeys(provider, secrets).filter((key) => !allowed || allowed.includes(key.id));
+      if (keys.some((key) => cloudConnectionForKey(provider, secrets, key.id)?.enabled)) return share;
     }
   }
 
-  /// Model keys the org can start with: its own, then any enabled shared
-  /// cloud computer's source account. Organization records win on conflict.
+  /// Organization-owned model keys. Cloud placements never bring their
+  /// owner's model credentials with them.
   async executionSecrets(org: string): Promise<Record<string, string>> {
-    const merged: Record<string, string> = {};
-    const shared = (
-      await this.db
-        .prepare(
-          "SELECT source_organization_id,provider FROM organization_cloud_shares WHERE organization_id=? ORDER BY created_at",
-        )
-        .bind(org)
-        .all<{ source_organization_id: string; provider: HostedSettings["provider"] }>()
-    ).results;
-    const seen = new Set<string>();
-    for (const row of shared) {
-      if (row.source_organization_id === org || seen.has(row.source_organization_id)) continue;
-      const connection = await this.connection(row.source_organization_id, row.provider);
-      if (!connection?.enabled) continue;
-      seen.add(row.source_organization_id);
-      Object.assign(
-        merged,
-        Object.fromEntries(
-          Object.entries(await this.secrets(row.source_organization_id)).filter(([name]) => modelSecretName(name)),
-        ),
-      );
-    }
-    Object.assign(merged, await this.secrets(org));
-    return merged;
+    return this.secrets(org);
   }
   async executionSettings(org: string, workspace: string, provider?: HostedSettings["provider"]): Promise<HostedSettings> {
     const settings = await this.settings(org, workspace);
@@ -212,4 +185,12 @@ export class HostedSettingsStore {
     }
     return result;
   }
+}
+
+function parseIds(value: string | null): string[] | null {
+  if (value === null) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.every((id) => typeof id === "string") ? parsed : [];
+  } catch { return []; }
 }

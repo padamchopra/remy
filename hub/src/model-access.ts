@@ -59,6 +59,18 @@ function parseNamedModelSet(saved: string | undefined) {
   } catch { return; }
 }
 
+/// One exact named credential. Grant records keep this id so changing the
+/// active Personal key does not silently change what an organization uses.
+export function modelAccessForKey(id: ModelAccessId, secrets: Record<string, string>, keyId?: string) {
+  const current = modelAccess(secrets).find((entry) => entry.id === id)!;
+  if (!keyId) return current;
+  const stored = parseNamedModelSet(secrets[namedAccessSecret(id)]);
+  if (keyId === "legacy" && !stored?.keys.length) return current.apiKey ? current : undefined;
+  const key = stored?.keys.find((entry) => entry.id === keyId);
+  if (!key) return;
+  return { id, apiKey: key.apiKey, enabled: current.enabled, models: key.models };
+}
+
 export function publicModelKeys(id: ModelAccessId, secrets: Record<string, string>): PublicNamedModelKey[] {
   const stored = parseNamedModelSet(secrets[namedAccessSecret(id)]);
   if (stored?.keys.length) {

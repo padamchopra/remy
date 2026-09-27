@@ -26,7 +26,7 @@ export class HostedLifecycle {
   private readonly running = new Map<string, Promise<unknown>>();
   constructor(
     private readonly storage: KeyValueStorage,
-    private readonly provider: (id: string) => ComputerRuntimeProvider,
+    private readonly provider: (id: string, state?: State) => ComputerRuntimeProvider,
     private readonly prepare: (state: State) => Promise<ProvisionComputerInput>,
     private readonly ready: (computerId: string) => Promise<void>,
     private readonly now: () => number = Date.now,
@@ -140,7 +140,7 @@ export class HostedLifecycle {
     let step = "preparing its configuration";
     try {
       const input = await this.prepare(state),
-        provider = this.provider(state.provider),
+        provider = this.provider(state.provider, state),
         allocating = this.now();
       step = "starting its cloud runtime";
       state.phase = "starting_runtime";

@@ -137,7 +137,7 @@ function ComputerDetails({ organizationId, owner, computer, busy, update }: {
       </SettingsRow>
       <SettingsRow
         title="Who can use it"
-        description={owner.personal ? "Only you. Share it with an organization from that organization's Computers settings." : "They start threads on it with the providers it runs."}
+        description={owner.personal ? "Only you. Enroll it from an organization's Computers and models settings when everyone should be able to use it." : "They start threads on it with the providers it runs."}
         below={!owner.personal && access.mode === "selected" && options && <div className="grid min-w-0 gap-4 sm:grid-cols-2">
           <fieldset className="flex min-w-0 flex-col gap-2" disabled={busy}>
             <legend className="mb-1 text-xs font-medium">Members</legend>

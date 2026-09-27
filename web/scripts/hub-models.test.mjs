@@ -14,7 +14,7 @@ const bundled = await build({
   format: "esm",
   alias: { "@": resolve(root, "src") },
 });
-const { cloudCatalogue, cloudShareAllowsProvider, computerModels, executionToChoice, hostedComposerChoice, hostedExecutionChoice, hostedModels, ownModels, threadModelPicker } = await import(
+const { cloudCatalogue, cloudShareAllowsProvider, computerModels, enrolledModels, executionToChoice, hostedComposerChoice, hostedExecutionChoice, hostedModels, ownModels, threadModelPicker } = await import(
   `data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString("base64")}`
 );
 
@@ -189,27 +189,30 @@ test("a running thread's picker offers its own provider's models and writes back
   assert.deepEqual(local.providers.map((provider) => provider.id), ["claude"]);
 });
 
-test("your own keys join the cloud catalogue as their own tabs, only where you turned them on", () => {
+test("each of your own keys joins the cloud catalogue as its own tab", () => {
   const own = [
-    { id: "chatgpt", configured: true, allowed: true, keyName: null, models: [] },
-    { id: "openrouter", configured: true, allowed: true, keyName: "Primary", models: ["anthropic/claude-opus-5.5"] },
-    { id: "anthropic", configured: true, allowed: false, keyName: "Work", models: [] },
-    { id: "openai", configured: false, allowed: true, keyName: null, models: [] },
+    { id: "chatgpt", configured: true, allowed: true, keyName: null, models: [], keys: [] },
+    { id: "openrouter", configured: true, allowed: true, keyName: "Primary", models: ["anthropic/claude-opus-5.5"], keys: [{ id: "primary", name: "Primary", models: ["anthropic/claude-opus-5.5"] }, { id: "sandbox", name: "Sandbox", models: ["openrouter/auto"] }] },
+    { id: "anthropic", configured: false, allowed: false, keyName: null, models: [], keys: [] },
+    { id: "openai", configured: false, allowed: true, keyName: null, models: [], keys: [] },
   ];
-  assert.deepEqual(ownModels(own).map((entry) => entry.id), ["own:openrouter"]);
+  assert.deepEqual(ownModels(own).map((entry) => entry.id), ["own:openrouter:primary", "own:openrouter:sandbox"]);
   const catalogue = cloudCatalogue([{ id: "openrouter", enabled: true, configured: true, models: ["openrouter/auto"] }], undefined, false, own);
-  assert.deepEqual(catalogue.map((entry) => [entry.id, entry.label]), [["openrouter", "OpenRouter"], ["own:openrouter", "Your OpenRouter"]]);
+  assert.deepEqual(catalogue.map((entry) => [entry.id, entry.label]), [["openrouter", "OpenRouter"], ["own:openrouter:primary", "OpenRouter · Your Primary"], ["own:openrouter:sandbox", "OpenRouter · Your Sandbox"]]);
   assert.deepEqual(catalogue[1].models.map((model) => model.value), ["anthropic/claude-opus-5.5"]);
 });
 
 test("a thread on your own key starts on the provider's runtime and says the key is yours", () => {
-  assert.deepEqual(hostedExecutionChoice({ provider: "own:openrouter", model: "openrouter/auto" }), { provider: "codex", model: "remy:openrouter:openrouter/auto", modelSource: "own" });
-  assert.deepEqual(hostedExecutionChoice({ provider: "own:anthropic", model: "claude-opus-5-5" }), { provider: "claude", model: "claude-opus-5-5", modelSource: "own" });
+  assert.deepEqual(hostedExecutionChoice({ provider: "own:openrouter:primary", model: "openrouter/auto" }), { provider: "codex", model: "remy:openrouter:openrouter/auto", modelSource: "own", modelProvider: "openrouter", modelConnection: "primary" });
+  assert.deepEqual(hostedExecutionChoice({ provider: "own:anthropic:work", model: "claude-opus-5-5" }), { provider: "claude", model: "claude-opus-5-5", modelSource: "own", modelProvider: "anthropic", modelConnection: "work" });
+  const enrolled = enrolledModels([{ connectionId: "ada:openrouter:team", provider: "openrouter", owner: "Ada", keyId: "team", keyName: "Team", models: ["openrouter/auto"] }]);
+  assert.equal(enrolled[0].label, "OpenRouter · Ada · Team");
+  assert.deepEqual(hostedExecutionChoice({ provider: enrolled[0].id, model: "openrouter/auto" }), { provider: "codex", model: "remy:openrouter:openrouter/auto", modelSource: "enrolled", modelProvider: "openrouter", modelConnection: "ada:openrouter:team" });
   assert.deepEqual(hostedExecutionChoice({ provider: "openrouter", model: "openrouter/auto" }), { provider: "codex", model: "remy:openrouter:openrouter/auto" });
 });
 
 test("a saved default on your own key survives when that key is on", () => {
-  const own = [{ id: "openrouter", configured: true, allowed: true, keyName: null, models: ["openrouter/auto"] }];
-  assert.deepEqual(hostedComposerChoice([], { provider: "own:openrouter", model: "openrouter/auto" }, false, own), { provider: "own:openrouter", model: "openrouter/auto" });
-  assert.equal(hostedComposerChoice([], { provider: "own:openrouter", model: "openrouter/auto" }, false, []).provider, "own:openrouter");
+  const own = [{ id: "openrouter", configured: true, allowed: true, keyName: "Primary", models: ["openrouter/auto"], keys: [{ id: "primary", name: "Primary", models: ["openrouter/auto"] }] }];
+  assert.deepEqual(hostedComposerChoice([], { provider: "own:openrouter:primary", model: "openrouter/auto" }, false, own), { provider: "own:openrouter:primary", model: "openrouter/auto" });
+  assert.equal(hostedComposerChoice([], { provider: "own:openrouter:primary", model: "openrouter/auto" }, false, []).provider, "own:openrouter:primary");
 });
