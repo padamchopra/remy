@@ -1,9 +1,7 @@
 import type { ReactNode } from "react";
 import remyMark from "@/assets/remy-mark.png";
-import { PERMISSIONS } from "@/lib/chat-options";
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectGroup, SelectItem } from "./ui/select";
 import { useRef, useState } from "react";
-import { Github, ImagePlus, Monitor } from "lucide-react";
+import { Github, ImagePlus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "./ui/button";
 import { Field, FieldContent, FieldDescription, FieldLabel } from "./ui/field";
@@ -187,23 +185,6 @@ export function NotificationsField() {
   );
 }
 
-
-export function AppearanceField() { return (
-      <div className="flex items-start gap-3 rounded-lg border border-border px-3 py-2.5">
-        <Monitor className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-        <div className="min-w-0">
-          <p className="text-sm font-medium">Appearance</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">Dark is the only theme wired up today.</p>
-        </div>
-      </div>
-); }
-
-export function PermissionField({value, disabled, onChange}: {value:string; disabled?:boolean; onChange:(value:string)=>void}) {
-  return <Select value={value} onValueChange={onChange} disabled={disabled}>
-    <SelectTrigger aria-label="Default permission level" size="sm" className="w-36 min-w-0"><SelectValue /></SelectTrigger>
-    <SelectContent align="end"><SelectGroup>{PERMISSIONS.map(option => <SelectItem key={option.value} value={option.value}><option.icon className="size-4 opacity-70" />{option.label}</SelectItem>)}</SelectGroup></SelectContent>
-  </Select>;
-}
 
 export function AppInfo({detail, children}: {detail:ReactNode; children:ReactNode}) {
   return <div className="flex items-center gap-3">

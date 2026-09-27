@@ -342,7 +342,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                 organization: true,
                 selected: o.id === organizationId,
                 onSelect: () => navigate({name:"threads",organizationId:o.id}),
-                onSettings: () => navigate({name:"settings",tab:"organization",organizationTab:"general",organizationId:o.id}),
+                onSettings: () => navigate({name:"settings",tab:"organization",organizationTab:"members",organizationId:o.id}),
               })),
             ],
             onCreate: () => setCreate(true),
@@ -421,7 +421,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                 </Deferred>
               </div>
           {workspacesListOpen ? null : organizationSettings && route.name === "settings" ? (
-            <Deferred open><OrganizationAdmin organizations={organizations} selectedId={isAll ? route.ownerOrganizationId : organizationId} tab={route.organizationTab ?? "general"} onSelect={owner => navigate({...route,tab:"organization",organizationId:isAll ? "all" : owner,...(isAll ? {ownerOrganizationId:owner} : {})})} onTab={organizationTab => navigate({...route,tab:"organization",organizationTab,ownerOrganizationId:isAll ? route.ownerOrganizationId ?? organizations[0]?.id : undefined})} /></Deferred>
+            <Deferred open><OrganizationAdmin organizations={organizations} selectedId={isAll ? route.ownerOrganizationId : organizationId} tab={route.organizationTab ?? "members"} onSelect={owner => navigate({...route,tab:"organization",organizationId:isAll ? "all" : owner,...(isAll ? {ownerOrganizationId:owner} : {})})} onTab={organizationTab => navigate({...route,tab:"organization",organizationTab,ownerOrganizationId:isAll ? route.ownerOrganizationId ?? organizations[0]?.id : undefined})} /></Deferred>
           ) : route.name === "prs" ? (
             <div className="flex min-h-0 flex-1"><Deferred open><PullRequests
               servers={[]}
@@ -436,7 +436,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
             <Deferred open><AllView organizations={contexts} route={route} navigate={navigate} threads={threads} threadsLoaded={threadsLoaded} /></Deferred>
           ) : (
             <div key={organization.id} className="flex min-h-0 flex-1 flex-col">
-              <div hidden={section !== "general"} className="min-h-0 overflow-auto px-5 py-6"><Deferred open={section === "general"}><GeneralSettings organizationId={organization.id} showModelDefault={organization.personal === true} /></Deferred></div>
+              <div hidden={section !== "general"} className="min-h-0 overflow-auto px-5 py-6"><Deferred open={section === "general"}><GeneralSettings organizationId={organization.id} /></Deferred></div>
               <div
                 hidden={section !== "threads"}
                 className={

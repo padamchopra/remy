@@ -201,7 +201,7 @@ export function HubThreadComposer({
   if (defaults.value) latchedDefaults.current = defaults.value;
   useEffect(() => { latchedDefaults.current = undefined; }, [workspaceId, organizationId]);
   const resolvedDefaults = defaults.value ?? latchedDefaults.current;
-  const inheritedModel = resolveModelDefault(resolvedDefaults?.workspace, resolvedDefaults?.remy, {provider:"",model:""}, resolvedDefaults?.computer);
+  const inheritedModel = resolveModelDefault(resolvedDefaults?.workspace, resolvedDefaults?.computer, {provider:"",model:""});
   const usingCloud=!!cloudComputerProvider(selected);
   const usingCursorCloud=cloudComputerProvider(selected)==="cursor-cloud";
   const cloudStart = usingCloud ? cloudConnections.value?.cloudStart?.[cloudComputerProvider(selected) ?? ""] : undefined;

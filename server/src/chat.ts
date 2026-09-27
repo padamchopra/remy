@@ -1169,7 +1169,7 @@ export function restoreArchivedChat(input: {
     provider,
     ...(conversation.model ? { model: conversation.model } : {}),
     ...(conversation.effort ? { effort: conversation.effort } : {}),
-    permissionMode: permissionMode(conversation.permissionMode, config.defaultPermissionMode),
+    permissionMode: permissionMode(conversation.permissionMode),
     ...(conversation.parentChatId ? { parentChatId: conversation.parentChatId } : {}),
     createdAt: conversation.createdAt ?? nowMs(),
     updatedAt: nowMs(),
@@ -1239,16 +1239,15 @@ export function createChat(input: {
   if (parent?.parentChatId) throw new Error("a subthread cannot start another subthread");
   const cwd = parent?.cwd ?? expandChatCwd(input.cwd ?? "~");
   if (!existsSync(cwd)) throw new Error("that directory does not exist on this machine");
-  // A workspace that runs on something of its own stands where the machine's
-  // default would.
-  const workspace = input.workspaceDefault?.provider
+  // A workspace that runs on something of its own says so; otherwise the
+  // first provider turned on answers with its own default model.
+  const inherited = input.workspaceDefault?.provider
     ? {
         provider: input.workspaceDefault.provider,
         model: input.workspaceDefault.model ?? "",
         effort: input.workspaceDefault.effort ?? "",
       }
-    : { provider: config.defaultProvider, model: config.defaultModel, effort: config.defaultEffort };
-  const inherited = workspace;
+    : { provider: config.defaultProvider, model: "", effort: "" };
   const askedProvider = providerId(parent?.provider ?? input.provider ?? inherited.provider);
   if (input.provider !== undefined && !config.enabledProviders.includes(askedProvider)) {
     throw new Error("that provider is turned off");
@@ -1272,7 +1271,8 @@ export function createChat(input: {
     ...(effort ? { effort } : {}),
     ...(parent ? { parentChatId: parent.id } : {}),
     permissionMode: parent?.permissionMode
-      ?? permissionMode(input.permissionMode, config.defaultPermissionMode),
+      // Unless the caller says otherwise, a thread asks before it acts.
+      ?? permissionMode(input.permissionMode),
     createdAt: nowMs(),
     updatedAt: nowMs(),
     entries: [],

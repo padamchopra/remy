@@ -1,4 +1,3 @@
-import { profilePreferences } from "./profile-preferences.js";
 import { validProfileImage } from "./profile-image.js";
 import { HostedStartupError } from "./hosted-startup-error.js";
 import { modelDefaults } from "./model-defaults.js";
@@ -495,15 +494,6 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     if (organizationMatch) {
       const organizationId = decodeURIComponent(organizationMatch[1]); const tail = organizationMatch[2] ?? "";
       const board = () => env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${organizationId}`));
-      if (tail === "profile-preferences" && (request.method === "GET" || request.method === "PATCH")) {
-        await organizations.member(organizationId, identity.userId);
-        const response = await profilePreferences(env.DB, identity.userId, request);
-        if (request.method === "PATCH" && response.ok) {
-          const memberships = await env.DB.prepare("SELECT organization_id FROM memberships WHERE user_id=?").bind(identity.userId).all<{organization_id:string}>();
-          await Promise.all(memberships.results.map(row => env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${row.organization_id}`)).fetch(new Request("https://internal/profile/changed", {method:"POST", headers:{"x-organization-id":row.organization_id,"x-user-id":identity.userId}}))));
-        }
-        return response;
-      }
       if (tail === "github/profile" && request.method === "GET") {
         const github = await githubFor(env).api<{avatar_url:string}>(organizationId, identity.userId, "/user");
         const image = new URL(github.avatar_url);
@@ -2083,14 +2073,14 @@ export class HubCoordinator {
       const computer = await this.computers.computer(org, choice.computerId);
       if (choice.computerId === CURSOR_CLOUD_COMPUTER_ID) {
         const workspace = await new OrganizationService(new D1OrganizationStore(this.env.DB)).workspace(org, actor.id, input.workspaceId);
-        const preferences = await this.env.DB.prepare("SELECT permission_mode FROM member_preferences WHERE user_id=?").bind(actor.id).first<{permission_mode:string}>();
         const started = await this.startCursorCloudThread(org, actor, {
           workspaceId: input.workspaceId,
           origin: workspace.origin,
           ...(input.title ? { title: input.title } : {}),
           ...(input.visibility ? { visibility: input.visibility } : {}),
           ...(input.branch ? { branch: input.branch } : {}),
-          permissionMode: preferences?.permission_mode ?? "default",
+          // A new thread asks first; nothing saved on the account grants more.
+          permissionMode: "default",
         });
         await this.ctx.storage.put(key, { computerId: started.computerId, id: started.threadId });
         await this.ctx.storage.put(`thread-run:${started.threadId}`, { computerId: started.computerId, userId: actor.id });
@@ -2102,8 +2092,7 @@ export class HubCoordinator {
         const current = await this.ctx.storage.get<ManualThreadStart>(key);
         await this.ctx.storage.put(key, { ...current, started: true, phase: "preparing_branch", workspaceId: input.workspaceId, at: current?.at ?? Date.now() });
       }
-      const preferences = await this.env.DB.prepare("SELECT permission_mode FROM member_preferences WHERE user_id=?").bind(actor.id).first<{permission_mode:string}>();
-      const made = await this.dispatchComputer(choice.computerId, actor, "POST", "/hub/threads", {workspaceId:choice.workspaceId, hubTaskId:key, permissionMode:preferences?.permission_mode ?? "default", branch:input.branch, provider:input.provider, model:input.model, visibility:input.visibility ?? "private", title:typeof input.title === "string" ? input.title.slice(0,200) : undefined});
+      const made = await this.dispatchComputer(choice.computerId, actor, "POST", "/hub/threads", {workspaceId:choice.workspaceId, hubTaskId:key, permissionMode:"default", branch:input.branch, provider:input.provider, model:input.model, visibility:input.visibility ?? "private", title:typeof input.title === "string" ? input.title.slice(0,200) : undefined});
       if (!made.ok) {
         const body = await made.json().catch(() => undefined) as { error?: unknown } | undefined;
         const error = typeof body?.error === "string" && body.error.trim() ? body.error : "Your computer could not start; try again.";

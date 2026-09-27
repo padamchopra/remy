@@ -16,12 +16,12 @@ test("disabled provider overrides return to Remy's default", async () => {
   const path = mkdtempSync(join(tmpdir(), "remy-provider-workspace-"));
   const workspace = await addWorkspace("Cloud", path);
   await updateWorkspace(workspace.id, { provider: "cursor", model: "auto", effort: "high" });
-  patchSettings({ defaultProvider: "cursor", defaultModel: "auto", defaultEffort: "high" });
+  patchSettings({ remyProvider: "cursor", remyModel: "auto" });
 
   const settings = setProviderEnabled("cursor", false);
 
   assert.equal(settings.defaultProvider, "claude");
-  assert.equal(settings.defaultEffort, "");
+  assert.equal(settings.remyProvider, "claude");
   const saved = (await listWorkspaces()).find((entry) => entry.id === workspace.id);
   assert.equal(saved?.provider, null);
   assert.equal(saved?.model, null);

@@ -162,8 +162,8 @@ export function TicketView({
     ? { provider: workspace.provider, model: workspace.model ?? "", effort: workspace.effort ?? "" }
     : {
         provider: settings?.defaultProvider ?? "claude",
-        model: settings?.defaultModel ?? "",
-        effort: settings?.defaultEffort ?? "",
+        model: "",
+        effort: "",
       };
   const defaultStartCheckout = gitWorkspace ? settings?.defaultCheckout ?? "main" : "main";
   const device = deviceForTicket(ticket, boardDevices, servers);

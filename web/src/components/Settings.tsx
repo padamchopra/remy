@@ -1,4 +1,4 @@
-import { AvatarField, NotificationsField, AppearanceField, PermissionField, AppInfo } from "./GeneralFields";
+import { AvatarField, NotificationsField, AppInfo } from "./GeneralFields";
 import { AutomaticUpdateField } from "./AutomaticUpdate";
 import { HubComputers } from "./HubComputers";
 import {
@@ -75,8 +75,6 @@ import {
   ItemSeparator,
   ItemTitle,
 } from "@/components/ui/item";
-import { ModelPickerButton } from "@/components/ModelPicker";
-import { permissionOf } from "@/lib/chat-options";
 import { ProviderMark } from "@/components/ProviderMark";
 import type { Provider } from "@/lib/providers";
 import { Markdown } from "@/components/Markdown";
@@ -217,8 +215,6 @@ function GeneralPane({
       </AppInfo>
       <LocalAvatarField />
       <NotificationsField />
-      <ThreadDefaultsField />
-      <AppearanceField />
     </div>
   );
 }
@@ -303,48 +299,6 @@ function LocalAvatarField() {
   const { settings, save } = useServerSettings();
   const fromGithub = useStore(s => s.useGithubAvatar);
   return settings ? <AvatarField avatar={settings.avatar ?? ""} onSave={avatar => save({ avatar }, "your avatar")} onGithub={fromGithub} /> : null;
-}
-
-/// What a new thread starts as: the model it thinks with, and what it may do
-/// before it asks you.
-///
-/// One place, here, because there is one answer. The model used to be chosen in
-/// Providers as well, which read as two settings for one choice — Providers says
-/// what this machine has installed, and that is a different question from what
-/// to reach for. A workspace that wants something else says so in its own
-/// settings, and a thread can still be moved after it starts.
-function ThreadDefaultsField() {
-  const { settings, online, save } = useServerSettings();
-  if (!online || !settings) return null;
-
-  const permission = permissionOf(settings.defaultPermissionMode);
-
-  return (
-    <Field orientation="horizontal" className="items-center">
-      <FieldContent>
-        <FieldLabel htmlFor="thread-default-model">Default model</FieldLabel>
-        <FieldDescription className="text-xs">A workspace or agent can differ.</FieldDescription>
-      </FieldContent>
-      <div className="flex shrink-0 gap-2">
-        <ModelPickerButton
-          id="thread-default-model"
-          className="w-48"
-          value={{
-            provider: settings.defaultProvider ?? "claude",
-            model: settings.defaultModel ?? "",
-            effort: settings.defaultEffort ?? "",
-          }}
-          onPick={(choice) =>
-            void save(
-              { defaultProvider: choice.provider, defaultModel: choice.model, defaultEffort: choice.effort ?? "" },
-              "what a new thread thinks with",
-            )
-          }
-        />
-        <PermissionField value={permission.value} onChange={value => void save({ defaultPermissionMode: value }, "what a new thread may do")} />
-      </div>
-    </Field>
-  );
 }
 
 const CHECKOUTS = [

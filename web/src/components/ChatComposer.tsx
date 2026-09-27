@@ -96,8 +96,9 @@ export function ChatComposer({
   const [devicePicked, setDevicePicked] = useState(false);
   const [choice, setChoice] = useState<ModelChoice>({ provider: "claude", model: "", effort: "" });
   const [modelPicked, setModelPicked] = useState(false);
+  // A new thread asks before it acts until you pick otherwise here; no saved
+  // setting starts it on anything more permissive.
   const [permissionMode, setPermissionMode] = useState<PermissionValue>("default");
-  const [permissionPicked, setPermissionPicked] = useState(false);
   const [checkout, setCheckout] = useState<(typeof CHECKOUTS)[number]["value"]>("main");
   const [branch, setBranch] = useState<string>();
   const [text, setText] = useState(() => readComposerDraft("new-thread"));
@@ -166,8 +167,9 @@ export function ChatComposer({
     if (preferred) setServerId(preferred.id);
   }, [devicePicked, home, servers, settings?.devicePreferenceOrder]);
 
-  // The workspace's own choice if it has one, this machine's otherwise, until
-  // you pick something — and then yours for as long as the composer is open.
+  // The workspace's own choice if it has one, otherwise the first provider
+  // turned on at its own default model, until you pick something — and then
+  // yours for as long as the composer is open.
   useEffect(() => {
     if (cloud) {
       setChoice({ provider: "cursor", model: "", effort: "" });
@@ -176,26 +178,18 @@ export function ChatComposer({
     if (modelPicked) return;
     setChoice(resolveModelDefault(
       workspace?.provider ? { provider: workspace.provider, model: workspace.model ?? "", effort: workspace.effort ?? "" } : undefined,
-      settings ? { provider: settings.defaultProvider ?? "claude", model: settings.defaultModel ?? "", effort: settings.defaultEffort ?? "" } : undefined,
-      {provider:"claude",model:"",effort:""},
+      undefined,
+      { provider: settings?.defaultProvider ?? "claude", model: "", effort: "" },
     ));
   }, [
     workspace?.provider,
     workspace?.model,
     workspace?.effort,
     settings?.defaultProvider,
-    settings?.defaultModel,
-    settings?.defaultEffort,
     modelPicked,
     cloud,
   ]);
 
-  // A permission mode is the machine's alone: what a thread may do is not a
-  // property of the folder it runs in.
-  useEffect(() => {
-    if (permissionPicked) return;
-    setPermissionMode(permissionOf(settings?.defaultPermissionMode).value);
-  }, [settings?.defaultPermissionMode, permissionPicked]);
 
   // A new workspace or default starts fresh. A later workspace refresh only
   // mirrors its main branch, without moving the picker back to the default mode.
@@ -453,10 +447,7 @@ export function ChatComposer({
                   icon={PermissionIcon}
                   label={permissionLabel}
                   value={permissionMode}
-                  onChange={(value) => {
-                    setPermissionPicked(true);
-                    setPermissionMode(value as PermissionValue);
-                  }}
+                  onChange={(value) => setPermissionMode(value as PermissionValue)}
                   options={cloud ? CLOUD_MODES : PERMISSIONS}
                   title={asks ? undefined : `${providerName} answers and exits, so it never stops to ask.`}
                 />

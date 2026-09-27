@@ -354,7 +354,7 @@ function fastDefault(choice: PullRequestGuideChoice): PullRequestGuideChoice {
 }
 
 function machineChoice(): PullRequestGuideChoice {
-  return { provider: config.defaultProvider, model: config.defaultModel, effort: config.defaultEffort };
+  return { provider: config.defaultProvider, model: "", effort: "" };
 }
 
 function validateChoice(value: { provider?: unknown; model?: unknown; effort?: unknown }, fallback: PullRequestGuideChoice): PullRequestGuideChoice {

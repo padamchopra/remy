@@ -95,18 +95,16 @@ function TicketSlugField({ workspace }: { workspace: Workspace }) {
 
 /// The provider and model a thread started in this workspace uses.
 ///
-/// The machine has a default and most workspaces want it, so the choice here is
-/// really "follow Remy, or not" — a repository that reads better on one provider
-/// says so once, here, instead of at the top of every thread. Remy default is
-/// stored as inheritance rather than as today's answer, so changing the machine
-/// default reaches this workspace without anyone coming back to it.
+/// A repository that reads better on one provider says so once, here, instead
+/// of at the top of every thread. Default leaves the choice to the composer,
+/// which starts on the first provider turned on at its own default model.
 function ModelField({ workspace }: { workspace: Workspace }) {
   const settings = useStore((s) => s.settings);
   const updateWorkspace = useStore((s) => s.updateWorkspace);
   const inherited = {
     provider: settings?.defaultProvider ?? "claude",
-    model: settings?.defaultModel ?? "",
-    effort: settings?.defaultEffort ?? "",
+    model: "",
+    effort: "",
   };
 
   const pick = (choice: { provider: string; model: string; effort?: string }) => {

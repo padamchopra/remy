@@ -193,6 +193,8 @@ Put the control where someone looks for the capability. Do not put it on the cur
 
 A broad owner supplies the default and a narrower owner may override it. The most specific explicit choice wins: Remy-wide → workspace → one pull request or thread.
 
+A new thread's model default lives on the workspace and the computer, never on the account or in Settings → General. The composer resolves it as: your pick → workspace default → computer default → the provider's own default. A new thread's permission has no saved default at all: it starts on Ask, and only the person, in the composer or the thread, moves it to something more permissive.
+
 Keep the same capability and state model at every scope, but use the choices the current context makes possible. Show which broader scope is being inherited and provide a way back to that default after an override. A lower scope starts from the effective values above it rather than from unrelated hard-coded defaults.
 
 Treat useful context as a first-class option. A pull request shown inside a thread can be monitored in that thread, assigned to an agent, turned off, or returned to its inherited default. A machine or workspace setting cannot offer “this thread” because no thread is present there.

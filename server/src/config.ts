@@ -15,7 +15,6 @@ import {
 } from "./providers.js";
 // Type-only, so this module keeps no runtime dependency on the one that runs a
 // thread — chat.ts already depends on this one.
-import type { ChatPermissionMode } from "./chat.js";
 
 export { configDir } from "./paths.js";
 
@@ -42,21 +41,14 @@ export interface Config {
   /// Directory that holds Remy's `.remy` worktree folder. Empty means each
   /// workspace holds its own, at `<workspace>/.remy`.
   worktreeRoot: string;
-  /// The model a new thread starts with, in `defaultProvider`'s own naming.
-  /// Empty leaves the choice to whatever that tool is configured with.
-  defaultModel: string;
-  /// How much reasoning a new thread asks its selected model to use. Empty
-  /// leaves the choice to that provider's configuration.
-  defaultEffort: string;
-  /// What a new thread thinks with. The pair is validated together: a provider
-  /// only ever holds one of its own models.
+  /// The provider a new thread runs on when neither its workspace nor the
+  /// composer names one: the first provider turned on, at its own default
+  /// model. It is derived, not a setting — there is no machine-wide default
+  /// model, and a stored one from an older Remy is ignored.
   defaultProvider: ProviderId;
   /// Providers offered for new work on this machine. Existing threads keep
   /// their provider so their history remains readable.
   enabledProviders: ProviderId[];
-  /// What a new thread may do without being asked. A thread can still say
-  /// otherwise; this is where one starts when it has not.
-  defaultPermissionMode: ChatPermissionMode;
   /// The face on your messages: empty for the default, `preset:<id>` for one
   /// of the built-in ones, or a `data:` URL for a picture you chose.
   avatar: string;
@@ -86,8 +78,8 @@ export interface Config {
   /// the setting for a machine that runs the work while you watch from another.
   notifySelf: boolean;
   /// What Remy runs its own small jobs on — naming a thread, and whatever else
-  /// comes to need a model later. Separate from `defaultModel`, which is what
-  /// your threads think with: this one should stay cheap. `off` declines them
+  /// comes to need a model later. Separate from what your threads think with:
+  /// this one should stay cheap. `off` declines them
   /// altogether.
   remyProvider: ProviderId;
   remyModel: string;
@@ -103,7 +95,6 @@ export type RepoUpdateEvery = "off" | "hourly" | "sixHourly" | "daily";
 
 /// Listed here rather than imported, so the type above can stay type-only. The
 /// same shape `agents.ts` keeps, and for the same reason.
-const PERMISSION_MODES: ChatPermissionMode[] = ["default", "auto", "acceptEdits", "plan", "bypassPermissions"];
 
 const SLEEP_MODES: PreventSleepMode[] = ["off", "whileBusy", "always"];
 const CHECKOUT_MODES: CheckoutMode[] = ["main", "worktree"];
@@ -261,11 +252,9 @@ function load(): Config {
   tailscaleServePreferenceStored = typeof parsed.tailscaleServeEnabled === "boolean";
   const hubMode = parsed.hubMode === true;
   const enabled = enabledProviders(parsed.enabledProviders, hubMode);
-  const parsedDefaultProvider = providerId(parsed.defaultProvider);
-  const defaultProvider = enabled.includes(parsedDefaultProvider) ? parsedDefaultProvider : enabled[0];
+  const defaultProvider = enabled[0];
   const parsedRemyProvider = providerId(parsed.remyProvider);
   const remyProvider = enabled.includes(parsedRemyProvider) ? parsedRemyProvider : defaultProvider;
-  const defaultModel = providerModel(defaultProvider, parsed.defaultModel);
   const remyModel = remyModelValue(remyProvider, parsed.remyModel ?? "haiku");
   const config: Config = {
     port: Number(parsed.port) || 8420,
@@ -278,10 +267,7 @@ function load(): Config {
     worktreeBase: oneOf(WORKTREE_BASES, parsed.worktreeBase, "remote"),
     worktreeRoot: worktreeRootPath(parsed.worktreeRoot),
     defaultProvider,
-    defaultModel,
-    defaultEffort: providerEffort(defaultProvider, defaultModel, parsed.defaultEffort),
     enabledProviders: enabled,
-    defaultPermissionMode: oneOf(PERMISSION_MODES, parsed.defaultPermissionMode, "default"),
     remyProvider,
     remyModel,
     remyEffort: remyModel === OFF ? "" : providerEffort(remyProvider, remyModel, parsed.remyEffort),
@@ -316,11 +302,8 @@ export interface PublicSettings {
   defaultCheckout: CheckoutMode;
   worktreeBase: WorktreeBase;
   worktreeRoot: string;
-  defaultModel: string;
-  defaultEffort: string;
   defaultProvider: ProviderId;
   enabledProviders: ProviderId[];
-  defaultPermissionMode: ChatPermissionMode;
   remyProvider: ProviderId;
   remyModel: string;
   remyEffort: string;
@@ -344,11 +327,8 @@ export function publicSettings(): PublicSettings {
     defaultCheckout: config.defaultCheckout,
     worktreeBase: config.worktreeBase,
     worktreeRoot: config.worktreeRoot,
-    defaultModel: config.defaultModel,
-    defaultEffort: config.defaultEffort,
     defaultProvider: config.defaultProvider,
     enabledProviders: config.enabledProviders,
-    defaultPermissionMode: config.defaultPermissionMode,
     remyProvider: config.remyProvider,
     remyModel: config.remyModel,
     remyEffort: config.remyEffort,
@@ -394,19 +374,6 @@ export function patchSettings(patch: Record<string, unknown>): PublicSettings {
   if (patch.worktreeRoot !== undefined) {
     set("worktreeRoot", worktreeRootPath(patch.worktreeRoot));
   }
-  // A provider and a model are one choice, so they are validated as one: a
-  // patch that moves to Codex and keeps `sonnet` lands on Codex's default
-  // rather than on a model Codex has never heard of.
-  if (patch.defaultProvider !== undefined || patch.defaultModel !== undefined || patch.defaultEffort !== undefined) {
-    const asked = patch.defaultProvider === undefined
-      ? config.defaultProvider
-      : providerId(patch.defaultProvider, config.defaultProvider);
-    const provider = config.enabledProviders.includes(asked) ? asked : config.defaultProvider;
-    const model = modelFor(provider, patch.defaultModel, config.defaultModel);
-    set("defaultProvider", provider);
-    set("defaultModel", model);
-    set("defaultEffort", effortFor(provider, model, patch.defaultEffort, config.defaultEffort));
-  }
   if (patch.remyProvider !== undefined || patch.remyModel !== undefined || patch.remyEffort !== undefined) {
     const asked = patch.remyProvider === undefined
       ? config.remyProvider
@@ -421,9 +388,6 @@ export function patchSettings(patch: Record<string, unknown>): PublicSettings {
   }
   if (patch.favoriteModels !== undefined) {
     set("favoriteModels", favoriteModels(patch.favoriteModels));
-  }
-  if (patch.defaultPermissionMode !== undefined) {
-    set("defaultPermissionMode", oneOf(PERMISSION_MODES, patch.defaultPermissionMode, config.defaultPermissionMode));
   }
   if (patch.repoUpdate !== undefined) {
     set("repoUpdate", oneOf(REPO_UPDATES, patch.repoUpdate, config.repoUpdate));
@@ -473,16 +437,12 @@ export function setProviderEnabled(value: unknown, enabled: boolean): PublicSett
   else next.delete(selected.id);
   if (next.size === 0) throw new Error("keep at least one provider on");
   config.enabledProviders = PROVIDERS.map((entry) => entry.id).filter((id) => next.has(id));
-  if (!next.has(config.defaultProvider)) {
-    config.defaultProvider = config.enabledProviders[0];
-    config.defaultModel = "";
-    config.defaultEffort = "";
-  }
+  config.defaultProvider = config.enabledProviders[0];
   if (!next.has(config.remyProvider)) {
     config.remyProvider = config.defaultProvider;
     if (config.remyModel !== OFF) {
-      config.remyModel = config.defaultModel;
-      config.remyEffort = config.defaultEffort;
+      config.remyModel = "";
+      config.remyEffort = "";
     }
   }
   setKv("config", config);

@@ -455,8 +455,6 @@ export interface ServerSettings {
   defaultCheckout: "main" | "worktree";
   worktreeBase: "remote" | "local";
   worktreeRoot: string;
-  defaultModel: string;
-  defaultEffort: string;
   /// What Remy runs its own small jobs on, as opposed to what your chats think
   /// with. Kept cheap on purpose, and `off` declines them altogether.
   remyProvider: string;
@@ -475,13 +473,11 @@ export interface ServerSettings {
   /// Preferred devices for work that is not tied to a workspace.
   devicePreferenceOrder: string[];
   tailscaleServeEnabled: boolean;
-  /// What a new thread thinks with. It pairs with `defaultModel`: a provider
-  /// only ever holds one of its own models.
+  /// The provider a new thread falls back to when neither its workspace nor
+  /// the composer names one: the first provider turned on, at its own default
+  /// model. Derived by the daemon, not a setting.
   defaultProvider: string;
   enabledProviders: string[];
-  /// What a new thread may do without being asked. A workspace or the thread
-  /// itself can still say otherwise.
-  defaultPermissionMode: string;
 }
 
 /// What one repository did the last time Remy refreshed them.
