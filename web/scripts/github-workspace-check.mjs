@@ -29,7 +29,7 @@ try {
    return route.fulfill({status:path in responses?200:404,json:responses[path]??{error:'Unexpected request'}});
   });
   await page.goto(`${process.env.WEBSITE_URL??'http://127.0.0.1:5187'}/app/#/workspaces?organization=team`);
-  await page.getByRole('button',{name:'Add a workspace',exact:true}).click();
+  await page.locator('[data-slot="pane-header"]').getByRole('button',{name:'Add workspace',exact:true}).click();
   const dialog=page.getByRole('dialog');
   await dialog.getByRole('button',{name:'Use a personal access token'}).click();
   await dialog.getByLabel('Personal access token',{exact:true}).fill('test-pat');
@@ -42,7 +42,7 @@ try {
   assert.equal(await dialog.evaluate(el=>el.scrollWidth<=el.clientWidth),true);
   await dialog.getByRole('button',{name:'example/repo',exact:true}).click();
   await dialog.waitFor({state:'hidden'});assert.equal(imported,true);
-  await page.getByRole('button',{name:'Add a workspace',exact:true}).click();
+  await page.locator('[data-slot="pane-header"]').getByRole('button',{name:'Add workspace',exact:true}).click();
   await page.getByRole('button',{name:'Enter a repository URL'}).click();
   await page.getByLabel('Repository origin',{exact:true}).waitFor();
   await page.getByRole('button',{name:'Cancel',exact:true}).click();

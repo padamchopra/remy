@@ -1,6 +1,6 @@
 import { Pin } from "lucide-react";
 import type { HubThread } from "@remy/contract";
-import { normalizeRepositoryOrigin } from "@/lib/hub-workspace-computers";
+import { hubThreadWorkspace } from "@/lib/workspace-list";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { hubThreadAsChat } from "@/components/ThreadMenu";
 import { useHubProfile } from "@/lib/hub-profile";
@@ -38,11 +38,7 @@ export function useHubThreadGroups({
       const account = resources[thread.access.organizationId || organizationId] ?? {};
       const detail = thread.detail;
       const computer = account.computers?.find((entry) => entry.computerId === thread.computerId);
-      const local = computer?.capabilities.workspaces.find((entry) =>
-        typeof detail.cwd === "string" && (detail.cwd === entry.path || detail.cwd.startsWith(`${entry.path}/`)));
-      const workspace = account.workspaces?.find((entry) =>
-        entry.id === local?.id
-        || (entry.origin && local?.origin && normalizeRepositoryOrigin(entry.origin) === normalizeRepositoryOrigin(local.origin)));
+      const workspace = hubThreadWorkspace(thread, account.computers, account.workspaces);
       const state: ChatState = detail.state === "working" || detail.state === "needs_input" || detail.state === "error"
         ? detail.state
         : "idle";

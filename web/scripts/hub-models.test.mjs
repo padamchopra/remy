@@ -81,12 +81,34 @@ test("cloud share grants match a gateway id or a legacy Codex runtime", () => {
   assert.equal(cloudShareAllowsProvider(new Set(["openrouter"]), "codex"), false);
 });
 
-test("hosted models do not add Claude Code or ChatGPT account rows", () => {
-  const models = hostedModels(
+test("hosted models never add a Claude Code account row, and add ChatGPT only when signed in", () => {
+  const signedOut = hostedModels(
     [{ id: "openai", enabled: true, configured: true, models: [] }],
   );
-  assert.deepEqual(models.map((entry) => entry.id), ["openai"]);
-  assert.equal(models[0].label, "OpenAI");
+  assert.deepEqual(signedOut.map((entry) => entry.id), ["openai"]);
+  assert.equal(signedOut[0].label, "OpenAI");
+  const signedIn = hostedModels(
+    [{ id: "openai", enabled: true, configured: true, models: [] }],
+    undefined,
+    true,
+  );
+  assert.deepEqual(signedIn.map((entry) => ({ id: entry.id, label: entry.label })), [
+    { id: "openai", label: "OpenAI" },
+    { id: "codex", label: "ChatGPT" },
+  ]);
+  assert.ok(signedIn[1].models.length > 0);
+  assert.equal(signedIn.find((entry) => entry.id === "claude"), undefined);
+});
+
+test("a ChatGPT start runs Codex on the account, not an API key gateway", () => {
+  const choice = hostedComposerChoice([], { provider: "codex", model: "gpt-5.5" }, true);
+  assert.deepEqual(choice, { provider: "codex", model: "gpt-5.5" });
+  assert.deepEqual(hostedExecutionChoice(choice), { provider: "codex", model: "gpt-5.5" });
+  const fallback = hostedComposerChoice(
+    [{ id: "openai", enabled: true, configured: true, models: [] }],
+    { provider: "codex", model: "gpt-5.5" },
+  );
+  assert.equal(fallback.provider, "openai");
 });
 
 test("hosted models keep Claude Opus 5.5 choosable while OpenRouter is selected", () => {

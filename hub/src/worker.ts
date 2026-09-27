@@ -16,6 +16,7 @@ import { ComputerAccountStore } from "./computer-accounts.js";
 import { cancelClaudeAccount, claudeAccountStatus, claudeComputerEnvironment, completeClaudeAccount, logoutClaudeAccount, startClaudeAccount } from "./claude-account.js";
 import { encodeComputerConnectionKey } from "@remy/contract";
 import { personalSpace } from "./personal-space.js";
+import { ChatGPTAccounts, RECONNECT_CODEX, chatgptConnected, chatgptEnabled, isChatGPTModel, setChatGPTEnabled } from "./chatgpt-account.js";
 import {linearAccountRoute, linearAccountsFor} from "./linear-routes.js";
 import { githubFor, githubRoute } from "./github-routes.js";
 import { connectionRoute, connectionWebhook, isGitHubConnectionCallback } from "./connection-routes.js";
@@ -97,6 +98,8 @@ export interface Env extends ApplePushConfig {
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string | SecretsStoreSecret;
   MINIMUM_DAEMON_VERSION?: string;
+  /// Only the disposable QA hub points this at a fake OpenAI auth server.
+  CHATGPT_AUTH_ISSUER?: string;
 }
 
 type LogEvent = RequestOutcome | HubErrorEvent;
@@ -174,6 +177,25 @@ async function cursorCloudApiKey(settings: HostedSettingsStore, org: string): Pr
   const connection = await settings.connection(org, "cursor-cloud");
   return connection?.provider === "cursor-cloud" && connection.enabled ? connection.token : undefined;
 }
+
+/// What a task sends when Codex asks again after a rejection: a reason, and a
+/// SHA-256 of the access token that was rejected. Anything else is ignored.
+function codexTokenRefresh(payload: ArrayBuffer | undefined): { reason: string; rejected?: string } | undefined {
+  if (!payload?.byteLength) return;
+  try {
+    const input = JSON.parse(new TextDecoder().decode(payload)) as { reason?: unknown; rejected?: unknown };
+    if (typeof input.reason !== "string" || input.reason.length > 64) return;
+    return { reason: input.reason, ...(typeof input.rejected === "string" && /^[0-9a-f]{64}$/.test(input.rejected) ? { rejected: input.rejected } : {}) };
+  } catch { return; }
+}
+
+/// Any member of an organization with a cloud computer can run the threads
+/// they start on their own ChatGPT sign-in, when they allow it there.
+async function chatgptReady(db: D1Database, org: string, userId: string) {
+  return await chatgptConnected(db, userId) && await chatgptEnabled(db, org, userId);
+}
+const CHATGPT_SIGN_IN = "Sign in to ChatGPT in Personal model access, or turn it on for this organization.";
+const CHATGPT_THREAD = "This thread’s starter hasn’t turned on ChatGPT here. Choose a model with an API key.";
 
 async function canStartOnCloud(
   settings: HostedSettingsStore,
@@ -298,6 +320,8 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     || url.pathname === "/api/review-rules"
     || /^\/api\/review-rules\/[^/]+$/.test(url.pathname)
     || url.pathname === "/api/personal"
+    || url.pathname === "/api/chatgpt-account"
+    || url.pathname.startsWith("/api/chatgpt-account/")
     || /^\/api\/sessions\/[^/]+$/.test(url.pathname)
     || url.pathname === "/api/invitations/accept"
     || url.pathname === "/api/invitations/preview"
@@ -359,7 +383,8 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
   if(codexTokens && request.method==="POST") {
     const org=decodeURIComponent(codexTokens[1]),computer=await authenticateComputer(request,org,computerStore);
     if(!computer || computer.ownership!=="hosted")return jsonError("This computer cannot use Codex.",403);
-    return env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${org}`)).fetch(new Request("https://internal/codex-tokens",{method:"POST",headers:{"x-organization-id":org,"x-computer-id":computer.computerId}}));
+    const refresh=codexTokenRefresh(await limitedBody(request,1024));
+    return env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${org}`)).fetch(new Request("https://internal/codex-tokens",{method:"POST",headers:{"x-organization-id":org,"x-computer-id":computer.computerId,"content-type":"application/json"},body:JSON.stringify(refresh ?? {})}));
   }
   const gitRoute = /^\/api\/organizations\/([^/]+)\/git\/([^/]+)(?:\/(token|info\/refs|git-upload-pack|git-receive-pack))?$/.exec(url.pathname);
   if (gitRoute) {
@@ -446,6 +471,15 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
   const reviewRulesResponse=await reviewRulesRoute(request,env,identity.userId,identity.clientKind);if(reviewRulesResponse)return reviewRulesResponse;
   try {
     if (url.pathname === "/api/personal" && request.method === "GET") return Response.json({ personal: await personalSpace(env.DB, identity.userId) }, { headers: { "cache-control": "no-store" } });
+    const chatgptAccount = /^\/api\/chatgpt-account(?:\/(start|cancel|logout))?$/.exec(url.pathname);
+    if (chatgptAccount) {
+      // Your own ChatGPT sign-in for cloud Codex. Nobody else, and no computer, can read or change it.
+      if (identity.clientKind === "computer") return jsonError("Connect Codex from Remy.", 403);
+      if (!(request.method === "GET" && !chatgptAccount[1]) && !(request.method === "POST" && chatgptAccount[1])) return jsonError("This account action is unavailable.", 405);
+      if (request.method === "POST" && !allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Connect Codex from Remy.", 403);
+      const response = await env.COORDINATOR.get(env.COORDINATOR.idFromName(`chatgpt:${identity.userId}`)).fetch(new Request(`https://internal/chatgpt-account/${chatgptAccount[1] ?? "status"}`, { method: "POST", headers: { "x-chatgpt-user": identity.userId } }));
+      return new Response(response.body, { status: response.status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
+    }
     if (url.pathname === "/api/organizations" && request.method === "GET") return Response.json({ organizations: await organizations.list(identity.userId) });
     if (url.pathname === "/api/organizations" && request.method === "POST") {
       const input = await body<{ name?: string }>(request); const name = input?.name?.trim();
@@ -537,6 +571,21 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         await organizations.member(organizationId, identity.userId);
         if (request.method !== "GET" && !allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Open notifications in Remy.", 403);
         return organizationObject().fetch(new Request(`https://internal/${tail}`, { method: request.method, headers: { "x-organization-id": organizationId, "x-user-id": identity.userId, "x-session-id": identity.sessionId, upgrade: request.headers.get("upgrade") ?? "" } }));
+      }
+      if (tail === "chatgpt") {
+        // Whether your own ChatGPT sign-in runs the cloud threads you start here.
+        await organizations.member(organizationId, identity.userId);
+        if (identity.clientKind === "computer") return jsonError("Open organization settings in Remy.", 403);
+        const personal = (await personalSpace(env.DB, identity.userId)).id === organizationId;
+        if (request.method === "PUT" || request.method === "DELETE") {
+          if (personal) return jsonError("Your ChatGPT sign-in always runs your Personal threads.", 409);
+          if (!allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Open organization settings in Remy.", 403);
+          await setChatGPTEnabled(env.DB, organizationId, identity.userId, request.method === "PUT");
+          await organizationObject().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId } }));
+        } else if (request.method !== "GET") return jsonError("This action is unavailable.", 405);
+        const connected = await chatgptConnected(env.DB, identity.userId);
+        const enabled = await chatgptEnabled(env.DB, organizationId, identity.userId);
+        return Response.json({ connected, enabled, personal, available: connected && enabled }, { headers: { "cache-control": "no-store" } });
       }
       if (tail === "compute-shares" && request.method === "GET") {
         const member = await organizations.member(organizationId, identity.userId);
@@ -760,10 +809,6 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       const claudeAccount = /^claude-account(?:\/(start|complete|cancel|logout))?$/.exec(tail);
       if (claudeAccount) {
         return jsonError("Connect Claude Code on a computer you own.", 403);
-      }
-      const hostedAccount = /^hosted\/([^/]+)\/codex(?:\/(start|cancel|logout))?$/.exec(tail);
-      if (hostedAccount) {
-        return jsonError("Connect Codex on a computer you own.", 403);
       }
       const computerClaude = /^computers\/([^/]+)\/claude-account(?:\/(start|complete|cancel|logout))?$/.exec(tail);
       if (computerClaude) {
@@ -1217,6 +1262,7 @@ export class HubCoordinator {
   private readonly threads: ThreadStore;
   private threadPublishing = Promise.resolve();
   private hosted?: HostedLifecycle;
+  private chatgpt?: ChatGPTAccounts;
   private cursorCloud?: CursorCloudThreads;
   private readonly computers: D1ComputerStore;
   private readonly notifications: HubNotifications;
@@ -1237,6 +1283,30 @@ export class HubCoordinator {
     const org = request.headers.get("x-organization-id");
     const user = request.headers.get("x-user-id");
     if (org) await this.ctx.storage.put("organizationId", org);
+    const chatgptPath = /^\/chatgpt-account\/(status|start|cancel|logout|tokens)$/.exec(url.pathname);
+    if (chatgptPath && request.method === "POST") {
+      // One object per person holds and refreshes that person's ChatGPT sign-in.
+      const person = request.headers.get("x-chatgpt-user");
+      if (!person) return jsonError("Choose an account.", 400);
+      const bound = await this.ctx.storage.get<string>("chatgpt:user");
+      if (bound && bound !== person) return jsonError("This account is unavailable.", 403);
+      if (!bound) await this.ctx.storage.put("chatgpt:user", person);
+      const accounts = this.chatgpt ??= new ChatGPTAccounts(this.env.DB, new HostedSettingsStore(this.env.DB, () => this.env.AUTH_SECRET.get()), new DurableStorage(this.ctx.storage), undefined, this.env.CHATGPT_AUTH_ISSUER ?? undefined);
+      try {
+        if (chatgptPath[1] === "tokens") {
+          const refresh = codexTokenRefresh(await request.arrayBuffer());
+          const tokens = await accounts.tokens(person, refresh ? { rejected: refresh.rejected } : undefined);
+          return tokens ? Response.json(tokens, { headers: { "cache-control": "no-store" } }) : jsonError(RECONNECT_CODEX, 409);
+        }
+        const account = chatgptPath[1] === "start" ? await accounts.start(person)
+          : chatgptPath[1] === "cancel" ? await accounts.cancel(person)
+          : chatgptPath[1] === "logout" ? await accounts.logout(person)
+          : await accounts.status(person);
+        return Response.json(account, { headers: { "cache-control": "no-store" } });
+      } catch (error) {
+        return jsonError(error instanceof Error ? error.message : "ChatGPT could not connect; try again.", 502);
+      }
+    }
     if (url.pathname === "/shared-computers/changed" && request.method === "POST" && org) {
       const computerId = request.headers.get("x-computer-id") ?? "";
       const organizationIds = await this.computers.sharedOrganizationIds?.(org, computerId) ?? [];
@@ -1426,11 +1496,14 @@ export class HubCoordinator {
     if(url.pathname==="/codex-tokens" && request.method==="POST") {
       const computer=request.headers.get("x-computer-id");
       const task=(await this.hostedService().list()).find(s=>s.computerId===computer && s.taskId);
-      if(!task || !org)return jsonError("This computer cannot use Codex.",403);
-      const account=await this.hostedService().get(task.workspaceId);
-      if(!account)return new Response(null,{status:204});
-      if(!this.computerSocket(account.computerId))await this.hostedService().ensure(account.workspaceId,account.settings);
-      return this.dispatchComputer(account.computerId,{id:"remy",label:"Remy"},"POST","/hub/codex-tokens",{});
+      if(!task?.taskId || !org)return jsonError("This computer cannot use Codex.",403);
+      // A thread runs on its starter's ChatGPT for its whole life, whoever replies.
+      if(!await this.ctx.storage.get<boolean>(`hosted-task-chatgpt:${task.taskId}`))return new Response(null,{status:204});
+      const starter=await this.ctx.storage.get<string>(`hosted-task-owner:${task.taskId}`);
+      if(!starter || !await new D1OrganizationStore(this.env.DB).membership(org,starter) || !await chatgptEnabled(this.env.DB,org,starter))return jsonError(RECONNECT_CODEX,409);
+      const refresh=codexTokenRefresh(await request.arrayBuffer());
+      const response=await this.env.COORDINATOR.get(this.env.COORDINATOR.idFromName(`chatgpt:${starter}`)).fetch(new Request("https://internal/chatgpt-account/tokens",{method:"POST",headers:{"x-chatgpt-user":starter,"content-type":"application/json"},body:JSON.stringify(refresh ?? {})}));
+      return new Response(response.body,{status:response.status,headers:{"content-type":"application/json","cache-control":"no-store"}});
     }
     if(url.pathname==="/computer-model-keys/changed" && request.method==="POST") {
       const computerId=request.headers.get("x-computer-id") ?? "";
@@ -1442,10 +1515,6 @@ export class HubCoordinator {
     if(removeWorkspace && request.method === "DELETE") { for (const state of (await this.hostedService().list()).filter(s => s.workspaceId === decodeURIComponent(removeWorkspace[1]))) await this.hostedService().remove(state.computerId); return new Response(null,{status:204}); }
     const removeHosted=/^\/hosted-computers\/([^/]+)$/.exec(url.pathname);
     if(removeHosted && request.method==="DELETE") {try{await this.hostedService().remove(decodeURIComponent(removeHosted[1]));return Response.json({ok:true});}catch{return jsonError("This hosted computer could not be removed; try again.",502);}}
-    const hostedAccount = /^\/hosted-account\/([^/]+)(?:\/(start|cancel|logout))?$/.exec(url.pathname);
-    if (hostedAccount) {
-      return jsonError("Connect Codex on a computer you own.", 403);
-    }
     const computerCodex = /^\/computer-account\/([^/]+)\/codex(?:\/(start|cancel|logout))?$/.exec(url.pathname);
     if (computerCodex && org && user) {
       const computerId = decodeURIComponent(computerCodex[1]);
@@ -1707,7 +1776,7 @@ export class HubCoordinator {
     const preference=await this.env.DB.prepare("SELECT computer_id FROM member_computer_preferences WHERE organization_id=? AND user_id=? AND workspace_id=?").bind(org,userId,workspaceId).first<{computer_id:string}>();
     return chooseComputer(await this.computerService().list(org,userId),{workspaceId,origin:workspace.origin,enabledProviders,...(override !== undefined ? (override ? {override} : {}) : preference ? {override:preference.computer_id} : {})});
   }
-  private async taskComputer(userId:string, workspaceId:string, taskId:string, title?:string, override?:string|null, modelChoice?:{provider?:string;model?:string}) {
+  private async taskComputer(userId:string, workspaceId:string, taskId:string, title?:string, override?:string|null, modelChoice?:{provider?:string;model?:string}, chatgpt=false) {
     const org = (await this.ctx.storage.get<string>("organizationId"))!;
     let choice = await this.routeFor(userId, workspaceId, override);
     const target = choice.computerId ? await this.computers.computer(org, choice.computerId) : undefined;
@@ -1723,12 +1792,15 @@ export class HubCoordinator {
     }
     if (choice.hostedWorkspaceId || target?.ownership === "hosted") {
       const settings = await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSettings(org,workspaceId,choice.hostedProvider);
-      if(!await canStartOnCloud(new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()),org,userId,settings.provider,modelChoice?.provider,modelChoice?.model)) throw Error(START_PROVIDER_DENIED);
+      const ownChatGPT = chatgpt && !isCursorCloudProvider(settings.provider);
+      if(ownChatGPT && !await chatgptReady(this.env.DB,org,userId)) throw Error(CHATGPT_SIGN_IN);
+      if(!ownChatGPT && !await canStartOnCloud(new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()),org,userId,settings.provider,modelChoice?.provider,modelChoice?.model)) throw Error(START_PROVIDER_DENIED);
       if (isCursorCloudProvider(settings.provider)) {
         if (modelChoice?.provider && modelChoice.provider !== "cursor") throw Error(START_PROVIDER_DENIED);
         return {computerId:CURSOR_CLOUD_COMPUTER_ID,workspaceId,reason:choice.reason};
       }
       await this.ctx.storage.put(`hosted-task-owner:${taskId}`, userId);
+      if (ownChatGPT) await this.ctx.storage.put(`hosted-task-chatgpt:${taskId}`, true);
       const state = await this.hostedService().ensure(workspaceId,settings,taskId,title);
       const computer = await this.computers.computer(org,state.computerId);
       choice = {computerId:state.computerId,workspaceId:computer?.capabilities.workspaces[0]?.id ?? workspaceId,reason:"A separate computer for your task."};
@@ -1945,6 +2017,7 @@ export class HubCoordinator {
       provider?: string | undefined;
       model?: string | undefined;
       review?: HubReview | undefined;
+      chatgpt?: boolean | undefined;
     },
     key: string,
   ): Promise<void> {
@@ -1959,6 +2032,7 @@ export class HubCoordinator {
           ...(input.provider ? { provider: input.provider } : {}),
           ...(input.model ? { model: input.model } : {}),
         },
+        input.chatgpt === true,
       );
       const computer = await this.computers.computer(org, choice.computerId);
       // Cursor Cloud threads run without Remy's tools, so a review there could
@@ -2136,13 +2210,16 @@ export class HubCoordinator {
       if(start.model !== undefined && (typeof start.model !== "string" || start.model.length>512))return jsonError("Choose a model.",400);
       if(input.branch !== undefined && (typeof input.branch !== "string" || !input.branch || input.branch.length > 255)) return jsonError("Choose a branch.",400);
       if(input.visibility !== undefined && input.visibility !== "private" && input.visibility !== "open") return jsonError("Choose who can read this thread.",400);
+      // Plain Codex on a cloud computer is the starter's own ChatGPT; API keys go through a `remy:` gateway model.
+      const chatgpt=input.provider==="codex" && !(input.model ?? "").startsWith("remy:");
       const gatewayError=hostedGatewayError(start.provider,start.model,await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSecrets(org));
       if(gatewayError)return jsonError(gatewayError,400);
       if(input.computerId) {
         const cloud=cloudComputerProvider(input.computerId);
         if(cloud) {
           if(isCursorCloudProvider(cloud) && start.provider && start.provider !== "cursor") return jsonError(START_PROVIDER_DENIED,403);
-          if(!await canStartOnCloud(new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()),org,actor.id,cloud,start.provider,start.model)) return jsonError(START_PROVIDER_DENIED,403);
+          if(chatgpt && !isCursorCloudProvider(cloud) && !await chatgptReady(this.env.DB,org,actor.id)) return jsonError(CHATGPT_SIGN_IN,409);
+          if(!(chatgpt && !isCursorCloudProvider(cloud)) && !await canStartOnCloud(new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()),org,actor.id,cloud,start.provider,start.model)) return jsonError(START_PROVIDER_DENIED,403);
         } else {
           const target=await this.computers.computer(org,input.computerId);
           if(target && !await this.computerService().canStartWithProvider(target,actor.id,org,start.provider)) return jsonError(START_PROVIDER_DENIED,403);
@@ -2167,6 +2244,7 @@ export class HubCoordinator {
         provider: start.provider,
         model: start.model,
         review,
+        chatgpt,
       }, key);
       this.manualStarts.set(key, work);
       this.ctx.waitUntil(work.finally(() => { if (this.manualStarts.get(key) === work) this.manualStarts.delete(key); }));
@@ -2235,7 +2313,22 @@ export class HubCoordinator {
     if(input.hubEnvironment!==undefined || input.hubTaskId!==undefined || input.hubLinear!==undefined || input.hubReview!==undefined)return jsonError("This thread configuration is unavailable.",403);
     const referencesError=action==="message"?codeReferencesError(input.codeReferences):undefined;
     if(referencesError)return jsonError(referencesError,400);
+    // A cloud Codex thread switched to plain Codex runs on its starter's ChatGPT, never an API key.
+    let chatgptTask: string | undefined, chatgptModel = false;
+    if (id && action === "options" && "model" in input && target.ownership === "hosted" && snapshot?.detail.provider === "codex") {
+      chatgptTask = (await this.hostedService().list()).find(s => s.computerId === computerId && s.taskId)?.taskId;
+      chatgptModel = isChatGPTModel("codex", input.model);
+      if (chatgptTask && chatgptModel) {
+        const org = request.headers.get("x-organization-id")!;
+        const starter = await this.ctx.storage.get<string>(`hosted-task-owner:${chatgptTask}`);
+        if (!starter || !await new D1OrganizationStore(this.env.DB).membership(org, starter) || !await chatgptReady(this.env.DB, org, starter)) return jsonError(CHATGPT_THREAD, 409);
+      }
+    }
     const answer=await this.dispatchComputer(computerId,actor,request.method,`/hub/threads${id?`/${id}`:""}${action?`/${action}`:""}`,input);
+    if (answer.ok && chatgptTask) {
+      if (chatgptModel) await this.ctx.storage.put(`hosted-task-chatgpt:${chatgptTask}`, true);
+      else await this.ctx.storage.delete(`hosted-task-chatgpt:${chatgptTask}`);
+    }
     if (id && (request.method === "DELETE" || action === "archive")) {
       if (answer.ok) {
         await this.threads.removeGroup(computerId, id);

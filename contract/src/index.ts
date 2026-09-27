@@ -374,6 +374,14 @@ export type HostedClaudeAccount = {
   subscription?: string;
   error?: string;
 };
+/// A person's ChatGPT sign-in for cloud Codex, as the browser sees it: never tokens.
+export type ChatGPTAccount = {
+  phase: "signedOut" | "pending" | "connected" | "error";
+  email?: string;
+  userCode?: string;
+  verificationUrl?: string;
+  error?: string;
+};
 export type HostedCodexAccount = {
   phase: "signedOut" | "pending" | "connected" | "error";
   email?: string;

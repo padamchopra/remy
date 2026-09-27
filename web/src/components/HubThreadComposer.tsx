@@ -23,6 +23,7 @@ import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { usePersonalHub } from "@/lib/hub-scope";
 import { saveComposerSnapshot, type ComposerSnapshot } from "@/lib/hub-composer-cache";
 import { cacheHubWorkspaces, cachedHubWorkspaces, hasCachedHubWorkspaces } from "@/lib/hub-workspace-cache";
+import { takeComposerWorkspace, useComposerWorkspaceRequest } from "@/lib/composer-workspace";
 export type HubThreadWorkspaceOption = {
   key: string;
   organizationId: string;
@@ -96,6 +97,15 @@ export function HubThreadComposer({
   const message = controlledMessage ?? draftMessage;
   const setMessage = onMessageChange ?? setDraftMessage;
   const workspaceId = controlledWorkspaceId ?? localWorkspaceId;
+  // New thread on a workspace row opens the composer on that workspace, once
+  // this account's list holds it.
+  const requested = useComposerWorkspaceRequest();
+  useEffect(() => {
+    if (controlledWorkspaceId !== undefined || !requested || requested.organizationId !== organizationId) return;
+    if (!workspaces.some((w) => w.id === requested.workspaceId)) return;
+    setWorkspace(requested.workspaceId);
+    takeComposerWorkspace(requested);
+  }, [requested, organizationId, workspaces, controlledWorkspaceId]);
   useEffect(() => {
     if (controlledWorkspaceId === undefined && (catalogue.value || workspaces.length))
       setWorkspace((id) =>
@@ -114,7 +124,7 @@ export function HubThreadComposer({
   const {
     snapshot, modelAccess, cloudConnections, cloudOptions, eligible, picked, pick, selected,
     preferenceLoaded, likelyComputer, defaults, resolvedDefaults, usingCloud, usingCursorCloud,
-    modelCatalogue, cataloguePending, selectedChoice, chosenProvider, choiceValid, executionChoice,
+    modelCatalogue, cataloguePending, codexAccountPending, selectedChoice, chosenProvider, choiceValid, executionChoice,
     setPickedModel, computerName, modelReady, error, setError,
   } = useHubStartChoice({ organizationId, memberId, computers, computersLoaded, workspaceId, workspaceOrigin: workspace?.origin });
   useEffect(() => {
@@ -247,6 +257,7 @@ export function HubThreadComposer({
           !catalogue.value ||
           catalogue.stale ||
           (usingCloud && !usingCursorCloud && !modelAccess.value) ||
+          codexAccountPending ||
           (!usingCursorCloud && (usingCloud || !!selectedChoice.provider) && !choiceValid)
         )
           return;
@@ -261,7 +272,7 @@ export function HubThreadComposer({
     >
       <ThreadComposerEditor
         textarea={{ id: "hub-thread-message", maxLength: 64000, value: message, onChange: e => setMessage(e.target.value), required: true, disabled: false }}
-        canSend={!!memberId && !!workspace && !!selected && preferenceLoaded && visibilityLoaded && !!resolvedDefaults && !!message.trim() && !!catalogue.value && !catalogue.stale && !(usingCloud && !usingCursorCloud && !modelAccess.value) && (usingCursorCloud || !(usingCloud || selectedChoice.provider) || !!choiceValid)}
+        canSend={!!memberId && !!workspace && !!selected && preferenceLoaded && visibilityLoaded && !!resolvedDefaults && !!message.trim() && !!catalogue.value && !catalogue.stale && !(usingCloud && !usingCursorCloud && !modelAccess.value) && !codexAccountPending && (usingCursorCloud || !(usingCloud || selectedChoice.provider) || !!choiceValid)}
         busy={false} sendLabel="Send"
         controls={modelReady
           ? (usingCursorCloud

@@ -2,7 +2,7 @@ import { handleHubThreadRequest, hubThreadIds, hubThreadSnapshot } from "./hub-t
 import { onLocalBroadcast, onAddressedNotification } from "./notify.js";
 import { saveChatImage } from "./chat-attachments.js";
 import { execFileSync } from "node:child_process";
-import { createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, randomUUID, sign } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, randomUUID, sign } from "node:crypto";
 import { hostname } from "node:os";
 import {
   COMPUTER_HEARTBEAT_INTERVAL_MS,
@@ -394,11 +394,17 @@ export async function detachHubComputer(): Promise<void> {
 }
 
 
-export async function hostedTaskCodexTokens():Promise<{accessToken:string;chatgptAccountId:string}|null> {
+/// The hub holds ChatGPT tokens; a task asks for its starter's. A refresh after a
+/// rejection sends only a hash of the rejected token, so the hub can tell whether
+/// someone else already rotated past it.
+export async function hostedTaskCodexTokens(refresh?:{reason:string;rejectedAccessToken?:string}):Promise<{accessToken:string;chatgptAccountId:string}|null> {
   const registration=getKv<HubComputerRegistration>(REGISTRATION_KEY);
   if(!registration || !process.env.REMY_HOSTED_TASK)throw Error("This task has no Codex connection.");
-  const response=await fetch(new URL(`/api/organizations/${encodeURIComponent(registration.organizationId)}/computers/codex-tokens`,registration.hubUrl),{method:"POST",headers:{authorization:connectionAuthorization(registration.organizationId,registration.computerId,privateKey().privateKey)},signal:AbortSignal.timeout(9000),redirect:"error"});
+  const body=refresh?JSON.stringify({reason:refresh.reason,...(refresh.rejectedAccessToken?{rejected:createHash("sha256").update(refresh.rejectedAccessToken).digest("hex")}:{})}):undefined;
+  const response=await fetch(new URL(`/api/organizations/${encodeURIComponent(registration.organizationId)}/computers/codex-tokens`,registration.hubUrl),{method:"POST",headers:{authorization:connectionAuthorization(registration.organizationId,registration.computerId,privateKey().privateKey),...(body?{"content-type":"application/json"}:{})},...(body?{body}:{}),signal:AbortSignal.timeout(9000),redirect:"error"});
   if(response.status===204)return null;
+  // The hub refuses with 409 when the starter signed out or turned ChatGPT off here.
+  if(response.status===409)throw Error("Reconnect Codex to continue.");
   if(!response.ok)throw Error("Codex could not reconnect; check your connection in Settings.");
   const tokens=await response.json() as {accessToken:string;chatgptAccountId:string};
   if(typeof tokens.accessToken!=="string"||typeof tokens.chatgptAccountId!=="string")throw Error("Codex returned an invalid connection.");

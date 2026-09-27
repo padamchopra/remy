@@ -1140,7 +1140,7 @@ test("owners can archive and delete hosted threads after the cloud computer slee
   }
 });
 
-test("Claude Code and Codex account login are refused on cloud computers", async () => {
+test("Claude Code account login is refused on cloud computers", async () => {
   const { sqlite, db, computers, organizations, service } = database();
   const { createRouteHandler } = await import("./worker.js");
   const { OrganizationService } = await import("./organizations.js");
@@ -1173,10 +1173,8 @@ test("Claude Code and Codex account login are refused on cloud computers", async
     const listed = await (await call("model-access")).json() as { providers: { id: string }[]; accounts?: { claude?: { phase: string } } };
     assert.equal(listed.accounts?.claude, undefined);
     assert.deepEqual(listed.providers.map((entry) => entry.id), ["anthropic", "openai", "router", "openrouter"]);
-    const codex = await call("hosted/ws/codex/start", "POST");
-    assert.equal(codex.status, 403);
-    assert.match(((await codex.json()) as { error: string }).error, /computer you own/);
-    assert.equal((await call("hosted/ws/codex")).status, 403);
+    // ChatGPT belongs to each person (`/api/chatgpt-account`), not to a workspace's computer.
+    assert.notEqual((await call("hosted/ws/codex/start", "POST")).status, 200);
   } finally {
     sqlite.close();
   }
@@ -1230,7 +1228,6 @@ test("owned connected computers can start Claude Code and Codex account login", 
     assert.equal(codex.status, 200);
     assert.ok(forwarded.some((path) => path.includes(`/computer-account/${input.computerId}/codex/start`)));
     assert.equal((await call("claude-account/start", "POST")).status, 403);
-    assert.equal((await call("hosted/ws/codex/start", "POST")).status, 403);
   } finally {
     sqlite.close();
   }

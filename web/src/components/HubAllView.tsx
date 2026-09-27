@@ -9,6 +9,7 @@ import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { useThreadStarts } from "@/lib/hub-thread-start";
 import { watchHubResource } from "@/lib/hub-computers";
 import { cacheHubWorkspaces, cachedHubWorkspaces, hasCachedHubWorkspaces } from "@/lib/hub-workspace-cache";
+import { takeComposerWorkspace, useComposerWorkspaceRequest } from "@/lib/composer-workspace";
 import { HubPersonalContext } from "@/lib/hub-scope";
 import { HubModelFavorites } from "./HubModelFavorites";
 import { hubThreads } from "./hub-surfaces";
@@ -238,6 +239,14 @@ function AllThreads({
   // workspace added later does not move the composer. A default drawn from a
   // saved list is not held: the fresh one may disagree.
   const defaultSettled = firstWithWorkspaces >= 0 && lists.slice(0, firstWithWorkspaces + 1).every(({ settled }) => settled);
+  const requested = useComposerWorkspaceRequest();
+  useEffect(() => {
+    if (!requested) return;
+    const key = `${requested.organizationId}:${requested.workspaceId}`;
+    if (!workspaceOptions.some((workspace) => workspace.key === key)) return;
+    setWorkspaceKey(key);
+    takeComposerWorkspace(requested);
+  }, [requested, workspaceOptions]);
   useEffect(() => {
     if (defaultSettled && selectedWorkspace && selectedWorkspace.key !== workspaceKey) setWorkspaceKey(selectedWorkspace.key);
   }, [defaultSettled, selectedWorkspace, workspaceKey]);

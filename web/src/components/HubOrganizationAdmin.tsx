@@ -23,7 +23,7 @@ export default function HubOrganizationAdmin({organizations, selectedId, tab, on
       <div className="px-6 pt-6"><Select value={organization.id} onValueChange={onSelect}><SelectTrigger aria-label="Organization" className="w-full sm:w-64"><SelectValue /></SelectTrigger><SelectContent>{organizations.map(o=><SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>)}</SelectContent></Select></div>
       <Tabs className="mt-4 min-h-0" value={current} onValueChange={value=>onTab(value as OrganizationTab)}>
         <TabsList className="mx-6"><TabsTrigger value="members">Members</TabsTrigger><TabsTrigger value="teams">Teams</TabsTrigger><TabsTrigger value="computers">Computers</TabsTrigger></TabsList>
-        {(["members","teams"] as const).map(kind=><TabsContent key={kind} value={kind}><OrganizationSettings key={`${organization.id}:${kind}`} organizationId={organization.id} kind={kind} role={organization.role} onOpenWorkspace={()=>{}} /></TabsContent>)}
+        {(["members","teams"] as const).map(kind=><TabsContent key={kind} value={kind}><OrganizationSettings key={`${organization.id}:${kind}`} organizationId={organization.id} kind={kind} role={organization.role} /></TabsContent>)}
         <TabsContent value="computers"><HubOrganizationComputers key={organization.id} organizationId={organization.id} /></TabsContent>
       </Tabs>
     </section>

@@ -141,17 +141,21 @@ export function useHubStartChoice({
   const inheritedModel = resolveModelDefault(resolvedDefaults?.workspace, resolvedDefaults?.computer, { provider: "", model: "" });
   const usingCloud = !!cloudComputerProvider(selected);
   const usingCursorCloud = cloudComputerProvider(selected) === "cursor-cloud";
+  // Your own ChatGPT sign-in, when you allow it in this organization. Nobody else's shows here.
+  const codexAccount = useHubResource<{ available: boolean }>(organizationId, usingCloud && !usingCursorCloud ? "/chatgpt" : null, "/computers/live");
+  const chatgpt = codexAccount.value?.available === true;
+  const codexAccountPending = usingCloud && !usingCursorCloud && !codexAccount.value && !codexAccount.error;
   const cloudStart = usingCloud ? cloudConnections.value?.cloudStart?.[cloudComputerProvider(selected) ?? ""] : undefined;
   const allowedCloudRuntimes = cloudStart && !cloudStart.owner ? new Set(cloudStart.providers.filter(provider => provider.allowed).map(provider => provider.id)) : undefined;
-  const resolvedChoice = hostedComposerChoice(modelAccess.value?.providers ?? [], inheritedModel);
+  const resolvedChoice = hostedComposerChoice(modelAccess.value?.providers ?? [], inheritedModel, chatgpt);
   const preferredModel = known && selected === known.computerId && known.provider && known.model
     ? executionToChoice(known.provider, known.model, usingCloud)
     : undefined;
   const modelChoice = pickedModel?.workspaceId === workspaceId ? pickedModel.choice : preferredModel ?? resolvedChoice;
-  const cloudModels = hostedModels(modelAccess.value?.providers ?? [], modelChoice).filter(provider => cloudShareAllowsProvider(allowedCloudRuntimes, provider.id));
+  const cloudModels = hostedModels(modelAccess.value?.providers ?? [], modelChoice, chatgpt).filter(provider => (chatgpt && provider.id === "codex") || cloudShareAllowsProvider(allowedCloudRuntimes, provider.id));
   const localModels = computerModels(computers.find(c => c.computerId === selected)?.capabilities.providers ?? []);
   const modelCatalogue = usingCursorCloud ? [] : usingCloud || !selected ? cloudModels : localModels;
-  const cataloguePending = usingCloud && !modelAccess.value && !modelAccess.error;
+  const cataloguePending = usingCloud && ((!modelAccess.value && !modelAccess.error) || codexAccountPending);
   const selectedChoice = modelCatalogue.some(p => p.id === modelChoice.provider && p.models.some(m => m.value === modelChoice.model))
     ? modelChoice
     : { provider: modelCatalogue[0]?.id ?? modelChoice.provider, model: modelCatalogue[0]?.models[0]?.value ?? modelChoice.model };
@@ -169,7 +173,7 @@ export function useHubStartChoice({
   if (modelReady) modelShown.current = modelKey;
   /// Whether a start can go: a computer, its defaults read, and a model it runs.
   const canStart = !!memberId && !!selected && preferenceLoaded && !!resolvedDefaults
-    && !(usingCloud && !usingCursorCloud && !modelAccess.value)
+    && !(usingCloud && !usingCursorCloud && !modelAccess.value) && !codexAccountPending
     && (usingCursorCloud || !(usingCloud || selectedChoice.provider) || !!choiceValid);
   return {
     snapshot,
@@ -191,6 +195,7 @@ export function useHubStartChoice({
     usingCursorCloud,
     modelCatalogue,
     cataloguePending,
+    codexAccountPending,
     selectedChoice,
     chosenProvider,
     choiceValid,

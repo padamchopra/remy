@@ -65,10 +65,12 @@ function withEnsuredModel(models: ProviderModel[], model?: string): ProviderMode
 /// Cloud thread catalogue: enabled and configured providers. Keep a saved
 /// default selectable only while access is still arriving, or by adding its
 /// model onto a provider that is already on. An unconfigured gateway is not a
-/// start choice.
+/// start choice. A workspace whose cloud computer is signed in to ChatGPT adds
+/// Codex under that name, which runs on the account rather than an API key.
 export function hostedModels(
   entries: ModelAccessEntry[],
   ensure?: ModelChoice,
+  chatgpt = false,
 ): Provider[] {
   const cloudModels: Provider[] = entries.filter((entry) => entry.enabled && entry.configured).flatMap((entry) => {
     const runtime = runtimeFor(entry.id);
@@ -93,6 +95,16 @@ export function hostedModels(
       });
     }
   }
+  if (chatgpt) {
+    const runtime = PROVIDERS.find((entry) => entry.id === "codex");
+    if (runtime) {
+      cloudModels.push({
+        ...runtime,
+        label: "ChatGPT",
+        models: withEnsuredModel(runtime.models, ensure?.provider === "codex" ? ensure.model : undefined),
+      });
+    }
+  }
   return cloudModels;
 }
 
@@ -101,8 +113,9 @@ export function hostedModels(
 export function hostedComposerChoice(
   entries: ModelAccessEntry[],
   inherited: ModelChoice,
+  chatgpt = false,
 ): ModelChoice {
-  const catalogue = hostedModels(entries, inherited);
+  const catalogue = hostedModels(entries, inherited, chatgpt);
   const match = catalogue.find((entry) => entry.id === inherited.provider);
   if (match?.models.some((model) => model.value === inherited.model)) return inherited;
   if (match) return { provider: match.id, model: match.models[0]?.value ?? "" };
@@ -173,7 +186,7 @@ export function threadModelPicker(
   const gateway = /^remy:(openrouter|router|openai):(.+)$/.exec(runtimeModel);
   const computerCatalogue = !gateway && computer ? computerModels(computer.capabilities?.providers ?? []).filter(p => p.id === runtimeProvider) : [];
   const modelProvider = computerCatalogue.length ? runtimeProvider : gateway?.[1] ?? (runtimeProvider === "claude" ? "anthropic" : runtimeProvider);
-  const providers = computerCatalogue.length ? computerCatalogue : hostedModels(access, { provider: modelProvider, model: gateway?.[2] ?? runtimeModel });
+  const providers = computerCatalogue.length ? computerCatalogue : hostedModels(access, { provider: modelProvider, model: gateway?.[2] ?? runtimeModel }, modelProvider === "codex");
   return {
     runtimeProvider,
     modelProvider,

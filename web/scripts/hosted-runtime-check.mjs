@@ -32,6 +32,8 @@ try {
       const errors = [], unexpected = [], requests = [];
       let available = true;
       const modelEntries=["anthropic","openai","router","openrouter"].map(id=>({id,enabled:false,configured:false,models:[],keys:[]}));
+      let chatgptAccount={phase:"signedOut"};
+      let chatgptAvailable=false;
       const savedKeys=new Map();
       const providerKeys={};
       const favorites = new Set();
@@ -137,7 +139,6 @@ try {
           if(file) return route.fulfill({json:{mime:"image/png",data:readFileSync(new URL("../public/favicon.png",import.meta.url)).toString("base64")}});
           return route.fulfill({json:{images:[],truncated:false}});
         }
-        if(path===`${base}/hosted/repo/codex`)return route.fulfill({json:{phase:"disconnected"}});
         if(path===`${base}/threads` && route.request().method()==="POST") {
           threadInput=route.request().postDataJSON();
           if(process.env.QA_START_ONLY === "1") {
@@ -166,6 +167,13 @@ try {
           for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot",cursor:1,thread:startedThread}));}catch{}
           return route.fulfill({json:{ok:true}});
         }
+        const chatgptPath=/^\/api\/chatgpt-account(?:\/(start|cancel|logout))?$/.exec(path);
+        if(chatgptPath) {
+          if(route.request().method()==="POST" && chatgptPath[1]==="start") chatgptAccount={phase:"pending",userCode:"DEMO-0000",verificationUrl:"https://auth.openai.com/codex/device"};
+          else if(route.request().method()==="POST") chatgptAccount={phase:"signedOut"};
+          return route.fulfill({json:chatgptAccount});
+        }
+        if(path===`${base}/chatgpt`) return route.fulfill({json:{connected:chatgptAvailable,enabled:true,personal:org.personal,available:chatgptAvailable}});
         if(/\/hosted\/[^/]+$/.test(path) && path !== `${base}/hosted`) return route.fulfill({json:{state:null}});
         if(path.startsWith(`${base}/model-access/`)) {
           const parts=path.split("/");
@@ -233,6 +241,7 @@ try {
           const anthropic=modelEntries.find(p=>p.id==="anthropic");anthropic.enabled=true;anthropic.configured=true;
           const entry=modelEntries.find(p=>p.id==="openrouter");entry.enabled=true;entry.configured=true;entry.models=["openrouter/auto","test/model-a","test/model-b","anthropic/claude-opus-5.5"];
           computerDefaults.set("cloud:fly-sprites",{provider:"openrouter",model:"openrouter/auto"});preference="cloud:fly-sprites";
+          chatgptAvailable=true;
         }
         if(process.env.QA_SCOPE_ONLY === "1") {
           profile.image="preset:cobalt-cyclops";
@@ -288,6 +297,8 @@ try {
           assert.equal(await page.getByText("No model by that name.",{exact:true}).count(),0);
           if(artifacts)await new Promise(resolve=>setTimeout(resolve,500));
           if(artifacts)await page.screenshot({path:`${artifacts}/composer-picker-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
+          await page.getByPlaceholder("Search providers and models",{exact:true}).fill("");
+          await page.getByRole("tablist",{name:"Providers",exact:true}).getByRole("tab",{name:"ChatGPT"}).waitFor();
           await page.getByPlaceholder("Search providers and models",{exact:true}).fill("");
           await page.getByRole("option",{name:/test\/model-a/}).click();
           await model.getByText("test/model-a",{exact:true}).waitFor();
@@ -445,26 +456,21 @@ try {
           assert.ok(requests.includes("/api/organizations/team/github/pull-requests"), "All reads organization GitHub pull requests");
           if(artifacts)await page.screenshot({path:`${artifacts}/unified-pull-requests-${mobile?'phone':'desktop'}.png`});
           await page.goto(clean("/workspaces"));
-          await page.getByText("Studio · https://github.com/example/repo",{exact:true}).waitFor();
+          const workspaceRows=page.locator('main section[aria-label="Workspaces"] [data-slot="item"]');
+          await workspaceRows.filter({hasText:"example/repo"}).filter({hasText:"Studio"}).first().waitFor();
           assert.equal(await page.getByRole("status",{name:"Loading workspaces",exact:true}).count(),0,"Loaded workspaces do not keep a loading status");
           assert.equal(await page.locator('[data-slot="pane-header"]').count(),1,"Workspace list uses the shared pane header");
           assert.equal(await page.getByRole("heading",{name:"Workspaces",exact:true}).count(),0,"Workspaces does not repeat the pane title");
-          assert.equal(await page.getByText("Personal · https://github.com/example/repo",{exact:true}).count(),0);
+          assert.equal(await workspaceRows.filter({hasText:"Personal"}).count(),0,"Personal has no workspaces in this account");
           assert.equal(await page.getByRole("button",{name:"Add workspace",exact:true}).count(),1);
+          assert.equal(await page.locator('[data-slot="pane-header"]').getByRole("button",{name:"Add workspace",exact:true}).count(),1,"Add workspace sits in the pane header");
           assert.equal(await page.getByRole("heading",{name:"Personal",exact:true}).count(),0);
           assert.equal(await page.getByRole("heading",{name:"Studio",exact:true}).count(),0);
           const workspaceSection=page.locator('main section[aria-label="Workspaces"]').first();
-          const workspaceLayout=await workspaceSection.evaluate(section=>{
-            const button=section.querySelector(':scope > button');
-            const item=section.querySelector('[data-slot="item"]');
-            const outer=section.getBoundingClientRect(),action=button.getBoundingClientRect(),row=item.getBoundingClientRect();
-            return {top:action.top-outer.top,bottom:row.top-action.bottom,right:row.right-action.right,overflow:section.scrollWidth-section.clientWidth};
-          });
-          assert.ok(Math.abs(workspaceLayout.right)<1,"Add workspace aligns with the workspace rows");
-          assert.ok(Math.abs(workspaceLayout.top-workspaceLayout.bottom)<1,"Add workspace has equal space above and below");
-          assert.ok(workspaceLayout.overflow<=0,"Workspace actions do not overflow the pane");
-          const remyWorkspace=page.locator('[data-slot="item"]',{hasText:"github.com/padamchopra/remy"});
-          await remyWorkspace.getByRole("button",{name:"Open remy workspace details",exact:true}).waitFor();
+          const workspaceLayout=await workspaceSection.evaluate(section=>({overflow:section.scrollWidth-section.clientWidth}));
+          assert.ok(workspaceLayout.overflow<=0,"Workspace rows do not overflow the pane");
+          const remyWorkspace=workspaceRows.filter({hasText:"padamchopra/remy"});
+          await remyWorkspace.getByRole("button",{name:"Open remy",exact:true}).waitFor();
           const listMark=remyWorkspace.locator('[data-slot="workspace-mark"]');
           await listMark.locator("svg").waitFor();
           const listIcon=await listMark.evaluate(mark=>{
@@ -473,10 +479,10 @@ try {
             const box=mark.getBoundingClientRect(), glyph=svg?.getBoundingClientRect();
             return {svg:svg?.innerHTML??"",well:style.backgroundColor,fg:style.color,radius:style.borderRadius,width:box.width,height:box.height,glyph:glyph?.width??0};
           });
-          assert.equal(listIcon.width,40,"Workspace list icon well is 40px wide");
-          assert.equal(listIcon.height,40,"Workspace list icon well is 40px tall");
+          assert.equal(listIcon.width,28,"Workspace list icon well is 28px wide");
+          assert.equal(listIcon.height,28,"Workspace list icon well is 28px tall");
           if(artifacts && !mobile) await remyWorkspace.screenshot({path:`${artifacts}/workspace-list-icon.png`});
-          await remyWorkspace.getByRole("button",{name:"Open remy workspace details",exact:true}).click();
+          await remyWorkspace.getByRole("button",{name:"Open remy",exact:true}).click();
           await page.waitForURL(/\/app\/workspaces\/remy\?owner=team$/);
           const remyButton=page.getByRole("button",{name:"Change icon for remy",exact:true});
           const detailMark=remyButton.locator('[data-slot="workspace-mark"]');
@@ -490,17 +496,14 @@ try {
           assert.equal(detailIcon.svg,listIcon.svg,"List and detail use the same folder glyph");
           assert.equal(detailIcon.well,listIcon.well,"List and detail share the well fill");
           assert.equal(detailIcon.fg,listIcon.fg,"List and detail share the glyph color");
-          assert.equal(detailIcon.width,listIcon.width,"List and detail wells are the same width");
-          assert.equal(detailIcon.height,listIcon.height,"List and detail wells are the same height");
-          assert.ok(Math.abs(detailIcon.glyph-listIcon.glyph)<1,"List and detail glyphs are the same size");
+          assert.equal(detailIcon.width,40,"The detail well is 40px wide");
           if(artifacts && !mobile) {
             await remyButton.screenshot({path:`${artifacts}/workspace-detail-icon.png`});
             await page.locator("main .flex.items-center.gap-3.rounded-lg.border").first().screenshot({path:`${artifacts}/workspace-detail-row.png`});
           }
           await page.getByRole("navigation",{name:"breadcrumb",exact:true}).getByRole("button",{name:"Workspaces",exact:true}).click();
-          await page.getByText("Studio · https://github.com/example/repo",{exact:true}).waitFor();
-          const studioWorkspace=page.locator('[data-slot="item"]',{hasText:"Studio · https://github.com/example/repo"});
-          await studioWorkspace.getByRole("button",{name:"Open Example workspace details",exact:true}).click();
+          const studioWorkspace=workspaceRows.filter({hasText:"example/repo"}).filter({hasText:"Studio"}).first();
+          await studioWorkspace.getByRole("button",{name:"Open Example",exact:true}).click();
           await page.waitForURL(/\/app\/workspaces\/repo\?owner=team$/);
           await page.getByText("Repository",{exact:true}).waitFor();
           await page.getByText("github.com/example/repo",{exact:true}).waitFor();
@@ -529,7 +532,7 @@ try {
           await page.getByText("Repository",{exact:true}).waitFor();
           workspaceBreadcrumb=page.getByRole("navigation",{name:"breadcrumb",exact:true});
           await workspaceBreadcrumb.getByRole("button",{name:"Workspaces",exact:true}).click();
-          await page.getByText("Studio · https://github.com/example/repo",{exact:true}).waitFor();
+          await workspaceRows.filter({hasText:"example/repo"}).first().waitFor();
           await page.goto(clean("/settings/general"));
           const generalSettings=page.getByRole("region",{name:"General settings",exact:true});
           await generalSettings.getByText("Notify me",{exact:true}).waitFor();
@@ -1025,22 +1028,31 @@ try {
         const modelAccess = page.getByRole("region", {name:"Model access",exact:true});
         const accessOrder = await modelAccess.evaluate((root) => [...root.querySelectorAll(":scope > section[aria-label$='model access']")].map((el) => el.getAttribute("aria-label")));
         assert.deepEqual(accessOrder, [
+          ...(org.personal ? ["Codex model access"] : []),
           "Anthropic model access",
           "OpenAI model access",
           "Router.com model access",
           "OpenRouter model access",
         ]);
         assert.equal(await modelAccess.getByRole("button", { name: "Connect Claude Code", exact: true }).count(), 0);
-        assert.equal(await modelAccess.getByRole("button", { name: "Connect Codex", exact: true }).count(), 0);
-        assert.equal(await modelAccess.getByRole("button", { name: "Connect ChatGPT", exact: true }).count(), 0);
-        assert.equal(await modelAccess.getByRole("combobox", { name: "Workspace", exact: true }).count(), 0);
         assert.equal(await modelAccess.getByRole("region", { name: "Claude Code model access", exact: true }).count(), 0);
-        assert.equal(await modelAccess.getByRole("region", { name: "Codex model access", exact: true }).count(), 0);
-        assert.equal(await modelAccess.getByText("Add a workspace", { exact: false }).count(), 0);
-        assert.equal(await modelAccess.getByText("Start your computer", { exact: false }).count(), 0);
+        const codexAccess = modelAccess.getByRole("region", { name: "Codex model access", exact: true });
+        if (org.personal) {
+          // Your ChatGPT sign-in is yours: no workspace to pick and no computer to start.
+          assert.ok(await codexAccess.getByRole("img", { name: "Codex" }).count());
+          await codexAccess.getByRole("button", { name: "Connect Codex", exact: true }).click();
+          await codexAccess.getByLabel("Codex sign-in code", { exact: true }).waitFor();
+          assert.equal(await codexAccess.getByLabel("Codex sign-in code", { exact: true }).inputValue(), "DEMO-0000");
+          await codexAccess.getByRole("button", { name: "Cancel sign-in", exact: true }).click();
+          await codexAccess.getByRole("button", { name: "Connect Codex", exact: true }).waitFor();
+          assert.equal(await codexAccess.getByRole("combobox").count(), 0);
+          assert.equal(await codexAccess.getByRole("button", { name: "Start computer", exact: true }).count(), 0);
+        } else {
+          assert.equal(await codexAccess.count(), 0, "an organization's Model access never signs anyone in to ChatGPT");
+        }
         assert.ok(await modelAccess.getByRole("region", { name: "Anthropic model access", exact: true }).getByRole("img", { name: "Claude" }).count());
         assert.ok(await modelAccess.getByRole("region", { name: "OpenAI model access", exact: true }).getByRole("img", { name: "Codex" }).count());
-        await modelAccess.getByText("Cloud threads use these API keys, with OpenAI for Codex and Anthropic for Claude.", { exact: true }).waitFor();
+        await modelAccess.getByText(org.personal ? "Cloud threads run Codex with your ChatGPT plan or an OpenAI key, and Claude with an Anthropic key." : "Cloud threads use these API keys, with OpenAI for Codex and Anthropic for Claude. Each member signs in to ChatGPT in Personal.", { exact: true }).waitFor();
         for(const [id,label] of [["anthropic","Anthropic"],["openai","OpenAI"],["router","Router.com"],["openrouter","OpenRouter"]]) {
           const section=modelAccess.getByRole("region",{name:`${label} model access`,exact:true});
           const toggle=section.getByRole("switch",{name:label,exact:true});

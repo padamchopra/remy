@@ -131,16 +131,18 @@ A setting lives with the thing whose behavior it controls. The actor that carrie
 - A machine integration belongs to that machine's settings. Hosted thread start uses the providers enabled on the chosen computer, including a cloud computer's OpenRouter, Router, OpenAI, and Anthropic access. A cloud computer shared into an organization carries that source account's enabled model access. A Remy-wide OpenRouter default does not start on an organization that has no OpenRouter key and no shared computer that does.
 - A Personal computer or cloud connection shared into an organization is a start grant. The member who owns that computer or connection can share it, unshare it, and choose which of its advertised providers other members may use to start a new thread. Administrators can revoke the grant; they cannot configure someone else's machine. Sharing turns every currently advertised provider on. The owner can always start with any provider on that computer, and always sees that computer in the thread picker for every organization they belong to. Turning share off hides it from other members, not from the owner. Other members can still reply, approve, and otherwise contribute on threads that already exist. An account can keep multiple named Fly.io, OpenRouter, and other integration keys; sharing and new work use the active key.
 - A shared cloud computer advertises the source account's enabled model access — OpenRouter, Router, OpenAI, Anthropic — not the Codex or Claude runtime those gateways execute through. Codex appears only when Codex itself is configured.
-- Hosted Model access is API keys. ChatGPT device-code and Claude Code account login belong on a computer you own. Do not start those logins on a Fly, Modal, or other hosted computer.
+- A model-access subscription belongs to the person, like any Personal connection. Using it in an organization is that person's own toggle, never an administrator's setting, and it runs only the threads that person starts. Cloud Codex signs in with ChatGPT once, in Personal → Model access; the hub holds the tokens under that Personal scope, and cloud task computers borrow short-lived access tokens for their starter. A thread keeps its starter's subscription for its life, including turns another participant sends. Claude Code account login stays on computers you own, because Anthropic's terms do not allow Claude subscriptions in third-party products; cloud Claude uses an Anthropic API key.
 
 BAD
 ```text
-Cloud Model access offers Connect Claude Code and Connect Codex, then injects that session onto a sprite.
+An organization admin connects ChatGPT for a workspace, and every member's cloud thread runs on it.
+Cloud Model access offers Connect Claude Code, then injects that session onto a sprite.
 ```
 
 GOOD
 ```text
-Cloud Model access saves Anthropic, OpenAI, Router, and OpenRouter keys.
+Personal → Model access: Codex → Connect Codex with a ChatGPT device code.
+Organization → Computers: Your subscriptions → ChatGPT, your own switch for threads you start there.
 Computers → Connected signs in to Claude Code and Codex on a computer you own, or sets an API key there.
 ```
 
