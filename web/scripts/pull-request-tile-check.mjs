@@ -151,6 +151,20 @@ try {
         patchesOmitted: false,
       },
       [`${base}/github/workspace-images`]: { images: [], truncated: false },
+      [`${base}/github/pull-request-activity`]: {
+        userId: "reader",
+        viewer: "reader",
+        seenAt: null,
+        items: [{
+          kind: "comment",
+          id: "comment-1",
+          at: "2026-09-25T00:30:00.000Z",
+          author: { login: "grace", name: "Grace", avatarUrl: null },
+          body: "<!-- CURSOR_AGENT_PR_BODY_BEGIN -->\nPlease check **details**.\n\n```\nmake test\n```",
+          url: null,
+          thread: null,
+        }],
+      },
       [`${base}/notifications`]: { notifications: [], devices: [] },
       [`${base}/hosted`]: { available: false, enabledProviders: [] },
       [`${base}/connections`]: { canManage: true, providers: [], connections: [] },
@@ -244,14 +258,15 @@ try {
 
   await fileTile.getByRole("button").first().click();
   await page.locator("[data-slot='pull-request-description']").waitFor();
-  assert.equal(await page.getByRole("heading", { name: "Description", exact: true }).count(), 0, "The body's own headings are the only ones");
+  // The Summary artboard (4AN-0) heads the body with Description; the body keeps its own headings under it.
+  assert.equal(await page.locator("[data-slot='pull-request-description']").getByRole("heading", { name: "Description", exact: true }).count(), 1, "The body sits under one Description heading");
   assert.equal(await page.locator("[data-slot='pane-header']").count(), 1, "The open pull request uses the shared pane header");
   const github = page.locator("[data-slot='pane-header']").getByRole("link", { name: "Open on GitHub", exact: true });
   assert.equal(await github.count(), 1);
   assert.equal(((await github.textContent()) ?? "").trim(), "", "Open on GitHub is the mark alone");
   await github.hover();
   await page.locator("[data-slot='tooltip-content']").filter({ hasText: "Open on GitHub" }).waitFor();
-  assert.equal(await page.getByRole("tab", { name: "Overview", selected: true }).count(), 1);
+  assert.equal(await page.getByRole("tab", { name: "Summary", selected: true }).count(), 1);
   assert.equal(await page.getByText("CURSOR_AGENT_PR_BODY", { exact: false }).count(), 0, "GitHub comment markers stay off the description");
   assert.equal(await page.getByText("<!--", { exact: false }).count(), 0);
   await page.getByRole("heading", { name: "What", exact: true }).waitFor();
@@ -259,23 +274,22 @@ try {
   await page.getByText("Notes", { exact: true }).waitFor();
   assert.equal(await page.getByText("<details>", { exact: false }).count(), 0);
   assert.equal(await page.getByText("<summary>", { exact: false }).count(), 0);
-  await page.getByRole("heading", { name: /^Comments/ }).waitFor();
-  await page.getByText("Please check").waitFor();
-  assert.equal(await page.locator("strong").filter({ hasText: "details" }).count(), 1);
-  await page.locator("pre").filter({ hasText: "make test" }).waitFor();
+  // Comments live on Activity now, not under the description.
+  assert.equal(await page.getByText("Please check").count(), 0);
 
   // The summary's stack: bottom first, the open one marked, the rest one step away.
   const detailStack = page.getByRole("region", { name: "Stack #12", exact: true });
   await detailStack.waitFor();
-  assert.equal(await detailStack.getByText("2 of 4 · Merge from the bottom up into main", { exact: true }).count(), 1);
+  assert.equal(await detailStack.getByText("2 of 4 · merge in order", { exact: true }).count(), 1);
   const members = detailStack.locator("[data-slot='pull-request-stack-entry']");
   assert.equal(await members.count(), 4);
-  assert.match((await members.nth(0).textContent()) ?? "", /^#8944.*1 of 4 · Merged$/);
+  assert.match((await members.nth(0).textContent()) ?? "", /^#8944.*Merged$/);
   assert.equal(await members.nth(1).getAttribute("aria-current"), "true", "The open pull request is marked");
+  assert.match((await members.nth(1).textContent()) ?? "", /You are here$/);
   assert.equal(await members.nth(0).evaluate((node) => node.tagName), "A", "A member Remy does not have opens on GitHub");
   assert.equal(await members.nth(0).getAttribute("href"), "https://github.com/jupiter/mobile/pull/8944");
   assert.equal(await members.nth(2).evaluate((node) => node.tagName), "BUTTON", "A member Remy has opens here");
-  assert.match((await members.nth(3).textContent()) ?? "", /4 of 4 · Draft$/);
+  assert.match((await members.nth(3).textContent()) ?? "", /Draft$/);
   if (artifacts) await detailStack.screenshot({ path: `${artifacts}/pr-open-stack.png` });
   await members.nth(2).focus();
   await page.keyboard.press("Enter");
@@ -284,19 +298,20 @@ try {
   await page.goBack();
   await page.waitForURL(/\/pull-requests\/jupiter\/mobile\/8945$/);
 
-  const checks = page.locator("[data-slot='pull-request-checks']");
+  // The rail's Checks (4AN-0): failing first, then running, passing and skipped, with a passed count.
+  const checks = page.getByRole("region", { name: "Checks", exact: true });
   await checks.waitFor();
   assert.equal(await checks.getByRole("heading", { name: "Checks", exact: true }).count(), 1);
-  assert.equal(await checks.getByText("CHECKS", { exact: true }).count(), 0);
-  assert.equal(await checks.getByText("2 failing", { exact: false }).count() + await checks.getByText("1 failing", { exact: false }).count(), 1);
-  assert.equal(await checks.locator("[data-slot='pull-request-check-group'][data-check-state='fail']").count(), 1);
-  assert.equal(await checks.locator("[data-slot='pull-request-check-group'][data-check-state='pending']").count(), 1);
-  assert.equal(await checks.locator("[data-slot='pull-request-check-group'][data-check-state='pass']").count(), 1);
-  assert.equal(await checks.locator("[data-slot='pull-request-check'][data-check-state='fail']").getByText("Maestro E2E").count(), 1);
+  assert.equal(await checks.getByText("2/4", { exact: true }).count(), 1);
+  const checkRows = checks.locator("li");
+  assert.equal(await checkRows.count(), 4);
+  assert.match((await checkRows.nth(0).textContent()) ?? "", /^Maestro E2E/, "A failing check comes first");
+  assert.equal(await checkRows.nth(0).getByLabel("Failed", { exact: true }).count(), 1);
+  assert.match((await checkRows.nth(1).textContent()) ?? "", /^Unit/, "A running check comes next");
   if (artifacts) await page.screenshot({ path: `${artifacts}/pr-open-markdown-checks.png` });
 
   // The diff is a route of its own, arrives on first open, and Back leaves it.
-  await page.getByRole("tab", { name: /Files changed/ }).click();
+  await page.getByRole("tab", { name: /^Files/ }).click();
   await page.waitForURL(/\/pull-requests\/jupiter\/mobile\/8945\/files$/);
   const file = page.locator("[data-slot='pull-request-file']").first();
   await file.waitFor();
@@ -309,7 +324,17 @@ try {
   assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("data-file-index")), "0", "k moves back");
   if (artifacts) await page.screenshot({ path: `${artifacts}/pr-open-files.png` });
   await page.goBack();
-  await page.getByRole("tab", { name: "Overview", selected: true }).waitFor();
+  await page.getByRole("tab", { name: "Summary", selected: true }).waitFor();
+
+  // Comments are on Activity, drawn as markdown with GitHub's markers dropped.
+  await page.getByRole("tab", { name: /^Activity/ }).click();
+  await page.waitForURL(/\/pull-requests\/jupiter\/mobile\/8945\/activity$/);
+  await page.getByText("Please check").waitFor();
+  assert.equal(await page.locator("strong").filter({ hasText: "details" }).count(), 1);
+  await page.locator("pre").filter({ hasText: "make test" }).waitFor();
+  assert.equal(await page.getByText("CURSOR_AGENT_PR_BODY", { exact: false }).count(), 0, "GitHub comment markers stay off comments");
+  await page.goBack();
+  await page.getByRole("tab", { name: "Summary", selected: true }).waitFor();
 
   await page.locator("[data-slot='pane-header']").getByRole("button", { name: "Pull requests", exact: true }).click();
   await fileTile.waitFor();
@@ -327,7 +352,7 @@ try {
   // Last, because a load starts the page over: a reload lands back on the files.
   await page.goto(new URL(`${appPrefix}/pull-requests/jupiter/mobile/8945/files`, origin).href);
   await page.locator("[data-slot='pull-request-file']").first().waitFor();
-  assert.equal(await page.getByRole("tab", { name: /Files changed/, selected: true }).count(), 1, "A reload lands back on the files");
+  assert.equal(await page.getByRole("tab", { name: /^Files/, selected: true }).count(), 1, "A reload lands back on the files");
 } finally {
   await browser.close();
 }
