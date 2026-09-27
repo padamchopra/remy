@@ -78,11 +78,11 @@ export function connectionProviders(env: Env): ConnectionProvider[] {
       tokenUrl: "https://api.linear.app/oauth/token",
       scope: "read,write",
       authorizeParameters: { actor: "user", prompt: "consent" },
-      identity: async (token, send) => {
+      identity: async (token, send, tokens) => {
         const response = await send("https://api.linear.app/graphql", {
           method: "POST",
           headers: {
-            authorization: `Bearer ${token}`,
+            authorization: tokens.token_type === "api-key" ? token : `Bearer ${token}`,
             "content-type": "application/json",
           },
           body: JSON.stringify({

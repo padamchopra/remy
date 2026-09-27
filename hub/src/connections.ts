@@ -16,6 +16,7 @@ export type ConnectionTokens = {
   access_token: string;
   refresh_token?: string;
   expires_in?: number;
+  token_type?: string;
 };
 export type Connection = {
   id: string;
@@ -56,6 +57,7 @@ export type ConnectionProvider = {
   identity: (
     token: string,
     send: typeof fetch,
+    tokens: ConnectionTokens,
   ) => Promise<{ id: string; label: string; userId?: string | undefined }>;
   verifyWebhook?: (
     request: Request,
@@ -315,14 +317,14 @@ export class Connections {
       user,
       "linear",
       { organization_id: org, subject: user, epoch: 0 },
-      { access_token: token },
+      { access_token: token, token_type: "api-key" },
     );
   }
   private async saveTokens(user: string, providerId: string, saved: { organization_id: string; subject: string; epoch: number }, tokens: ConnectionTokens) {
     const provider = this.provider(providerId);
     if (providerId === "linear" && saved.subject !== user)
       throw new ConnectionError("Linear connections belong to you.", 403);
-    const identity = await provider.identity(tokens.access_token, this.send);
+    const identity = await provider.identity(tokens.access_token, this.send, tokens);
     await this.authorize(saved.organization_id, user, saved.subject);
     if (providerId === "linear") {
       const accounts = await this.linearAccounts();

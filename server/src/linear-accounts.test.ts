@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 process.env.MC_CONFIG_DIR = mkdtempSync(join(tmpdir(), "remy-linear-"));
-const { connectLinearAccount, disconnectLinearAccount, linearView, localLinearAccess, setLinearLink } = await import("./linear-accounts.js");
+const { connectLinearAccount, disconnectLinearAccount, linearView, localLinearAccess, setLinearLink, verifyLinearKey } = await import("./linear-accounts.js");
 
 const verify = async (token: string) => ({ id: token.endsWith("other") ? "ws-other" : "ws-studio", label: token.endsWith("other") ? "Other" : "Studio" });
 
@@ -26,4 +26,19 @@ test("a second Linear key adds a row and the thread waits for both the link and 
   assert.equal(linearView().link, null);
   assert.equal(linearView().accounts.length, 1);
   assert.deepEqual(localLinearAccess(), { kind: "off" });
+});
+
+test("Linear verification sends a personal API key without the OAuth Bearer scheme", async () => {
+  const original = globalThis.fetch;
+  let authorization = "";
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    authorization = new Headers(init?.headers).get("authorization") ?? "";
+    return Response.json({ data: { organization: { id: "ws-studio", name: "Studio" }, viewer: { id: "ada" } } });
+  }) as typeof fetch;
+  try {
+    assert.deepEqual(await verifyLinearKey("linear-key"), { id: "ws-studio", label: "Studio" });
+    assert.equal(authorization, "linear-key");
+  } finally {
+    globalThis.fetch = original;
+  }
 });

@@ -199,3 +199,24 @@ test("a pull request's ticket is its attachment, then its branch, then an identi
   assert.deepEqual(await accounts.pullRequestTicket("studio", "ada", pull), { identifier: "REMY-9", title: "Nine", url: "", state: "" });
   assert.deepEqual(asked.slice(1).map((entry) => Object.values(entry.variables)[0]), [pull.url, "padam/remy-9-nine", "REMY-9"]);
 });
+
+test("Linear GraphQL sends a personal API key without the OAuth Bearer scheme", async () => {
+  const authorizations: string[] = [];
+  const send = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    authorizations.push(new Headers(init?.headers).get("authorization") ?? "");
+    return Response.json({ data: { attachmentsForURL: { nodes: [] } } });
+  }) as typeof fetch;
+  const { accounts } = fixture(send);
+  const accountId = await accounts.save(
+    "ada",
+    { access_token: "linear-key", token_type: "api-key" },
+    { id: "linear-studio", label: "Studio" },
+  );
+  await accounts.setLink("studio", "ada", accountId);
+  await accounts.pullRequestTicket("studio", "ada", {
+    url: "https://github.com/release/remy/pull/8",
+    branch: "",
+    title: "No issue",
+  });
+  assert.deepEqual(authorizations, ["linear-key"]);
+});
