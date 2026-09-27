@@ -95,9 +95,20 @@ export function useHubStartChoice({
   const optionsKnown = computersLoaded && !!cloudConnections.value;
   const options = useMemo(() => [...cloudOptions.map(c => c.id), ...eligible.map(c => c.computerId)], [cloudOptions, eligible]);
   const saved = preference?.workspaceId === workspaceId ? preference : undefined;
-  const savedValid = !!saved?.computerId && options.includes(saved.computerId);
+  const availableComputer = (computerId?: string | null) => {
+    if (!computerId) return undefined;
+    if (options.includes(computerId)) return computerId;
+    const provider = CLOUD_COMPUTERS.find(option => option.id === computerId)?.provider;
+    return provider ? cloudOptions.find(option => option.provider === provider)?.id : undefined;
+  };
+  // A preference saved before cloud keys were named identifies the provider,
+  // not one exact key. Resolve it to that provider's active placement so the
+  // composer does not wait forever on an id that is no longer listed.
+  const savedComputer = availableComputer(saved?.computerId);
+  const savedValid = !!savedComputer;
   const known = preferred && preferred !== "loading" ? preferred : undefined;
-  const preferredValid = !!known && optionsKnown && options.includes(known.computerId);
+  const preferredComputer = availableComputer(known?.computerId);
+  const preferredValid = !!known && optionsKnown && !!preferredComputer;
   // Only when there is no usable preference does the hub have to choose, which
   // lists every computer and is the slowest read here.
   const needsFallback = !!workspaceId && !!saved && optionsKnown && !savedValid && !preferredValid && preferred !== "loading";
@@ -115,9 +126,9 @@ export function useHubStartChoice({
   }, [base, needsFallback, workspaceId]);
   const chosen = (() => {
     if (!optionsKnown || preferred === "loading") return "";
-    if (preferredValid) return known!.computerId;
+    if (preferredValid) return preferredComputer!;
     if (!saved) return "";
-    if (savedValid) return saved.computerId!;
+    if (savedValid) return savedComputer!;
     const resolved = fallback?.workspaceId === workspaceId ? fallback : undefined;
     if (!resolved) return "";
     let next = resolved.computerId && options.includes(resolved.computerId) ? resolved.computerId : "";

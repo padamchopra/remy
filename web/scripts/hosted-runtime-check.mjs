@@ -246,7 +246,7 @@ try {
           [`${base}/threads`]: { threads: process.env.QA_SCOPE_ONLY === "1" ? [{id:`${org.id}-thread`,computerId:`${org.id}-computer`,revision:1,stale:!org.personal,observedAt:Date.now(),access:{organizationId:org.id,owner:{id:"reader",label:"Reader"},participants:[],visibility:"private"},detail:{id:`${org.id}-thread`,title:org.personal?"Personal thread":"Studio thread",state:"idle",provider:"codex",entries:[]}}, ...(org.personal ? [{id:"cloud-thread",computerId:"sprite-gone",revision:1,stale:true,observedAt:Date.now(),access:{organizationId:org.id,owner:{id:"reader",label:"Reader"},participants:[],visibility:"private"},detail:{id:"cloud-thread",title:"Cloud thread",state:"idle",provider:"codex",model:"remy:openrouter:openrouter/auto",entries:[]}}] : [])] : startedThread && startedThread.access.organizationId === org.id ? [startedThread]:[], cursor: 0, member: { id: "reader", role: "owner" } },
           [`${base}/computers`]: { computers: process.env.QA_SCOPE_ONLY === "1" ? [{ computerId: `${org.id}-computer`, name: org.personal ? "Personal Mac" : "Studio Mac", icon: "laptop", ownership: "personal", availability: org.personal ? "available" : "offline", access: { mode: "owner" }, canUse: Boolean(org.personal), canManage: false, capabilities: { workspaces: [] } }] : connected ? [{ computerId: "studio", name: computerName, icon: "laptop", ownership: "personal", availability: online ? "online" : "offline", access: { mode: "owner" }, canUse: online, canManage: false, capabilities: { workspaces: [] } }] : [] },
           [`${base}/computers/options`]: { role: "owner", members: [], teams: [] },
-          [`${base}/hosted`]: { settings: { enabled: cloudEnabled, provider: "fly-sprites", region: "", cpu: 1, memoryMiB: 2048, maxComputers: 5, idleMinutes: 12 }, secretNames: [], connections: [...connections], enabledProviders: [...enabledProviders], providerKeys, cloudPlacements:org.personal?[]:[...enabledProviders].map(provider=>({id:`cloud:${provider}:personal:legacy`,provider,owner:"Reader",keyName:"Default",own:false})), available },
+          [`${base}/hosted`]: { settings: { enabled: cloudEnabled, provider: "fly-sprites", region: "", cpu: 1, memoryMiB: 2048, maxComputers: 5, idleMinutes: 12 }, secretNames: [], connections: [...connections], enabledProviders: [...enabledProviders], providerKeys, cloudPlacements:process.env.QA_COMPOSER_ONLY === "1" && org.personal?[...enabledProviders].map(provider=>({id:`cloud:${provider}:personal:key-main`,provider,owner:"You",keyName:"Default",own:true})):org.personal?[]:[...enabledProviders].map(provider=>({id:`cloud:${provider}:personal:legacy`,provider,owner:"Reader",keyName:"Default",own:false})), available },
           [`${base}/members`]: {members:[{id:"reader-member",userId:"reader",name:profile.name,image:profile.image,role:"owner"},...Array.from({length:4},(_,i)=>({id:`m${i}`,userId:`p${i}`,name:`Person ${i}`,image:`data:image/png;base64,${readFileSync(new URL('../public/favicon.png',import.meta.url)).toString('base64')}`,role:"member"}))]},
           [`${base}/teams`]: {teams:[]},
           [`${base}/workspaces/repo`]: {id:"repo",name:"Example",origin:"github.com/example/repo",icon:"icon.png"},
@@ -272,7 +272,7 @@ try {
           holdComposerReads=true;
           const anthropic=modelEntries.find(p=>p.id==="anthropic");anthropic.enabled=true;anthropic.configured=true;
           const entry=modelEntries.find(p=>p.id==="openrouter");entry.enabled=true;entry.configured=true;entry.models=["openrouter/auto","test/model-a","test/model-b","anthropic/claude-opus-5.5"];
-          computerDefaults.set("cloud:fly-sprites",{provider:"openrouter",model:"openrouter/auto"});preference="cloud:fly-sprites";
+          computerDefaults.set("cloud:fly-sprites",{provider:"openrouter",model:"openrouter/auto"});computerDefaults.set("cloud:fly-sprites:personal:key-main",{provider:"openrouter",model:"openrouter/auto"});preference="cloud:fly-sprites";
           chatgptAvailable=true;
         }
         if(process.env.QA_SCOPE_ONLY === "1") {
@@ -310,8 +310,12 @@ try {
           const computer=composer.getByLabel("Thread computer",{exact:true});
           const branch=composer.getByRole("button",{name:"Branch",exact:true});
           await model.getByText("openrouter/auto",{exact:true}).waitFor();
-          await computer.getByText("Cloud · Fly.io Sprites",{exact:true}).waitFor();
+          await computer.getByText("Cloud · Fly.io Sprites · You · Default",{exact:true}).waitFor();
           await branch.getByText("main",{exact:true}).waitFor();
+          const workspace=page.getByRole("button",{name:"Thread workspace",exact:true});
+          await workspace.click();await page.getByRole("menuitem",{name:/Example/}).waitFor();await page.keyboard.press("Escape");
+          await computer.click();await page.getByRole("menuitem",{name:"Cloud · Fly.io Sprites · You · Default",exact:true}).waitFor();await page.keyboard.press("Escape");
+          await branch.click();await page.getByPlaceholder("Search branches",{exact:true}).waitFor();await page.keyboard.press("Escape");
           const snapshot=async()=>({model:((await model.textContent())??"").replace(/\s+/g," ").trim(),computer:((await computer.textContent())??"").replace(/\s+/g," ").trim(),branch:((await branch.textContent())??"").replace(/\s+/g," ").trim()});
           const first=await snapshot();
           assert.equal(/Unavailable|Choosing computer/.test(first.model+first.computer),false);
