@@ -4,7 +4,6 @@ import { toast } from "sonner";
 import type { ChatGPTAccount } from "@remy/contract";
 import { AccessMark } from "./AccessMark";
 import { HubKeyList, type NamedKey } from "./HubKeyList";
-import { HubOwnModelAccess } from "./HubOwnModelAccess";
 import { SettingsList, SettingsRow, SettingsSection } from "./SettingsList";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -14,14 +13,14 @@ import { Switch } from "./ui/switch-base";
 import { useHubResource } from "@/lib/hub-organization";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { apiError } from "@/lib/api-error";
+import type { OwnModelAccessResponse } from "@/lib/hub-models";
 
 export interface ModelAccessEntry {id:string;enabled:boolean;configured:boolean;models:string[];keys?:NamedKey[]}
 export interface ModelAccessResponse { providers: ModelAccessEntry[] }
 export const MODEL_ACCESS_LABELS: Record<string,string> = {anthropic:"Anthropic",openai:"OpenAI",router:"Router.com",openrouter:"OpenRouter"};
 
 /// What cloud threads in one account can run. Personal holds your ChatGPT
-/// sign-in and your own keys; an organization holds its keys, which members
-/// read, and each member's own switches for theirs.
+/// sign-in and your own keys; an organization page is a read-only inventory.
 export function HubModelAccessPage({ organizationId, owner, admin }: { organizationId: string; owner: { name: string; personal: boolean }; admin: boolean }) {
   return <div className="mx-auto flex w-full max-w-[760px] flex-col gap-9 px-4 pt-9 pb-10 sm:px-10">
     <div className="flex min-w-0 items-center gap-3.5">
@@ -32,8 +31,25 @@ export function HubModelAccessPage({ organizationId, owner, admin }: { organizat
       </div>
     </div>
     <HubModelAccess organizationId={organizationId} owner={owner} admin={admin} />
-    {!owner.personal && <HubOwnModelAccess organizationId={organizationId} organizationName={owner.name} />}
+    {!owner.personal && <AvailableMemberModelAccess organizationId={organizationId} />}
   </div>;
+}
+
+function AvailableMemberModelAccess({ organizationId }: { organizationId: string }) {
+  const resource = useHubResource<OwnModelAccessResponse>(organizationId, "/own-model-access", "/computers/live");
+  const rows = resource.value ? [
+    ...resource.value.providers.flatMap((provider) => provider.id === "chatgpt"
+      ? provider.configured ? [{ id: "chatgpt", provider: "chatgpt", name: "ChatGPT", owner: "Yours" }] : []
+      : provider.keys.map((key) => ({ id: `own:${provider.id}:${key.id}`, provider: provider.id, name: key.name, owner: "Yours" }))),
+    ...resource.value.enrolled.map((entry) => ({ id: `enrolled:${entry.connectionId}`, provider: entry.provider, name: entry.keyName, owner: entry.owner })),
+  ] : [];
+  return <SettingsSection id={`available-model-access-${organizationId}`} title="Available to you" description="Your connections follow you here. Enrolled connections are available to everyone.">
+    {resource.error && <p role="alert" className="text-[13px] text-muted-foreground">{resource.error}</p>}
+    {!resource.value && !resource.error && <Skeleton className="h-28 w-full rounded-[10px]" aria-label="Loading available model access" />}
+    {resource.value && (rows.length ? <SettingsList label="Model connections available to you">
+      {rows.map((row) => <SettingsRow key={row.id} media={<AccessMark id={row.provider === "chatgpt" ? "codex" : row.provider} />} title={row.name} description={row.owner} />)}
+    </SettingsList> : <p className="text-[13px] text-muted-foreground">No model connections are available to you.</p>)}
+  </SettingsSection>;
 }
 
 export function HubModelAccess({organizationId, owner, admin}:{organizationId:string; owner:{name:string; personal:boolean}; admin:boolean}) {
@@ -41,7 +57,7 @@ export function HubModelAccess({organizationId, owner, admin}:{organizationId:st
   const [entries,setEntries]=useState<ModelAccessEntry[]>([]);
   useEffect(()=>{if(resource.value)setEntries(resource.value.providers);},[resource.value]);
   const title = owner.personal ? "Yours" : `${owner.name}'s`;
-  return <SettingsSection id={`model-access-${organizationId}`} title={title} description={owner.personal ? "Only threads you start use these. An organization uses them only where you turn them on." : admin ? "Every member's cloud threads here can use these." : `Members read these. Ask an admin of ${owner.name} to change them.`}>
+  return <SettingsSection id={`model-access-${organizationId}`} title={title} description={owner.personal ? "These follow you into every thread you start." : admin ? "Every member's cloud threads here can use these." : `Members read these. Ask an admin of ${owner.name} to change them.`}>
     {resource.error && <p role="alert" className="text-[13px] text-muted-foreground">{resource.error === "Not found" ? "Update your hosted service to configure model access." : resource.error}</p>}
     {!resource.value && !resource.error && <Skeleton className="h-[220px] w-full rounded-[10px]" aria-label="Loading model access" />}
     {resource.value && <SettingsList label="Model access">

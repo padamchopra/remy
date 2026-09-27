@@ -4,7 +4,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { sqliteD1 } from "../test/sqlite-d1.js";
 // @ts-expect-error The fake auth server is a plain module shared with the QA hub.
 import { startFakeOpenAIAuth } from "../scripts/fake-openai-auth.mjs";
-import { ChatGPTAccounts, RECONNECT_CODEX, isChatGPTModel, setChatGPTEnabled } from "./chatgpt-account.js";
+import { ChatGPTAccounts, RECONNECT_CODEX, isChatGPTModel } from "./chatgpt-account.js";
 import { createHash } from "node:crypto";
 import { HostedSettingsStore } from "./hosted-settings.js";
 import { personalSpace } from "./personal-space.js";
@@ -143,7 +143,7 @@ test("plain Codex is the ChatGPT model; a remy: gateway model is an API key", ()
   assert.equal(isChatGPTModel("claude", "claude-opus-5-5"), false);
 });
 
-test("a cloud task gets only its starter's ChatGPT tokens, and none once they turn it off", async () => {
+test("a cloud task gets only its starter's ChatGPT tokens until they sign out", async () => {
   const fake = await startFakeOpenAIAuth() as Fake;
   const { db, sqlite } = database();
   const { HubCoordinator } = await import("./worker.js");
@@ -186,16 +186,9 @@ test("a cloud task gets only its starter's ChatGPT tokens, and none once they tu
     assert.equal((await tokensFor("c-key")).status, 204, "a thread started on an API key gets no ChatGPT tokens");
     assert.equal((await tokensFor("c-missing")).status, 403);
 
-    await setChatGPTEnabled(db, "org", "grace", false);
-    const off = await tokensFor("c-grace");
-    assert.equal(off.status, 409);
-    const body = await off.text();
-    assert.match(body, /Reconnect Codex to continue/);
-    assert.ok(!body.includes("acct-grace") && !body.includes("fake"), "no tokens once the starter turns it off");
-    assert.equal((await tokensFor("c-ada")).status, 200, "the toggle is per person");
-
     await person("ada", "logout");
     assert.equal((await tokensFor("c-ada")).status, 409, "signing out fails the next refresh");
+    assert.equal((await tokensFor("c-grace")).status, 200, "one member signing out does not affect another member");
   } finally {
     sqlite.close();
     await fake.close();
@@ -240,10 +233,10 @@ test("browsers read only your status, and computers cannot reach ChatGPT sign-in
     assert.ok(!(await browserTokens.text()).includes("acct-ada"));
 
     assert.deepEqual(await (await call("/api/organizations/org/chatgpt")).json(), { connected: true, enabled: true, personal: false, available: true });
-    assert.equal((await call("/api/organizations/org/chatgpt", "DELETE")).status, 200);
-    assert.equal(((await (await call("/api/organizations/org/chatgpt")).json()) as { available: boolean }).available, false);
+    assert.equal((await call("/api/organizations/org/chatgpt", "DELETE")).status, 405, "there is no organization switch for a personal subscription");
+    assert.equal(((await (await call("/api/organizations/org/chatgpt")).json()) as { available: boolean }).available, true);
     const personal = (await personalSpace(db, "ada")).id;
-    assert.equal((await call(`/api/organizations/${personal}/chatgpt`, "DELETE")).status, 409, "Personal always uses your own sign-in");
+    assert.equal((await call(`/api/organizations/${personal}/chatgpt`, "DELETE")).status, 405, "Personal always uses your own sign-in");
 
     userId = "grace";
     assert.deepEqual(await (await call("/api/organizations/org/chatgpt")).json(), { connected: false, enabled: true, personal: false, available: false }, "a member sees only their own sign-in");

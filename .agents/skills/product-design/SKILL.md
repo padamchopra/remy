@@ -130,10 +130,11 @@ Name the capability, its durable owner, the actor that performs it, the event th
 
 A setting lives with the thing whose behavior it controls. The actor that carries out that behavior is a reference, not the owner, when another actor could reasonably take its place.
 
-- A machine integration belongs to that machine's settings. Hosted thread start uses the providers enabled on the chosen computer, including a cloud computer's OpenRouter, Router, OpenAI, and Anthropic access. A cloud computer shared into an organization carries that source account's enabled model access. A Remy-wide OpenRouter default does not start on an organization that has no OpenRouter key and no shared computer that does.
-- A Personal computer or cloud connection shared into an organization is a start grant. The member who owns that computer or connection can share it, unshare it, and choose which of its advertised providers other members may use to start a new thread. Administrators can revoke the grant; they cannot configure someone else's machine. Sharing turns every currently advertised provider on. The owner can always start with any provider on that computer, and always sees that computer in the thread picker for every organization they belong to. Turning share off hides it from other members, not from the owner. Other members can still reply, approve, and otherwise contribute on threads that already exist. An account can keep multiple named Fly.io, OpenRouter, and other integration keys; sharing and new work use the active key.
-- A shared cloud computer advertises the source account's enabled model access — OpenRouter, Router, OpenAI, Anthropic — not the Codex or Claude runtime those gateways execute through. Codex appears only when Codex itself is configured.
-- A model-access subscription belongs to the person, like any Personal connection. Using it in an organization is that person's own toggle, never an administrator's setting, and it runs only the threads that person starts. Cloud Codex signs in with ChatGPT once, in Personal → Model access; the hub holds the tokens under that Personal scope, and cloud task computers borrow short-lived access tokens for their starter. A thread keeps its starter's subscription for its life, including turns another participant sends. Claude Code account login stays on computers you own, because Anthropic's terms do not allow Claude subscriptions in third-party products; cloud Claude uses an Anthropic API key.
+- A machine integration belongs to that machine's settings. Compute placement and model credentials are independent choices. Enrolling a cloud key in an organization lets members run there, but never carries the key owner's model access into the organization. Each thread uses a model credential its starter owns or an exact model key enrolled for everyone in that organization.
+- Computers is one account-wide inventory of everything the person can use. Resources they own are editable. Resources another member enrolled in an organization are read-only and name their owner and organization. Do not narrow this inventory with the account switcher or repeat the same resource for each organization that grants it.
+- A Personal computer or cloud connection enrolled in an organization is a start grant. The member who owns that computer or connection can enroll it, remove it, choose specific named cloud keys, and choose which of its advertised providers other members may use to start a new thread. Administrators can revoke the grant; they cannot configure someone else's machine or credential. The owner always sees their own computer and cloud connections in the picker for every organization they belong to, even when they are not enrolled. Turning enrollment off hides it from other members, not from the owner. Other members can still reply, approve, and otherwise contribute on threads that already exist.
+- A cloud placement advertises compute only. The model picker independently lists the starter's personal credentials and exact model keys enrolled in the organization. Never infer model access from who owns the cloud key.
+- A model-access subscription or key belongs to the person, like any Personal connection. The owner may use it for their own threads in every organization they belong to without enrolling it. Enrolling a specific named key in an organization lets every member use that credential. The model picker shows the credential owner and key name and stores that exact grant on the thread. Administrators can revoke an enrollment; they cannot read or configure another member's credential. Cloud Codex signs in with ChatGPT once in Personal model access; the hub holds the tokens under that Personal scope, and cloud task computers borrow short-lived access tokens. Claude Code account login stays on computers you own, because Anthropic's terms do not allow Claude subscriptions in third-party products; cloud Claude uses an Anthropic API key.
 
 BAD
 ```text
@@ -143,8 +144,8 @@ Cloud Model access offers Connect Claude Code, then injects that session onto a 
 
 GOOD
 ```text
-Personal → Model access: Codex → Connect Codex with a ChatGPT device code.
-Organization → Computers: Your subscriptions → ChatGPT, your own switch for threads you start there.
+Computers → Model access: Codex → Connect Codex with a ChatGPT device code.
+Organizations → Computers and models: enroll Production OpenAI for everyone, or leave it Personal for only your threads.
 Computers → Connected signs in to Claude Code and Codex on a computer you own, or sets an API key there.
 ```
 
@@ -163,18 +164,16 @@ Other members do not.
 
 BAD
 ```text
-Fly.io is shared from Personal, where OpenRouter is on.
-Organization → Computers shows a Codex toggle under Fly.io Sprites.
+Production Fly.io is enrolled in Remy, so every member can use its owner's OpenRouter key.
 ```
 
 GOOD
 ```text
-Fly.io is shared from Personal, where OpenRouter is on.
-Organization → Computers shows OpenRouter under Fly.io Sprites.
-Codex stays off the row unless that account actually configured Codex.
+Production Fly.io is enrolled in Remy, so every member can choose it as compute placement.
+Each member chooses their own model key, or an exact model key separately enrolled in Remy.
 ```
 
-Named integration keys belong to that account’s Computers settings. Management APIs return names and configured state, never values. Values stay encrypted at rest and out of logs, prompts, and snapshots. Agent capabilities cannot create, read, or replace them.
+Named integration keys belong to the person’s Computers settings. Organization grants reference their stable key ids; they never copy a secret. Management APIs return names and configured state, never values. Values stay encrypted at rest and out of logs, prompts, and snapshots. Agent capabilities cannot create, read, or replace them.
 
 BAD
 ```text

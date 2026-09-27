@@ -19,8 +19,8 @@ export function useHubModelDefaults(org:string,computerId?:string) {
   return useHubResource<HubModelDefaults>(org,modelDefaultsPath(computerId));
 }
 
-/// What a cloud computer can start on for you: the account's model access,
-/// ChatGPT when you allow it here, and your own keys where you turned them on.
+/// What a cloud computer can start on for you: organization model access,
+/// your ChatGPT subscription, and your own model keys.
 function useCloudCatalogue(organizationId: string, cloud: boolean, choice: ModelChoice) {
   const access = useHubResource<ModelAccessResponse>(organizationId, cloud ? "/model-access" : null);
   const chatgpt = useHubResource<{ available: boolean }>(organizationId, cloud ? "/chatgpt" : null, "/computers/live");

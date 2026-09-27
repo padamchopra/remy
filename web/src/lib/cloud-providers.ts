@@ -28,5 +28,6 @@ export type CloudConnections = {
   connections?: string[];
   enabledProviders?: string[];
   providerKeys?: Record<string, { id: string; name: string; active?: boolean }[]>;
+  cloudPlacements?: { id: string; provider: string; owner: string; keyName: string; own: boolean }[];
   available?: boolean;
 };

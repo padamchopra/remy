@@ -257,13 +257,9 @@ export class ChatGPTAccounts {
   }
 }
 
-/// Whether a person's ChatGPT sign-in may run threads they start in an
-/// organization: always in Personal, and elsewhere unless they turned it off.
-export async function chatgptEnabled(db: D1Database, organizationId: string, userId: string) {
-  if ((await personalSpace(db, userId)).id === organizationId) return true;
-  const row = await db.prepare("SELECT enabled FROM organization_chatgpt_access WHERE organization_id=? AND user_id=?").bind(organizationId, userId).first<{ enabled: number }>();
-  return row ? row.enabled === 1 : true;
-}
+/// A person's subscription is available to the threads they start in every
+/// organization they belong to. Organization enrollment never shares it.
+export async function chatgptEnabled(_db: D1Database, _organizationId: string, _userId: string) { return true; }
 
 export async function setChatGPTEnabled(db: D1Database, organizationId: string, userId: string, enabled: boolean, now = Date.now()) {
   await db.prepare("INSERT INTO organization_chatgpt_access(organization_id,user_id,enabled,updated_at) VALUES(?,?,?,?) ON CONFLICT(organization_id,user_id) DO UPDATE SET enabled=excluded.enabled,updated_at=excluded.updated_at")

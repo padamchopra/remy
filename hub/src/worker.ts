@@ -6,7 +6,7 @@ import { hostedGatewayError, hostedStartChoice, modelAccessIds, publicModelAcces
 import { routerConnectionSchema, routerModels } from "./router-connection.js";
 import { CLOUD_COMPUTER_PROVIDERS, CURSOR_CLOUD_COMPUTER_ID, cloudComputerProvider, isCursorCloudProvider, isGuestCloudProvider, type HostedSettings } from "@remy/contract";
 import { managementCredential } from "./cloud-connection.js";
-import { cloudToggleSchema, cloudConnectionSchema, cloudConnectionKey, modelSecrets, publicProviderKeys, removeNamedCloudKey, saveNamedCloudKey } from "./cloud-connection.js";
+import { cloudToggleSchema, cloudConnectionForKey, cloudConnectionSchema, cloudConnectionKey, modelSecrets, publicCloudKeys, publicProviderKeys, removeNamedCloudKey, saveNamedCloudKey } from "./cloud-connection.js";
 import { CursorCloudThreads, verifyCursorCloudKey } from "./cursor-cloud.js";
 import { allowedRequestOrigin } from "./request-origin.js";
 import { emailAvailable, sendAccountEmail, type AccountEmail } from "./email.js";
@@ -16,7 +16,7 @@ import { ComputerAccountStore } from "./computer-accounts.js";
 import { cancelClaudeAccount, claudeAccountStatus, claudeComputerEnvironment, completeClaudeAccount, logoutClaudeAccount, startClaudeAccount } from "./claude-account.js";
 import { encodeComputerConnectionKey } from "@remy/contract";
 import { personalSpace } from "./personal-space.js";
-import { ChatGPTAccounts, RECONNECT_CODEX, chatgptConnected, chatgptEnabled, isChatGPTModel, setChatGPTEnabled } from "./chatgpt-account.js";
+import { ChatGPTAccounts, RECONNECT_CODEX, chatgptConnected, chatgptEnabled, isChatGPTModel } from "./chatgpt-account.js";
 import { OWN_MODEL_CLOUD_ONLY, OWN_MODEL_THREAD, OwnModelAccessError, isOwnKeyProvider, isOwnModelId, ownModelAccess, ownModelEnvironment, ownModelError, ownModelSecrets, setOwnModelAccess, type OwnModelTask } from "./own-model-access.js";
 import {linearAccountRoute, linearAccountsFor} from "./linear-routes.js";
 import { githubFor, githubRoute } from "./github-routes.js";
@@ -24,7 +24,7 @@ import { connectionRoute, connectionWebhook, isGitHubConnectionCallback } from "
 import { connectionProviders } from "./connection-providers.js";
 import { ConnectionError, type ConnectionDelivery, type ConnectionJob } from "./connections.js";
 import { chooseComputer } from "./computer-choice.js";
-import { advertisedCloudProvidersFor, advertisedProviderIds, canStartWithShareGrant, parseStartProviderInput, parseStartProviders, providersFromCapabilities, publicStartProviders, serializeStartProviders, START_PROVIDER_DENIED } from "./computer-start-access.js";
+import { advertisedCloudProvidersFor, advertisedProviderIds, parseStartProviderInput, parseStartProviders, providersFromCapabilities, publicStartProviders, serializeStartProviders, START_PROVIDER_DENIED } from "./computer-start-access.js";
 import { GitCapabilities, GithubInstallation, githubRepository, proxyGit } from "./hosted-git.js";
 import { HostedSettingsStore } from "./hosted-settings.js";
 import { HostedLifecycle } from "./hosted-lifecycle.js";
@@ -158,27 +158,76 @@ function jsonError(error: string, status: number): Response {
   return Response.json({ error }, { status });
 }
 
+function storedIds(value: string | null): string[] | null {
+  if (value === null) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.every((id) => typeof id === "string") ? parsed : [];
+  } catch { return []; }
+}
+
+function selectedPublicKeys(keys: { id: string; name: string; active: boolean }[], saved: string | null) {
+  const ids = storedIds(saved);
+  if (ids) return keys.map((key) => ({ ...key, selected: ids.includes(key.id) }));
+  const active = keys.find((key) => key.active) ?? keys[0];
+  return keys.map((key) => ({ ...key, selected: key.id === active?.id }));
+}
+
+type CloudConnectionTask = { sourceOrganizationId: string; provider: HostedSettings["provider"]; keyId: string };
+function cloudConnectionTask(id: string | null | undefined): CloudConnectionTask | undefined {
+  const provider = cloudComputerProvider(id);
+  if (!provider || !id?.startsWith(`cloud:${provider}:`)) return;
+  const rest = id.slice(`cloud:${provider}:`.length);
+  const split = rest.indexOf(":");
+  if (split < 1 || split === rest.length - 1) return;
+  return { provider, sourceOrganizationId: rest.slice(0, split), keyId: rest.slice(split + 1) };
+}
+
+async function cloudTaskConnection(db: D1Database, settings: HostedSettingsStore, org: string, userId: string, task: CloudConnectionTask) {
+  const personal = await personalSpace(db, userId);
+  const direct = task.sourceOrganizationId === personal.id || task.sourceOrganizationId === org;
+  if (!direct) {
+    const share = await db.prepare("SELECT key_ids FROM organization_cloud_shares WHERE organization_id=? AND source_organization_id=? AND provider=?")
+      .bind(org, task.sourceOrganizationId, task.provider).first<{ key_ids: string | null }>();
+    if (!share) return;
+    const sourceSecrets = await settings.secrets(task.sourceOrganizationId);
+    const selected = selectedPublicKeys(publicCloudKeys(task.provider, sourceSecrets), share.key_ids).filter((key) => key.selected);
+    if (!selected.some((key) => key.id === task.keyId)) return;
+  }
+  const secrets = await settings.secrets(task.sourceOrganizationId);
+  const connection = cloudConnectionForKey(task.provider, secrets, task.keyId);
+  return connection?.enabled ? connection : undefined;
+}
+
 async function cloudStartGrant(
   settings: HostedSettingsStore,
   org: string,
   provider: HostedSettings["provider"],
   userId: string,
 ) {
-  const advertisedFor = async (source: string) => advertisedCloudProvidersFor(provider, publicModelAccess(await settings.secrets(source)));
   if (await settings.ownConnection(org, provider)) {
-    return { owner: true, advertised: await advertisedFor(org), stored: null };
+    return { owner: true, available: true, advertised: [], stored: null };
   }
   const share = await settings.cloudShare(org, provider);
-  if (!share) return { owner: true, advertised: advertisedCloudProvidersFor(provider, []), stored: null };
+  if (!share) return { owner: false, available: false, advertised: [], stored: null };
   return {
     owner: share.shared_by === userId,
-    advertised: await advertisedFor(share.source_organization_id),
-    stored: parseStartProviders(share.start_providers),
+    available: true,
+    advertised: [],
+    stored: null,
   };
 }
 
-async function cursorCloudApiKey(settings: HostedSettingsStore, org: string): Promise<string | undefined> {
-  const connection = await settings.connection(org, "cursor-cloud");
+async function cursorCloudApiKey(
+  db: D1Database,
+  settings: HostedSettingsStore,
+  org: string,
+  userId?: string,
+  task?: CloudConnectionTask,
+): Promise<string | undefined> {
+  const connection = task && userId
+    ? await cloudTaskConnection(db, settings, org, userId, task)
+    : await settings.connection(org, "cursor-cloud");
   return connection?.provider === "cursor-cloud" && connection.enabled ? connection.token : undefined;
 }
 
@@ -194,12 +243,12 @@ function codexTokenRefresh(payload: ArrayBuffer | undefined): { reason: string; 
 }
 
 /// Any member of an organization with a cloud computer can run the threads
-/// they start on their own ChatGPT sign-in, when they allow it there.
+/// they start on their own ChatGPT sign-in.
 async function chatgptReady(db: D1Database, org: string, userId: string) {
   return await chatgptConnected(db, userId) && await chatgptEnabled(db, org, userId);
 }
-const CHATGPT_SIGN_IN = "Sign in to ChatGPT in Personal model access, or turn it on for this organization.";
-const CHATGPT_THREAD = "This thread’s starter hasn’t turned on ChatGPT here. Choose a model with an API key.";
+const CHATGPT_SIGN_IN = "Sign in to ChatGPT in Personal model access.";
+const CHATGPT_THREAD = "This thread’s starter is no longer signed in to ChatGPT. Choose a model with an API key.";
 
 async function canStartOnCloud(
   settings: HostedSettingsStore,
@@ -210,7 +259,9 @@ async function canStartOnCloud(
   model?: string,
 ) {
   const grant = await cloudStartGrant(settings, org, provider, userId);
-  return canStartWithShareGrant(grant.owner, grant.stored, grant.advertised, runtimeProvider, model);
+  if (!grant.available) return false;
+  if (provider === "cursor-cloud") return !runtimeProvider || runtimeProvider === "cursor";
+  return true;
 }
 
 function encodeWireBody(value: ArrayBuffer): string {
@@ -560,24 +611,19 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         return organizationObject().fetch(new Request(`https://internal/${tail}`, { method: request.method, headers: { "x-organization-id": organizationId, "x-user-id": identity.userId, "x-session-id": identity.sessionId, upgrade: request.headers.get("upgrade") ?? "" } }));
       }
       if (tail === "chatgpt") {
-        // Whether your own ChatGPT sign-in runs the cloud threads you start here.
+        // Your own ChatGPT sign-in runs the cloud threads you start everywhere.
         await organizations.member(organizationId, identity.userId);
         if (identity.clientKind === "computer") return jsonError("Open organization settings in Remy.", 403);
         const personal = (await personalSpace(env.DB, identity.userId)).id === organizationId;
-        if (request.method === "PUT" || request.method === "DELETE") {
-          if (personal) return jsonError("Your ChatGPT sign-in always runs your Personal threads.", 409);
-          if (!allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Open organization settings in Remy.", 403);
-          await setChatGPTEnabled(env.DB, organizationId, identity.userId, request.method === "PUT");
-          await organizationObject().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId } }));
-        } else if (request.method !== "GET") return jsonError("This action is unavailable.", 405);
+        if (request.method !== "GET") return jsonError("Your ChatGPT subscription is already available to your threads.", 405);
         const connected = await chatgptConnected(env.DB, identity.userId);
         const enabled = await chatgptEnabled(env.DB, organizationId, identity.userId);
         return Response.json({ connected, enabled, personal, available: connected && enabled }, { headers: { "cache-control": "no-store" } });
       }
       const ownModel = /^own-model-access(?:\/([^/]+))?$/.exec(tail);
       if (ownModel) {
-        // Your own Personal keys, one switch each per organization. Only the
-        // threads you start here may use one, and nobody else sees it.
+        // Personal keys always work for their owner. These routes enroll exact
+        // named keys so every member of the organization may choose them.
         await organizations.member(organizationId, identity.userId);
         if (identity.clientKind === "computer") return jsonError("Open organization settings in Remy.", 403);
         const settings = new HostedSettingsStore(env.DB, () => env.AUTH_SECRET.get());
@@ -589,7 +635,10 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         if (!isOwnModelId(id) || (request.method !== "PUT" && request.method !== "DELETE")) return jsonError("This model action is unavailable.", 405);
         if (!allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Open organization settings in Remy.", 403);
         try {
-          const access = await setOwnModelAccess(env.DB, settings, organizationId, identity.userId, id, request.method === "PUT");
+          const input = request.method === "PUT" ? await body<{ keyIds?: unknown }>(request) : undefined;
+          const keyIds = input?.keyIds === undefined ? undefined : Array.isArray(input.keyIds) && input.keyIds.every((keyId) => typeof keyId === "string") ? input.keyIds : null;
+          if (keyIds === null) return jsonError("Choose the keys to enroll.", 400);
+          const access = await setOwnModelAccess(env.DB, settings, organizationId, identity.userId, id, request.method === "PUT", keyIds);
           await organizationObject().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId } }));
           return Response.json(access, { headers: { "cache-control": "no-store" } });
         } catch (error) {
@@ -604,7 +653,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         const computerShares = (await env.DB.prepare(`SELECT s.computer_id,s.shared_by,s.start_providers,c.name,c.icon,c.platform,c.last_seen_at,c.capabilities,c.owner_user_id
           FROM organization_computer_shares s JOIN organization_computers c ON c.id=s.computer_id
           WHERE s.organization_id=? ORDER BY lower(c.name),c.id`).bind(organizationId).all<{computer_id:string;shared_by:string;start_providers:string|null;name:string;icon:string;platform:string;last_seen_at:number|null;capabilities:string;owner_user_id:string|null}>()).results;
-        const cloudShares = (await env.DB.prepare("SELECT source_organization_id,provider,shared_by,start_providers FROM organization_cloud_shares WHERE organization_id=? ORDER BY provider,created_at").bind(organizationId).all<{source_organization_id:string;provider:HostedSettings["provider"];shared_by:string;start_providers:string|null}>()).results;
+        const cloudShares = (await env.DB.prepare("SELECT source_organization_id,provider,shared_by,start_providers,key_ids FROM organization_cloud_shares WHERE organization_id=? ORDER BY provider,created_at").bind(organizationId).all<{source_organization_id:string;provider:HostedSettings["provider"];shared_by:string;start_providers:string|null;key_ids:string|null}>()).results;
         const settings = new HostedSettingsStore(env.DB, () => env.AUTH_SECRET.get());
         const personalSecrets = await settings.secrets(personal.id);
         const ownCloud = Object.entries(personalSecrets).flatMap(([name, value]) => {
@@ -621,13 +670,13 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           return next;
         };
         const sharedCloudAvailability = new Map<string, boolean>();
-        const sharedCloudAdvertised = new Map<string, ReturnType<typeof advertisedCloudProvidersFor>>();
+        const sharedCloudKeys = new Map<string, ReturnType<typeof publicProviderKeys>[HostedSettings["provider"]]>();
         for (const share of cloudShares) {
           const sourceSecrets = await cloudSecrets(share.source_organization_id);
-          const saved = sourceSecrets[cloudConnectionKey(share.provider)];
-          const parsed = saved ? cloudConnectionSchema.safeParse(JSON.parse(saved)) : null;
-          sharedCloudAvailability.set(`${share.source_organization_id}:${share.provider}`, !!parsed?.success && parsed.data.enabled);
-          sharedCloudAdvertised.set(`${share.source_organization_id}:${share.provider}`, advertisedCloudProvidersFor(share.provider, publicModelAccess(sourceSecrets)));
+          const availableKeys = publicProviderKeys(sourceSecrets)[share.provider];
+          const selected = selectedPublicKeys(availableKeys, share.key_ids).filter((key) => key.selected);
+          sharedCloudAvailability.set(`${share.source_organization_id}:${share.provider}`, selected.some((key) => cloudConnectionForKey(share.provider, sourceSecrets, key.id)?.enabled));
+          sharedCloudKeys.set(`${share.source_organization_id}:${share.provider}`, availableKeys);
         }
         const names = new Map<string,string>();
         for (const userId of new Set([...computerShares.map(share => share.shared_by), ...cloudShares.map(share => share.shared_by)])) names.set(userId, (await store.profile(userId))?.name ?? "Member");
@@ -644,9 +693,10 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           cloudConnections: [
             ...cloudShares.map(share => {
               const canShare = share.shared_by === identity.userId || share.source_organization_id === personal.id;
-              return { provider: share.provider, shared: true, available: sharedCloudAvailability.get(`${share.source_organization_id}:${share.provider}`) ?? false, sharedBy: names.get(share.shared_by) ?? "Member", canShare, canRevoke: admin, providers: publicStartProviders(sharedCloudAdvertised.get(`${share.source_organization_id}:${share.provider}`) ?? [], parseStartProviders(share.start_providers)) };
+              const keys = canShare ? selectedPublicKeys(sharedCloudKeys.get(`${share.source_organization_id}:${share.provider}`) ?? [], share.key_ids) : [];
+              return { id: `${share.source_organization_id}:${share.provider}`, provider: share.provider, shared: true, available: sharedCloudAvailability.get(`${share.source_organization_id}:${share.provider}`) ?? false, sharedBy: names.get(share.shared_by) ?? "Member", canShare, canRevoke: admin, keys, providers: [] };
             }),
-            ...ownCloud.filter(provider => !cloudShares.some(share => share.source_organization_id === personal.id && share.provider === provider)).map(provider => ({ provider, shared: false, available: true, sharedBy: (null as string | null), canShare: true, canRevoke: false, providers: publicStartProviders(advertisedCloudProvidersFor(provider, publicModelAccess(personalSecrets)), null) })),
+            ...ownCloud.filter(provider => !cloudShares.some(share => share.source_organization_id === personal.id && share.provider === provider)).map(provider => ({ id: `${personal.id}:${provider}`, provider, shared: false, available: true, sharedBy: (null as string | null), canShare: true, canRevoke: false, keys: selectedPublicKeys(publicProviderKeys(personalSecrets)[provider], null), providers: [] })),
           ],
         });
       }
@@ -688,31 +738,36 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
             await env.DB.prepare("DELETE FROM organization_computer_shares WHERE organization_id=? AND computer_id=?").bind(organizationId, computerId).run();
           }
         } else {
-          const provider = decodeURIComponent(cloudShare![1]) as HostedSettings["provider"];
+          const cloudId = decodeURIComponent(cloudShare![1]);
+          const separator = cloudId.lastIndexOf(":");
+          const sourceOrganizationId = separator === -1 ? personal.id : cloudId.slice(0, separator);
+          const provider = (separator === -1 ? cloudId : cloudId.slice(separator + 1)) as HostedSettings["provider"];
           if (!(CLOUD_COMPUTER_PROVIDERS as readonly string[]).includes(provider)) return jsonError("Choose a cloud connection.", 400);
           const settings = new HostedSettingsStore(env.DB, () => env.AUTH_SECRET.get());
-          const existing = await env.DB.prepare("SELECT source_organization_id,shared_by FROM organization_cloud_shares WHERE organization_id=? AND source_organization_id=? AND provider=?").bind(organizationId, personal.id, provider).first<{source_organization_id:string;shared_by:string}>();
-          const owns = !!(await settings.ownConnection(personal.id, provider));
+          const existing = await env.DB.prepare("SELECT source_organization_id,shared_by FROM organization_cloud_shares WHERE organization_id=? AND source_organization_id=? AND provider=?").bind(organizationId, sourceOrganizationId, provider).first<{source_organization_id:string;shared_by:string}>();
+          const owns = sourceOrganizationId === personal.id && !!(await settings.ownConnection(personal.id, provider));
           if (request.method === "PUT") {
             if (!owns) return jsonError("Enable this cloud provider in Personal first.", 409);
-            const advertised = advertisedCloudProvidersFor(provider, publicModelAccess(await settings.secrets(personal.id)));
-            let startProviders;
-            try { startProviders = parseStartProviderInput((await body<{startProviders?:unknown}>(request))?.startProviders, advertised); }
-            catch (error) { return jsonError(error instanceof Error ? error.message : "Choose the providers others may start.", 400); }
-            await env.DB.prepare("INSERT INTO organization_cloud_shares(organization_id,source_organization_id,provider,shared_by,created_at,start_providers) VALUES(?,?,?,?,?,?) ON CONFLICT(organization_id,source_organization_id,provider) DO UPDATE SET start_providers=excluded.start_providers").bind(organizationId, personal.id, provider, identity.userId, Date.now(), startProviders === undefined ? null : serializeStartProviders(startProviders)).run();
+            const personalSecrets = await settings.secrets(personal.id);
+            const input = await body<{keyIds?:unknown}>(request);
+            const availableKeys = publicProviderKeys(personalSecrets)[provider];
+            const keyIds = input?.keyIds === undefined ? selectedPublicKeys(availableKeys, null).filter(key => key.selected).map(key => key.id) : Array.isArray(input.keyIds) && input.keyIds.every(key => typeof key === "string") ? [...new Set(input.keyIds)] : [];
+            if (!keyIds.length || keyIds.some(keyId => !availableKeys.some(key => key.id === keyId))) return jsonError("Choose the cloud keys to enroll.", 400);
+            await env.DB.prepare("INSERT INTO organization_cloud_shares(organization_id,source_organization_id,provider,shared_by,created_at,start_providers,key_ids) VALUES(?,?,?,?,?,?,?) ON CONFLICT(organization_id,source_organization_id,provider) DO UPDATE SET key_ids=excluded.key_ids").bind(organizationId, personal.id, provider, identity.userId, Date.now(), null, JSON.stringify(keyIds)).run();
           } else if (request.method === "PATCH") {
             if (!owns) return jsonError("Choose one of your cloud connections.", 404);
             if (!existing) return jsonError("Share this connection first.", 409);
-            const advertised = advertisedCloudProvidersFor(provider, publicModelAccess(await settings.secrets(personal.id)));
-            let startProviders;
-            try { startProviders = parseStartProviderInput((await body<{startProviders?:unknown}>(request))?.startProviders, advertised); }
-            catch (error) { return jsonError(error instanceof Error ? error.message : "Choose the providers others may start.", 400); }
-            if (startProviders === undefined) return jsonError("Choose the providers others may start.", 400);
-            await env.DB.prepare("UPDATE organization_cloud_shares SET start_providers=? WHERE organization_id=? AND source_organization_id=? AND provider=?").bind(serializeStartProviders(startProviders), organizationId, personal.id, provider).run();
-          } else if (existing && owns) {
-            await env.DB.prepare("DELETE FROM organization_cloud_shares WHERE organization_id=? AND source_organization_id=? AND provider=?").bind(organizationId, personal.id, provider).run();
-          } else if (admin) {
-            await env.DB.prepare("DELETE FROM organization_cloud_shares WHERE organization_id=? AND provider=?").bind(organizationId, provider).run();
+            const personalSecrets = await settings.secrets(personal.id);
+            const input = await body<{keyIds?:unknown}>(request);
+            const availableKeys = publicProviderKeys(personalSecrets)[provider];
+            const keyIds = input?.keyIds === undefined ? undefined : Array.isArray(input.keyIds) && input.keyIds.every(key => typeof key === "string") ? [...new Set(input.keyIds)] : [];
+            if (keyIds === undefined) return jsonError("Choose what to enroll.", 400);
+            if (keyIds && (!keyIds.length || keyIds.some(keyId => !availableKeys.some(key => key.id === keyId)))) return jsonError("Choose the cloud keys to enroll.", 400);
+            await env.DB.prepare("UPDATE organization_cloud_shares SET key_ids=? WHERE organization_id=? AND source_organization_id=? AND provider=?").bind(JSON.stringify(keyIds), organizationId, personal.id, provider).run();
+          } else if (existing && (owns || admin)) {
+            await env.DB.prepare("DELETE FROM organization_cloud_shares WHERE organization_id=? AND source_organization_id=? AND provider=?").bind(organizationId, sourceOrganizationId, provider).run();
+          } else if (!existing) {
+            return Response.json({ ok: true });
           } else return jsonError("Ask an organization admin to change this computer’s sharing.", 403);
         }
         await organizationObject().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId } }));
@@ -999,7 +1054,29 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
             const grant = grants[index]!;
             cloudStart[provider] = { owner: grant.owner, providers: publicStartProviders(grant.advertised, grant.stored) };
           });
-          return Response.json({ settings: hostedSettings, secretNames: member.role !== "member" ? names.filter(name => !name.startsWith("cloud:") && !name.startsWith("model:") && !name.startsWith("access:") && !name.startsWith("named-")) : [], enabledProviders, cloudStart, routerConfigured: !!access.find(entry => entry.id === "router")?.configured, openrouterConfigured: !!access.find(entry => entry.id === "openrouter")?.configured, connections: names.filter(name => name.startsWith("cloud:")).map(name => name.slice(6)), providerKeys: publicProviderKeys(secrets), available: enabledProviders.includes("cursor-cloud") || (!!env.HOSTED_IMAGE && (!!env.PROVIDER_RUNTIME || (!!env.HOSTED_CONTROL_URL && !!env.HOSTED_CONTROL_TOKEN))) });
+          const profile = await env.DB.prepare("SELECT name FROM user WHERE id=?").bind(identity.userId).first<{ name: string }>();
+          const personal = profile ? await personalSpace(env.DB, identity.userId) : undefined;
+          const personalSecrets = personal ? await settings.secrets(personal.id) : {};
+          const placements: { id: string; provider: HostedSettings["provider"]; owner: string; keyName: string; own: boolean }[] = [];
+          for (const provider of CLOUD_COMPUTER_PROVIDERS) {
+            if (!personal || !await settings.ownConnection(personal.id, provider)) continue;
+            for (const key of publicCloudKeys(provider, personalSecrets)) placements.push({ id: `cloud:${provider}:${personal.id}:${key.id}`, provider, owner: "You", keyName: key.name, own: true });
+          }
+          if (organizationId !== personal?.id) {
+            for (const provider of CLOUD_COMPUTER_PROVIDERS) {
+              if (!await settings.ownConnection(organizationId, provider)) continue;
+              for (const key of publicCloudKeys(provider, secrets)) placements.push({ id: `cloud:${provider}:${organizationId}:${key.id}`, provider, owner: "Organization", keyName: key.name, own: false });
+            }
+          }
+          const sharedRows = (await env.DB.prepare("SELECT source_organization_id,provider,shared_by,key_ids FROM organization_cloud_shares WHERE organization_id=? ORDER BY created_at")
+            .bind(organizationId).all<{ source_organization_id: string; provider: HostedSettings["provider"]; shared_by: string; key_ids: string | null }>()).results;
+          for (const share of sharedRows) {
+            if (share.source_organization_id === personal?.id) continue;
+            const sourceSecrets = await settings.secrets(share.source_organization_id);
+            const owner = (await env.DB.prepare("SELECT name FROM user WHERE id=?").bind(share.shared_by).first<{ name: string }>())?.name ?? "Member";
+            for (const key of selectedPublicKeys(publicCloudKeys(share.provider, sourceSecrets), share.key_ids).filter(key => key.selected)) placements.push({ id: `cloud:${share.provider}:${share.source_organization_id}:${key.id}`, provider: share.provider, owner, keyName: key.name, own: false });
+          }
+          return Response.json({ settings: hostedSettings, secretNames: member.role !== "member" ? names.filter(name => !name.startsWith("cloud:") && !name.startsWith("model:") && !name.startsWith("access:") && !name.startsWith("named-")) : [], enabledProviders, cloudStart, cloudPlacements: placements, routerConfigured: !!access.find(entry => entry.id === "router")?.configured, openrouterConfigured: !!access.find(entry => entry.id === "openrouter")?.configured, connections: names.filter(name => name.startsWith("cloud:")).map(name => name.slice(6)), providerKeys: publicProviderKeys(secrets), available: enabledProviders.includes("cursor-cloud") || (!!env.HOSTED_IMAGE && (!!env.PROVIDER_RUNTIME || (!!env.HOSTED_CONTROL_URL && !!env.HOSTED_CONTROL_TOKEN))) });
         }
         if (request.method === "PUT" && (!workspaceId || hostedMatch[2] === "settings")) {
           if (member.role === "member") return jsonError("Ask an admin to change hosted computers.",403);
@@ -1800,9 +1877,11 @@ export class HubCoordinator {
     const preference=await this.env.DB.prepare("SELECT computer_id FROM member_computer_preferences WHERE organization_id=? AND user_id=? AND workspace_id=?").bind(org,userId,workspaceId).first<{computer_id:string}>();
     return chooseComputer(await this.computerService().list(org,userId),{workspaceId,origin:workspace.origin,enabledProviders,...(override !== undefined ? (override ? {override} : {}) : preference ? {override:preference.computer_id} : {})});
   }
-  private async taskComputer(userId:string, workspaceId:string, taskId:string, title?:string, override?:string|null, modelChoice?:{provider?:string;model?:string}, chatgpt=false, ownModel?:OwnModelTask["provider"]) {
+  private async taskComputer(userId:string, workspaceId:string, taskId:string, title?:string, override?:string|null, modelChoice?:{provider?:string;model?:string}, chatgpt=false, ownModel?:OwnModelTask, cloudTask?:CloudConnectionTask) {
     const org = (await this.ctx.storage.get<string>("organizationId"))!;
-    let choice = await this.routeFor(userId, workspaceId, override);
+    let choice = cloudTask
+      ? { hostedWorkspaceId: workspaceId, hostedProvider: cloudTask.provider, reason: "Your selected cloud connection." }
+      : await this.routeFor(userId, workspaceId, override);
     const target = choice.computerId ? await this.computers.computer(org, choice.computerId) : undefined;
     if(target && target.ownership !== "hosted" && modelChoice?.provider && !target.capabilities.providers.some(p=>p.id===modelChoice.provider && (!modelChoice.model || p.models.includes(modelChoice.model)))) {
       if(override)throw Error("This computer cannot run your selected model; choose another computer.");
@@ -1815,12 +1894,15 @@ export class HubCoordinator {
       choice={reason:START_PROVIDER_DENIED,hostedWorkspaceId:workspaceId,hostedProvider:settings.provider};
     }
     if (choice.hostedWorkspaceId || target?.ownership === "hosted") {
-      const settings = await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSettings(org,workspaceId,choice.hostedProvider);
+      const settingsStore = new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get());
+      const settings = cloudTask
+        ? { ...await settingsStore.settings(org, workspaceId), enabled: true, provider: cloudTask.provider }
+        : await settingsStore.executionSettings(org,workspaceId,choice.hostedProvider);
       const ownChatGPT = !ownModel && chatgpt && !isCursorCloudProvider(settings.provider);
       if (ownModel) {
-        // Your own key bypasses the share's start allowlist, like your ChatGPT.
+        // Personal model credentials remain usable with organization compute.
         if (isCursorCloudProvider(settings.provider)) throw Error(OWN_MODEL_CLOUD_ONLY);
-        const ownError = await ownModelError(this.env.DB,new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()),org,userId,ownModel);
+        const ownError = await ownModelError(this.env.DB,new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()),org,ownModel.userId,ownModel.provider,ownModel.keyId,ownModel.enrolled);
         if (ownError) throw Error(ownError);
       }
       if(ownChatGPT && !await chatgptReady(this.env.DB,org,userId)) throw Error(CHATGPT_SIGN_IN);
@@ -1830,8 +1912,10 @@ export class HubCoordinator {
         return {computerId:CURSOR_CLOUD_COMPUTER_ID,workspaceId,reason:choice.reason};
       }
       await this.ctx.storage.put(`hosted-task-owner:${taskId}`, userId);
+      if (cloudTask) await this.ctx.storage.put(`hosted-task-cloud:${taskId}`, cloudTask);
+      else await this.ctx.storage.delete(`hosted-task-cloud:${taskId}`);
       if (ownChatGPT) await this.ctx.storage.put(`hosted-task-chatgpt:${taskId}`, true);
-      if (ownModel) await this.ctx.storage.put(`hosted-task-own-model:${taskId}`, { userId, provider: ownModel } satisfies OwnModelTask);
+      if (ownModel) await this.ctx.storage.put(`hosted-task-own-model:${taskId}`, ownModel);
       else await this.ctx.storage.delete(`hosted-task-own-model:${taskId}`);
       const state = await this.hostedService().ensure(workspaceId,settings,taskId,title);
       const computer = await this.computers.computer(org,state.computerId);
@@ -1859,8 +1943,10 @@ export class HubCoordinator {
     branch?: string;
     permissionMode?: unknown;
     text?: string;
+    cloudTask?: CloudConnectionTask;
   }): Promise<{ computerId: string; threadId: string }> {
-    const apiKey = await cursorCloudApiKey(new HostedSettingsStore(this.env.DB, () => this.env.AUTH_SECRET.get()), org);
+    const settings = new HostedSettingsStore(this.env.DB, () => this.env.AUTH_SECRET.get());
+    const apiKey = await cursorCloudApiKey(this.env.DB, settings, org, actor.id, input.cloudTask);
     const snapshot = await this.cursorCloudThreads().create({
       organizationId: org,
       actor,
@@ -1879,6 +1965,7 @@ export class HubCoordinator {
         throw new Error(typeof body?.error === "string" && body.error.trim() ? body.error : "This agent's message could not be sent.");
       }
     }
+    if (input.cloudTask) await this.ctx.storage.put(`cursor-cloud-connection:${snapshot.id}`, { userId: actor.id, task: input.cloudTask });
     return { computerId: CURSOR_CLOUD_COMPUTER_ID, threadId: snapshot.id };
   }
 
@@ -1893,21 +1980,27 @@ export class HubCoordinator {
     if (!payload) return jsonError("Send a shorter message.", 413);
     let input: Record<string, unknown> = {};
     if (payload.byteLength) { try { input = JSON.parse(new TextDecoder().decode(payload)); } catch { return jsonError("Send a valid thread request.", 400); } }
-    const apiKey = await cursorCloudApiKey(new HostedSettingsStore(this.env.DB, () => this.env.AUTH_SECRET.get()), org);
-    return this.cursorCloudThreads().handle(id, actor, request.method, action, input, apiKey);
+    const connection = await this.ctx.storage.get<{ userId: string; task: CloudConnectionTask }>(`cursor-cloud-connection:${id}`);
+    const apiKey = await cursorCloudApiKey(this.env.DB, new HostedSettingsStore(this.env.DB, () => this.env.AUTH_SECRET.get()), org, connection?.userId, connection?.task);
+    const response = await this.cursorCloudThreads().handle(id, actor, request.method, action, input, apiKey);
+    if (response.ok && request.method === "DELETE" && !action) await this.ctx.storage.delete(`cursor-cloud-connection:${id}`);
+    return response;
   }
 
   private hostedService(): HostedLifecycle {
     if(this.hosted) return this.hosted;
     const settings=new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get());
-    this.hosted=new HostedLifecycle(new DurableStorage(this.ctx.storage),id=>{
+    this.hosted=new HostedLifecycle(new DurableStorage(this.ctx.storage),(id,state)=>{
       if(!isGuestCloudProvider(id)) throw new Error("Hosted computers are not configured.");
       if(!this.env.PROVIDER_RUNTIME && (!this.env.HOSTED_CONTROL_URL || !this.env.HOSTED_CONTROL_TOKEN)) throw new Error("Hosted computers are not configured.");
       return new HttpRuntimeProvider(id,this.env.HOSTED_CONTROL_URL ?? "https://provider.internal",
         () => this.env.PROVIDER_RUNTIME ? this.env.AUTH_SECRET.get().then(managementCredential) : this.env.HOSTED_CONTROL_TOKEN!.get(),
         this.env.PROVIDER_RUNTIME ? (input, init) => this.env.PROVIDER_RUNTIME!.get(this.env.PROVIDER_RUNTIME!.idFromName("provider-management")).fetch(new Request(input, init)) : undefined, async () => {
         const org = (await this.ctx.storage.get<string>("organizationId"))!;
-        const connection = await settings.connection(org, id as HostedSettings["provider"]);
+        const cloudTask = state?.taskId ? await this.ctx.storage.get<CloudConnectionTask>(`hosted-task-cloud:${state.taskId}`) : undefined;
+        const connection = cloudTask
+          ? await cloudTaskConnection(this.env.DB, settings, org, await this.ctx.storage.get<string>(`hosted-task-owner:${state!.taskId}`) ?? "", cloudTask)
+          : await settings.connection(org, id as HostedSettings["provider"]);
         if (!connection || !isGuestCloudProvider(connection.provider)) throw new Error("Connect your cloud provider in Computers settings.");
         return connection;
       });
@@ -1932,8 +2025,8 @@ export class HubCoordinator {
       // A thread started on its starter's own key keeps that key for its life,
       // while the starter is still a member and still allows it here.
       const ownModel = state.taskId ? await this.ctx.storage.get<OwnModelTask>(`hosted-task-own-model:${state.taskId}`) : undefined;
-      if (ownModel && await ownModelError(this.env.DB,settings,org,ownModel.userId,ownModel.provider)) throw new HostedStartupError(OWN_MODEL_THREAD);
-      const models = ownModel ? await ownModelEnvironment(this.env.DB,settings,modelSecrets(secrets),ownModel) : modelSecrets(secrets);
+      if (ownModel && await ownModelError(this.env.DB,settings,org,ownModel.userId,ownModel.provider,ownModel.keyId,ownModel.enrolled)) throw new HostedStartupError(OWN_MODEL_THREAD);
+      const models = ownModel ? await ownModelEnvironment(this.env.DB,settings,org,modelSecrets(secrets),ownModel) : modelSecrets(secrets);
       const environment={...models,MC_CONFIG_DIR:"/data/remy",REMY_HOSTED_BOOTSTRAP:JSON.stringify({registration:{...actual,hubUrl:this.env.BETTER_AUTH_URL},privateKey:keys.privateKey,...(state.taskId?{taskId:state.taskId}:{}),workspace:{id:workspace.id,name:workspace.name,origin:workspace.origin}})};
       const domains=[new URL(this.env.BETTER_AUTH_URL).hostname,"api.anthropic.com","console.anthropic.com","claude.ai","api.openai.com","api.router.com","openrouter.ai","api.openrouter.ai","auth.openai.com","chatgpt.com","ab.chatgpt.com","github.com","api.github.com","codeload.github.com","objects.githubusercontent.com","release-assets.githubusercontent.com","github-releases.githubusercontent.com","ghcr.io","pkg-containers.githubusercontent.com","registry.npmjs.org"];
       return {organizationId:org,computerId:state.computerId,settings:state.settings,image:this.env.HOSTED_IMAGE,archive:this.env.HOSTED_ARCHIVE??"",environment,allowedDomains:domains};
@@ -2055,7 +2148,8 @@ export class HubCoordinator {
       model?: string | undefined;
       review?: HubReview | undefined;
       chatgpt?: boolean | undefined;
-      ownModel?: OwnModelTask["provider"] | undefined;
+      ownModel?: OwnModelTask | undefined;
+      cloudTask?: CloudConnectionTask | undefined;
     },
     key: string,
   ): Promise<void> {
@@ -2072,6 +2166,7 @@ export class HubCoordinator {
         },
         input.chatgpt === true,
         input.ownModel,
+        input.cloudTask,
       );
       const computer = await this.computers.computer(org, choice.computerId);
       // Cursor Cloud threads run without Remy's tools, so a review there could
@@ -2087,6 +2182,7 @@ export class HubCoordinator {
           ...(input.branch ? { branch: input.branch } : {}),
           // A new thread asks first; nothing saved on the account grants more.
           permissionMode: "default",
+          ...(input.cloudTask ? { cloudTask: input.cloudTask } : {}),
         });
         await this.ctx.storage.put(key, { computerId: started.computerId, id: started.threadId });
         await this.ctx.storage.put(`thread-run:${started.threadId}`, { computerId: started.computerId, userId: actor.id });
@@ -2224,7 +2320,7 @@ export class HubCoordinator {
     }
     if (url.pathname === "/threads" && request.method === "POST") {
       const org = request.headers.get("x-organization-id")!;
-      const input = await body<{workspaceId?: string; title?: string; requestId?: string; computerId?:string|null; provider?:string; model?:string; modelSource?:unknown; branch?:string; visibility?:string; review?:unknown}>(request);
+      const input = await body<{workspaceId?: string; title?: string; requestId?: string; computerId?:string|null; provider?:string; model?:string; modelSource?:unknown; modelProvider?:unknown; modelConnection?:unknown; branch?:string; visibility?:string; review?:unknown}>(request);
       if (!input || typeof input.workspaceId !== "string" || typeof input.requestId !== "string" || !/^[0-9a-f-]{36}$/.test(input.requestId)) return jsonError("Choose a workspace and retry your thread.", 400);
       const workspace = await new OrganizationService(new D1OrganizationStore(this.env.DB)).workspace(org, actor.id, input.workspaceId);
       // A review is a thread with a pull request attached. The pull request is
@@ -2249,23 +2345,30 @@ export class HubCoordinator {
       if(start.model !== undefined && (typeof start.model !== "string" || start.model.length>512))return jsonError("Choose a model.",400);
       if(input.branch !== undefined && (typeof input.branch !== "string" || !input.branch || input.branch.length > 255)) return jsonError("Choose a branch.",400);
       if(input.visibility !== undefined && input.visibility !== "private" && input.visibility !== "open") return jsonError("Choose who can read this thread.",400);
-      if(input.modelSource !== undefined && input.modelSource !== "own" && input.modelSource !== "organization") return jsonError("Choose where your model comes from.",400);
+      if(input.modelSource !== undefined && input.modelSource !== "own" && input.modelSource !== "enrolled" && input.modelSource !== "organization") return jsonError("Choose where your model comes from.",400);
       const settingsStore=new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get());
-      // Your own Personal key runs only the cloud threads you start, and only
-      // where you turned it on. It is not the organization's to allow or share.
-      let ownModel: OwnModelTask["provider"] | undefined;
-      if(input.modelSource === "own") {
-        if(!isOwnKeyProvider(input.provider)) return jsonError("Choose a provider.",400);
+      const cloudTask = cloudConnectionTask(input.computerId);
+      if (cloudTask && !await cloudTaskConnection(this.env.DB, settingsStore, org, actor.id, cloudTask)) return jsonError("This cloud connection is no longer available.", 409);
+      // Personal keys are always available to their owner. An enrolled key is
+      // available to every member, but both choices name the exact key id.
+      let ownModel: OwnModelTask | undefined;
+      if(input.modelSource === "own" || input.modelSource === "enrolled") {
+        if(!isOwnKeyProvider(input.modelProvider) || typeof input.modelConnection !== "string" || !input.modelConnection) return jsonError("Choose a model connection.",400);
         const cloud=input.computerId ? cloudComputerProvider(input.computerId) : undefined;
         const hostedTarget=input.computerId && !cloud ? (await this.computers.computer(org,input.computerId))?.ownership === "hosted" : false;
         if(!(cloud && !isCursorCloudProvider(cloud)) && !hostedTarget) return jsonError(OWN_MODEL_CLOUD_ONLY,409);
-        const ownError=await ownModelError(this.env.DB,settingsStore,org,actor.id,input.provider);
+        if (input.modelSource === "own") ownModel = { userId: actor.id, provider: input.modelProvider, keyId: input.modelConnection };
+        else {
+          const [sourceUserId, sourceProvider, ...key] = input.modelConnection.split(":");
+          if (!sourceUserId || sourceProvider !== input.modelProvider || !key.length) return jsonError("Choose a model connection.", 400);
+          ownModel = { userId: sourceUserId, provider: input.modelProvider, keyId: key.join(":"), enrolled: true };
+        }
+        const ownError=await ownModelError(this.env.DB,settingsStore,org,ownModel.userId,ownModel.provider,ownModel.keyId,ownModel.enrolled);
         if(ownError)return jsonError(ownError,409);
-        ownModel=input.provider;
       }
       // Plain Codex on a cloud computer is the starter's own ChatGPT; API keys go through a `remy:` gateway model.
       const chatgpt=!ownModel && input.provider==="codex" && !(input.model ?? "").startsWith("remy:");
-      const gatewayError=hostedGatewayError(start.provider,start.model,ownModel ? await ownModelSecrets(this.env.DB,settingsStore,actor.id,ownModel) : await settingsStore.executionSecrets(org));
+      const gatewayError=hostedGatewayError(start.provider,start.model,ownModel ? await ownModelSecrets(this.env.DB,settingsStore,ownModel,org) : await settingsStore.executionSecrets(org));
       if(gatewayError)return jsonError(gatewayError,400);
       if(input.computerId && !ownModel) {
         const cloud=cloudComputerProvider(input.computerId);
@@ -2299,6 +2402,7 @@ export class HubCoordinator {
         review,
         chatgpt,
         ownModel,
+        cloudTask,
       }, key);
       this.manualStarts.set(key, work);
       this.ctx.waitUntil(work.finally(() => { if (this.manualStarts.get(key) === work) this.manualStarts.delete(key); }));

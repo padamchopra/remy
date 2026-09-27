@@ -447,8 +447,9 @@ export default function HubAllView({
     });
   if (route.name === "threads" && route.threadId && !threadsLoaded && !pendingStart && !route.ownerOrganizationId)
     return <div className="flex min-h-0 flex-1 items-center justify-center"><Spinner aria-label="Loading threads" /></div>;
-  // Computers is one list across every account, and names the owner of the
-  // page it opens itself, so it never narrows to that owner here.
+  // Computers is the person's account-wide inventory. Organization grants
+  // are configured under Organizations and appear here only as read-only
+  // resources once the inventory API includes them.
   if (route.name === "settings" && route.tab === "devices") {
     const personal = organizations.find((organization) => organization.personal) ?? organizations[0];
     return (

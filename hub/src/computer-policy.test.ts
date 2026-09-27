@@ -402,14 +402,13 @@ test("members share their own computers and start-provider grants block only new
   }
 });
 
-test("members share their own cloud connections and start-provider grants block only new threads", async () => {
+test("members enroll their own cloud keys independently from model access", async () => {
   const { sqlite, db, computers, organizations, service: computerService } = database();
   const { createRouteHandler, HubCoordinator } = await import("./worker.js");
   const { OrganizationService } = await import("./organizations.js");
   const { personalSpace } = await import("./personal-space.js");
   const { HostedSettingsStore } = await import("./hosted-settings.js");
   const { saveModelAccess } = await import("./model-access.js");
-  const { START_PROVIDER_DENIED } = await import("./computer-start-access.js");
   let userId = "grace";
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () => Response.json({ data: [{ id: "openrouter/auto" }] })) as typeof fetch;
@@ -419,6 +418,7 @@ test("members share their own cloud connections and start-provider grants block 
     await settings.setSecret(personal.id, "cloud:modal", JSON.stringify({ provider: "modal", enabled: true, tokenId: "private-id", tokenSecret: "private-secret" }));
     await saveModelAccess(settings, personal.id, "anthropic", { enabled: true, apiKey: "grace-anthropic" });
     await saveModelAccess(settings, personal.id, "openrouter", { enabled: true, apiKey: "grace-openrouter" });
+    await saveModelAccess(settings, "org", "openrouter", { enabled: true, apiKey: "organization-openrouter" });
     sqlite.prepare("INSERT INTO organization_workspaces(id,organization_id,name,origin,created_at,updated_at) VALUES(?,?,?,?,?,?)").run("org-release", "org", "Release", "github.com/example/release", 1, 1);
     const hostedId = crypto.randomUUID();
     await computerService.register("org", "ada", {
@@ -447,33 +447,26 @@ test("members share their own cloud connections and start-provider grants block 
     assert.equal((await call("compute-shares/cloud/modal", "PUT")).status, 409);
     userId = "grace";
     assert.equal((await call("compute-shares/cloud/modal", "PUT")).status, 200);
-    const shared = await (await call("compute-shares")).json() as { cloudConnections: { provider: string; shared: boolean; canShare: boolean; canRevoke: boolean; providers: { id: string; allowed: boolean; label: string }[] }[] };
+    const shared = await (await call("compute-shares")).json() as { cloudConnections: { id: string; provider: string; shared: boolean; canShare: boolean; canRevoke: boolean; providers: { id: string; allowed: boolean; label: string }[] }[] };
     const row = shared.cloudConnections.find(connection => connection.provider === "modal")!;
     assert.equal(row.shared, true);
     assert.equal(row.canShare, true);
     assert.equal(row.canRevoke, false);
-    assert.deepEqual(row.providers, [
-      { id: "anthropic", label: "Anthropic", allowed: true },
-      { id: "openrouter", label: "OpenRouter", allowed: true },
-    ]);
-    assert.equal(row.providers.some(provider => provider.id === "codex"), false);
-    assert.equal((await call("compute-shares/cloud/modal", "PATCH", { startProviders: ["anthropic"] })).status, 200);
-    assert.equal((await call("compute-shares/cloud/modal", "PATCH", { startProviders: ["cursor"] })).status, 400);
+    assert.deepEqual(row.providers, [], "a cloud enrollment does not choose or expose model access");
+    assert.equal((await call("compute-shares/cloud/modal", "PATCH", { startProviders: ["anthropic"] })).status, 400);
 
     userId = "ada";
-    const adminView = await (await call("compute-shares")).json() as { cloudConnections: { provider: string; canShare: boolean; canRevoke: boolean; providers: { id: string; allowed: boolean; label: string }[] }[] };
+    const adminView = await (await call("compute-shares")).json() as { cloudConnections: { id: string; provider: string; canShare: boolean; canRevoke: boolean; providers: { id: string; allowed: boolean; label: string }[] }[] };
     const adminRow = adminView.cloudConnections.find(connection => connection.provider === "modal")!;
     assert.equal(adminRow.canShare, false);
     assert.equal(adminRow.canRevoke, true);
-    assert.deepEqual(adminRow.providers.find(provider => provider.id === "openrouter"), { id: "openrouter", allowed: false, label: "OpenRouter" });
-    assert.equal(adminRow.providers.some(provider => provider.id === "codex"), false);
+    assert.deepEqual(adminRow.providers, []);
     assert.equal((await call("compute-shares/cloud/modal", "PATCH", { startProviders: ["anthropic", "openrouter"] })).status, 404);
 
     const hosted = await (await call("hosted")).json() as { enabledProviders: string[]; cloudStart: Record<string, { owner: boolean; providers: { id: string; allowed: boolean }[] }> };
     assert.deepEqual(hosted.enabledProviders, ["modal"]);
     assert.equal(hosted.cloudStart.modal.owner, false);
-    assert.equal(hosted.cloudStart.modal.providers.find(provider => provider.id === "openrouter")?.allowed, false);
-    assert.equal(hosted.cloudStart.modal.providers.some(provider => provider.id === "codex"), false);
+    assert.deepEqual(hosted.cloudStart.modal.providers, []);
 
     const values = new Map<string, unknown>([["organizationId", "org"]]);
     const coordinator = new HubCoordinator({ storage: { get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); }, delete: async (key: string) => values.delete(key), list: async () => new Map(), getAlarm: async () => null, setAlarm: async () => {}, transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn({ get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); } }) }, blockConcurrencyWhile: async <T>(work: () => Promise<T>) => work(), getWebSockets: () => [], waitUntil: (work: Promise<unknown>) => { void work; } } as unknown as DurableObjectState, { DB: db, AUTH_SECRET: { get: async () => "test-encryption-root-with-at-least-thirty-two-characters" }, BETTER_AUTH_URL: "https://hub.example" } as never);
@@ -485,9 +478,8 @@ test("members share their own cloud connections and start-provider grants block 
     };
     const request = (user: string, path: string, method: string, payload: unknown) => new Request(`https://internal${path}`, { method, headers: { "content-type": "application/json", "x-thread-member": encodeURIComponent(JSON.stringify({ id: user, label: user })), "x-organization-id": "org" }, body: JSON.stringify(payload) });
     const handle = (coordinator as unknown as { threadRequest: (r: Request) => Promise<Response | undefined> }).threadRequest.bind(coordinator);
-    const denied = await handle(request("ada", "/threads", "POST", { workspaceId: "org-release", requestId: crypto.randomUUID(), computerId: "cloud:modal", provider: "openrouter", model: "openrouter/auto", visibility: "open" }));
-    assert.equal(denied?.status, 403);
-    assert.equal((await denied!.json() as { error: string }).error, START_PROVIDER_DENIED);
+    const memberStart = await handle(request("ada", "/threads", "POST", { workspaceId: "org-release", requestId: crypto.randomUUID(), computerId: "cloud:modal", provider: "openrouter", model: "openrouter/auto", visibility: "open" }));
+    assert.notEqual(memberStart?.status, 403, "every member can use an enrolled placement with independently available model access");
     const ownerStart = await handle(request("grace", "/threads", "POST", { workspaceId: "org-release", requestId: crypto.randomUUID(), computerId: "cloud:modal", provider: "openrouter", model: "openrouter/auto", visibility: "open" }));
     assert.notEqual(ownerStart?.status, 403);
     const threads = (coordinator as unknown as { threads: import("./thread-store.js").ThreadStore }).threads;
@@ -497,7 +489,7 @@ test("members share their own cloud connections and start-provider grants block 
     assert.ok(forwarded.some(entry => String(entry[3]).includes("/message")));
 
     userId = "ada";
-    assert.equal((await call("compute-shares/cloud/modal", "DELETE")).status, 200);
+    assert.equal((await call(`compute-shares/cloud/${encodeURIComponent(adminRow.id)}`, "DELETE")).status, 200);
     userId = "grace";
     assert.equal((await (await call("compute-shares")).json() as { cloudConnections: { provider: string; shared: boolean }[] }).cloudConnections.some(connection => connection.provider === "modal" && connection.shared), false);
     assert.equal((await call("compute-shares/cloud/modal", "PUT")).status, 200);
@@ -750,11 +742,11 @@ test("hosted model keys are encrypted per organization and settings inherit expl
     assert.deepEqual(await store.secretNames('other'),[]);
     await saveModelAccess(store,"org","openrouter",{enabled:true,apiKey:"source-openrouter-key"});
     const sharedAccess = publicModelAccess(await store.executionSecrets("other"), await store.secrets("other"));
-    assert.equal(sharedAccess.find(entry => entry.id === "openrouter")?.enabled, true);
-    assert.equal(sharedAccess.find(entry => entry.id === "openrouter")?.configured, true);
+    assert.equal(sharedAccess.find(entry => entry.id === "openrouter")?.enabled, false);
+    assert.equal(sharedAccess.find(entry => entry.id === "openrouter")?.configured, false);
     assert.deepEqual(sharedAccess.find(entry => entry.id === "openrouter")?.keys, []);
-    assert.equal(hostedGatewayError("openrouter", "openrouter/auto", await store.executionSecrets("other")), undefined);
-    assert.equal(modelEnvironment(await store.executionSecrets("other")).OPENROUTER_API_KEY, "source-openrouter-key");
+    assert.equal(hostedGatewayError("openrouter", "openrouter/auto", await store.executionSecrets("other")), "Choose an enabled provider and model.");
+    assert.equal(modelEnvironment(await store.executionSecrets("other")).OPENROUTER_API_KEY, undefined, "a cloud enrollment never imports its owner's model key");
     assert.equal("cloud:modal" in (await store.executionSecrets("other")), false);
     await saveModelAccess(store,"other","openrouter",{enabled:false,apiKey:"org-openrouter-key"});
     assert.equal(publicModelAccess(await store.executionSecrets("other")).find(entry => entry.id === "openrouter")?.enabled, false);
@@ -824,13 +816,13 @@ test("OpenRouter routes enforce admin access and persist only encrypted credenti
     const teamCall = (path:string) => route(new Request(`https://hub.example/api/organizations/team/${path}`, {headers:{authorization:"Bearer test",origin:"https://hub.example"}}),env);
     role="member";
     const teamAccess=await (await teamCall("model-access")).json() as {providers:{id:string;configured:boolean;enabled:boolean}[]};
-    assert.equal(teamAccess.providers.find(p=>p.id==="openrouter")?.enabled,true);
-    assert.equal(teamAccess.providers.find(p=>p.id==="openrouter")?.configured,true);
+    assert.equal(teamAccess.providers.find(p=>p.id==="openrouter")?.enabled,false);
+    assert.equal(teamAccess.providers.find(p=>p.id==="openrouter")?.configured,false, "a cloud enrollment does not carry the source account's model key");
     assert.ok(!JSON.stringify(teamAccess).includes(input.apiKey));
     const hosted=await (await teamCall("hosted")).json() as {enabledProviders:string[];connections:string[];openrouterConfigured:boolean};
     assert.deepEqual(hosted.enabledProviders,["fly-sprites"]);
     assert.equal(hosted.connections.includes("fly-sprites"), false);
-    assert.equal(hosted.openrouterConfigured,true);
+    assert.equal(hosted.openrouterConfigured,false);
   } finally {globalThis.fetch=originalFetch;sqlite.close();}
 });
 
@@ -985,7 +977,7 @@ test("Cursor Cloud connects, stays encrypted, starts without a guest computer, a
     await store.setSecret(personal.id, "cloud:cursor-cloud", JSON.stringify({ provider: "cursor-cloud", enabled: true, token: "cursor-secret" }));
     assert.equal((await call("compute-shares/cloud/cursor-cloud", "PUT")).status, 200);
     const shares = await (await call("compute-shares")).json() as { cloudConnections: { provider: string; providers: { id: string }[] }[] };
-    assert.deepEqual(shares.cloudConnections.find(connection => connection.provider === "cursor-cloud")?.providers.map(provider => provider.id), ["cursor"]);
+    assert.deepEqual(shares.cloudConnections.find(connection => connection.provider === "cursor-cloud")?.providers, [], "the exact cloud key is enrolled without a model scope");
 
     const values = new Map<string, unknown>([["organizationId", "org"]]);
     let ensured = 0;
@@ -1015,14 +1007,8 @@ test("Cursor Cloud connects, stays encrypted, starts without a guest computer, a
     await store.setSecret(personal.id, "cloud:cursor-cloud", null);
     const missingId = crypto.randomUUID();
     const missing = await handle(request("/threads", "POST", { workspaceId: "org-release", requestId: missingId, computerId: CURSOR_CLOUD_COMPUTER_ID, provider: "cursor" }));
-    assert.equal(missing?.status, 202);
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      const stored = values.get(`manual-task:ada:${missingId}`) as { error?: string } | undefined;
-      if (stored?.error) break;
-      await new Promise(resolve => setTimeout(resolve, 25));
-    }
-    const failed = values.get(`manual-task:ada:${missingId}`) as { error?: string };
-    assert.match(failed.error ?? "", /Enable a cloud provider|Connect Cursor Cloud|disabled/);
+    assert.equal(missing?.status, 403);
+    assert.match(await missing!.text(), /does not allow|unavailable|disabled/i);
   } finally {
     globalThis.fetch = originalFetch;
     sqlite.close();

@@ -210,7 +210,7 @@ export function LinearThreadNotice({ notice, organizationId }: { notice?: string
     <p role="status" className="mx-auto mb-3 w-full max-w-[44rem] text-sm text-muted-foreground">
       {notice.includes("Organization") ? (
         <>
-          Connect your Linear account in <button type="button" data-link className="underline" onClick={() => go("connections")}>Connections</button>, or choose it in <button type="button" data-link className="underline" onClick={() => go("organization")}>Organization</button>.
+          Connect your Linear account in <button type="button" data-link className="underline" onClick={() => go("connections")}>Connections</button>, or choose it in <button type="button" data-link className="underline" onClick={() => go("organization")}>Organizations</button>.
         </>
       ) : notice.includes("Reconnect") ? (
         <>Reconnect your account in <button type="button" data-link className="underline" onClick={() => go("connections")}>Connections</button>.</>

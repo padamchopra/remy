@@ -441,7 +441,7 @@ export const CLOUD_COMPUTERS = [
   { id: "cloud:cursor-cloud", provider: "cursor-cloud", name: "Cloud · Cursor" },
 ] as const;
 export const CURSOR_CLOUD_COMPUTER_ID = "cloud:cursor-cloud";
-export const cloudComputerProvider = (id: string | undefined | null) => CLOUD_COMPUTERS.find(c => c.id === id)?.provider;
+export const cloudComputerProvider = (id: string | undefined | null) => CLOUD_COMPUTERS.find(c => c.id === id || id?.startsWith(`${c.id}:`))?.provider;
 export const cloudComputerName = (id: string | undefined | null) => CLOUD_COMPUTERS.find(c => c.id === id)?.name;
 
 // ---- Review agent -----------------------------------------------------------
