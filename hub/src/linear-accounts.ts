@@ -207,16 +207,6 @@ export class LinearAccounts {
     return access.kind === "notice" ? access.notice : null;
   }
 
-  async markRevoked(org: string, externalId: string) {
-    await this.db
-      .prepare(
-        "UPDATE linear_accounts SET status='reauth',updated_at=? WHERE external_id=? AND user_id IN (SELECT user_id FROM memberships WHERE organization_id=?)",
-      )
-      .bind(this.now(), externalId, org)
-      .run();
-    await this.changed(org);
-  }
-
   private async memberAccount(org: string, user: string, externalId: string) {
     if (!(await this.isMember(org, user)))
       throw new ConnectionError("This connection action is unavailable.", 403);

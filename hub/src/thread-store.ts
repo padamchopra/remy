@@ -5,7 +5,7 @@ import {
   type ThreadLiveFrame,
   type ThreadSnapshot,
 } from "@remy/contract";
-import type { BoardStorage } from "./organization-board.js";
+import type { KeyValueStorage } from "./durable-storage.js";
 
 const PREFIX = "threads:snapshot:";
 const HISTORY = 128;
@@ -20,7 +20,7 @@ type StoredFrame = Exclude<
 
 export class ThreadStore {
   constructor(
-    private readonly storage: BoardStorage,
+    private readonly storage: KeyValueStorage,
     private readonly publish: (frame: StoredFrame) => void = () => undefined,
   ) {}
 

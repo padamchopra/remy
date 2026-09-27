@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { hostedSettingsSchema } from "@remy/contract";
 import { HostedLifecycle } from "./hosted-lifecycle.js";
-import type { BoardStorage } from "./organization-board.js";
+import type { KeyValueStorage } from "./durable-storage.js";
 import type { ComputerRuntimeProvider } from "./computer-runtime.js";
 function fixture() {
   const values = new Map<string, unknown>();
@@ -29,7 +29,7 @@ function fixture() {
           .filter(([k]) => k.startsWith(prefix))
           .map(([k, v]) => [k, structuredClone(v)]),
       ),
-  } as unknown as BoardStorage;
+  } as unknown as KeyValueStorage;
   const provider: ComputerRuntimeProvider = {
     id: "modal",
     capabilities: { checkpoints: true, persistentFilesystem: true },

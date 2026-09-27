@@ -5,10 +5,10 @@ import {
   canWriteThread,
   type ThreadSnapshot,
 } from "@remy/contract";
-import type { BoardStorage } from "./organization-board.js";
+import type { KeyValueStorage } from "./durable-storage.js";
 import { ThreadStore } from "./thread-store.js";
 
-class MemoryStorage implements BoardStorage {
+class MemoryStorage implements KeyValueStorage {
   values = new Map<string, unknown>();
   async get<T>(key: string) {
     return structuredClone(this.values.get(key)) as T | undefined;
@@ -26,7 +26,7 @@ class MemoryStorage implements BoardStorage {
         .map(([key, value]) => [key, structuredClone(value) as T]),
     );
   }
-  async transaction<T>(fn: (storage: BoardStorage) => Promise<T>): Promise<T> {
+  async transaction<T>(fn: (storage: KeyValueStorage) => Promise<T>): Promise<T> {
     return fn(this);
   }
 }

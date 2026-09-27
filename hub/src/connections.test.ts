@@ -216,19 +216,19 @@ test("a Personal member connection is available to organizations unless they hav
   );
 });
 
-test("webhook signatures, timestamp bounds, durable receipt and queue retry retain a single delivery", async () => {
+test("webhook signatures, durable receipt and queue retry retain a single delivery", async () => {
   const f = fixture(),
     secret = "webhook-secret",
     now = Date.now();
   const provider = connectionProviders({
-    LINEAR_WEBHOOK_SECRET: { get: async () => secret },
-  } as Env).find((p) => p.id === "linear")!;
-  const raw = JSON.stringify({ webhookTimestamp: now, type: "Issue" }),
+    GITHUB_WEBHOOK_SECRET: { get: async () => secret },
+  } as Env).find((p) => p.id === "github")!;
+  const raw = JSON.stringify({ action: "created" }),
     signature = createHmac("sha256", secret).update(raw).digest("hex");
   const request = () =>
-    new Request("https://hub.example/api/connections/linear/webhook", {
+    new Request("https://hub.example/api/connections/github/webhook", {
       method: "POST",
-      headers: { "linear-signature": signature, "linear-delivery": "one" },
+      headers: { "x-hub-signature-256": `sha256=${signature}`, "x-github-delivery": "one", "x-github-event": "issue_comment" },
       body: raw,
     });
   let calls = 0;
@@ -252,10 +252,24 @@ test("webhook signatures, timestamp bounds, durable receipt and queue retry reta
     1,
   );
   await assert.rejects(
-    provider.verifyWebhook(request(), raw + " ", secret, now),
+    provider.verifyWebhook!(request(), raw + " ", secret, now),
   );
+});
+
+test("Linear has no webhook: its updates are refused before anything is stored", async () => {
+  const f = fixture();
+  const provider = connectionProviders({} as Env).find((p) => p.id === "linear")!;
+  assert.equal(provider.verifyWebhook, undefined);
+  assert.equal(provider.receive, undefined);
+  const queue = { send: async () => assert.fail("nothing is queued") } as unknown as Queue<ConnectionJob>;
   await assert.rejects(
-    provider.verifyWebhook(request(), raw, secret, now + 61_000),
+    ingestConnectionWebhook(new Request("https://hub.example/api/connections/linear/webhook", { method: "POST", body: "{}" }), provider, f.db, queue),
+    (error: { status?: number }) => error.status === 404,
+  );
+  assert.equal(
+    f.sqlite.prepare("SELECT COUNT(*) AS n FROM connection_deliveries").get()!
+      .n,
+    0,
   );
 });
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CONTRACT_VERSION, accountProfileSchema, decodeComputerConnectionKey, encodeComputerConnectionKey, boardAppendInputSchema, boardLiveFrameSchema, boardLogEventSchema, computerCapabilitiesSchema, computerHeartbeatSchema, computerRegistrationInputSchema, computerToHubFrameSchema, deviceAuthorizationSchema, hubToComputerFrameSchema, organizationDeletionImpactSchema, organizationSchema, organizationWorkspaceSchema, parseHubHealth, tokenPairSchema, uptimeCheckFrameSchema } from "./index.js";
+import { CONTRACT_VERSION, accountProfileSchema, decodeComputerConnectionKey, encodeComputerConnectionKey, computerCapabilitiesSchema, computerHeartbeatSchema, computerRegistrationInputSchema, computerToHubFrameSchema, deviceAuthorizationSchema, hubToComputerFrameSchema, organizationDeletionImpactSchema, organizationSchema, organizationWorkspaceSchema, parseHubHealth, tokenPairSchema, uptimeCheckFrameSchema } from "./index.js";
 
 test("accepts a compatible hub health response", () => {
   const health = parseHubHealth({
@@ -42,6 +42,8 @@ test("validates computer capabilities and multiplexed protocol frames", () => {
   const capabilities = { providers: [{ id: "codex", models: ["gpt-5.6-sol"] }], workspaces: [{ id: "w1", name: "Remy", path: "/src/remy", origin: "github.com/remy/remy" }], worktrees: true, terminals: true, emulator: false };
   assert.equal(computerRegistrationInputSchema.parse({ computerId: "b7ebfcbe-f2f4-4a1b-8707-3029fa65d14b", name: "Studio", platform: "darwin", daemonVersion: "1.2.3", protocol: { minimum: 1, maximum: 1 }, publicKey: "k".repeat(44), capabilities }).capabilities.workspaces[0]?.name, "Remy");
   assert.equal(computerToHubFrameSchema.parse({ kind: "heartbeat", availability: "available", observedAt: 1 }).kind, "heartbeat");
+  // A computer released before Tasks was removed still says it syncs the board; the hub ignores that.
+  assert.equal("boardSync" in computerToHubFrameSchema.parse({ kind: "hello", boardSync: true, protocolVersion: 1, daemonVersion: "0.1.0", capabilities }), false);
   assert.equal(hubToComputerFrameSchema.parse({ kind: "request", id: "r1", method: "GET", path: "/api/chats", headers: {}, body: "" }).kind, "request");
   assert.throws(() => hubToComputerFrameSchema.parse({ kind: "request", id: "r1", method: "GET", path: "https://other.example", headers: {}, body: "" }));
 });
@@ -76,23 +78,6 @@ test("validates organization workspaces and optional administrative access", () 
   const workspace = { id: "workspace-1", organizationId: "org-1", name: "Remy", origin: "github.com/padam/remy", restricted: true, createdAt: 1, updatedAt: 1 };
   assert.equal(organizationWorkspaceSchema.parse(workspace).restricted, true);
   assert.deepEqual(organizationWorkspaceSchema.parse({ ...workspace, access: { teamIds: ["team-1"], userIds: [] } }).access?.teamIds, ["team-1"]);
-});
-
-test("validates attributed board events and resumable live frames", () => {
-  const input = boardAppendInputSchema.parse({ entity: "ticket", entityId: "ticket-1", kind: "create", payload: { title: "Ship it" } });
-  const event = boardLogEventSchema.parse({
-    ...input,
-    id: "event-1",
-    deviceId: "hub-1",
-    lamport: 1,
-    at: 1,
-    actor: { kind: "member", id: "user-1", label: "Ada" },
-  });
-
-  assert.equal(event.actor.label, "Ada");
-  assert.equal(boardLiveFrameSchema.parse({ kind: "event", cursor: 1, event }).cursor, 1);
-  assert.equal(boardLiveFrameSchema.parse({ kind: "reset", cursor: 8, reason: "cursor_unavailable" }).kind, "reset");
-  assert.throws(() => boardLogEventSchema.parse({ ...event, actor: undefined }));
 });
 
 test("carries one connection key from the web to a computer's terminal", () => {

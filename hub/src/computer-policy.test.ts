@@ -356,7 +356,7 @@ test("members share their own computers and start-provider grants block only new
     assert.equal(await computerService.canStartWithProvider(stored, "ada", "org", "claude"), true);
 
     const values = new Map<string, unknown>([["organizationId", "org"]]);
-    const coordinator = new HubCoordinator({ storage: { get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); }, delete: async (key: string) => values.delete(key), list: async () => new Map(), getAlarm: async () => null, setAlarm: async () => {}, transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn({ get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); } }) }, getWebSockets: () => [], waitUntil: (work: Promise<unknown>) => { void work; } } as unknown as DurableObjectState, { DB: db, AUTH_SECRET: { get: async () => "test-encryption-root-with-at-least-thirty-two-characters" }, BETTER_AUTH_URL: "https://hub.example" } as never);
+    const coordinator = new HubCoordinator({ storage: { get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); }, delete: async (key: string) => values.delete(key), list: async () => new Map(), getAlarm: async () => null, setAlarm: async () => {}, transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn({ get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); } }) }, blockConcurrencyWhile: async <T>(work: () => Promise<T>) => work(), getWebSockets: () => [], waitUntil: (work: Promise<unknown>) => { void work; } } as unknown as DurableObjectState, { DB: db, AUTH_SECRET: { get: async () => "test-encryption-root-with-at-least-thirty-two-characters" }, BETTER_AUTH_URL: "https://hub.example" } as never);
     const forwarded: unknown[][] = [];
     const threadId = crypto.randomUUID();
     (coordinator as unknown as { dispatchComputer: (...args: unknown[]) => Promise<Response> }).dispatchComputer = async (...args) => {
@@ -463,7 +463,7 @@ test("members share their own cloud connections and start-provider grants block 
     assert.equal(hosted.cloudStart.modal.providers.some(provider => provider.id === "codex"), false);
 
     const values = new Map<string, unknown>([["organizationId", "org"]]);
-    const coordinator = new HubCoordinator({ storage: { get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); }, delete: async (key: string) => values.delete(key), list: async () => new Map(), getAlarm: async () => null, setAlarm: async () => {}, transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn({ get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); } }) }, getWebSockets: () => [], waitUntil: (work: Promise<unknown>) => { void work; } } as unknown as DurableObjectState, { DB: db, AUTH_SECRET: { get: async () => "test-encryption-root-with-at-least-thirty-two-characters" }, BETTER_AUTH_URL: "https://hub.example" } as never);
+    const coordinator = new HubCoordinator({ storage: { get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); }, delete: async (key: string) => values.delete(key), list: async () => new Map(), getAlarm: async () => null, setAlarm: async () => {}, transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn({ get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); } }) }, blockConcurrencyWhile: async <T>(work: () => Promise<T>) => work(), getWebSockets: () => [], waitUntil: (work: Promise<unknown>) => { void work; } } as unknown as DurableObjectState, { DB: db, AUTH_SECRET: { get: async () => "test-encryption-root-with-at-least-thirty-two-characters" }, BETTER_AUTH_URL: "https://hub.example" } as never);
     const forwarded: unknown[][] = [];
     const threadId = crypto.randomUUID();
     (coordinator as unknown as { dispatchComputer: (...args: unknown[]) => Promise<Response> }).dispatchComputer = async (...args) => {
@@ -664,7 +664,7 @@ test("a list cursor cannot skip an update that arrives while its snapshot is bei
       },
       transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => fn(storage),
     };
-    const coordinator = new HubCoordinator({ storage, getWebSockets: () => [], waitUntil: (work:Promise<unknown>)=>{void work;} } as unknown as DurableObjectState, { DB: db } as never);
+    const coordinator = new HubCoordinator({ storage, blockConcurrencyWhile: async <T>(work: () => Promise<T>) => work(), getWebSockets: () => [], waitUntil: (work:Promise<unknown>)=>{void work;} } as unknown as DurableObjectState, { DB: db } as never);
     const threads = (coordinator as unknown as { threads: import("./thread-store.js").ThreadStore }).threads;
     const id = crypto.randomUUID();
     const snapshot = { id, revision: 1, access: { organizationId: "org", owner: { id: "ada", label: "Ada" }, visibility: "open" as const, participants: [] }, detail: { id, title: "Release", cwd: "/src/release", entries: [] } };
@@ -675,32 +675,6 @@ test("a list cursor cannot skip an update that arrives while its snapshot is bei
     assert.equal(result.threads[0]!.revision, 1);
     const replay = await threads.replay(result.cursor);
     assert.ok(replay.frames.some((frame) => frame.kind === "snapshot" && frame.thread.revision === 2));
-  } finally { sqlite.close(); }
-});
-
-test("board access follows current workspace restrictions on reads and every write", async () => {
-  const { sqlite, organizations } = database();
-  const { BoardAccess } = await import("./board-access.js");
-  const { OrganizationService } = await import("./organizations.js");
-  const service = new OrganizationService(organizations);
-  const workspace = await service.createWorkspace("org", "ada", { name: "Release", origin: "https://example.test/release.git", access: { userIds: [], teamIds: ["release"] } });
-  const ticket = { id: "ticket", entity: "ticket" as const, fields: { projectId: workspace.id }, activity: [], createdAt: 1, updatedAt: 1, lastActor: { kind: "member" as const, id: "ada", label: "Ada" } };
-  const board = { detail: async (_entity: string, id: string) => id === "ticket" ? ticket : undefined, project: async () => undefined } as unknown as import("./organization-board.js").OrganizationBoard;
-  const access = new BoardAccess(organizations, board, "org", "grace");
-  try {
-    assert.equal(await access.canRead(ticket), false);
-    assert.equal(await access.canWrite({ entity: "ticket", entityId: "ticket", kind: "field", payload: { projectId: "", title: "Escape restriction" } }), false);
-    assert.equal(await access.canWrite({ entity: "ticket", entityId: "new", kind: "create", payload: { projectId: workspace.id } }), false);
-    await service.changeTeamMember("org", "ada", "release", "grace", true);
-    assert.equal(await access.canRead(ticket), true);
-    assert.equal(await access.canWrite({ entity: "ticket", entityId: "ticket", kind: "status", payload: { status: "done" } }), true);
-    assert.equal(await access.canWrite({ entity: "ticket", entityId: "new", kind: "create", payload: { projectId: {} } }), false);
-    assert.equal(await access.canWrite({ entity: "ticket", entityId: "ticket", kind: "create", payload: {} }), false);
-    assert.equal(await new BoardAccess(organizations, board, "org", "outsider").canRead(ticket), false);
-    await service.changeTeamMember("org", "ada", "release", "grace", false);
-    assert.equal(await access.canRead(ticket), false);
-    await service.removeMember("org", "ada", "grace");
-    assert.equal(await access.canRead({ ...ticket, fields: {} }), false);
   } finally { sqlite.close(); }
 });
 
@@ -938,7 +912,7 @@ test("branch reads only forward an authorized workspace and never neighboring ac
   try {
     await service.register("org", "ada", { ...input, capabilities: { ...input.capabilities, workspaces: [{ id: "w", name: "Release", path: "/src/release", origin: null }] } });
     const { HubCoordinator } = await import("./worker.js");
-    const coordinator = new HubCoordinator({ storage: {get: async()=>"org"}, getWebSockets:()=>[] } as unknown as DurableObjectState, { DB: db } as never);
+    const coordinator = new HubCoordinator({ storage: {get: async()=>"org"}, blockConcurrencyWhile: async <T>(work: () => Promise<T>) => work(), getWebSockets:()=>[] } as unknown as DurableObjectState, { DB: db } as never);
     const forwarded: unknown[][]=[];
     (coordinator as unknown as {dispatchComputer: (...args:unknown[])=>Promise<Response>}).dispatchComputer=async (...args)=>{forwarded.push(args);return Response.json({branches:[{name:"main"}]});};
     const request=(user:string,workspace="w",method="GET",action="branches")=>new Request(`https://internal/computers/${input.computerId}/workspaces/${workspace}/${action}`,{method,headers:{"x-thread-member":encodeURIComponent(JSON.stringify({id:user,label:user})),"x-organization-id":"org"}});
@@ -1005,7 +979,7 @@ test("Cursor Cloud connects, stays encrypted, starts without a guest computer, a
 
     const values = new Map<string, unknown>([["organizationId", "org"]]);
     let ensured = 0;
-    const coordinator = new HubCoordinator({ storage: { get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); }, delete: async (key: string) => values.delete(key), list: async () => new Map([...values]), getAlarm: async () => null, setAlarm: async () => {}, transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn({ get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); } }) }, getWebSockets: () => [], waitUntil: (work: Promise<unknown>) => { void work; } } as unknown as DurableObjectState, { DB: db, AUTH_SECRET: { get: async () => secret }, BETTER_AUTH_URL: "https://hub.example" } as never);
+    const coordinator = new HubCoordinator({ storage: { get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); }, delete: async (key: string) => values.delete(key), list: async () => new Map([...values]), getAlarm: async () => null, setAlarm: async () => {}, transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn({ get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); } }) }, blockConcurrencyWhile: async <T>(work: () => Promise<T>) => work(), getWebSockets: () => [], waitUntil: (work: Promise<unknown>) => { void work; } } as unknown as DurableObjectState, { DB: db, AUTH_SECRET: { get: async () => secret }, BETTER_AUTH_URL: "https://hub.example" } as never);
     (coordinator as unknown as { hostedService: () => { ensure: () => Promise<unknown> } }).hostedService = () => ({ ensure: async () => { ensured += 1; throw new Error("guest computers must not start for Cursor Cloud"); } });
     const handle = (coordinator as unknown as { threadRequest: (r: Request) => Promise<Response | undefined> }).threadRequest.bind(coordinator);
     const request = (path: string, method: string, payload: unknown) => new Request(`https://internal${path}`, { method, headers: { "content-type": "application/json", "x-thread-member": encodeURIComponent(JSON.stringify({ id: "ada", label: "Ada" })), "x-organization-id": "org" }, body: JSON.stringify(payload) });
@@ -1067,7 +1041,7 @@ test("owners can archive and delete hosted threads after the cloud computer slee
     });
     await computers.seen("org", hostedId, 0);
     const values = new Map<string, unknown>([["organizationId", "org"]]);
-    const coordinator = new HubCoordinator({ storage: { get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); }, delete: async (key: string) => values.delete(key), list: async (options?: { prefix?: string }) => new Map([...values].filter(([key]) => key.startsWith(options?.prefix ?? ""))), getAlarm: async () => null, setAlarm: async () => {}, transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn({ get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); }, delete: async (key: string) => values.delete(key) }) }, getWebSockets: () => [], waitUntil: (work: Promise<unknown>) => { void work; } } as unknown as DurableObjectState, { DB: db, AUTH_SECRET: { get: async () => "test-encryption-root-with-at-least-thirty-two-characters" }, BETTER_AUTH_URL: "https://hub.example" } as never);
+    const coordinator = new HubCoordinator({ storage: { get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); }, delete: async (key: string) => values.delete(key), list: async (options?: { prefix?: string }) => new Map([...values].filter(([key]) => key.startsWith(options?.prefix ?? ""))), getAlarm: async () => null, setAlarm: async () => {}, transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn({ get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); }, delete: async (key: string) => values.delete(key) }) }, blockConcurrencyWhile: async <T>(work: () => Promise<T>) => work(), getWebSockets: () => [], waitUntil: (work: Promise<unknown>) => { void work; } } as unknown as DurableObjectState, { DB: db, AUTH_SECRET: { get: async () => "test-encryption-root-with-at-least-thirty-two-characters" }, BETTER_AUTH_URL: "https://hub.example" } as never);
     const forwarded: unknown[][] = [];
     let ensured = 0;
     let wake: "ok" | "fail" = "ok";
