@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { AuditEvent, Membership, Organization, OrganizationInvite, OrganizationRole, OrganizationStore, OrganizationSummary, OrganizationTeam, OrganizationWorkspace, WorkspaceAccess } from "./organization-store.js";
+import type { AuditEvent, Membership, Organization, OrganizationInvite, OrganizationRole, OrganizationStore, OrganizationSummary, OrganizationTeam, OrganizationWorkspace } from "./organization-store.js";
 import { OrganizationError, OrganizationService } from "./organizations.js";
 import { createRouteHandler, type Env } from "./worker.js";
 
 class MemoryOrganizationStore implements OrganizationStore {
-  organizations: Organization[] = []; memberships: Membership[] = []; invites: OrganizationInvite[] = []; teamRows: OrganizationTeam[] = []; teamMemberships: { organizationId: string; teamId: string; userId: string }[] = []; workspaceRows: OrganizationWorkspace[] = []; workspaceGrants = new Map<string, WorkspaceAccess>(); audits: AuditEvent[] = [];
+  organizations: Organization[] = []; memberships: Membership[] = []; invites: OrganizationInvite[] = []; teamRows: OrganizationTeam[] = []; teamMemberships: { organizationId: string; teamId: string; userId: string }[] = []; workspaceRows: OrganizationWorkspace[] = []; audits: AuditEvent[] = [];
   async createOrganization(org: Organization, member: Membership) { this.organizations.push(org); this.memberships.push(member); }
   async organizationsFor(userId: string): Promise<OrganizationSummary[]> { return this.memberships.filter((m) => m.userId === userId).map((m) => ({ ...this.organizations.find((o) => o.id === m.organizationId)!, role: m.role })); }
   async membership(org: string, user: string) { return this.memberships.find((m) => m.organizationId === org && m.userId === user); }
@@ -28,14 +28,12 @@ class MemoryOrganizationStore implements OrganizationStore {
   async addTeamMember(org: string, team: string, user: string) { if (this.teamMemberships.some((m) => m.teamId === team && m.userId === user)) return false; this.teamMemberships.push({ organizationId: org, teamId: team, userId: user }); return true; }
   async removeTeamMember(org: string, team: string, user: string) { const before = this.teamMemberships.length; this.teamMemberships = this.teamMemberships.filter((m) => m.organizationId !== org || m.teamId !== team || m.userId !== user); return before !== this.teamMemberships.length; }
   async teamMembers(org: string, team: string) { return this.teamMemberships.filter((m) => m.organizationId === org && m.teamId === team).map((m) => m.userId); }
-  async createWorkspace(workspace: OrganizationWorkspace, access: WorkspaceAccess) { this.workspaceRows.push(workspace); this.workspaceGrants.set(workspace.id, structuredClone(access)); }
+  async createWorkspace(workspace: OrganizationWorkspace) { this.workspaceRows.push(workspace); }
   async workspace(org: string, id: string) { return this.workspaceRows.find((workspace) => workspace.organizationId === org && workspace.id === id); }
   async workspaceByOrigin(org: string, origin: string) { return this.workspaceRows.find((workspace) => workspace.organizationId === org && workspace.origin === origin); }
-  async visibleWorkspaces(org: string, user: string, administer: boolean) { const teams = new Set(this.teamMemberships.filter((member) => member.organizationId === org && member.userId === user).map((member) => member.teamId)); return this.workspaceRows.filter((workspace) => workspace.organizationId === org && (administer || !workspace.restricted || this.workspaceGrants.get(workspace.id)?.userIds.includes(user) || this.workspaceGrants.get(workspace.id)?.teamIds.some((team) => teams.has(team)))); }
-  async workspaceAccess(_org: string, id: string) { return structuredClone(this.workspaceGrants.get(id) ?? { teamIds: [], userIds: [] }); }
-  async updateWorkspace(org: string, id: string, patch: { name?: string; restricted?: boolean }, at: number) { const workspace = await this.workspace(org, id); if (!workspace) return false; Object.assign(workspace, patch, { updatedAt: at }); return true; }
-  async replaceWorkspaceAccess(_org: string, id: string, access: WorkspaceAccess) { this.workspaceGrants.set(id, structuredClone(access)); }
-  async deleteWorkspace(org: string, id: string) { const before = this.workspaceRows.length; this.workspaceRows = this.workspaceRows.filter((workspace) => workspace.organizationId !== org || workspace.id !== id); this.workspaceGrants.delete(id); return before !== this.workspaceRows.length; }
+  async workspaces(org: string) { return this.workspaceRows.filter((workspace) => workspace.organizationId === org); }
+  async updateWorkspace(org: string, id: string, patch: { name?: string; icon?: string; tint?: string }, at: number) { const workspace = await this.workspace(org, id); if (!workspace) return false; Object.assign(workspace, patch, { updatedAt: at }); return true; }
+  async deleteWorkspace(org: string, id: string) { const before = this.workspaceRows.length; this.workspaceRows = this.workspaceRows.filter((workspace) => workspace.organizationId !== org || workspace.id !== id); return before !== this.workspaceRows.length; }
   async appendAudit(event: AuditEvent) { this.audits.push(event); }
 }
 
@@ -165,28 +163,20 @@ test("owners transfer before leaving and deletion requires an impact preview con
   await assert.rejects(service.delete(org.id, "next", "Wrong"), /organization name/); await service.delete(org.id, "next", "Example"); assert.equal(await store.organization(org.id), undefined);
 });
 
-test("workspace catalogues hide team-restricted repositories from members outside the team", async () => {
+test("every member reaches every workspace, and only owners and admins change one", async () => {
   const store = new MemoryOrganizationStore(); const service = new OrganizationService(store, () => 1000, random); const org = await service.create("owner", "Example");
-  for (const user of ["builder", "outsider"]) store.memberships.push({ id: `membership-${user}`, organizationId: org.id, userId: user, role: "member", createdAt: 1000, updatedAt: 1000 });
-  const team = await service.createTeam(org.id, "owner", "Builders"); await service.changeTeamMember(org.id, "owner", team.id, "builder", true);
-  const shared = await service.createWorkspace(org.id, "owner", { name: "Shared", origin: "https://github.com/example/shared.git" });
-  const restricted = await service.createWorkspace(org.id, "owner", { name: "Private", origin: "https://github.com/example/private.git", access: { teamIds: [team.id], userIds: [] } });
-  assert.deepEqual((await service.workspaces(org.id, "builder")).map((workspace) => workspace.id), [shared.id, restricted.id]);
-  assert.deepEqual((await service.workspaces(org.id, "outsider")).map((workspace) => workspace.id), [shared.id]);
-  await assert.rejects(service.workspace(org.id, "outsider", restricted.id), (error: unknown) => error instanceof OrganizationError && error.status === 404);
-  assert.deepEqual((await service.workspace(org.id, "owner", restricted.id) as { access: WorkspaceAccess }).access.teamIds, [team.id]);
-});
-
-test("workspace access accepts organization members, rejects foreign principals, and can return to organization-wide", async () => {
-  const store = new MemoryOrganizationStore(); const service = new OrganizationService(store, () => 1000, random); const org = await service.create("owner", "Example");
-  const invite = await service.createInvite(org.id, "owner", { role: "member" }); await service.acceptInvite("member", invite.token, []);
-  const workspace = await service.createWorkspace(org.id, "owner", { name: "Remy", origin: "git@github.com:padam/remy.git", access: { teamIds: [], userIds: ["member"] } });
+  for (const [user, role] of [["member", "member"], ["admin", "admin"]] as const) store.memberships.push({ id: `membership-${user}`, organizationId: org.id, userId: user, role, createdAt: 1000, updatedAt: 1000 });
+  const workspace = await service.createWorkspace(org.id, "owner", { name: "Remy", origin: "git@github.com:padam/remy.git" });
   assert.equal(workspace.origin, "github.com/padam/remy");
+  assert.equal("restricted" in workspace, false);
   await assert.rejects(service.createWorkspace(org.id, "owner", { name: "Duplicate", origin: "https://github.com/padam/remy.git" }), (error: unknown) => error instanceof OrganizationError && error.status === 409);
-  await assert.rejects(service.updateWorkspace(org.id, "owner", workspace.id, { access: { teamIds: ["foreign"], userIds: [] } }), /Team not found/);
-  const updated = await service.updateWorkspace(org.id, "owner", workspace.id, { access: null });
-  assert.equal(updated.restricted, false);
   assert.deepEqual((await service.workspaces(org.id, "member")).map((entry) => entry.id), [workspace.id]);
+  assert.equal((await service.workspace(org.id, "member", workspace.id)).id, workspace.id);
+  await assert.rejects(service.workspace(org.id, "stranger", workspace.id), (error: unknown) => error instanceof OrganizationError && error.status === 404);
+  await assert.rejects(service.updateWorkspace(org.id, "member", workspace.id, { name: "Renamed" }), (error: unknown) => error instanceof OrganizationError && error.status === 404);
+  await assert.rejects(service.updateWorkspace(org.id, "member", workspace.id, { icon: "code" }), (error: unknown) => error instanceof OrganizationError && error.status === 404);
+  await assert.rejects(service.deleteWorkspace(org.id, "member", workspace.id), (error: unknown) => error instanceof OrganizationError && error.status === 404);
+  assert.equal((await service.updateWorkspace(org.id, "admin", workspace.id, { name: "Renamed", tint: "blue" })).name, "Renamed");
 });
 
 test("invitation preview identifies the destination without accepting or exposing another recipient's invitation", async () => {

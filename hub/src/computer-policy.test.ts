@@ -687,21 +687,18 @@ test("a list cursor cannot skip an update that arrives while its snapshot is bei
   } finally { sqlite.close(); }
 });
 
-test("workspace restrictions apply to capability lists and thread access including nested folders", async () => {
+test("every member reaches an organization's workspaces on a shared computer, including nested folders", async () => {
   const { sqlite, service, computers, organizations } = database();
   try {
     await service.register("org", "ada", { ...input, ownership: "organization", capabilities: { ...input.capabilities, workspaces: [{ id: "clone", name: "Android", path: "/src/android", origin: "git@github.com:studio/android.git" }] } });
-    await organizations.createWorkspace({ id: "android", organizationId: "org", name: "Android", origin: "github.com/studio/android", restricted: true, createdAt: 1, updatedAt: 1 }, { userIds: [], teamIds: ["release"] });
+    await organizations.createWorkspace({ id: "android", organizationId: "org", name: "Android", origin: "github.com/studio/android", createdAt: 1, updatedAt: 1 });
     const computer = (await computers.computer("org", input.computerId))!;
-    assert.equal(await service.canUseWorkspace(computer, "grace", "clone"), false);
-    assert.equal((await service.list("org", "grace"))[0].capabilities.workspaces.length, 0);
-    await organizations.addTeamMember("org", "release", "grace", 1);
     assert.equal(await service.canUseWorkspace(computer, "grace", "clone"), true);
+    assert.equal((await service.list("org", "grace"))[0].capabilities.workspaces.length, 1);
     assert.equal(await service.canReadWorkspace(computer, "grace", "/src/android/subdir"), true);
     assert.equal(await service.canReadWorkspace(computer, "grace", "/src/android-other"), false);
     assert.equal(await service.canReadWorkspace(computer, "grace", undefined), false);
-    await organizations.removeTeamMember("org", "release", "grace");
-    assert.equal(await service.canReadWorkspace(computer, "grace", "/src/android"), false);
+    assert.equal(await service.canUseWorkspace(computer, "outsider", "clone"), false);
     assert.equal(await service.canUseWorkspace(computer, "ada", "clone"), true);
   } finally { sqlite.close(); }
 });

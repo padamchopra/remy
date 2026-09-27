@@ -117,15 +117,18 @@ test("organization teams cannot contain a member from another tenant", () => {
   assert.throws(() => database.prepare("INSERT INTO organization_team_members (organization_id,team_id,user_id,created_at) VALUES ('first','team','other',1)").run(), /FOREIGN KEY/);
 });
 
-test("workspace access cannot grant teams or members from another tenant", () => {
-  const database = migratedDatabase();
-  database.prepare("INSERT INTO user (id,name,email,createdAt,updatedAt) VALUES ('owner','Owner','owner@example.com',1,1),('other','Other','other@example.com',1,1)").run();
-  database.prepare("INSERT INTO organizations (id,name,createdAt,updatedAt) VALUES ('first','First',1,1),('second','Second',1,1)").run();
-  database.prepare("INSERT INTO memberships (id,organization_id,user_id,role,createdAt,updatedAt) VALUES ('m1','first','owner','owner',1,1),('m2','second','other','owner',1,1)").run();
-  database.prepare("INSERT INTO organization_teams (id,organization_id,name,created_at,updated_at) VALUES ('team','second','Builders',1,1)").run();
+test("removing workspace access opens every workspace to its organization and drops the grants", () => {
+  const folder = new URL("../migrations/", import.meta.url);
+  const files = readdirSync(folder).filter((file) => file.endsWith(".sql")).sort();
+  const removal = files.indexOf("0036_remove_workspace_access_and_defaults.sql");
+  assert.ok(removal > 0);
+  const database = new DatabaseSync(":memory:");
+  for (const file of files.slice(0, removal)) database.exec(readFileSync(new URL(file, folder), "utf8"));
+  database.prepare("INSERT INTO organizations (id,name,createdAt,updatedAt) VALUES ('first','First',1,1)").run();
   database.prepare("INSERT INTO organization_workspaces (id,organization_id,name,origin,restricted,created_at,updated_at) VALUES ('workspace','first','Remy','github.com/padam/remy',1,1,1)").run();
-  assert.throws(() => database.prepare("INSERT INTO organization_workspace_teams (organization_id,workspace_id,team_id) VALUES ('first','workspace','team')").run(), /FOREIGN KEY/);
-  assert.throws(() => database.prepare("INSERT INTO organization_workspace_members (organization_id,workspace_id,user_id) VALUES ('first','workspace','other')").run(), /FOREIGN KEY/);
+  database.exec(readFileSync(new URL(files[removal], folder), "utf8"));
+  assert.equal(database.prepare("SELECT restricted FROM organization_workspaces WHERE id='workspace'").get()?.restricted, 0);
+  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE name IN ('organization_workspace_teams','organization_workspace_members','member_workspace_model_defaults')").get()?.count, 0);
 });
 
 test("Wrangler records the migration and makes a second apply a no-op", (context) => {

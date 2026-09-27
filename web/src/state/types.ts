@@ -90,11 +90,6 @@ export interface Workspace {
   origin?: string | null;
   icon?: string | null;
   tint?: string | null;
-  /// What a thread started here runs on, when this workspace does not follow
-  /// the machine. Null in both means it does.
-  provider?: string | null;
-  model?: string | null;
-  effort?: string | null;
   worktrees: GitWorktree[];
   /// A device projection, hidden from the workspace list.
   virtual?: boolean;

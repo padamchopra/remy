@@ -6,8 +6,8 @@ Hosted requests carry the organization in their URL and the web session in an HT
 
 | Path | Behavior |
 | --- | --- |
-| Owner | D1 owns organizations, memberships, teams, and workspace restrictions; the organization Durable Object owns thread snapshots and live streams. |
-| Read | Every list/detail checks current membership and workspace access. Imported workspace records remain organization-visible unless they have a restricted workspace registration. |
+| Owner | D1 owns organizations, memberships, teams, and workspaces; the organization Durable Object owns thread snapshots and live streams. |
+| Read | Every list/detail checks current membership. Every member reaches every workspace in the organization; there is no per-workspace restriction (migration 0036 cleared the old ones and dropped their grant tables). Only owners and admins rename, re-icon or remove a workspace. |
 | Write | Member identity is assigned by the hub. Current access and any new workspace destination are checked before the request reaches a computer. |
 | Live | Organization sockets send content-free resets. Open views read authorized state again; membership/session expiry closes the socket. |
 | Reconnect | Lists refresh on connection/reset; transient failures retain an explicitly stale view. |
@@ -34,7 +34,7 @@ For isolated hosted QA, build the computer with `npm run build --prefix server` 
 QA_SESSION=<printed session file> node web/scripts/qa-hub-web.mjs
 ```
 
-The test signs in two people, creates an organization, delivers and accepts an invitation, restricts a workspace, grants and revokes team access live, changes roles, reloads deep links, switches organizations, and checks a narrow viewport. Capture authorization and invitation setup outside any reviewer recording.
+The test signs in two people, creates an organization, delivers and accepts an invitation, checks that a member sees the organization's workspace, creates a team, changes roles, reloads deep links, switches organizations, and checks a narrow viewport. Capture authorization and invitation setup outside any reviewer recording.
 
 ### Real GitHub, Linear and models
 
@@ -86,4 +86,4 @@ Cloud checkout supports repositories imported with GitHub OAuth or a personal ac
 
 General settings hold your avatar and notification preference. Your avatar belongs to your signed-in account; presets and resized raster pictures use the existing profile image field. Changes notify your open organization sessions and reload after reconnect. Browser notification permission remains local to each browser. Web updates ship automatically; the app information row links to the setup guide for installing Remy on a computer.
 
-There is no account-wide default model or permission. A new thread takes its model from the composer: your pick for that workspace, else your default for the workspace (workspace settings), else your default for the chosen computer (Computers), else the first model the computer or cloud offers. Every new thread starts on Ask; a person can change the permission once the thread exists. Migration 0031 drops the old `member_model_defaults` and `member_preferences` tables, and `GET /profile-preferences` is gone; `PATCH /model-defaults` requires a `workspace` or `computer` query. Existing threads retain their permission levels.
+There is no account-wide default model or permission. A new thread takes its model from the composer: your pick for that workspace, else your default for the chosen computer (Computers), else the first model the computer or cloud offers. A workspace has no default model of its own; migration 0036 drops `member_workspace_model_defaults`. Every new thread starts on Ask; a person can change the permission once the thread exists. Migration 0031 drops the old `member_model_defaults` and `member_preferences` tables, and `GET /profile-preferences` is gone; `PATCH /model-defaults` requires a `computer` query. Existing threads retain their permission levels.

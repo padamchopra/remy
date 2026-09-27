@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSyn
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { config } from "./config.js";
-import { providerEffort, providerId, providerModel } from "./providers.js";
 import { db, getKv, runTransaction } from "./db.js";
 import { findProjectFiles } from "./discovery.js";
 import { run as exec } from "./run.js";
@@ -20,11 +19,6 @@ export interface Workspace {
   origin: string | null;
   icon: string | null;
   tint: string | null;
-  /// What a thread started here runs on, when this workspace does not follow
-  /// the machine. Null in both means it does, which is the usual answer.
-  provider: string | null;
-  model: string | null;
-  effort: string | null;
   worktrees: GitWorktree[];
 }
 
@@ -47,9 +41,6 @@ interface StoredWorkspace {
   path: string;
   icon: string | null;
   tint: string | null;
-  provider: string | null;
-  model: string | null;
-  effort: string | null;
 }
 
 interface ParsedWorktree {
@@ -59,15 +50,12 @@ interface ParsedWorktree {
 
 function load(): StoredWorkspace[] {
   return (
-    db.prepare("select id, name, path, icon, tint, provider, model, effort from workspaces").all() as {
+    db.prepare("select id, name, path, icon, tint from workspaces").all() as {
       id: string;
       name: string;
       path: string;
       icon: string | null;
       tint: string | null;
-      provider: string | null;
-      model: string | null;
-      effort: string | null;
     }[]
   ).map((row) => ({
     id: row.id,
@@ -75,9 +63,6 @@ function load(): StoredWorkspace[] {
     path: row.path,
     icon: row.icon,
     tint: row.tint,
-    provider: row.provider,
-    model: row.model,
-    effort: row.effort,
   }));
 }
 
@@ -85,7 +70,7 @@ function save(workspaces: StoredWorkspace[]): void {
   runTransaction(() => {
     db.exec("delete from workspaces");
     const insert = db.prepare(
-      "insert into workspaces (id, name, path, icon, tint, provider, model, effort) values (?, ?, ?, ?, ?, ?, ?, ?)",
+      "insert into workspaces (id, name, path, icon, tint) values (?, ?, ?, ?, ?)",
     );
     for (const workspace of workspaces) {
       insert.run(
@@ -94,9 +79,6 @@ function save(workspaces: StoredWorkspace[]): void {
         workspace.path,
         workspace.icon,
         workspace.tint,
-        workspace.provider,
-        workspace.model,
-        workspace.effort,
       );
     }
   });
@@ -325,9 +307,9 @@ async function computeWorkspaces(): Promise<Workspace[]> {
   const migrated = resolved.flatMap((item) => item ? [item.workspace] : []);
   if (resolved.some((item) => item?.migrated)) {
     const byID = new Map(
-      migrated.map(({ id, name, path, icon, tint, provider, model, effort }) => [
+      migrated.map(({ id, name, path, icon, tint }) => [
         id,
-        { id, name, path, icon, tint, provider, model, effort },
+        { id, name, path, icon, tint },
       ]),
     );
     save(stored.map((workspace) => byID.get(workspace.id) ?? workspace));
@@ -344,9 +326,6 @@ export async function addWorkspace(name: string, rawPath: string): Promise<Works
     path: rawPath,
     icon: null,
     tint: null,
-    provider: null,
-    model: null,
-    effort: null,
   });
   const workspaces = load();
   const existing = workspaces.find((entry) => entry.path === workspace.path);
@@ -363,9 +342,6 @@ export async function addWorkspace(name: string, rawPath: string): Promise<Works
     path: workspace.path,
     icon: workspace.icon,
     tint: workspace.tint,
-    provider: workspace.provider,
-    model: workspace.model,
-    effort: workspace.effort,
   });
   save(workspaces);
   invalidateWorkspacesCache();
@@ -378,9 +354,6 @@ export async function updateWorkspace(
     name?: string;
     icon?: string | null;
     tint?: string | null;
-    provider?: string | null;
-    model?: string | null;
-    effort?: string | null;
   },
 ): Promise<Workspace> {
   const stored = load();
@@ -397,42 +370,9 @@ export async function updateWorkspace(
   if (patch.tint !== undefined) {
     entry.tint = normalizeWorkspaceTint(patch.tint);
   }
-  // A provider and a model are one choice, so they are stored as one: nothing
-  // for a provider means this workspace follows the machine, and then a model
-  // of its own would be a model belonging to nobody.
-  if (patch.provider !== undefined || patch.model !== undefined || patch.effort !== undefined) {
-    const asked = patch.provider === undefined ? entry.provider : patch.provider;
-    if (!asked) {
-      entry.provider = null;
-      entry.model = null;
-      entry.effort = null;
-    } else {
-      const provider = providerId(asked);
-      if (!config.enabledProviders.includes(provider)) throw new Error("that provider is turned off");
-      const model = providerModel(provider, patch.model === undefined ? entry.model : patch.model);
-      entry.provider = provider;
-      entry.model = model || null;
-      entry.effort = providerEffort(provider, model, patch.effort === undefined ? entry.effort : patch.effort) || null;
-    }
-  }
   save(stored);
   invalidateWorkspacesCache();
   return hydrateWorkspace(entry);
-}
-
-export function resetWorkspacesUsingProvider(provider: string): void {
-  const stored = load();
-  let changed = false;
-  for (const workspace of stored) {
-    if (workspace.provider !== provider) continue;
-    workspace.provider = null;
-    workspace.model = null;
-    workspace.effort = null;
-    changed = true;
-  }
-  if (!changed) return;
-  save(stored);
-  invalidateWorkspacesCache();
 }
 
 export function normalizeWorkspaceIcon(icon: string | null): string | null {

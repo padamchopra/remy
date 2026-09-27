@@ -9,7 +9,7 @@ import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { useThreadStarts } from "@/lib/hub-thread-start";
 import { watchHubResource } from "@/lib/hub-computers";
 import { cacheHubWorkspaces, cachedHubWorkspaces, hasCachedHubWorkspaces } from "@/lib/hub-workspace-cache";
-import { takeComposerWorkspace, useComposerWorkspaceRequest } from "@/lib/composer-workspace";
+import { requestComposerWorkspace, takeComposerWorkspace, useComposerWorkspaceRequest } from "@/lib/composer-workspace";
 import { HubPersonalContext } from "@/lib/hub-scope";
 import { HubModelFavorites } from "./HubModelFavorites";
 import { hubThreads } from "./hub-surfaces";
@@ -710,12 +710,17 @@ export default function HubAllView({
                 route.name === "workspaces" &&
                 route.workspaceId && (
                   <WorkspaceDetails
+                    key={`${selectedOwner.id}:${route.workspaceId}`}
                     organizationId={selectedOwner.id}
                     workspaceId={route.workspaceId}
-                    role={selectedOwner.role}
+                    owner={selectedOwner}
                     onBack={() =>
                       navigate({ name: "workspaces", organizationId: "all" })
                     }
+                    onNewThread={() => {
+                      requestComposerWorkspace({ organizationId: selectedOwner.id, workspaceId: route.workspaceId! });
+                      navigate({ name: "threads", organizationId: "all" });
+                    }}
                   />
                 )}
             </Deferred>

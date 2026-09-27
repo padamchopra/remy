@@ -372,11 +372,8 @@ test("PR actions use the caller identity and reject inaccessible workspaces", as
     body: "Ready to review",
   });
   assert.equal(calls.at(-1)?.actor, "Bearer member-grace");
-  await service.organizations.updateWorkspace("studio", "ada", workspace, {
-    access: { teamIds: [], userIds: ["ada"] },
-  });
   await assert.rejects(
-    service.action("studio", "grace", workspace, "review", {
+    service.action("studio", "stranger", workspace, "review", {
       number: 7,
       event: "APPROVE",
     }),
@@ -445,9 +442,9 @@ test("workspace images use member credentials and reject unauthorized, oversized
   assert.deepEqual(await service.workspaceImage("studio", "ada", workspace.id, "assets/logo.png"), {mime:"image/png",data:"aGVsbG8="});
   assert.equal(calls.at(-1)?.actor, "Bearer member-ada");
   for (const path of ["../logo.png", "/logo.png", "README.md", "large.png"]) await assert.rejects(service.workspaceImage("studio", "ada", workspace.id, path));
-  await service.organizations.updateWorkspace("studio", "ada", workspace.id, {access:{userIds:[],teamIds:[]},icon:"assets/logo.png"});
+  await service.organizations.updateWorkspace("studio", "ada", workspace.id, {icon:"assets/logo.png"});
   const count = calls.length;
-  await assert.rejects(service.workspaceImage("studio", "grace", workspace.id));
+  await assert.rejects(service.workspaceImage("studio", "stranger", workspace.id));
   await assert.rejects(service.workspaceImage("other", "ada", workspace.id));
   assert.equal(calls.length, count);
   assert.equal((await service.organizations.workspace("studio", "ada", workspace.id)).icon, "assets/logo.png");
@@ -459,9 +456,8 @@ test("workspace images use member credentials and reject unauthorized, oversized
   const {workspace} = await service.importRepository("studio", "ada", "release/remy");
   assert.deepEqual(await service.workspaceBranches("studio", "ada", workspace.id), {branches:[{name:"main",current:true,checkout:null},{name:"feature/next",current:false,checkout:null}]});
   assert.equal(calls.at(-1)?.actor, "Bearer member-ada");
-  await service.organizations.updateWorkspace("studio", "ada", workspace.id, {access:{userIds:[],teamIds:[]}});
   const count = calls.length;
-  await assert.rejects(service.workspaceBranches("studio", "grace", workspace.id));
+  await assert.rejects(service.workspaceBranches("studio", "stranger", workspace.id));
   await assert.rejects(service.workspaceBranches("other", "ada", workspace.id));
   assert.equal(calls.length, count);
   sqlite.close();
@@ -471,8 +467,7 @@ test("cloud Git uses the initiating member's connection for imported workspaces"
   const {service, sqlite} = fixture();
   const {workspace} = await service.importRepository("studio", "ada", "release/remy");
   assert.equal(await service.workspaceGitToken("studio", "ada", workspace.id), "member-ada");
-  await service.organizations.updateWorkspace("studio", "ada", workspace.id, {access:{userIds:[],teamIds:[]}});
-  await assert.rejects(service.workspaceGitToken("studio", "grace", workspace.id));
+  await assert.rejects(service.workspaceGitToken("studio", "stranger", workspace.id));
   await assert.rejects(service.workspaceGitToken("other", "ada", workspace.id));
   sqlite.exec("DELETE FROM memberships WHERE user_id='ada'");
   await assert.rejects(service.workspaceGitToken("studio", "ada", workspace.id));
@@ -716,8 +711,7 @@ test("squash merge, reviewer requests and draft changes go through the member's 
   assert.match(String((mutation.body as { query: string }).query), /convertPullRequestToDraft/);
   assert.deepEqual((mutation.body as { variables: unknown }).variables, { id: "PR_node7" });
 
-  await service.organizations.updateWorkspace("studio", "ada", workspace.id, { access: { teamIds: [], userIds: ["ada"] } });
-  await assert.rejects(service.action("studio", "grace", workspace.id, "merge", { number: 7, title: "x" }));
+  await assert.rejects(service.action("studio", "stranger", workspace.id, "merge", { number: 7, title: "x" }));
 });
 
 test("the review read carries viewed state, conversations and pending comments for a workspace repository", async () => {
@@ -817,6 +811,5 @@ test("line comments, replies, the pending review and viewed marks go through the
     (error: Error & { status?: number }) => /your own pull request/.test(error.message) && error.status === 403,
   );
 
-  await service.organizations.updateWorkspace("studio", "ada", workspace.id, { access: { teamIds: [], userIds: ["ada"] } });
-  await assert.rejects(service.action("studio", "grace", workspace.id, "view-file", { number: 7, path: "src/a.ts", viewed: true }));
+  await assert.rejects(service.action("studio", "stranger", workspace.id, "view-file", { number: 7, path: "src/a.ts", viewed: true }));
 });

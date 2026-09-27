@@ -133,12 +133,12 @@ export function useHubStartChoice({
   // Reads keyed on the computer start with the one they will most likely end
   // on, so the model default and branch do not wait for the choice to settle.
   const likelyComputer = selected || (preferredValid ? known!.computerId : "") || saved?.computerId || (saved ? "" : snapshot?.computerId) || "";
-  const defaults = useHubModelDefaults(organizationId, workspaceId || undefined, likelyComputer || undefined);
+  const defaults = useHubModelDefaults(organizationId, likelyComputer || undefined);
   const latchedDefaults = useRef(defaults.value);
   if (defaults.value) latchedDefaults.current = defaults.value;
   useEffect(() => { latchedDefaults.current = undefined; }, [workspaceId, organizationId]);
   const resolvedDefaults = defaults.value ?? latchedDefaults.current;
-  const inheritedModel = resolveModelDefault(resolvedDefaults?.workspace, resolvedDefaults?.computer, { provider: "", model: "" });
+  const inheritedModel = resolveModelDefault(resolvedDefaults?.computer, { provider: "", model: "" });
   const usingCloud = !!cloudComputerProvider(selected);
   const usingCursorCloud = cloudComputerProvider(selected) === "cursor-cloud";
   // Your own ChatGPT sign-in, when you allow it in this organization. Nobody else's shows here.

@@ -21,67 +21,10 @@ const {
   worktreeDirtyMap,
 } = await import("./workspaces.js");
 
-/// A folder is all a workspace needs to be; the git metadata is attached when
-/// there is any, and these tests are about the choice stored beside it.
-async function workspace(name: string) {
-  return addWorkspace(name, mkdtempSync(join(tmpdir(), `remy-ws-${name}-`)));
-}
-
-test("follows the machine until the workspace is given a provider of its own", async () => {
-  const added = await workspace("plain");
-  assert.equal(added.provider, null);
-  assert.equal(added.model, null);
-  assert.equal(added.effort, null);
-});
-
-test("stores a workspace's provider and model as one choice", async () => {
-  const added = await workspace("codex");
-  const saved = await updateWorkspace(added.id, {
-    provider: "codex",
-    model: "gpt-5.6-terra",
-    effort: "xhigh",
-  });
-  assert.equal(saved.provider, "codex");
-  assert.equal(saved.model, "gpt-5.6-terra");
-  assert.equal(saved.effort, "xhigh");
-});
-
-test("drops a model the workspace's provider would refuse", async () => {
-  const added = await workspace("mixed");
-  // `sonnet` is Claude's word, and Codex has never heard of it, so the pair
-  // lands on Codex's own default rather than on a model it would reject.
-  const saved = await updateWorkspace(added.id, { provider: "codex", model: "sonnet" });
-  assert.equal(saved.provider, "codex");
-  assert.equal(saved.model, null);
-});
-
-test("moving to another provider takes the model with it", async () => {
-  const added = await workspace("moved");
-  await updateWorkspace(added.id, { provider: "claude", model: "opus", effort: "high" });
-  const saved = await updateWorkspace(added.id, { provider: "codex" });
-  assert.equal(saved.provider, "codex");
-  assert.equal(saved.model, null);
-  assert.equal(saved.effort, "high");
-});
-
-test("clearing the provider puts the workspace back on the machine's default", async () => {
-  const added = await workspace("cleared");
-  await updateWorkspace(added.id, { provider: "claude", model: "opus", effort: "high" });
-  const saved = await updateWorkspace(added.id, { provider: null });
-  // A model with no provider in front of it belongs to nobody, so it goes too.
-  assert.equal(saved.provider, null);
-  assert.equal(saved.model, null);
-  assert.equal(saved.effort, null);
-});
-
-test("leaves the choice alone when a patch does not mention it", async () => {
-  const added = await workspace("renamed");
-  await updateWorkspace(added.id, { provider: "claude", model: "haiku", effort: "low" });
+test("renames a workspace", async () => {
+  const added = await addWorkspace("renamed", mkdtempSync(join(tmpdir(), "remy-ws-renamed-")));
   const saved = await updateWorkspace(added.id, { name: "Renamed" });
   assert.equal(saved.name, "Renamed");
-  assert.equal(saved.provider, "claude");
-  assert.equal(saved.model, "haiku");
-  assert.equal(saved.effort, "low");
 });
 
 test("loads worktree changes on demand and protects them from safe cleanup", async () => {
@@ -157,7 +100,7 @@ test("hosted workspace identity stays canonical while Git uses its capability pr
     const hosted = await addWorkspace("Hosted release", folder);
     assert.equal(hosted.origin, "github.com/studio/release");
     assert.equal(execFileSync("git", ["-C", folder, "remote", "get-url", "origin"], {encoding:"utf8"}).trim(), proxy);
-    const ordinary = await workspace("unrelated");
+    const ordinary = await addWorkspace("unrelated", mkdtempSync(join(tmpdir(), "remy-ws-unrelated-")));
     assert.equal(ordinary.origin, null);
   } finally { setKv("hostedWorkspaceRepository", null); rmSync(folder, {recursive:true, force:true}); }
 });

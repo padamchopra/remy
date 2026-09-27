@@ -7,9 +7,7 @@ import type {
   OrganizationWorkspace,
 } from "@remy/contract";
 export type HubMember = OrganizationMember & { name: string; image?: string | null };
-export type HubWorkspace = OrganizationWorkspace & {
-  access?: { userIds: string[]; teamIds: string[] };
-};
+export type HubWorkspace = OrganizationWorkspace;
 export type HubPeople = { members: HubMember[]; teams: OrganizationTeam[] };
 export function useHubResource<T>(organizationId: string, path: string | null, livePath = "/live") {
   const [value, setValue] = useState<T>();

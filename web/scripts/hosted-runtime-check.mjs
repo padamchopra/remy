@@ -62,7 +62,7 @@ try {
       const workspaceRead = new Promise(resolve => { releaseWorkspaces = resolve; });
       const computerRead = new Promise(resolve => { releaseComputers = resolve; });
       const composerReads = new Promise(resolve => { releaseComposer = resolve; });
-      let workspaceDefault=null; const computerDefaults=new Map();
+      const computerDefaults=new Map();
       const connections = new Set();
       const enabledProviders = new Set();
       const computerName = returning ? "Studio-Mac-with-a-long-unbroken-name-for-release-and-preview-builds" : "Studio Mac";
@@ -120,12 +120,12 @@ try {
           return route.fulfill({ json: { saved: true } });
         }
         if(path === `${base}/model-defaults`) {
-          const workspace=new URL(route.request().url()).searchParams.get("workspace");
           const computer=new URL(route.request().url()).searchParams.get("computer");
-          // There is no account-wide default: a PATCH names a workspace or a computer.
-          if(route.request().method()==="PATCH" && !!workspace===!!computer) return route.fulfill({status:400,json:{error:"Choose one default to change."}});
-          if(route.request().method()==="PATCH") {if(computer)computerDefaults.set(computer,route.request().postDataJSON().choice);else workspaceDefault=route.request().postDataJSON().choice;for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"model-defaults.changed"}));}catch{}}
-          return route.fulfill({json:{workspace:workspace?workspaceDefault:null,computer:computerDefaults.get(computer)??null}});
+          // There is no account-wide or workspace default: a PATCH names a computer.
+          assert.equal(new URL(route.request().url()).searchParams.has("workspace"),false,"The composer reads no workspace default");
+          if(route.request().method()==="PATCH" && !computer) return route.fulfill({status:400,json:{error:"Choose a computer."}});
+          if(route.request().method()==="PATCH") {computerDefaults.set(computer,route.request().postDataJSON().choice);for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"model-defaults.changed"}));}catch{}}
+          return route.fulfill({json:{computer:computerDefaults.get(computer)??null}});
         }
         if(path === `${base}/model-favorites`) {
           if(route.request().method()==="PATCH") { const {key,enabled}=route.request().postDataJSON(); if(enabled)favorites.add(key);else favorites.delete(key); }
@@ -218,8 +218,8 @@ try {
           [`${base}/hosted`]: { settings: { enabled: cloudEnabled, provider: "fly-sprites", region: "", cpu: 1, memoryMiB: 2048, maxComputers: 5, idleMinutes: 12 }, secretNames: [], connections: [...connections], enabledProviders: [...enabledProviders], providerKeys, available },
           [`${base}/members`]: {members:[{id:"reader-member",userId:"reader",name:profile.name,image:profile.image,role:"owner"},...Array.from({length:4},(_,i)=>({id:`m${i}`,userId:`p${i}`,name:`Person ${i}`,image:`data:image/png;base64,${readFileSync(new URL('../public/favicon.png',import.meta.url)).toString('base64')}`,role:"member"}))]},
           [`${base}/teams`]: {teams:[]},
-          [`${base}/workspaces/repo`]: {id:"repo",name:"Example",origin:"github.com/example/repo",restricted:false,icon:"icon.png"},
-          [`${base}/workspaces/remy`]: {id:"remy",name:"remy",origin:"github.com/padamchopra/remy",restricted:false,icon:"folder"},
+          [`${base}/workspaces/repo`]: {id:"repo",name:"Example",origin:"github.com/example/repo",icon:"icon.png"},
+          [`${base}/workspaces/remy`]: {id:"remy",name:"remy",origin:"github.com/padamchopra/remy",icon:"folder"},
           [`${base}/workspaces`]: { workspaces: hasWorkspace && !(process.env.QA_SCOPE_ONLY === "1" && org.personal)?[{id:"repo",name:"Example",origin:"https://github.com/example/repo",icon:"icon.png"},{id:"remy",name:"remy",origin:"https://github.com/padamchopra/remy",icon:"folder"}]:[], canManage: true },
           [`${base}/notifications`]: { notifications: [], devices: [] },
           [`${base}/environments`]: { environments: [], assignments: [], workspaces: [] },
@@ -496,17 +496,22 @@ try {
           assert.equal(detailIcon.svg,listIcon.svg,"List and detail use the same folder glyph");
           assert.equal(detailIcon.well,listIcon.well,"List and detail share the well fill");
           assert.equal(detailIcon.fg,listIcon.fg,"List and detail share the glyph color");
-          assert.equal(detailIcon.width,40,"The detail well is 40px wide");
+          assert.equal(detailIcon.width,44,"The detail well is 44px wide");
           if(artifacts && !mobile) {
             await remyButton.screenshot({path:`${artifacts}/workspace-detail-icon.png`});
-            await page.locator("main .flex.items-center.gap-3.rounded-lg.border").first().screenshot({path:`${artifacts}/workspace-detail-row.png`});
+            await remyButton.locator("xpath=../..").screenshot({path:`${artifacts}/workspace-detail-row.png`});
           }
           await page.getByRole("navigation",{name:"breadcrumb",exact:true}).getByRole("button",{name:"Workspaces",exact:true}).click();
           const studioWorkspace=workspaceRows.filter({hasText:"example/repo"}).filter({hasText:"Studio"}).first();
           await studioWorkspace.getByRole("button",{name:"Open Example",exact:true}).click();
           await page.waitForURL(/\/app\/workspaces\/repo\?owner=team$/);
-          await page.getByText("Repository",{exact:true}).waitFor();
+          await page.getByRole("heading",{name:"Owner",exact:true}).waitFor();
           await page.getByText("github.com/example/repo",{exact:true}).waitFor();
+          // The detail is identity and owner only: no computers, default model or access control.
+          for(const gone of ["Repository","Computers","Default model","Access","Restrict access"]) assert.equal(await page.locator("main").getByText(gone,{exact:true}).count(),0,`The workspace detail has no ${gone}`);
+          assert.equal(await page.locator("main [data-model-picker]").count(),0,"The workspace detail has no model picker");
+          await page.locator('[data-slot="pane-header"]').getByRole("button",{name:"New thread",exact:true}).waitFor();
+          await page.getByRole("button",{name:"Remove workspace",exact:true}).waitFor();
           const iconButton=page.getByRole("button",{name:"Change icon for Example",exact:true});
           await iconButton.locator("img").waitFor();
           const iconFill=await iconButton.evaluate(button=>{
@@ -516,12 +521,12 @@ try {
             return {left:image.left-box.left,top:image.top-box.top,right:box.right-image.right,bottom:box.bottom-image.bottom,width:box.width,height:box.height};
           });
           assert.ok(iconFill,"Workspace image is in the icon button");
-          assert.equal(iconFill.width,40,"Icon button is 40px wide");
-          assert.equal(iconFill.height,40,"Icon button is 40px tall");
+          assert.equal(iconFill.width,44,"Icon button is 44px wide");
+          assert.equal(iconFill.height,44,"Icon button is 44px tall");
           assert.ok(iconFill.left<3 && iconFill.top<3 && iconFill.right<3 && iconFill.bottom<3,"Workspace image fills the icon button");
           if(artifacts && !mobile) {
             await iconButton.screenshot({path:`${artifacts}/workspace-icon-button.png`});
-            await page.locator("main .flex.items-center.gap-3.rounded-lg.border").first().screenshot({path:`${artifacts}/workspace-icon-row.png`});
+            await iconButton.locator("xpath=../..").screenshot({path:`${artifacts}/workspace-icon-row.png`});
           }
           let workspaceBreadcrumb=page.getByRole("navigation",{name:"breadcrumb",exact:true});
           await workspaceBreadcrumb.getByRole("button",{name:"Workspaces",exact:true}).waitFor();
@@ -529,7 +534,7 @@ try {
           assert.equal(await page.getByRole("button",{name:"Back to all",exact:true}).count(),0);
           assert.equal(await page.getByRole("heading",{name:"Workspaces",exact:true}).count(),0);
           await page.reload();
-          await page.getByText("Repository",{exact:true}).waitFor();
+          await page.getByRole("heading",{name:"Owner",exact:true}).waitFor();
           workspaceBreadcrumb=page.getByRole("navigation",{name:"breadcrumb",exact:true});
           await workspaceBreadcrumb.getByRole("button",{name:"Workspaces",exact:true}).click();
           await workspaceRows.filter({hasText:"example/repo"}).first().waitFor();
@@ -785,7 +790,6 @@ try {
           const model=page.getByRole("button",{name:"Model",exact:true});await model.getByText("test/computer",{exact:true}).waitFor();
           const computer=page.getByLabel('Thread computer',{exact:true});await computer.click();await page.getByRole('menuitem',{name:'Cloud · Modal',exact:true}).click();await model.getByText('openrouter/auto',{exact:true}).waitFor();
           await computer.click();await page.getByRole('menuitem',{name:'Cloud · Fly.io Sprites',exact:true}).click();await model.getByText('test/computer',{exact:true}).waitFor();
-          workspaceDefault={provider:'openrouter',model:'test/workspace'};await page.reload();await model.getByText('test/workspace',{exact:true}).waitFor();
           await model.click();await page.getByRole('option',{name:/test\/manual/}).click();await computer.click();await page.getByRole('menuitem',{name:'Cloud · Modal',exact:true}).click();await model.getByText('test/manual',{exact:true}).waitFor();
           await page.locator('#hub-thread-message').fill('Computer default QA');await page.getByRole('button',{name:'Send',exact:true}).click();await page.getByText('Preview request captured.',{exact:true}).waitFor();assert.equal(threadInput.model,'remy:openrouter:test/manual');
           assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);await context.close();console.log(`Computer defaults passed: ${returning?'saved local state':'fresh profile'}, ${mobile?'touch phone':'desktop'}.`);continue;
@@ -799,15 +803,15 @@ try {
           const model=page.getByRole("button",{name:"Model",exact:true});
           await page.reload();await model.getByText("openrouter/auto",{exact:true}).waitFor();
           const workspaceTarget=new URL(url);workspaceTarget.hash="/workspaces/repo?organization=personal";await page.goto(workspaceTarget.href);
-          await page.locator('[data-model-picker]:visible').click();await page.getByRole("option",{name:/test\/workspace/}).click();
-          await page.locator("[data-model-picker]:visible").getByText("test/workspace",{exact:true}).waitFor();assert.equal(workspaceDefault.model,"test/workspace");
-          await page.goto(target.href);await model.getByText("test/workspace",{exact:true}).waitFor();
+          await page.getByRole("heading",{name:"Owner",exact:true}).waitFor();
+          assert.equal(await page.locator("[data-model-picker]:visible").count(),0,"A workspace has no default model to set");
+          await page.goto(target.href);await model.getByText("openrouter/auto",{exact:true}).waitFor();
           await model.click();await page.getByRole("option",{name:/test\/manual/}).click();
           await model.getByText("test/manual",{exact:true}).waitFor();
           for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"model-defaults.changed"}));}catch{}
           await page.locator("#hub-thread-message").fill("Default selection QA");await page.getByRole("button",{name:"Send",exact:true}).click();
           await page.getByText("Preview request captured.",{exact:true}).waitFor();assert.equal(threadInput.model,"remy:openrouter:test/manual");
-          workspaceDefault=null;await page.goto(target.href);await model.getByText("openrouter/auto",{exact:true}).waitFor();
+          await page.goto(target.href);await model.getByText("openrouter/auto",{exact:true}).waitFor();
           assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);
           await context.close();console.log(`Model defaults passed: ${returning?"saved local state":"fresh profile"}, ${mobile?"touch phone":"desktop"}.`);continue;
         }

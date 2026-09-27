@@ -14,7 +14,6 @@ export type CachedHubWorkspace = {
   origin: string;
   icon?: string;
   tint?: string;
-  restricted?: boolean;
 };
 
 /// Bump this whenever a persisted shape changes. A snapshot written by another

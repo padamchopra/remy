@@ -1,5 +1,5 @@
 import { tokenHash } from "./accounts.js";
-import type { AuditEvent, Membership, OrganizationInvite, OrganizationRole, OrganizationStore, OrganizationTeam, WorkspaceAccess } from "./organization-store.js";
+import type { AuditEvent, Membership, OrganizationInvite, OrganizationRole, OrganizationStore, OrganizationTeam } from "./organization-store.js";
 
 const INVITE_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
 type Clock = () => number;
@@ -38,13 +38,6 @@ export class OrganizationService {
     if ((await this.store.organization(organizationId))?.personalOwnerId) throw new OrganizationError(403, "Your personal account cannot be shared or transferred.");
   }
   async member(organizationId: string, userId: string): Promise<Membership> { return this.access(organizationId, userId); }
-  private async workspaceAccessInput(organizationId: string, access: WorkspaceAccess): Promise<WorkspaceAccess> {
-    const teamIds = [...new Set(access.teamIds)];
-    const userIds = [...new Set(access.userIds)];
-    for (const teamId of teamIds) if (!await this.store.team(organizationId, teamId)) throw new OrganizationError(404, "Team not found.");
-    for (const memberId of userIds) if (!await this.store.membership(organizationId, memberId)) throw new OrganizationError(404, "Member not found.");
-    return { teamIds, userIds };
-  }
   async list(userId: string) { return this.store.organizationsFor(userId); }
   async create(userId: string, name: string) {
     const now = this.now();
@@ -87,34 +80,33 @@ export class OrganizationService {
   async renameTeam(organizationId: string, userId: string, teamId: string, name: string) { await this.access(organizationId, userId, ["owner", "admin"]); if (!await this.store.renameTeam(organizationId, teamId, name, this.now())) throw new OrganizationError(404, "Team not found."); await this.audit(organizationId, userId, "team.renamed", "team", teamId); }
   async deleteTeam(organizationId: string, userId: string, teamId: string) { await this.access(organizationId, userId, ["owner", "admin"]); if (!await this.store.deleteTeam(organizationId, teamId)) throw new OrganizationError(404, "Team not found."); await this.audit(organizationId, userId, "team.deleted", "team", teamId); }
   async changeTeamMember(organizationId: string, userId: string, teamId: string, memberUserId: string, add: boolean) { await this.access(organizationId, userId, ["owner", "admin"]); if (!await this.store.team(organizationId, teamId) || !await this.store.membership(organizationId, memberUserId)) throw new OrganizationError(404, "Team not found."); const changed = add ? await this.store.addTeamMember(organizationId, teamId, memberUserId, this.now()) : await this.store.removeTeamMember(organizationId, teamId, memberUserId); if (!changed) throw new OrganizationError(404, add ? "Member not found." : "Team member not found."); await this.audit(organizationId, userId, add ? "team.member_added" : "team.member_removed", "team", teamId, { userId: memberUserId }); }
-  async workspaces(organizationId: string, userId: string) { const member = await this.access(organizationId, userId); return this.store.visibleWorkspaces(organizationId, userId, member.role !== "member"); }
+  async workspaces(organizationId: string, userId: string) { await this.access(organizationId, userId); return this.store.workspaces(organizationId); }
   async workspace(organizationId: string, userId: string, workspaceId: string) {
-    const member = await this.access(organizationId, userId);
-    const workspace = (await this.store.visibleWorkspaces(organizationId, userId, member.role !== "member")).find((candidate) => candidate.id === workspaceId);
+    await this.access(organizationId, userId);
+    const workspace = await this.store.workspace(organizationId, workspaceId);
     if (!workspace) throw new OrganizationError(404, "Workspace not found.");
-    return member.role === "member" ? workspace : { ...workspace, access: await this.store.workspaceAccess(organizationId, workspaceId) };
+    return workspace;
   }
-  async createWorkspace(organizationId: string, userId: string, input: { name: string; origin: string; access?: WorkspaceAccess }) {
+  async createWorkspace(organizationId: string, userId: string, input: { name: string; origin: string }) {
     await this.access(organizationId, userId, ["owner", "admin"]);
     const origin = repositoryOrigin(input.origin);
     if (!origin) throw new OrganizationError(400, "Enter the repository origin.");
     if (await this.store.workspaceByOrigin(organizationId, origin)) throw new OrganizationError(409, "This workspace is already registered.");
-    const access = input.access ? await this.workspaceAccessInput(organizationId, input.access) : { teamIds: [], userIds: [] };
     const now = this.now();
-    const workspace = { id: crypto.randomUUID(), organizationId, name: input.name, origin, restricted: input.access !== undefined, createdAt: now, updatedAt: now };
-    await this.store.createWorkspace(workspace, access);
-    await this.audit(organizationId, userId, "workspace.created", "workspace", workspace.id, { restricted: workspace.restricted });
-    return { ...workspace, access };
+    const workspace = { id: crypto.randomUUID(), organizationId, name: input.name, origin, createdAt: now, updatedAt: now };
+    await this.store.createWorkspace(workspace);
+    await this.audit(organizationId, userId, "workspace.created", "workspace", workspace.id);
+    return workspace;
   }
-  async updateWorkspace(organizationId: string, userId: string, workspaceId: string, patch: { name?: string; icon?: string; tint?: string; access?: WorkspaceAccess | null }) {
+  /// Only the organization's owner and admins rename a workspace or change its
+  /// icon; in a personal account that is its one owner.
+  async updateWorkspace(organizationId: string, userId: string, workspaceId: string, patch: { name?: string; icon?: string; tint?: string }) {
     await this.access(organizationId, userId, ["owner", "admin"]);
     if (!await this.store.workspace(organizationId, workspaceId)) throw new OrganizationError(404, "Workspace not found.");
     if (patch.icon !== undefined && !["folder","code","terminal","git","globe","database","box","sparkles"].includes(patch.icon) && !(patch.icon.length <= 1024 && !patch.icon.startsWith("/") && !patch.icon.includes("..") && !patch.icon.includes("\\") && /\.(png|jpe?g|svg|webp)$/i.test(patch.icon))) throw new OrganizationError(400, "Choose a workspace icon.");
     if (patch.tint !== undefined && !["zinc","red","orange","amber","green","teal","blue","violet","pink"].includes(patch.tint)) throw new OrganizationError(400, "Choose a workspace color.");
-    const access = patch.access === undefined ? undefined : patch.access === null ? { teamIds: [], userIds: [] } : await this.workspaceAccessInput(organizationId, patch.access);
-    await this.store.updateWorkspace(organizationId, workspaceId, { ...(patch.icon !== undefined ? {icon:patch.icon} : {}), ...(patch.tint !== undefined ? {tint:patch.tint} : {}), ...(patch.name ? { name: patch.name } : {}), ...(patch.access !== undefined ? { restricted: patch.access !== null } : {}) }, this.now());
-    if (access) await this.store.replaceWorkspaceAccess(organizationId, workspaceId, access);
-    await this.audit(organizationId, userId, "workspace.updated", "workspace", workspaceId, { ...(patch.name ? { name: true } : {}), ...(patch.access !== undefined ? { access: patch.access === null ? "organization" : "restricted" } : {}) });
+    await this.store.updateWorkspace(organizationId, workspaceId, { ...(patch.icon !== undefined ? {icon:patch.icon} : {}), ...(patch.tint !== undefined ? {tint:patch.tint} : {}), ...(patch.name ? { name: patch.name } : {}) }, this.now());
+    await this.audit(organizationId, userId, "workspace.updated", "workspace", workspaceId, { ...(patch.name ? { name: true } : {}) });
     return this.workspace(organizationId, userId, workspaceId);
   }
   async deleteWorkspace(organizationId: string, userId: string, workspaceId: string) { await this.access(organizationId, userId, ["owner", "admin"]); if (!await this.store.deleteWorkspace(organizationId, workspaceId)) throw new OrganizationError(404, "Workspace not found."); await this.audit(organizationId, userId, "workspace.deleted", "workspace", workspaceId); }

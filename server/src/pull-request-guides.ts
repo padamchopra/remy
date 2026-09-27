@@ -8,7 +8,6 @@ import { parsePullRequestPatch, pullRequestDiff, type PullRequestDiffLine } from
 import { providerEffort, providerId, providerModel, type ProviderId } from "./providers.js";
 import { providerAnswer } from "./provider-adapters/index.js";
 import { run as exec } from "./run.js";
-import { listWorkspaces } from "./workspaces.js";
 
 export interface PullRequestGuideCommit {
   sha: string;
@@ -98,7 +97,7 @@ export async function pullRequestGuideContext(
   };
   return {
     commits: await pullRequestGuideCommits(repository, number),
-    defaultChoice: await guideDefaultChoice(repository, chatId),
+    defaultChoice: await guideDefaultChoice(chatId),
   };
 }
 
@@ -127,7 +126,7 @@ async function buildPullRequestGuide(input: GenerateGuideInput): Promise<PullReq
   const commits = await pullRequestGuideCommits(input.repository, input.number);
   if (commits.length === 0) throw new Error("this pull request has no commits to review");
   const selected = selectedCommits(commits, input.commitShas);
-  const inherited = await guideDefaultChoice(input.repository, input.chatId);
+  const inherited = await guideDefaultChoice(input.chatId);
   const choice = validateChoice(input, inherited);
   const hunks = await hunksForSelection(input.repository, input.number, commits, selected);
   if (hunks.length === 0) throw new Error("the selected commits have no changes to guide");
@@ -321,12 +320,9 @@ export function flattenGuideHunks(files: ReturnType<typeof parsePullRequestPatch
       }]);
 }
 
-async function guideDefaultChoice(repository: string, chatId?: string): Promise<PullRequestGuideChoice> {
+async function guideDefaultChoice(chatId?: string): Promise<PullRequestGuideChoice> {
   const chat = chatId ? getChat(chatId) : undefined;
   if (chat) return fastDefault(validateChoice(chat, machineChoice()));
-  const origin = `github.com/${repository}`.toLowerCase();
-  const workspace = (await listWorkspaces()).find((entry) => entry.origin?.toLowerCase() === origin);
-  if (workspace?.provider) return fastDefault(validateChoice(workspace, machineChoice()));
   return fastDefault(machineChoice());
 }
 
@@ -432,7 +428,7 @@ export async function answerPullRequestQuestion(input: {
   hunk: PullRequestGuideHunk; start: number; end: number; question: string;
   choice?: { provider?: unknown; model?: unknown; effort?: unknown };
 }): Promise<{ answer: string; choice: PullRequestGuideChoice }> {
-  const inherited = await guideDefaultChoice(input.repository, input.chatId);
+  const inherited = await guideDefaultChoice(input.chatId);
   const choice = validateChoice(input.choice ?? {}, inherited);
   const prompt = [
     `Answer a reviewer's question about ${input.repository} pull request #${input.number}.`,

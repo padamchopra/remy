@@ -25,9 +25,6 @@ function workspace(id: string, origin: string | null): Workspace {
     origin,
     icon: null,
     tint: null,
-    provider: null,
-    model: null,
-    effort: null,
     worktrees: [],
   };
 }
