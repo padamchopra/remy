@@ -22,7 +22,7 @@ import "../ui.css";
 import "./style.css";
 
 const sections = [{ id: "chats", label: "Threads", icon: MessagesSquare }, { id: "workspaces", label: "Workspaces", icon: Folder }, { id: "tasks", label: "Tasks", icon: SquareKanban }];
-const explain = () => toast("Explore more in the installed app.");
+const explain = () => toast("Explore more in Remy on the web.");
 function WorkspacePreview() {
   const state = useWorkspaceWorktrees(workspace);
   return <div className="workspace-preview"><WorkspaceWorktrees state={state} /></div>;
