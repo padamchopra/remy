@@ -15,7 +15,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar-base";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { Item, ItemContent, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
+import { Item, ItemContent, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs-base";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip-base";
@@ -24,6 +24,7 @@ import { GitHubMark } from "@/components/GitHubMark";
 import { Markdown } from "@/components/Markdown";
 import { PaneHeader } from "@/components/PaneHeader";
 import { PullRequestChecksDisclosure } from "@/components/PullRequestChecks";
+import { PullRequestStackEntry, PullRequestStackHeader, PullRequestStackRows, stackEntriesInOrder } from "@/components/PullRequestStack";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { relativeDate } from "@/lib/relative-date";
 import { cn } from "@/lib/utils";
@@ -219,38 +220,25 @@ function Stack({ pullRequest, canOpen, onOpen }: {
   const stack = pullRequest.stack;
   if (!stack?.entries || stack.entries.length < 2) return null;
   return (
-    <SideSection title={`Stack #${stack.number}`}>
-      <p className="text-xs text-muted-foreground">{stack.position} of {stack.size} · Merges into {stack.baseRefName} from the bottom up</p>
-      <ItemGroup className="-mx-2 mt-1.5 gap-0">
-        {stack.entries.map((entry) => {
-          const current = entry.number === pullRequest.number;
-          const inApp = !current && canOpen(entry.number);
-          const Icon = entry.state === "MERGED" ? GitMerge : entry.state === "CLOSED" ? GitPullRequestClosed : entry.isDraft ? GitPullRequestDraft : GitPullRequest;
-          const content = (
-            <>
-              <ItemMedia className="self-start pt-0.5"><Icon className={cn("size-3.5", entry.state === "MERGED" ? "text-violet-500" : "text-muted-foreground")} /></ItemMedia>
-              <ItemContent className="min-w-0">
-                <ItemTitle className="line-clamp-2 w-full min-w-0 font-normal whitespace-normal wrap-break-word">
-                  <span className="text-muted-foreground tabular-nums">#{entry.number}</span> {entry.title}
-                </ItemTitle>
-              </ItemContent>
-            </>
-          );
-          const className = cn("min-w-0 gap-2 px-2 py-1.5", current ? "bg-accent" : "hover:bg-accent/50");
-          return current ? (
-            <Item key={entry.number} size="sm" className={className} aria-current="true">{content}</Item>
-          ) : (
-            <Item key={entry.number} asChild size="sm" className={className}>
-              {inApp ? (
-                <button type="button" data-link className="w-full text-left" onClick={() => onOpen(entry.number)}>{content}</button>
-              ) : (
-                <a href={`https://github.com/${pullRequest.repository}/pull/${entry.number}`} target="_blank" rel="noreferrer" data-link>{content}</a>
-              )}
-            </Item>
-          );
-        })}
-      </ItemGroup>
-    </SideSection>
+    <section aria-label={`Stack #${stack.number}`} data-slot="pull-request-stack" className="flex flex-col gap-2.5">
+      <PullRequestStackHeader
+        number={stack.number}
+        detail={`${stack.position} of ${stack.size} · Merge from the bottom up into ${stack.baseRefName}`}
+      />
+      <PullRequestStackRows>
+        {stackEntriesInOrder(stack.entries).map((entry) => (
+          <PullRequestStackEntry
+            key={entry.number}
+            repository={pullRequest.repository}
+            entry={entry}
+            size={stack.size}
+            current={entry.number === pullRequest.number}
+            canOpen={canOpen}
+            onOpen={onOpen}
+          />
+        ))}
+      </PullRequestStackRows>
+    </section>
   );
 }
 

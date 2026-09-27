@@ -32,6 +32,14 @@ Keep the thread on the same computer.
 </details>
 <!-- CURSOR_AGENT_PR_BODY_END -->`;
 
+// GitHub's whole stack, merged bottom included, as the hub reads it.
+const stackEntries = [
+  { position: 1, number: 8944, title: "Move the rates call into its own module", state: "MERGED", isDraft: false },
+  { position: 2, number: 8945, title: longTitle, state: "OPEN", isDraft: false },
+  { position: 3, number: 8946, title: "Ship the stack middle", state: "OPEN", isDraft: false },
+  { position: 4, number: 8947, title: "Ship the stack tip", state: "OPEN", isDraft: true },
+];
+
 function pullRequest(number, title, workspace, extra = {}) {
   return {
     url: `https://github.com/jupiter/mobile/pull/${number}`,
@@ -40,7 +48,7 @@ function pullRequest(number, title, workspace, extra = {}) {
     repository: extra.repository ?? "jupiter/mobile",
     headRefName: extra.headRefName ?? "feature/android-1278",
     baseRefName: "main",
-    isDraft: false,
+    isDraft: extra.isDraft ?? false,
     reviewDecision: extra.reviewDecision ?? "APPROVED",
     updatedAt: extra.updatedAt ?? "2026-09-25T00:00:00.000Z",
     additions: 18,
@@ -101,15 +109,16 @@ try {
         pullRequests: org.id === "team"
           ? [
             pullRequest(8947, "Ship the stack tip", jupiter, {
-              stack: { number: 12, position: 3, size: 3, baseRefName: "main" },
+              isDraft: true,
+              stack: { number: 12, position: 4, size: 4, baseRefName: "main", entries: stackEntries },
               updatedAt: "2026-09-25T03:00:00.000Z",
             }),
             pullRequest(8946, "Ship the stack middle", jupiter, {
-              stack: { number: 12, position: 2, size: 3, baseRefName: "main" },
+              stack: { number: 12, position: 3, size: 4, baseRefName: "main", entries: stackEntries },
               updatedAt: "2026-09-25T02:00:00.000Z",
             }),
             pullRequest(8945, longTitle, jupiter, {
-              stack: { number: 12, position: 1, size: 3, baseRefName: "main" },
+              stack: { number: 12, position: 2, size: 4, baseRefName: "main", entries: stackEntries },
               body: markedBody,
               comments: [{
                 author: "grace",
@@ -174,30 +183,38 @@ try {
   assert.equal(await stack.getByText("Stack #12", { exact: true }).count(), 1);
   assert.equal(await stack.locator("[data-slot='pull-request-tile']").count(), 3);
   const fileTile = stack.locator("[data-slot='pull-request-tile']").filter({ hasText: "[ANDROID-1278]" });
+  // A stack names its workspace once, above its rows.
+  const stackHeader = stack.locator("[data-slot='pull-request-stack-header']");
+  assert.equal(await stack.locator("[data-slot='pull-request-stack-rows'][role='list']").count(), 1);
+  assert.equal(await stack.locator("[role='listitem']").count(), 3);
+  assert.equal(await stackHeader.getByText("Merge from the bottom up into main", { exact: true }).count(), 1);
+  assert.equal(await fileTile.locator("[data-slot='pull-request-stack-position']").textContent(), "2 of 4 · Open");
+  assert.equal(await stack.locator("[data-slot='pull-request-stack-position']").first().textContent(), "4 of 4 · Draft");
+  assert.equal(await fileTile.locator("[data-slot='workspace-icon']").count(), 0, "A stack row leaves the workspace to the header");
   const folderTile = page.locator("[data-slot='pull-request-tile']").filter({ hasText: "Keep the default folder mark" });
   await fileTile.waitFor();
   await folderTile.waitFor();
-  assert.equal(await fileTile.locator("svg.lucide-folder").count(), 0, "A set workspace icon does not flash the folder mark");
-  assert.equal(await fileTile.locator("img[data-slot='workspace-icon']").count(), 0, "The set icon waits on the image cache");
-  assert.equal(await fileTile.locator("span[data-slot='workspace-icon']").count(), 1, "The well stays empty until the set icon loads");
+  assert.equal(await stackHeader.locator("svg.lucide-folder").count(), 0, "A set workspace icon does not flash the folder mark");
+  assert.equal(await stackHeader.locator("img[data-slot='workspace-icon']").count(), 0, "The set icon waits on the image cache");
+  assert.equal(await stackHeader.locator("span[data-slot='workspace-icon']").count(), 1, "The well stays empty until the set icon loads");
   assert.equal(await folderTile.locator("svg.lucide-folder").count(), 1, "A folder workspace still shows the folder glyph");
-  if (artifacts) await fileTile.screenshot({ path: `${artifacts}/pr-tile-icon-pending.png` });
+  if (artifacts) await stack.screenshot({ path: `${artifacts}/pr-tile-icon-pending.png` });
 
   holdImages = false;
   releaseImages();
-  await fileTile.locator("img[data-slot='workspace-icon']").waitFor();
-  assert.equal(await fileTile.locator("svg.lucide-folder").count(), 0);
-  assert.equal(await fileTile.locator("img[data-slot='workspace-icon']").count(), 1);
+  await stackHeader.locator("img[data-slot='workspace-icon']").waitFor();
+  assert.equal(await stackHeader.locator("svg.lucide-folder").count(), 0);
+  assert.equal(await stackHeader.locator("img[data-slot='workspace-icon']").count(), 1);
   const loadsAfterFirst = imageLoads;
   if (artifacts) {
-    await fileTile.screenshot({ path: `${artifacts}/pr-tile-icon-loaded.png` });
+    await stack.screenshot({ path: `${artifacts}/pr-tile-icon-loaded.png` });
     await page.screenshot({ path: `${artifacts}/pr-stack-list.png` });
     await page.screenshot({ path: `${artifacts}/pr-tile-icon-titles.png` });
   }
 
   const metrics = await fileTile.evaluate((row) => {
     const title = row.querySelector("[data-slot='pull-request-title']");
-    const checks = row.lastElementChild?.previousElementSibling?.previousElementSibling;
+    const checks = row.querySelector("[data-slot='pull-request-tile-checks']");
     if (!(title instanceof HTMLElement) || !(checks instanceof HTMLElement)) {
       return { titleWidth: 0, titleRight: 0, checksLeft: 0, unused: Infinity, truncated: false, text: "" };
     }
@@ -247,6 +264,26 @@ try {
   assert.equal(await page.locator("strong").filter({ hasText: "details" }).count(), 1);
   await page.locator("pre").filter({ hasText: "make test" }).waitFor();
 
+  // The summary's stack: bottom first, the open one marked, the rest one step away.
+  const detailStack = page.getByRole("region", { name: "Stack #12", exact: true });
+  await detailStack.waitFor();
+  assert.equal(await detailStack.getByText("2 of 4 · Merge from the bottom up into main", { exact: true }).count(), 1);
+  const members = detailStack.locator("[data-slot='pull-request-stack-entry']");
+  assert.equal(await members.count(), 4);
+  assert.match((await members.nth(0).textContent()) ?? "", /^#8944.*1 of 4 · Merged$/);
+  assert.equal(await members.nth(1).getAttribute("aria-current"), "true", "The open pull request is marked");
+  assert.equal(await members.nth(0).evaluate((node) => node.tagName), "A", "A member Remy does not have opens on GitHub");
+  assert.equal(await members.nth(0).getAttribute("href"), "https://github.com/jupiter/mobile/pull/8944");
+  assert.equal(await members.nth(2).evaluate((node) => node.tagName), "BUTTON", "A member Remy has opens here");
+  assert.match((await members.nth(3).textContent()) ?? "", /4 of 4 · Draft$/);
+  if (artifacts) await detailStack.screenshot({ path: `${artifacts}/pr-open-stack.png` });
+  await members.nth(2).focus();
+  await page.keyboard.press("Enter");
+  await page.waitForURL(/\/pull-requests\/jupiter\/mobile\/8946$/);
+  await page.getByRole("region", { name: "Stack #12", exact: true }).locator("[data-slot='pull-request-stack-entry'][aria-current='true']").filter({ hasText: "#8946" }).waitFor();
+  await page.goBack();
+  await page.waitForURL(/\/pull-requests\/jupiter\/mobile\/8945$/);
+
   const checks = page.locator("[data-slot='pull-request-checks']");
   await checks.waitFor();
   assert.equal(await checks.getByRole("heading", { name: "Checks", exact: true }).count(), 1);
@@ -282,10 +319,10 @@ try {
   holdImages = true;
   await page.getByRole("button", { name: "Pull requests", exact: true }).click();
   await fileTile.waitFor();
-  assert.equal(await fileTile.locator("img[data-slot='workspace-icon']").count(), 1, "A cached set icon paints on the first frame");
-  assert.equal(await fileTile.locator("svg.lucide-folder").count(), 0, "Returning to the list does not flash the folder mark");
+  assert.equal(await stackHeader.locator("img[data-slot='workspace-icon']").count(), 1, "A cached set icon paints on the first frame");
+  assert.equal(await stackHeader.locator("svg.lucide-folder").count(), 0, "Returning to the list does not flash the folder mark");
   assert.equal(imageLoads, loadsAfterFirst, "A cached workspace image is not fetched again");
-  if (artifacts) await fileTile.screenshot({ path: `${artifacts}/pr-tile-icon-cached.png` });
+  if (artifacts) await stack.screenshot({ path: `${artifacts}/pr-tile-icon-cached.png` });
 
   // Last, because a load starts the page over: a reload lands back on the files.
   await page.goto(new URL(`${appPrefix}/pull-requests/jupiter/mobile/8945/files`, origin).href);
