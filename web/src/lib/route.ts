@@ -18,7 +18,8 @@ export type Route = (
   | { name: "ticket"; key: string }
   // A pull request is addressed by its repository and number, which is what
   // GitHub calls it and what someone pastes.
-  | { name: "prs"; repository?: string; number?: number }
+  // `view` is the tab in front: the summary, or the files it changes.
+  | { name: "prs"; repository?: string; number?: number; view?: "files" }
   | { name: "settings"; tab: SettingsTab; organizationTab?: "general" | "members" | "teams" | "computers"; analyticsTab?: AnalyticsTab; deviceId?: string; organizationId?: string }) & { organizationId?: string; ownerOrganizationId?: string };
 
 export interface AppLocation {
@@ -48,9 +49,10 @@ function pullRequestRoute(path: string): Route {
   } catch {
     return { name: "prs" };
   }
-  const [, owner, name, number, extra] = parts;
+  const [, owner, name, number, view, extra] = parts;
   if (!owner || !name || extra !== undefined || !/^[1-9]\d{0,9}$/.test(number ?? "")) return { name: "prs" };
-  return { name: "prs", repository: `${owner}/${name}`, number: Number(number) };
+  if (view !== undefined && view !== "files") return { name: "prs" };
+  return { name: "prs", repository: `${owner}/${name}`, number: Number(number), ...(view ? { view } : {}) };
 }
 
 function parseRoute(hash: string): AppLocation {
@@ -118,7 +120,7 @@ export function formatPathLocation({ route }: AppLocation): string {
           : route.name === "settings"
               ? `/settings/${route.tab}`
               : route.repository && route.number
-                ? `/pull-requests/${route.repository.split("/").map(encodeURIComponent).join("/")}/${route.number}`
+                ? `/pull-requests/${route.repository.split("/").map(encodeURIComponent).join("/")}/${route.number}${route.view ? `/${route.view}` : ""}`
                 : "/pull-requests";
   const params = new URLSearchParams();
   const threadId = route.name === "threads" ? route.threadId : undefined;

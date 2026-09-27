@@ -91,7 +91,11 @@ test("a pull request has its own address in both shells", () => {
     "/pull-requests/jup-ag/mobile/9029?organization=release",
   );
   assert.equal(formatPathLocation({ route: { name: "prs" } }), "/pull-requests");
-  for (const path of ["/pull-requests/jup-ag/mobile", "/pull-requests/jup-ag/mobile/0", "/pull-requests/jup-ag/mobile/12/files"]) {
+  const files = { ...route, view: "files" };
+  assert.equal(formatPathLocation({ route: files }), "/pull-requests/jup-ag/mobile/9029/files");
+  assert.deepEqual(parseLocation("/pull-requests/jup-ag/mobile/9029/files").route, files);
+  assert.deepEqual(parseLocation("#/pull-requests/jup-ag/mobile/9029/files").route, files);
+  for (const path of ["/pull-requests/jup-ag/mobile", "/pull-requests/jup-ag/mobile/0", "/pull-requests/jup-ag/mobile/12/commits", "/pull-requests/jup-ag/mobile/12/files/extra"]) {
     assert.deepEqual(parseLocation(path).route, { name: "prs" }, path);
   }
 });

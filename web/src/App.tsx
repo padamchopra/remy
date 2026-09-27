@@ -542,7 +542,7 @@ export function App() {
             workspaces={allWorkspaces}
             onOpenThread={openChat}
             onOpenWorkspace={(workspaceId) => go({ name: "workspaces", workspaceId })}
-            selected={route.repository && route.number ? { repository: route.repository, number: route.number } : undefined}
+            selected={route.repository && route.number ? { repository: route.repository, number: route.number, ...(route.view ? { view: route.view } : {}) } : undefined}
             onSelect={(address) => go(address ? { name: "prs", ...address } : { name: "prs" })}
           />
         ) : openWorkspace ? (

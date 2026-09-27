@@ -33,6 +33,8 @@ type PullRequestFilter = "yours" | "review";
 export interface PullRequestAddress {
   repository: string;
   number: number;
+  /// The tab in front, when it is not the summary.
+  view?: "files";
 }
 
 interface PullRequestCheck {
@@ -60,6 +62,9 @@ export interface AuthoredPullRequest {
   mergeStateStatus?: string;
   state?: string;
   checks: PullRequestCheck[];
+  /// Hosted only: who reviewed, with their latest verdict, and who is asked to.
+  reviewers?: { login: string; state: "REQUESTED" | "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED" }[];
+  labels?: { name: string; color: string }[];
   comments?: { author: string; body: string; createdAt?: string; url?: string }[];
   unreadComments: unknown[];
   hasUnreadActivity: boolean;
@@ -500,7 +505,7 @@ export function PullRequests({
     return (
       <Suspense fallback={(
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <PaneHeader sidebar crumbs={[{ label: "Pull requests", onClick: back }, { label: selected.title }]} />
+          <PaneHeader sidebar crumbs={[{ label: "Pull requests", onClick: back }, { label: `${selected.repository} #${selected.number}` }]} />
           <PullRequestDetailLoading />
         </main>
       )}>
@@ -510,6 +515,8 @@ export function PullRequests({
           organizationId={hostedOrganizationOf(selected.serverId)}
           canOpen={(number) => Boolean(members(number))}
           onOpen={(number) => open({ repository: selected.repository, number })}
+          view={selectedAddress?.view}
+          onViewChange={(view) => onSelect({ repository: selected.repository, number: selected.number, ...(view ? { view } : {}) })}
           onBack={back}
         />
       </Suspense>
