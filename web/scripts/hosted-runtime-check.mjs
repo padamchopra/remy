@@ -40,6 +40,7 @@ try {
       const profile={id:"reader",name:"Reader",image:null};
       let lastMessage;
       let threadInput;
+      let linearKeyInput;
       let startCalls=0, messageCalls=0, startStatusCalls=0, startReleased=false;
       const releaseStart=()=>{startReleased=true;};
       const startIds=[], messageIds=[];
@@ -126,6 +127,10 @@ try {
           if(route.request().method()==="PATCH" && !computer) return route.fulfill({status:400,json:{error:"Choose a computer."}});
           if(route.request().method()==="PATCH") {computerDefaults.set(computer,route.request().postDataJSON().choice);for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"model-defaults.changed"}));}catch{}}
           return route.fulfill({json:{computer:computerDefaults.get(computer)??null}});
+        }
+        if(path === `${base}/connections/linear` && route.request().method() === "POST") {
+          linearKeyInput = route.request().postDataJSON();
+          return route.fulfill({json:{ok:true}});
         }
         if(path === `${base}/model-favorites`) {
           if(route.request().method()==="PATCH") { const {key,enabled}=route.request().postDataJSON(); if(enabled)favorites.add(key);else favorites.delete(key); }
@@ -574,6 +579,13 @@ try {
           await availability.getByText("Studio",{exact:true}).waitFor();
           if(artifacts && !returning && !mobile) await page.screenshot({path:`${artifacts}/connection-availability.png`});
           await page.keyboard.press("Escape");
+          await allConnections.getByRole("button",{name:"Add Linear connection",exact:true}).click();
+          await page.getByRole("button",{name:"Connect account",exact:true}).click();
+          const linearKey=page.getByLabel("Linear API key",{exact:true});
+          if(artifacts && !returning && !mobile) await page.screenshot({path:`${artifacts}/private-linear-connection.png`,animations:"disabled"});
+          await linearKey.fill("personal-linear-key");
+          await page.getByRole("button",{name:"Connect Linear",exact:true}).click();
+          assert.deepEqual(linearKeyInput,{scope:"member",token:"personal-linear-key"},"Linear falls back to a private key when shared OAuth is unavailable");
           await page.goto(clean("/settings/connections?owner=personal"));
           const connectionSettings=page.getByRole("region",{name:"Connections",exact:true});
           await connectionSettings.getByText("Your Linear account",{exact:true}).waitFor();
