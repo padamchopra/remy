@@ -155,6 +155,11 @@ try {
   assert.equal(await filter.getByText(/^Review requested/).count(), 1);
   assert.equal(await filter.getByText(/Needs you/).count(), 0);
   assert.equal(await filter.getByText(/^All$/).count(), 0);
+  assert.equal(await filter.getAttribute("role"), "tablist", "The filter is one segmented control");
+  assert.equal(await filter.getByRole("tab", { selected: true }).getByText(/^Yours/).count(), 1, "Yours is selected by default");
+  const filterBox = await filter.boundingBox();
+  const searchBox = await page.locator("[data-slot='input-group']").filter({ has: page.getByLabel("Search pull requests") }).boundingBox();
+  assert.equal(Math.round(filterBox.height), Math.round(searchBox.height), "The filter is as tall as the search field");
 
   const stack = page.locator("[data-slot='pull-request-stack']");
   await stack.waitFor();
@@ -206,7 +211,10 @@ try {
   await filter.getByText(/^Review requested/).click();
   await page.getByText("Please review the wallet sheet").waitFor();
   assert.equal(await page.locator("[data-slot='pull-request-tile']").count(), 1);
-  await filter.getByText(/^Yours/).click();
+  // Arrows move and select together, so the keyboard switches the list.
+  await page.keyboard.press("ArrowLeft");
+  assert.equal(await filter.getByRole("tab", { selected: true }).getByText(/^Yours/).count(), 1, "ArrowLeft selects Yours");
+  assert.equal(await filter.getByRole("tab", { selected: true }).evaluate((tab) => tab === document.activeElement), true);
   await fileTile.waitFor();
 
   await fileTile.getByRole("button").first().click();
