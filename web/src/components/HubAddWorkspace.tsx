@@ -51,8 +51,8 @@ function rankRepository(value: string, search: string) {
   return name.startsWith(needle) ? 1 : name.includes(needle) ? 0.8 : 0.5;
 }
 
-export function HubAddWorkspace({ organizationId, organizations, open, onOpenChange, onManual, onAdded }: {
-  organizationId: string; organizations?: Organization[]; open: boolean; onOpenChange: (open: boolean) => void; onManual?: () => void; onAdded?: (organizationId: string) => void;
+export function HubAddWorkspace({ organizationId, organizations, open, onOpenChange, onAdded }: {
+  organizationId: string; organizations?: Organization[]; open: boolean; onOpenChange: (open: boolean) => void; onAdded?: (organizationId: string) => void;
 }) {
   const destinations = organizations?.filter(o => o.role !== "member");
   const [selected, setSelected] = useState(organizationId);
@@ -91,7 +91,7 @@ export function HubAddWorkspace({ organizationId, organizations, open, onOpenCha
       </header>
       {open && destination && (manual
         ? <ManualRepository key={destination} organizationId={destination} onAdded={added} onBack={() => setManual(false)} />
-        : <RepositoryPicker key={destination} organizationId={destination} onAdded={added} onManual={onManual ?? (() => setManual(true))} />)}
+        : <RepositoryPicker key={destination} organizationId={destination} onAdded={added} onManual={() => setManual(true)} />)}
     </DialogContent>
   </Dialog>;
 }

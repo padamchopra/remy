@@ -7,7 +7,7 @@ export function WorkspaceMarkFrame({
   tint,
   children,
 }: {
-  size: "sm" | "md" | "lg";
+  size: "sm" | "row" | "md" | "lg";
   tint?: string | null;
   children: ReactNode;
 }) {
@@ -17,7 +17,7 @@ export function WorkspaceMarkFrame({
       data-slot="workspace-mark"
       className={cn(
         "inline-flex shrink-0 items-center justify-center overflow-hidden leading-none",
-        size === "lg" ? "size-[1em] rounded-md" : size === "md" ? "size-10 rounded-lg" : "size-4 rounded-md",
+        size === "lg" ? "size-[1em] rounded-md" : size === "md" ? "size-10 rounded-lg" : size === "row" ? "size-7 rounded-[7px]" : "size-4 rounded-md",
         colors.well,
         colors.fg,
       )}
