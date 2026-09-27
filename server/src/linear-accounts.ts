@@ -158,7 +158,7 @@ export async function linearHttp(method: string, pathname: string, body: Record<
 export async function verifyLinearKey(token: string) {
   const response = await fetch("https://api.linear.app/graphql", {
     method: "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    headers: { authorization: token, "content-type": "application/json" },
     body: JSON.stringify({ query: "query { organization { id name } viewer { id } }" }),
     signal: AbortSignal.timeout(20_000),
   });

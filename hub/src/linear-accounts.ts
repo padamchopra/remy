@@ -162,21 +162,28 @@ export class LinearAccounts {
   /// Linear always runs as the acting member. An organization never supplies
   /// another person's workspace choice or token.
   async accessToken(org: string, user: string) {
+    return (await this.accessCredentials(org, user)).access_token;
+  }
+
+  private async accessCredentials(org: string, user: string) {
     const current = await this.effectiveLink(org, user);
     if (!current) throw new ConnectionError("Choose a Linear account for this organization.");
     const row = await this.memberAccount(org, user, current.externalId);
     if (!row || row.status !== "connected")
       throw new ConnectionError("Reconnect your account to continue.", 409);
-    return this.openToken(row);
+    return this.openCredentials(row);
   }
 
   /// One GraphQL request to Linear as this member.
   async linearGraphql<T>(org: string, user: string, query: string, variables: Record<string, unknown>): Promise<T | undefined> {
-    const token = await this.accessToken(org, user);
+    const tokens = await this.accessCredentials(org, user);
     const send = this.oauth.send ?? fetch;
     const response = await send("https://api.linear.app/graphql", {
       method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      headers: {
+        authorization: tokens.token_type === "api-key" ? tokens.access_token : `Bearer ${tokens.access_token}`,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({ query, variables }),
       signal: AbortSignal.timeout(10_000),
     });
@@ -232,7 +239,7 @@ export class LinearAccounts {
     if (!row) return { kind: "notice", notice: LINEAR_MISSING_NOTICE };
     if (row.status !== "connected") return { kind: "notice", notice: LINEAR_REAUTH_NOTICE };
     try {
-      const token = await this.openToken(row);
+      const token = (await this.openCredentials(row)).access_token;
       return {
         kind: "ready",
         token,
@@ -297,10 +304,10 @@ export class LinearAccounts {
     }
   }
 
-  private async openToken(row: AccountRow) {
+  private async openCredentials(row: AccountRow) {
     const context = `linear:${row.user_id}:${row.id}`;
     const tokens = await this.vault.open<ConnectionTokens>(row.credentials, context);
-    if (!row.expires_at || row.expires_at > this.now() + 60_000) return tokens.access_token;
+    if (!row.expires_at || row.expires_at > this.now() + 60_000) return tokens;
     if (!tokens.refresh_token || !this.oauth.clientId || !this.oauth.clientSecret) {
       await this.markReauth(row);
       throw new ConnectionError("Reconnect your account to continue.", 409);
@@ -330,7 +337,7 @@ export class LinearAccounts {
         )
         .first();
       if (!updated) throw new ConnectionError("Your connection changed; try again.", 409);
-      return next.access_token;
+      return next;
     } catch (error) {
       await this.markReauth(row, lease);
       if (error instanceof ConnectionError) throw error;
