@@ -33,6 +33,20 @@ function fixture() {
       actor = new Headers(init?.headers).get("authorization") ?? "",
       body = init?.body ? JSON.parse(String(init.body)) : undefined;
     calls.push({ path, method, actor, body });
+    if (path === "/repos/release/remy/pulls/7/files") {
+      // 205 files: two full pages and a short third, the last one binary.
+      const page = Number(new URL(String(input)).searchParams.get("page"));
+      const start = (page - 1) * 100;
+      const count = Math.max(0, Math.min(100, 205 - start));
+      return Response.json(Array.from({ length: count }, (_, index) => {
+        const n = start + index;
+        return n === 204
+          ? { filename: "assets/logo.png", status: "added", additions: 0, deletions: 0 }
+          : n === 0
+            ? { filename: "src/new.ts", previous_filename: "src/old.ts", status: "renamed", additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new" }
+            : { filename: `src/file-${n}.ts`, status: "modified", additions: 2, deletions: 0, patch: "@@ -1,1 +1,3 @@\n a\n+b\n+c" };
+      }));
+    }
     if (path === "/repos/release/remy/git/trees/HEAD") return Response.json({tree:[{path:"assets/logo.png",type:"blob",size:10},{path:"README.md",type:"blob",size:1},{path:"large.png",type:"blob",size:2000000}]});
     if (path === "/repos/release/remy/contents/assets/logo.png") return Response.json({type:"file",size:10,encoding:"base64",content:"aGVsbG8=\n"});
     if (path === "/repos/release/remy/contents/large.png") return Response.json({type:"file",size:2000000,encoding:"base64",content:""});
@@ -158,6 +172,12 @@ function fixture() {
             repository: { nameWithOwner: "jup-ag/mobile" },
             assignees: { nodes: [] },
             reviewRequests: { nodes: [{ requestedReviewer: { login: "ada" } }] },
+            latestReviews: { nodes: [
+              { author: { login: "ada" }, state: "COMMENTED" },
+              { author: { login: "linus" }, state: "APPROVED" },
+              { author: { login: "bad login!" }, state: "APPROVED" },
+            ] },
+            labels: { nodes: [{ name: "android", color: "A2EEEF" }, { name: "no colour", color: "not-hex" }] },
             commits: { nodes: [] },
           },
         ],
@@ -501,5 +521,44 @@ test("hosted pull request cache returns the previous list without waiting on Git
   const warmMs = Date.now() - warmStarted;
   assert.ok(coldMs >= 80, `cold open waited on GitHub (${coldMs}ms)`);
   assert.ok(warmMs < 20, `warm open reused the cache (${warmMs}ms)`);
+  sqlite.close();
+});
+
+test("hosted pull requests carry reviewers with their latest verdict and labels", async () => {
+  clearHostedPullRequestCache();
+  const { service, sqlite } = fixture();
+  await service.importRepository("studio", "ada", "jup-ag/mobile");
+  const listed = await service.openPullRequests("studio", "ada");
+  const wallet = listed.pullRequests.find((pullRequest) => pullRequest.number === 12);
+  assert.deepEqual(wallet?.reviewers, [
+    { login: "ada", state: "REQUESTED" },
+    { login: "linus", state: "APPROVED" },
+  ]);
+  assert.deepEqual(wallet?.labels, [{ name: "android", color: "a2eeef" }, { name: "no colour", color: "" }]);
+  sqlite.close();
+});
+
+test("pull request files page through GitHub with the member credential for a workspace repository", async () => {
+  clearHostedPullRequestCache();
+  const { service, calls, sqlite } = fixture();
+  await service.importRepository("studio", "ada", "release/remy");
+  const before = calls.length;
+  const read = await service.pullRequestFiles("studio", "ada", "release/remy", 7, 205);
+  const reads = calls.slice(before).filter((call) => call.path === "/repos/release/remy/pulls/7/files");
+  assert.equal(reads.length, 3);
+  assert.ok(reads.every((call) => call.actor === "Bearer member-ada"));
+  assert.equal(read.files.length, 205);
+  assert.equal(read.truncated, false);
+  assert.equal(read.patchesOmitted, false);
+  assert.deepEqual(read.files[0], { path: "src/new.ts", previousPath: "src/old.ts", status: "renamed", additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new" });
+  assert.deepEqual(read.files.at(-1), { path: "assets/logo.png", status: "added", additions: 0, deletions: 0 });
+  // Without the count it still reads every page, one after another.
+  const sequential = await service.pullRequestFiles("studio", "ada", "release/remy", 7);
+  assert.equal(sequential.files.length, 205);
+  const count = calls.length;
+  await assert.rejects(service.pullRequestFiles("studio", "ada", "ada/notes", 7));
+  await assert.rejects(service.pullRequestFiles("studio", "ada", "release/remy", 0));
+  await assert.rejects(service.pullRequestFiles("other", "ada", "release/remy", 7));
+  assert.equal(calls.length, count);
   sqlite.close();
 });
