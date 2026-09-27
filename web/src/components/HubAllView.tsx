@@ -53,6 +53,7 @@ import {
 import { Field, FieldLabel } from "./ui/field";
 import { toast } from "sonner";
 import { apiError } from "@/lib/api-error";
+import { LinearKeyDialog } from "./LinearConnection";
 
 const Threads = hubThreads.Surface;
 const Computers = lazy(() =>
@@ -246,6 +247,7 @@ function ConnectionsSummary({ organizations, navigate }: { organizations: Organi
   const [adding, setAdding] = useState<"github" | "linear">();
   const [availability, setAvailability] = useState("all");
   const [busy, setBusy] = useState(false);
+  const [linearKeyOrganization, setLinearKeyOrganization] = useState<string>();
   const names = new Map(organizations.map((organization) => [organization.id, organization.personal ? "Personal" : organization.name]));
   const rows = new Map<string, ProviderConnection>();
   for (const resource of resources) {
@@ -293,9 +295,17 @@ function ConnectionsSummary({ organizations, navigate }: { organizations: Organi
     ].filter((scope) => !used.has(scope.id));
   };
   const scopes = adding ? availableScopes(adding) : [];
+  const linearConfigured = resources.some((resource) =>
+    resource.value?.providers.some((provider) => provider.id === "linear" && provider.configured),
+  );
   const connect = async () => {
     if (!adding || !personal) return;
     const owner = availability === "all" ? personal.id : availability;
+    if (adding === "linear" && !linearConfigured) {
+      setAdding(undefined);
+      setLinearKeyOrganization(owner);
+      return;
+    }
     setBusy(true);
     try {
       const result = await hubRequest<{ url: string }>(`${hubThreadBase(owner)}/connections/${adding}`, "POST", { scope: "member" });
@@ -377,6 +387,28 @@ function ConnectionsSummary({ organizations, navigate }: { organizations: Organi
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <LinearKeyDialog
+        open={!!linearKeyOrganization}
+        busy={busy}
+        onOpenChange={(open) => { if (!open && !busy) setLinearKeyOrganization(undefined); }}
+        onSubmit={async (token) => {
+          if (!linearKeyOrganization) return;
+          setBusy(true);
+          try {
+            await hubRequest(
+              `${hubThreadBase(linearKeyOrganization)}/connections/linear`,
+              "POST",
+              { scope: "member", token },
+            );
+            setLinearKeyOrganization(undefined);
+            toast.success("Your Linear account is connected.");
+          } catch (cause) {
+            toast.error("Couldn't connect Linear", { description: apiError(cause) });
+          } finally {
+            setBusy(false);
+          }
+        }}
+      />
     </section>
   );
 }

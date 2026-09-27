@@ -190,6 +190,24 @@ test("removing Tasks drops the board and Linear sync tables and keeps each perso
   assert.deepEqual(database.prepare("SELECT id FROM connection_deliveries").all().map((row) => row.id), ["github-one"]);
 });
 
+test("Linear organization choices migrate to one private row per member", () => {
+  const database = new DatabaseSync(":memory:");
+  database.exec("PRAGMA foreign_keys = ON");
+  const directory = new URL("../migrations/", import.meta.url);
+  const files = readdirSync(directory).filter((file) => file.endsWith(".sql")).sort();
+  const migration = files.indexOf("0038_private_linear_links.sql");
+  for (const file of files.slice(0, migration)) database.exec(readFileSync(new URL(file, directory), "utf8"));
+  database.exec("INSERT INTO user(id,name,email,createdAt,updatedAt) VALUES('ada','Ada','ada@example.test',1,1),('grace','Grace','grace@example.test',1,1); INSERT INTO organizations(id,name,createdAt,updatedAt) VALUES('studio','Studio',1,1); INSERT INTO memberships(id,organization_id,user_id,role,createdAt,updatedAt) VALUES('a','studio','ada','owner',1,1),('g','studio','grace','member',1,1); INSERT INTO linear_accounts(id,user_id,external_id,label,credentials,updated_at) VALUES('la','ada','linear-studio','Studio','secret-a',1),('lg','grace','linear-studio','Studio','secret-g',1); INSERT INTO organization_linear_links(organization_id,external_id,label,updated_at) VALUES('studio','linear-studio','Studio',1)");
+  database.exec(readFileSync(new URL(files[migration]!, directory), "utf8"));
+  assert.deepEqual(
+    database.prepare("SELECT user_id,external_id FROM member_linear_links ORDER BY user_id").all().map((row) => ({ ...row })),
+    [{ user_id: "ada", external_id: "linear-studio" }, { user_id: "grace", external_id: "linear-studio" }],
+  );
+  assert.equal(database.prepare("SELECT COUNT(*) count FROM sqlite_master WHERE type='table' AND name='organization_linear_links'").get()?.count, 0);
+  database.prepare("DELETE FROM memberships WHERE organization_id='studio' AND user_id='ada'").run();
+  assert.deepEqual(database.prepare("SELECT user_id FROM member_linear_links").all().map((row) => ({ ...row })), [{ user_id: "grace" }]);
+});
+
 test("monitoring is dropped, Activity gets read marks, and recorded GitHub activity stays", () => {
   const database = new DatabaseSync(":memory:");
   database.exec("PRAGMA foreign_keys = ON");

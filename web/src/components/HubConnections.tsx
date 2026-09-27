@@ -5,7 +5,7 @@ import { useHubResource } from "@/lib/hub-organization";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { toast } from "sonner";
 import { apiError } from "@/lib/api-error";
-import { HubLinearWorkspace, LinearAccountsCard } from "./LinearConnection";
+import { HubLinearWorkspace, LinearAccountsCard, LinearKeyDialog } from "./LinearConnection";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -64,10 +64,17 @@ export function HubConnections({ organizationId }: { organizationId: string }) {
     error: readError,
   } = useHubResource<ConnectionsState>(organizationId, "/connections");
   const [busy, setBusy] = useState(false),
+    [linearKeyOpen, setLinearKeyOpen] = useState(false),
+    [linearKeyFor, setLinearKeyFor] = useState<string>(),
     [remove, setRemove] = useState<{ provider: string; scope: string } | null>(
       null,
     );
-  const start = async (provider: string, scope: string) => {
+  const start = async (provider: string, scope: string, accountId?: string) => {
+    if (provider === "linear" && !value?.providers.find((item) => item.id === "linear")?.configured) {
+      setLinearKeyFor(accountId);
+      setLinearKeyOpen(true);
+      return;
+    }
     setBusy(true);
     try {
       const result = await hubRequest<{ url: string }>(
@@ -101,7 +108,7 @@ export function HubConnections({ organizationId }: { organizationId: string }) {
         <LinearAccountsCard
           accounts={value.linearAccounts ?? []}
           busy={busy || stale}
-          onConnect={() => void start("linear", "member")}
+          onConnect={(accountId) => void start("linear", "member", accountId)}
           onDisconnect={async (accountId) => {
             setBusy(true);
             try {
@@ -120,6 +127,27 @@ export function HubConnections({ organizationId }: { organizationId: string }) {
         />
       )}
       <HubLinearWorkspace organizationId={organizationId} personal={isPersonal} />
+      <LinearKeyDialog
+        open={linearKeyOpen}
+        accountId={linearKeyFor}
+        busy={busy}
+        onOpenChange={setLinearKeyOpen}
+        onSubmit={async (token) => {
+          setBusy(true);
+          try {
+            await hubRequest(
+              `${hubThreadBase(organizationId)}/connections/linear`,
+              "POST",
+              { scope: "member", token },
+            );
+            toast.success("Your Linear account is connected.");
+          } catch (e) {
+            toast.error("Couldn't connect Linear", { description: apiError(e) });
+          } finally {
+            setBusy(false);
+          }
+        }}
+      />
       {value?.providers.filter((provider) => provider.id !== "linear").map((provider) => (
         <Card key={provider.id} className="min-w-0">
           <CardHeader>

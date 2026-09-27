@@ -120,7 +120,7 @@ export function LinearKeyDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{accountId ? "Reconnect" : "Connect Linear"}</DialogTitle>
-          <DialogDescription>Paste your Linear API key.</DialogDescription>
+          <DialogDescription>Paste a Linear API key from Settings → Security &amp; access.</DialogDescription>
         </DialogHeader>
         <Field>
           <FieldLabel htmlFor="linear-api-key">Linear API key</FieldLabel>

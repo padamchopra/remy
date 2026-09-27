@@ -17,7 +17,7 @@ import { sqliteD1 } from "../test/sqlite-d1.js";
 
 function fixture() {
   const { db, sqlite } = sqliteD1(
-    `CREATE TABLE organizations(id TEXT PRIMARY KEY,personal_owner_id TEXT);CREATE TABLE user(id TEXT PRIMARY KEY);CREATE TABLE memberships(organization_id TEXT,user_id TEXT,PRIMARY KEY(organization_id,user_id));INSERT INTO organizations VALUES('studio',NULL),('other',NULL),('personal','ada');INSERT INTO memberships VALUES('studio','ada'),('studio','grace'),('personal','ada');${readFileSync(new URL("../migrations/0012_connections.sql", import.meta.url), "utf8")}${readFileSync(new URL("../migrations/0029_linear_accounts.sql", import.meta.url), "utf8")}`,
+    `CREATE TABLE organizations(id TEXT PRIMARY KEY,personal_owner_id TEXT);CREATE TABLE user(id TEXT PRIMARY KEY);CREATE TABLE memberships(organization_id TEXT,user_id TEXT,PRIMARY KEY(organization_id,user_id));INSERT INTO organizations VALUES('studio',NULL),('other',NULL),('personal','ada');INSERT INTO user VALUES('ada'),('grace');INSERT INTO memberships VALUES('studio','ada'),('studio','grace'),('personal','ada');${readFileSync(new URL("../migrations/0012_connections.sql", import.meta.url), "utf8")}${readFileSync(new URL("../migrations/0029_linear_accounts.sql", import.meta.url), "utf8")}${readFileSync(new URL("../migrations/0038_private_linear_links.sql", import.meta.url), "utf8")}`,
   );
   let now = 1_000_000,
     fail = false,
@@ -261,6 +261,7 @@ test("Linear has no webhook: its updates are refused before anything is stored",
   const provider = connectionProviders({} as Env).find((p) => p.id === "linear")!;
   assert.equal(provider.verifyWebhook, undefined);
   assert.equal(provider.receive, undefined);
+  assert.deepEqual(provider.authorizeParameters, { actor: "user", prompt: "consent" });
   const queue = { send: async () => assert.fail("nothing is queued") } as unknown as Queue<ConnectionJob>;
   await assert.rejects(
     ingestConnectionWebhook(new Request("https://hub.example/api/connections/linear/webhook", { method: "POST", body: "{}" }), provider, f.db, queue),
@@ -308,4 +309,21 @@ test("repository OAuth reuses sign-in configuration with isolated callback state
   await f.finish(url);
   assert.equal(f.bodies[0].get("redirect_uri"), url.searchParams.get("redirect_uri"));
   await assert.rejects(f.finish(url));
+});
+
+test("a member can connect a private Linear API key without organization administration", async () => {
+  const f = fixture();
+  f.provider.id = "linear";
+  f.provider.identity = async (token) => ({ id: "linear-studio", label: token === "linear-key" ? "Studio" : "Wrong" });
+  await f.service.linearToken("studio", "grace", "linear-key");
+  await assert.rejects(
+    f.service.begin("studio", "ada", "linear", "", "https://hub.example"),
+    /belong to you/,
+  );
+  const grace = await f.service.list("studio", "grace");
+  const ada = await f.service.list("studio", "ada");
+  assert.deepEqual(grace.linearAccounts.map((account) => account.label), ["Studio"]);
+  assert.equal(ada.linearAccounts.length, 0);
+  assert.ok(!JSON.stringify(grace).includes("linear-key"));
+  assert.equal((await f.service.linearToken("other", "grace", "linear-key").then(() => true, () => false)), false);
 });
