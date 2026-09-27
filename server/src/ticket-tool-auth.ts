@@ -33,8 +33,7 @@ export function remyToolChatId(authorization: string | undefined): string | unde
 /// Remy capabilities expose orchestration but cannot change settings, pairing,
 /// notifications, checkouts, files, or destructive workspace/thread routes.
 export function isRemyToolRoute(method: string | undefined, pathname: string): boolean {
-  if (method === "POST" && /^\/organization-tools\/(resolve_linear_ticket|comment_organization_ticket|github_action|list_organization_computers|list_organization_workspaces|create_organization_ticket)$/.test(pathname)) return true;
-  if (method === "GET" && pathname === "/board") return true;
+  if (method === "POST" && /^\/organization-tools\/(github_action|list_organization_computers|list_organization_workspaces)$/.test(pathname)) return true;
   if ((method === "GET" || method === "POST") && pathname === "/workspaces") return true;
   if ((method === "GET" || method === "POST") && pathname === "/chats") return true;
   if (method === "POST" && pathname === "/runtime/environment-command") return true;
@@ -45,9 +44,5 @@ export function isRemyToolRoute(method: string | undefined, pathname: string): b
     method === "POST"
     && /^\/chats\/[^/]+\/browser\/(open|viewport|snapshot|back|forward|reload|click|type|insert|press|scroll|wait|zoom|close)$/.test(pathname)
   ) return true;
-  if (method === "POST" && pathname === "/tickets") return true;
-  if (!/^\/tickets\/[^/]+(?:\/[^/]+)?$/.test(pathname)) return false;
-  if (method === "GET" && /\/activity$/.test(pathname)) return true;
-  if (method === "PATCH" && /^\/tickets\/[^/]+$/.test(pathname)) return true;
-  return method === "POST" && /\/(status|comment|threads|handoff)$/.test(pathname);
+  return false;
 }

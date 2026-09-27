@@ -4,7 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { configDir } from "./paths.js";
 
 /// One file for everything Remy persists: config, settings, chats, workspaces,
-/// the board, archives, and the session registry.
+/// projects, archives, and the session registry.
 export const dbFile = join(configDir, "remy.db");
 
 const sqlite = await import("node:sqlite");
@@ -77,9 +77,8 @@ function migrate(database: DatabaseSync): void {
       name text primary key,
       json text not null
     );
-    -- The board. Every mutation is an event; the tables below are folds of it,
-    -- rebuilt from the log rather than written to directly. That is what lets a
-    -- second machine replay the same events and land on the same board.
+    -- Every change to a project is an event; the projects table is a fold of
+    -- it, rebuilt from the log rather than written to directly.
     create table if not exists board_log (
       id text primary key,
       device_id text not null,
@@ -95,11 +94,9 @@ function migrate(database: DatabaseSync): void {
     create table if not exists projects (
       id text primary key,
       name text not null,
-      key_prefix text not null,
       origin text,
       icon text,
       tint text,
-      counter integer not null default 0,
       created_at integer not null,
       updated_at integer not null,
       deleted integer not null default 0
@@ -110,38 +107,6 @@ function migrate(database: DatabaseSync): void {
       workspace_id text not null,
       primary key (project_id, workspace_id)
     );
-    create table if not exists tickets (
-      id text primary key,
-      -- The number is what a ticket owns; the key is that number behind its
-      -- project's slug, recomputed whenever either changes.
-      number integer not null default 0,
-      key text not null,
-      project_id text not null,
-      title text not null,
-      body text not null default '',
-      status text not null default 'backlog',
-      priority integer not null default 0,
-      parent_id text,
-      rank text not null default 'n',
-      device_id text,
-      branch text,
-      created_at integer not null,
-      updated_at integer not null,
-      started_at integer,
-      closed_at integer,
-      deleted integer not null default 0
-    );
-    create index if not exists tickets_project on tickets(project_id, status);
-    create table if not exists ticket_threads (
-      ticket_id text not null,
-      device_id text not null,
-      chat_id text not null,
-      stage text,
-      linked_by text not null default 'you',
-      created_at integer not null,
-      primary key (ticket_id, device_id, chat_id)
-    );
-    create index if not exists ticket_threads_chat on ticket_threads(chat_id);
     -- Shared workspace environments are encrypted independently on each
     -- machine. Values from the hub arrive over the authenticated computer
     -- channel and are re-encrypted with this machine's key.
@@ -214,8 +179,7 @@ function migrate(database: DatabaseSync): void {
     );
     create index if not exists pull_request_questions_pr on pull_request_questions(repository, number, created_at);
   `);
-  // Agents and routines were removed, and their projections with them. The
-  // board log keeps whatever it recorded; nothing folds it any more.
+  // Agents and routines were removed, and their projections with them.
   database.exec("drop table if exists agent_memories");
   database.exec("drop table if exists agents");
   database.exec("drop table if exists recurrences");
@@ -226,6 +190,18 @@ function migrate(database: DatabaseSync): void {
   // its own notifications.
   database.exec("drop table if exists push_devices");
   database.exec("delete from kv where key = 'pairing'");
+  // Tasks were removed. Tickets and their thread links go with their events;
+  // the log keeps only the projects that workspaces and environments use.
+  database.exec("drop table if exists ticket_threads");
+  database.exec("drop table if exists tickets");
+  database.exec("delete from board_log where entity <> 'project'");
+  for (const column of ["key_prefix", "counter"]) {
+    try {
+      database.exec(`alter table projects drop column ${column}`);
+    } catch {
+      // Column already gone on databases created after this migration.
+    }
+  }
   try {
     database.exec("alter table workspaces add column icon text");
   } catch {
@@ -243,11 +219,6 @@ function migrate(database: DatabaseSync): void {
   }
   try {
     database.exec("alter table projects add column tint text");
-  } catch {
-    // Column already exists on databases created after this migration.
-  }
-  try {
-    database.exec("alter table tickets add column number integer not null default 0");
   } catch {
     // Column already exists on databases created after this migration.
   }
@@ -308,9 +279,8 @@ function migrate(database: DatabaseSync): void {
   } catch {
     // Column already exists on databases created after this migration.
   }
-  // Loops were scheduled prompts with no ticket behind them. Recurring tickets
-  // replaced them, and a table nothing reads is worth dropping rather than
-  // carrying.
+  // Loops were scheduled prompts, and a table nothing reads is worth dropping
+  // rather than carrying.
   database.exec("drop table if exists loops");
   database.exec("pragma user_version = 9");
 }

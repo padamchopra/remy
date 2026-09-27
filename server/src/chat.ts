@@ -57,10 +57,9 @@ import {
   type ChatImageAttachment,
 } from "./transcript.js";
 import { codeReferencePrompt } from "./chat-references.js";
-import { inProcessTicketMcpServer, ticketPromptContext } from "./ticket-tools.js";
+import { inProcessRemyMcpServer } from "./ticket-tools.js";
 import { remyToolToken } from "./ticket-tool-auth.js";
 import { remyProviderInstructions } from "./ticket-tool-contract.js";
-import { forgetChat, linkTicketFromWorkPrompt, syncTicketFromThread } from "./tickets.js";
 import { readChatImage } from "./chat-attachments.js";
 import { uploadRoot } from "./uploads.js";
 import { nameDetachedWorktree } from "./workspaces.js";
@@ -292,13 +291,6 @@ export class Chat {
     const busy = next === "working" || next === "needs_input";
     this.workingSince = busy ? (this.workingSince ?? nowMs()) : undefined;
     this.currentState = next;
-    // A ticket following this thread starts from Todo, then moves between In
-    // progress and Needs input — see `syncTicketFromThread`.
-    try {
-      syncTicketFromThread(this.record.id, next);
-    } catch (error) {
-      console.error(`chat ${this.record.id} could not update its ticket:`, error);
-    }
   }
 
   summary(): ChatSummary {
@@ -394,11 +386,8 @@ export class Chat {
     // A better name is worth having but not worth waiting for, so it runs
     // alongside the turn and lands whenever it lands.
     if (first) void this.rename(safeText);
-    const ticketOwnerId = this.record.parentChatId ?? this.record.id;
-    linkTicketFromWorkPrompt(ticketOwnerId, safeText);
-    const ticketContext = ticketPromptContext(ticketOwnerId);
     const referenceContext = codeReferencePrompt(safeReferences);
-    const agentText = [ticketContext, referenceContext, agentContext, safeText]
+    const agentText = [referenceContext, agentContext, safeText]
       .filter(Boolean)
       .join("\n\n");
     const agentPrompt: ChatPrompt = { text: agentText, attachments, environment:await taskEnvironment(this.record.cwd,this.record.id) };
@@ -576,7 +565,7 @@ export class Chat {
               : {}),
             additionalDirectories: [uploadRoot],
             developerInstructions: remyProviderInstructions(),
-            inProcessMcp: inProcessTicketMcpServer(this.record.id, {
+            inProcessMcp: inProcessRemyMcpServer(this.record.id, {
               currentCwd: this.record.cwd,
               list: listChats,
               read: getChat,
@@ -1460,7 +1449,6 @@ export function chatCwd(id: string): string {
 
 export function deleteChat(id: string): void {
   const chat = mustGet(id);
-  forgetChat(id);
   chat.stop();
   chat.markDeleted();
   chats.delete(id);

@@ -11,13 +11,13 @@
 export interface ConvArtifact {
   organizationId?: string;
   computerId?: string;
-  kind: "ticket" | "thread" | "workspace" | "routine";
-  /// A ticket is addressed by key, a thread and a workspace by id. Whichever
-  /// one this has is what opens it.
+  kind: "thread" | "workspace";
+  /// A thread and a workspace are addressed by id; `key` is kept for older
+  /// markers and opens nothing.
   key?: string;
   id?: string;
   title: string;
-  /// One line under the title: a ticket's status, a thread's folder.
+  /// One line under the title: a thread's folder.
   detail?: string;
 }
 
@@ -36,7 +36,7 @@ function parse(json: string): ConvArtifact | undefined {
   try {
     const value = JSON.parse(json) as Record<string, unknown>;
     const kind = value.kind;
-    if (kind !== "ticket" && kind !== "thread" && kind !== "workspace" && kind !== "routine") return undefined;
+    if (kind !== "thread" && kind !== "workspace") return undefined;
     const title = typeof value.title === "string" ? value.title.slice(0, 200) : "";
     if (!title) return undefined;
     return {

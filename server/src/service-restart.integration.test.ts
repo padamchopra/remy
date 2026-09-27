@@ -70,7 +70,6 @@ test('an authenticated idle handoff replaces the actual listener and preserves s
     assert.equal(second.health.release, 'new');
     assert.notEqual(second.health.instance, first.health.instance);
     assert.equal((await request('/server/hub/computer')).status, 200);
-    assert.equal((await request('/server/hub/authorize', { method: 'POST', body: '{}' })).status, 400);
     const preserved = new DatabaseSync(join(state, 'remy.db'), { readOnly: true });
     const row = preserved.prepare("select value from kv where key = 'config'").get() as { value: string };
     assert.equal(JSON.parse(row.value).token, token);

@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { artifactMarker, takeArtifacts, type ConvArtifact } from "./remy-artifacts.js";
 
-const ticket: ConvArtifact = { kind: "ticket", key: "REMY-12", title: "Rework the inbox", detail: "todo" };
+const workspace: ConvArtifact = { kind: "workspace", id: "remy", title: "Remy", detail: "~/Projects/remy" };
 
 test("a tool's answer keeps its sentence and hands the card over separately", () => {
-  const result = takeArtifacts(`Created REMY-12 in Remy.${artifactMarker(ticket)}`);
-  assert.equal(result.text, "Created REMY-12 in Remy.");
-  assert.deepEqual(result.artifacts, [ticket]);
+  const result = takeArtifacts(`Registered Remy.${artifactMarker(workspace)}`);
+  assert.equal(result.text, "Registered Remy.");
+  assert.deepEqual(result.artifacts, [workspace]);
 });
 
 test("output with no marker comes back exactly as it was", () => {
@@ -19,9 +19,8 @@ test("output with no marker comes back exactly as it was", () => {
 
 test("several things made in one call each get a card", () => {
   const thread: ConvArtifact = { kind: "thread", id: "abc", title: "Rework the inbox" };
-  const routine: ConvArtifact = { kind: "routine", id: "routine-1", title: "Morning review" };
-  const result = takeArtifacts(`Done.${artifactMarker(ticket)}${artifactMarker(thread)}${artifactMarker(routine)}`);
-  assert.deepEqual(result.artifacts, [ticket, thread, routine]);
+  const result = takeArtifacts(`Done.${artifactMarker(workspace)}${artifactMarker(thread)}`);
+  assert.deepEqual(result.artifacts, [workspace, thread]);
 });
 
 test("a marker Remy cannot read is dropped rather than drawn", () => {
@@ -32,7 +31,9 @@ test("a marker Remy cannot read is dropped rather than drawn", () => {
 
 test("a card with no kind Remy draws, or no name to draw, is dropped", () => {
   const bogus = '<remy-artifact>{"kind":"invoice","title":"Nope"}</remy-artifact>'
-    + '<remy-artifact>{"kind":"ticket"}</remy-artifact>';
+    + '<remy-artifact>{"kind":"thread"}</remy-artifact>'
+    // Tasks were removed, so a ticket card from an older transcript is not drawn.
+    + '<remy-artifact>{"kind":"ticket","key":"REMY-12","title":"Rework the inbox"}</remy-artifact>';
   assert.deepEqual(takeArtifacts(`Hm.${bogus}`).artifacts, []);
 });
 

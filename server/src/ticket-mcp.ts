@@ -1,25 +1,11 @@
-import {hubLinearResolveInput,hubTicketCommentInput} from "./hub-linear-input.js";
 import {hubGitHubInput} from "./hub-github-input.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { basename } from "node:path";
 import { homedir } from "node:os";
 import { z } from "zod";
-import { REMY_TOOL_INSTRUCTIONS, THREAD_TICKET_STATUSES } from "./ticket-tool-contract.js";
+import { REMY_TOOL_INSTRUCTIONS } from "./ticket-tool-contract.js";
 import { artifactMarker, type ConvArtifact } from "./remy-artifacts.js";
-
-interface ApiTicket {
-  id: string;
-  key: string;
-  projectId: string;
-  title: string;
-  body: string;
-  status: string;
-  priority: number;
-  branch?: string;
-  parentId?: string;
-  threads: { chatId: string; deviceId: string }[];
-}
 
 interface ApiWorkspace {
   id: string;
@@ -53,11 +39,6 @@ interface ApiBrowserView {
   height: number;
 }
 
-interface Board {
-  tickets?: ApiTicket[];
-  projects?: { id: string; name: string; workspaceIds?: string[] }[];
-}
-
 const apiUrl = process.env.REMY_API_URL ?? "http://127.0.0.1:8420";
 const token = process.env.REMY_API_TOKEN
   ?? (process.env.REMY_MCP_PROVIDER
@@ -65,7 +46,6 @@ const token = process.env.REMY_API_TOKEN
     : undefined)
   ?? "";
 const chatId = process.env.REMY_CHAT_ID ?? "";
-const threadDeviceId = process.env.REMY_DEVICE_ID ?? "";
 
 async function request<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
   const response = await fetch(`${apiUrl}${path}`, {
@@ -81,44 +61,6 @@ async function request<T>(path: string, init: { method?: string; body?: unknown 
   return body as T;
 }
 
-async function board(): Promise<Board> {
-  return request<Board>("/board");
-}
-
-async function ticketFor(key?: string): Promise<{ ticket: ApiTicket; board: Board }> {
-  const snapshot = await board();
-  const tickets = snapshot.tickets ?? [];
-  const ticket = key
-    ? tickets.find((entry) => entry.key === key.trim().toUpperCase())
-    : tickets.find((entry) => entry.threads.some((thread) =>
-      thread.chatId === chatId && (!threadDeviceId || thread.deviceId === threadDeviceId)));
-  if (!ticket) throw new Error(key ? `No ticket called ${key}.` : "This thread is not linked to a ticket.");
-  return { ticket, board: snapshot };
-}
-
-async function describe(key?: string): Promise<string> {
-  const { ticket, board: snapshot } = await ticketFor(key);
-  const project = snapshot.projects?.find((entry) => entry.id === ticket.projectId);
-  const children = snapshot.tickets?.filter((entry) => entry.parentId === ticket.id) ?? [];
-  const activity = await request<{ activity?: { actor: string; kind: string; body?: string }[] }>(
-    `/tickets/${encodeURIComponent(ticket.id)}/activity`,
-  );
-  return [
-    `${ticket.key}: ${ticket.title}`,
-    `Workspace: ${project?.name ?? "Unknown"}`,
-    `Status: ${ticket.status}`,
-    `Priority: ${ticket.priority}`,
-    ticket.branch ? `Branch: ${ticket.branch}` : "",
-    ticket.body ? `\nDescription:\n${ticket.body}` : "\nNo description.",
-    children.length
-      ? `\nSub-tickets:\n${children.map((child) => `- ${child.key} [${child.status}] ${child.title}`).join("\n")}`
-      : "",
-    activity.activity?.length
-      ? `\nRecent activity:\n${activity.activity.slice(-20).map((entry) => `- ${entry.actor} ${entry.kind}${entry.body ? `: ${entry.body}` : ""}`).join("\n")}`
-      : "",
-  ].filter(Boolean).join("\n");
-}
-
 /// A tool's answer, and the card the feed draws under it. Same marker the
 /// in-process server uses, so a card looks the same on every provider.
 function ok(text: string, artifact?: ConvArtifact) {
@@ -127,10 +69,6 @@ function ok(text: string, artifact?: ConvArtifact) {
 
 function browserResult(action: string, view: ApiBrowserView): string {
   return [action, `Page: ${view.title || "Untitled"}`, `URL: ${view.url || "about:blank"}`].join("\n");
-}
-
-function ticketCard(ticket: ApiTicket): ConvArtifact {
-  return { kind: "ticket", key: ticket.key, title: ticket.title, detail: ticket.status };
 }
 
 function workspaceName(path: string): string {
@@ -191,17 +129,14 @@ function describeThread(thread: ApiThread): string {
   ].filter(Boolean).join("\n");
 }
 
-const key = z.string().optional().describe("Ticket key. Omit it for this thread's linked ticket.");
 const server = new McpServer(
   { name: "remy", version: "1" },
   { instructions: REMY_TOOL_INSTRUCTIONS },
 );
 
-server.registerTool("resolve_linear_ticket",{description:"Resolve a Linear ticket in this workspace.",inputSchema:hubLinearResolveInput},async input=>{const result=await request<{artifact?:ConvArtifact}>("/organization-tools/resolve_linear_ticket",{method:"POST",body:input});return ok(JSON.stringify(result),result.artifact);});
-server.registerTool("comment_organization_ticket",{description:"Comment on a shared ticket with a link to this thread.",inputSchema:hubTicketCommentInput},async input=>ok(JSON.stringify(await request("/organization-tools/comment_organization_ticket",{method:"POST",body:input}))));
 server.registerTool("github_action",{description:"Create a pull request, comment or review using the linked member account.",inputSchema:hubGitHubInput},async input=>ok(JSON.stringify(await request("/organization-tools/github_action",{method:"POST",body:input}))));
 for(const action of ["list_organization_computers","list_organization_workspaces"])server.registerTool(action,{description:"List organization resources visible to the person.",inputSchema:{}},async()=>ok(JSON.stringify(await request(`/organization-tools/${action}`,{method:"POST",body:{}}))));
-for(const action of ["start_organization_thread","create_organization_ticket","move_organization_thread"])server.registerTool(action,{description:"Act within the person's visible organization workspaces.",inputSchema:{workspaceId:z.string(),prompt:z.string().optional(),title:z.string().optional(),ticketId:z.string().optional(),threadId:z.string().optional(),computerId:z.string().optional()}},async input=>{const result=await request<{artifact?:ConvArtifact}>(`/organization-tools/${action}`,{method:"POST",body:input});return ok(JSON.stringify(result),result.artifact);});
+for(const action of ["start_organization_thread","move_organization_thread"])server.registerTool(action,{description:"Act within the person's visible organization workspaces.",inputSchema:{workspaceId:z.string(),prompt:z.string().optional(),title:z.string().optional(),threadId:z.string().optional(),computerId:z.string().optional()}},async input=>{const result=await request<{artifact?:ConvArtifact}>(`/organization-tools/${action}`,{method:"POST",body:input});return ok(JSON.stringify(result),result.artifact);});
 server.registerTool("list_workspaces", {
   description: "List the workspace folders registered on this machine.",
   inputSchema: {},
@@ -438,123 +373,6 @@ server.registerTool("stop_thread", {
   if (thread_id === chatId) throw new Error("The current thread cannot stop itself through Remy.");
   await request(`/chats/${encodeURIComponent(thread_id)}/stop`, { method: "POST" });
   return ok(`Stopped thread ${thread_id}.`);
-});
-
-server.registerTool("create_ticket", {
-  description: "Write a new ticket on a workspace's board.",
-  inputSchema: {
-    title: z.string().min(1).max(200),
-    body: z.string().max(20000).optional().describe("The description in markdown"),
-    workspace: z.string().optional().describe("Registered workspace name, id, path, or origin. Omit it to use this thread's folder."),
-    status: z.enum(THREAD_TICKET_STATUSES).optional().describe("Defaults to Backlog. Choose another status only when the person explicitly asks."),
-  },
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-}, async ({ title, body, workspace, status }) => {
-  const held = await workspaceFor(workspace);
-  const snapshot = await board();
-  const project = held && snapshot.projects?.find((entry) => entry.workspaceIds?.includes(held.id));
-  if (!project) throw new Error("That folder has no board yet. Register it as a workspace first.");
-  const created = await request<{ ticket: ApiTicket }>("/tickets", {
-    method: "POST",
-    body: {
-      projectId: project.id,
-      title,
-      ...(body ? { body } : {}),
-      ...(status ? { status } : {}),
-    },
-  });
-  return ok(`Created ${created.ticket.key} in ${project.name}.`, ticketCard(created.ticket));
-});
-
-server.registerTool("read_ticket", {
-  description: "Read a ticket's current scope, status, sub-tickets, and recent activity.",
-  inputSchema: { key },
-  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-}, async ({ key: asked }) => ok(await describe(asked)));
-
-server.registerTool("attach_ticket", {
-  description: "Link this thread to a ticket before working on it.",
-  inputSchema: { key: z.string() },
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-}, async ({ key: asked }) => {
-  const { ticket } = await ticketFor(asked);
-  await request(`/tickets/${encodeURIComponent(ticket.id)}/threads`, {
-    method: "POST",
-    body: {
-      chatId,
-      deviceId: threadDeviceId,
-      state: "working",
-      linkedBy: "runner",
-    },
-  });
-  return ok(`Linked this thread to ${ticket.key}.`, ticketCard(ticket));
-});
-
-server.registerTool("update_ticket", {
-  description: "Rewrite a ticket's title or product scope.",
-  inputSchema: {
-    key,
-    title: z.string().max(200).optional(),
-    body: z.string().max(20000).optional().describe("The complete replacement description in markdown"),
-  },
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-}, async ({ key: asked, title, body }) => {
-  const { ticket } = await ticketFor(asked);
-  const patch: Record<string, unknown> = {};
-  if (title !== undefined) patch.title = title;
-  if (body !== undefined) patch.body = body;
-  if (Object.keys(patch).length === 0) throw new Error("Give a title or description to update.");
-  await request(`/tickets/${encodeURIComponent(ticket.id)}`, { method: "PATCH", body: patch });
-  return ok(`Updated ${ticket.key}.`, ticketCard(ticket));
-});
-
-server.registerTool("set_ticket_status", {
-  description: "Move a ticket only when the person explicitly asks for a particular status. Never infer Done from finishing work.",
-  inputSchema: {
-    key,
-    status: z.enum(THREAD_TICKET_STATUSES),
-    note: z.string().max(10000).optional(),
-    instruction: z.string().max(1000).describe("The exact words from the person's latest message that request this status"),
-  },
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-}, async ({ key: asked, status, note, instruction }) => {
-  const { ticket } = await ticketFor(asked);
-  await request(`/tickets/${encodeURIComponent(ticket.id)}/status`, {
-    method: "POST",
-    body: { status, note, instruction },
-  });
-  return ok(`Moved ${ticket.key} to ${status}.`, { ...ticketCard(ticket), detail: status });
-});
-
-server.registerTool("comment_on_ticket", {
-  description: "Record a concise progress note, QA result, blocker, or decision on a ticket.",
-  inputSchema: { key, body: z.string().max(10000) },
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-}, async ({ key: asked, body }) => {
-  const { ticket } = await ticketFor(asked);
-  await request(`/tickets/${encodeURIComponent(ticket.id)}/comment`, {
-    method: "POST",
-    body: { body },
-  });
-  return ok(`Commented on ${ticket.key}.`, ticketCard(ticket));
-});
-
-server.registerTool("create_sub_ticket", {
-  description: "Create a smaller piece of work beneath a ticket.",
-  inputSchema: { key, title: z.string().max(200), body: z.string().max(20000).optional() },
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-}, async ({ key: asked, title, body }) => {
-  const { ticket } = await ticketFor(asked);
-  const created = await request<{ ticket: ApiTicket }>("/tickets", {
-    method: "POST",
-    body: {
-      projectId: ticket.projectId,
-      parentId: ticket.id,
-      title,
-      ...(body ? { body } : {}),
-    },
-  });
-  return ok(`Created ${created.ticket.key} under ${ticket.key}.`, ticketCard(created.ticket));
 });
 
 await server.connect(new StdioServerTransport());

@@ -100,7 +100,6 @@ function topicsFor(payload: unknown): string[] {
     return ["pull-requests"];
   }
   if (type === "settings" || type === "automatic-update") return ["settings"];
-  if (type === "hub-board") return ["board", "settings"];
   if (type === "board") return ["board", "sidebar", "settings"];
   if (type === "quick-replies" || type === "environments") return ["settings"];
   return ["sidebar"];
