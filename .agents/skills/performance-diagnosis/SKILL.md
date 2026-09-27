@@ -102,7 +102,7 @@ Deep links wait only for the catalogue needed to decide whether their entity exi
 
 ## Re-measure the same interaction
 
-Compare cold open, warm reopen, live update, unavailable peer, reconnect, and deep-link reload.
+Compare cold open, warm reopen, live update, unavailable computer, reconnect, and deep-link reload.
 
 Confirm request counts as well as elapsed time. A faster median that still performs duplicate remote calls is not complete.
 

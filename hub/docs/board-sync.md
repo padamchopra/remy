@@ -2,7 +2,7 @@
 
 An organization retains the authoritative shared log in its Durable Object. A trusted computer can keep a SQLite replica under its organization id. Receiving organization data never makes it part of the computer's private local log.
 
-The consent controls that turned this on lived in the removed local window's Computers settings, so nothing in the web app grants or starts it today. The hub grant routes and the computer's `/server/hub/board` routes remain; whether they stay is decided with the removal of daemon-to-daemon sync.
+The consent controls that turned this on lived in the removed local window's Computers settings, so nothing in the web app grants or starts it today. Daemon-to-daemon sync is gone; this replica is computer-to-hub and stays, with its hub grant routes and the computer's `/server/hub/board` routes, until the web app grants it or it is removed with them.
 
 | Path | Owner and behavior |
 | --- | --- |

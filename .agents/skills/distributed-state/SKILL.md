@@ -29,7 +29,7 @@ Check local and remote list, detail, write, live-update, reconnect, restart, and
 
 The browser reaches a computer only through the hub. A member session authenticates the page; the computer proves itself with its own keypair over its outbound connection, and computer credentials never enter the browser (`hub/docs/threads.md`). The hub checks membership and access, and the computer checks them again before it acts.
 
-Do not put a computer credential in the page or widen the loopback bind. Peer routing through `server/src/peers.ts` and `peer-stream.ts` belonged to the desktop experience and is being removed; do not add paths that depend on it.
+Do not put a computer credential in the page or widen the loopback bind. Computers do not reach each other: there is no peer routing, daemon-to-daemon board sync or tailnet exposure, so a path that needs another computer's state goes through the hub.
 
 ## Hosted thread start uses the computer's providers
 

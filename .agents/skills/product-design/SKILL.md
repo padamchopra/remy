@@ -11,7 +11,7 @@ description: Product structure, platform parity, and ownership in Remy. Use befo
 
 The web app is the only client; the daemon and CLI connect computers to it. The Mac app, the phone app and the web UI's local mode are gone. A capability a person uses belongs in the hosted web app and reaches a computer through the hub; the daemon and the `remy` CLI exist to sign a computer in, keep it connected and run its threads.
 
-Do not add a window, a browser shell against a daemon's `/api`, or a daemon-only settings screen. A setting that lives on a computer is edited from the web app through that computer's hub connection. Pairing, peers, `board_log` sync between daemons, Tailscale exposure and the device consent flows belonged to the desktop experience and are being removed; shape new multi-computer work on hub computers, organizations and grants instead.
+Do not add a window, a browser shell against a daemon's `/api`, or a daemon-only settings screen. A setting that lives on a computer is edited from the web app through that computer's hub connection. Pairing, peers, `board_log` sync between daemons, Tailscale exposure and the device consent flows are gone; shape multi-computer work on hub computers, organizations and grants.
 
 BAD
 ```text
