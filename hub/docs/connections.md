@@ -5,11 +5,11 @@ WRK-21 and WRK-133–136 provide the shared connection broker. Settings → Conn
 Apply migration 0012. The hub uses its existing JOBS queue and scheduled trigger. Register provider client IDs as variables and client secrets/webhook secrets through Secret Store bindings:
 
 - GitHub App user authorization: GITHUB_CONNECTION_CLIENT_ID and GITHUB_CONNECTION_CLIENT_SECRET; GITHUB_WEBHOOK_SECRET for deliveries. When these are absent, the repository picker reuses GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET from sign-in, with explicit repo consent and a separately validated connection state on the existing callback.
-- Linear: LINEAR_CLIENT_ID, LINEAR_CLIENT_SECRET and LINEAR_WEBHOOK_SECRET.
+- Linear: LINEAR_CLIENT_ID and LINEAR_CLIENT_SECRET. Linear has no webhook.
 - Callback: `https://<hub>/api/connections/<provider>/callback`.
-- Webhook: `https://<hub>/api/connections/<provider>/webhook`.
+- Webhook, for GitHub only: `https://<hub>/api/connections/github/webhook`.
 
-Provider definitions live in connection-providers.ts. Adding a provider supplies its endpoints, scopes, verified identity lookup, signature validation and delivery handler. Provider-specific setup and behavior arrive in WRK-22 and WRK-23; this framework alone does not import repositories or synchronize tickets.
+Provider definitions live in connection-providers.ts. Adding a provider supplies its endpoints, scopes and verified identity lookup, plus signature validation and a delivery handler when it sends webhooks. This framework alone does not import repositories.
 
 Credentials and PKCE verifiers are encrypted using AUTH_SECRET-derived AES-GCM keys with organization/provider/record context. Public reads return identity labels and connection state, never credentials. State is single-use, expires after ten minutes and is bound to the signed-in member. A disconnect advances an epoch so an already-running callback cannot reconnect it. Member departure removes the member credential. Organization credentials survive their original installer's departure and disappear with the organization.
 
@@ -19,7 +19,7 @@ Refresh uses a D1 lease and generation check. A failed refresh asks the owner to
 
 The QA provider runs only in the separate test fixture. It replaces vendor OAuth endpoints while exercising the production broker, PKCE exchange, encrypted storage, current-member checks and live settings. Vendor consent and refresh still require configured OAuth applications; no live vendor result is claimed by that fixture.
 
-Provider references: [Linear OAuth](https://linear.app/developers/oauth-2-0-authentication), [Linear webhooks](https://linear.app/developers/webhooks), [GitHub App user authorization](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app).
+Provider references: [Linear OAuth](https://linear.app/developers/oauth-2-0-authentication), [GitHub App user authorization](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app).
 
 
 Workspace setup offers GitHub account authorization or a personal access token, followed by a paginated repository picker. Tokens are validated against GitHub and kept in the existing encrypted member connection; the picker never reads them back. Import rechecks repository access and reuses an existing canonical workspace without replacing other selections. A PAT connection does not configure GitHub App installations or webhooks; hosted Git still requires its existing installation setup.

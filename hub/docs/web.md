@@ -6,10 +6,10 @@ Hosted requests carry the organization in their URL and the web session in an HT
 
 | Path | Behavior |
 | --- | --- |
-| Owner | D1 owns organizations, memberships, teams, and workspace restrictions; the organization Durable Object owns Tasks. |
+| Owner | D1 owns organizations, memberships, teams, and workspace restrictions; the organization Durable Object owns thread snapshots and live streams. |
 | Read | Every list/detail checks current membership and workspace access. Imported workspace records remain organization-visible unless they have a restricted workspace registration. |
-| Write | Member identity is assigned by the hub. Current access and any new workspace destination are checked before appending. |
-| Live | Board and organization sockets send content-free resets. Open views read authorized state again; membership/session expiry closes the socket. |
+| Write | Member identity is assigned by the hub. Current access and any new workspace destination are checked before the request reaches a computer. |
+| Live | Organization sockets send content-free resets. Open views read authorized state again; membership/session expiry closes the socket. |
 | Reconnect | Lists refresh on connection/reset; transient failures retain an explicitly stale view. |
 | Navigation | Clean paths reload through the app-shell fallback. All is the default account view with no query parameter; a narrower account writes `organization` explicitly. Legacy hash links and `organization=all` normalize on open. Threads remain in the sidebar while other sections are open. |
 | Sign-out | Only the current session is revoked, its cookie expires, and the organization view is cleared. |
@@ -34,7 +34,7 @@ For isolated hosted QA, build the computer with `npm run build --prefix server` 
 QA_SESSION=<printed session file> node web/scripts/qa-hub-web.mjs
 ```
 
-The test signs in two people, creates an organization, delivers and accepts an invitation, edits shared Tasks, restricts a workspace, grants and revokes team access live, changes roles, reloads deep links, switches organizations, and checks a narrow viewport. Capture authorization and invitation setup outside any reviewer recording.
+The test signs in two people, creates an organization, delivers and accepts an invitation, restricts a workspace, grants and revokes team access live, changes roles, reloads deep links, switches organizations, and checks a narrow viewport. Capture authorization and invitation setup outside any reviewer recording.
 
 References: [Cloudflare asset routing](https://developers.cloudflare.com/workers/static-assets/binding/), [Better Auth sign-in](https://better-auth.com/docs/basic-usage), [SSO](https://better-auth.com/docs/plugins/sso).
 
