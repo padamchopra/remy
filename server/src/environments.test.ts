@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,107 +9,49 @@ const stateDir = mkdtempSync(join(tmpdir(), "remy-environments-test-"));
 process.env.MC_CONFIG_DIR = stateDir;
 
 const { db } = await import("./db.js");
-const { bindWorkspace, createProject } = await import("./projects.js");
-const {
-  createEnvironment,
-  disableEnvironment,
-  deleteEnvironmentValue,
-  importEnvironmentFile,
-  listEnvironmentFiles,
-  listEnvironments,
-  mergeEnvironmentSync,
-  parseEnvironmentValues,
-  renameEnvironment,
-  selectEnvironment,
-  redactForCwd,
-  runWithEnvironment,
-  setEnvironmentValues,
-} = await import("./environments.js");
+const env = await import("./environments.js");
 
 const workspacePath = join(stateDir, "repo");
 mkdirSync(workspacePath);
-const project = createProject({ name: "Secrets" });
-db.prepare(
-  "insert into workspaces (id, name, path, icon, tint, provider, model) values (?, ?, ?, null, null, null, null)",
-).run("workspace-one", "Secrets", workspacePath);
-bindWorkspace(project.id, "workspace-one");
 
-test("environment views and SQLite never expose cleartext values", () => {
-  const environment = createEnvironment(project.id, "Development");
-  const saved = setEnvironmentValues(project.id, environment.id, {
-    API_KEY: "exact-secret-value",
-    PORT: "4040",
-  });
-
-  assert.deepEqual(saved.variables.map((entry) => entry.name), ["API_KEY", "PORT"]);
-  assert.equal(JSON.stringify(listEnvironments(project.id)).includes("exact-secret-value"), false);
-  const row = db.prepare(
-    "select ciphertext, iv, tag from workspace_environment_values where environment_id = ? and name = 'API_KEY'",
-  ).get(environment.id) as { ciphertext: string; iv: string; tag: string };
-  assert.ok(row.ciphertext);
-  assert.ok(row.iv);
-  assert.ok(row.tag);
-  assert.equal(JSON.stringify(row).includes("exact-secret-value"), false);
+test("a thread keeps the values the hub delivered for it, sealed, and nothing else", async () => {
+  assert.deepEqual(await env.taskEnvironment("thread-one"), {});
+  env.setTaskEnvironment("thread-one", { values: { SERVICE_TOKEN: "task-test-secret", LOG_LEVEL: "debug" }, secrets: ["SERVICE_TOKEN"] });
+  assert.equal((await env.taskEnvironment("thread-one")).SERVICE_TOKEN, "task-test-secret");
+  assert.deepEqual(await env.taskEnvironment("thread-two"), {});
+  assert.ok(!JSON.stringify(db.prepare("select value from kv where key=?").get("taskEnvironment:thread-one")).includes("task-test-secret"));
+  assert.equal(env.redactForThread("thread-one", "token task-test-secret"), "token [REDACTED]");
+  // A variable is ordinary text; only secrets are scrubbed.
+  assert.equal(env.redactForThread("thread-one", "level debug"), "level debug");
+  assert.equal(env.redactKnownSecrets("level debug, token task-test-secret"), "level debug, token [REDACTED]");
+  // A later turn replaces the whole environment, so a removed value is gone.
+  env.setTaskEnvironment("thread-one", { values: { LOG_LEVEL: "info" } });
+  assert.deepEqual(await env.taskEnvironment("thread-one"), { LOG_LEVEL: "info" });
+  assert.throws(() => env.setTaskEnvironment("thread-one", { values: { REMY_HOSTED_TASK: "1" } }), /invalid/);
+  assert.throws(() => env.setTaskEnvironment("thread-one", { values: { OK: 1 } }), /invalid/);
+  // A hub that names no secrets has every value treated as one.
+  env.setTaskEnvironment("thread-legacy", { values: { OLD_VALUE: "legacy-test-value" } });
+  assert.equal(env.redactForThread("thread-legacy", "legacy-test-value"), "[REDACTED]");
 });
 
-test("an environment can be renamed or disabled without revealing or removing values", () => {
-  const environment = listEnvironments(project.id)[0];
-  const renamed = renameEnvironment(project.id, environment.id, "Local development");
-  assert.equal(renamed.name, "Local development");
-  assert.equal(renamed.active, true);
-  assert.deepEqual(renamed.variables.map((entry) => entry.name), ["API_KEY", "PORT"]);
-
-  disableEnvironment(project.id);
-  assert.equal(listEnvironments(project.id).some((entry) => entry.active), false);
-  assert.ok(db.prepare("select 1 from workspace_environment_selection where project_id = ? and environment_id = ''").get(project.id));
-  selectEnvironment(project.id, environment.id);
+test("the local named environments are gone", () => {
+  const tables = (db.prepare("select name from sqlite_master where type='table'").all() as { name: string }[]).map((row) => row.name);
+  assert.ok(!tables.some((name) => name.startsWith("workspace_environment")));
 });
 
-test("dotenv and comma-separated values import without returning values", async () => {
-  assert.deepEqual(parseEnvironmentValues("ONE=first, TWO='second, THREE=inside'\nexport THREE=third # note"), {
-    ONE: "first",
-    TWO: "second, THREE=inside",
-    THREE: "third",
-  });
-  writeFileSync(join(workspacePath, ".env.local"), "FROM_FILE=inside-file\n");
-  assert.deepEqual(await listEnvironmentFiles(project.id), [".env.local"]);
-  const environment = listEnvironments(project.id)[0];
-  await importEnvironmentFile(project.id, environment.id, ".env.local");
-  assert.ok(listEnvironments(project.id)[0].variables.some((entry) => entry.name === "FROM_FILE"));
-  writeFileSync(join(workspacePath, ".env.remove"), "REMOVED_FILE=gone\n");
-  await importEnvironmentFile(project.id, environment.id, ".env.remove", true);
-  assert.equal(existsSync(join(workspacePath, ".env.remove")), false);
-});
-
-test("runtime commands receive values but their output and prompts are redacted", async () => {
-  const result = await runWithEnvironment(workspacePath, {
+test("a runtime command sees the thread's values, and they are scrubbed from what it returns", async () => {
+  await assert.rejects(env.runWithEnvironment(workspacePath, "thread-empty", { program: process.execPath, args: ["-e", ""] }), /no environment values/);
+  env.setTaskEnvironment("thread-run", { values: { FROM_HUB: "exact-secret-value" } });
+  const result = await env.runWithEnvironment(workspacePath, "thread-run", {
     program: process.execPath,
-    args: ["-e", "process.stdout.write(`${process.env.API_KEY} safe`)"],
+    args: ["-e", "console.log(process.env.FROM_HUB)"],
   });
+  assert.equal(result.output.trim(), "[REDACTED]");
   assert.equal(result.exitCode, 0);
-  assert.equal(result.output, "[REDACTED] safe");
-  assert.equal(await redactForCwd(workspacePath, "token exact-secret-value"), "token [REDACTED]");
-  const { redactEntry } = await import("./chat.js");
-  const entry = redactEntry({
-    id: "activity:tool", kind: "tool",
-    activity: { id: "tool", kind: "shell", provider: "claude", title: "exact-secret-value", command: "echo exact-secret-value", progress: "exact-secret-value", output: "exact-secret-value", model: "exact-secret-value", status: "running", startedAt: 1, updatedAt: 2 },
-  });
-  assert.ok(!JSON.stringify(entry).includes("exact-secret-value"));
-  assert.equal(entry.activity?.output, "[REDACTED]");
-});
-
-test("hub records converge while the receiving database remains encrypted", () => {
-  const environment = listEnvironments(project.id)[0];
-  const record = { kind: "value", projectId: project.id, environmentId: environment.id, name: "HUB_KEY", deviceId: "hub" };
-  assert.equal(mergeEnvironmentSync([{ ...record, value: "hub-secret-value", updatedAt: Date.now() + 1_000 }]), 1);
-  assert.equal(mergeEnvironmentSync([{ ...record, value: "stale-value", updatedAt: 1 }]), 0);
-  assert.ok(!JSON.stringify(db.prepare("select * from workspace_environment_values").all()).includes("hub-secret-value"));
-
-  deleteEnvironmentValue(project.id, environment.id, "API_KEY");
-  assert.equal(listEnvironments(project.id)[0].variables.some((entry) => entry.name === "API_KEY"), false);
 });
 
 test("runtime environments cannot publish version-control history", async () => {
+  env.setTaskEnvironment("thread-git", { values: { FROM_HUB: "exact-secret-value" } });
   execFileSync("git", ["init"], { cwd: workspacePath, stdio: "ignore" });
   execFileSync("git", ["config", "user.name", "Remy Test"], { cwd: workspacePath });
   execFileSync("git", ["config", "user.email", "remy@example.com"], { cwd: workspacePath });
@@ -117,60 +59,26 @@ test("runtime environments cannot publish version-control history", async () => 
   execFileSync("git", ["add", "README.md"], { cwd: workspacePath });
   execFileSync("git", ["commit", "-m", "Baseline"], { cwd: workspacePath, stdio: "ignore" });
   await assert.rejects(
-    runWithEnvironment(workspacePath, { program: "git", args: ["commit", "-m", "unsafe"] }),
+    env.runWithEnvironment(workspacePath, "thread-git", { program: "git", args: ["commit", "-m", "unsafe"] }),
     /without the workspace environment/,
   );
 
-  const wrote = await runWithEnvironment(workspacePath, {
+  const wrote = await env.runWithEnvironment(workspacePath, "thread-git", {
     program: process.execPath,
-    args: ["-e", "require('fs').writeFileSync('leak.txt', process.env.FROM_FILE)"],
+    args: ["-e", "require('fs').writeFileSync('leak.txt', process.env.FROM_HUB)"],
   });
   assert.match(wrote.output, /removed configured values/);
   assert.equal(readFileSync(join(workspacePath, "leak.txt"), "utf8"), "[REDACTED]");
 
   const before = execFileSync("git", ["rev-parse", "HEAD"], { cwd: workspacePath, encoding: "utf8" }).trim();
-  const committed = await runWithEnvironment(workspacePath, {
+  const committed = await env.runWithEnvironment(workspacePath, "thread-git", {
     program: process.execPath,
     args: [
       "-e",
-      "const {execFileSync}=require('child_process');require('fs').writeFileSync('commit.txt',process.env.FROM_FILE);execFileSync('git',['add','commit.txt']);execFileSync('git',['commit','-m','Indirect']);",
+      "const {execFileSync}=require('child_process');require('fs').writeFileSync('commit.txt',process.env.FROM_HUB);execFileSync('git',['add','commit.txt']);execFileSync('git',['commit','-m','Indirect']);",
     ],
   });
   assert.equal(committed.exitCode, 1);
   assert.equal(execFileSync("git", ["rev-parse", "HEAD"], { cwd: workspacePath, encoding: "utf8" }).trim(), before);
   assert.equal(execFileSync("git", ["show", ":commit.txt"], { cwd: workspacePath, encoding: "utf8" }), "[REDACTED]");
-});
-
-test("shared profiles apply to several workspace tasks without exposing stored values",async()=>{
-  const env=await import("./environments.js");
-  const second=createProject({name:"Second"});
-  const shared=createEnvironment("*","Shared development");
-  setEnvironmentValues("*",shared.id,{SERVICE_TOKEN:"shared-test-secret"});
-  selectEnvironment(project.id,shared.id);selectEnvironment(second.id,shared.id);
-  assert.equal((await env.taskEnvironment(workspacePath)).SERVICE_TOKEN,"shared-test-secret");
-  assert.ok(listEnvironments(second.id).find(e=>e.id===shared.id)?.active);
-  assert.ok(!JSON.stringify(listEnvironments("*")).includes("shared-test-secret"));
-  assert.throws(()=>setEnvironmentValues("*",shared.id,{REMY_HOSTED_TASK:"1"}),/valid variable/);
-  env.setTaskEnvironment("test-task",{values:{SERVICE_TOKEN:"task-test-secret"}});
-  assert.equal((await env.taskEnvironment(workspacePath,"test-task")).SERVICE_TOKEN,"task-test-secret");
-  assert.ok(!JSON.stringify(db.prepare("select value from kv where key=?").get("taskEnvironment:test-task")).includes("task-test-secret"));
-  env.setTaskEnvironment("test-task",null);
-  assert.deepEqual(await env.taskEnvironment(workspacePath,"test-task"),{});
-  env.deleteEnvironment("*",shared.id);
-  assert.equal(listEnvironments(second.id).some(e=>e.id===shared.id),false);
-});
-
-
-test("hub assignments refresh local tasks and clear cached values after removal",async()=>{
-  const env=await import("./environments.js");
-  const {projectForWorkspace}=await import("./projects.js");
-  const profile={id:"shared-hub",name:"Hub development",values:{HUB_VALUE:"first-value"},updatedAt:1};
-  await env.applyHubEnvironments("org-test",{workspaces:[{localId:"workspace-one",profile}]});
-  const bound=projectForWorkspace("workspace-one")!;
-  assert.equal((await env.taskEnvironment(workspacePath)).HUB_VALUE,"first-value");
-  await env.applyHubEnvironments("org-test",{workspaces:[{localId:"workspace-one",profile:{...profile,values:{HUB_VALUE:"second-value"},updatedAt:2}}]});
-  assert.equal((await env.taskEnvironment(workspacePath)).HUB_VALUE,"second-value");
-  await env.applyHubEnvironments("org-test",{workspaces:[]});
-  assert.deepEqual(await env.taskEnvironment(workspacePath),{});
-  assert.ok(!listEnvironments(bound.id).some(e=>e.id==="hub:org-test:shared-hub"));
 });

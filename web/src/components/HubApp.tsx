@@ -71,7 +71,6 @@ const Threads = hubThreads.Surface;
 const Computers = lazy(() =>
   import("./HubComputers").then((m) => ({ default: m.HubComputers })),
 );
-const Environments = lazy(() => import("./EnvironmentsSettings").then(m=>({default:m.EnvironmentsSettings})));
 const WorkspaceDetails = lazy(() => import("./HubWorkspaceDetails"));
 const OrganizationSettings = lazy(() => import("./HubOrganizationSettings"));
 const Connections = lazy(() =>
@@ -286,7 +285,6 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           route: { name: "settings", tab: "devices", organizationId },
           selected: section === "devices",
         },
-        { label:"Environments", icon:Plug, route:{name:"settings",tab:"environments",organizationId}, selected:section==="environments" },
         {
           label: "Connections",
           icon: Plug,
@@ -474,7 +472,6 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                   <Computers organizationId={organization.id} />
                 </Deferred>
               </div>
-              <div hidden={section !== "environments"} className="min-h-0 flex-1 overflow-auto p-6"><Deferred open={section === "environments"}><Environments organizationId={organization.id} /></Deferred></div>
               <div
                 hidden={section !== "connections"}
                 className="min-h-0 overflow-auto"

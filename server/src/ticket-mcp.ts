@@ -178,7 +178,7 @@ server.registerTool("register_workspace", {
 });
 
 server.registerTool("run_with_environment", {
-  description: "Run a program in this thread's workspace with its active environment. Values stay in Remy and exact matches are removed from output.",
+  description: "Run a program in this thread's workspace with its environment values. Values stay in Remy and exact matches are removed from output.",
   inputSchema: {
     program: z.string().min(1).max(500).describe("Executable name or absolute path"),
     args: z.array(z.string().max(20000)).max(200).optional().describe("Arguments passed directly to the executable"),
@@ -186,12 +186,12 @@ server.registerTool("run_with_environment", {
   },
   annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
 }, async ({ program, args, timeout_seconds }) => {
-  const result = await request<{ command: string; output: string; exitCode: number; environment: string }>(
+  const result = await request<{ command: string; output: string; exitCode: number }>(
     "/runtime/environment-command",
     { method: "POST", body: { program, args, timeoutSeconds: timeout_seconds } },
   );
   return ok([
-    `${result.command} (${result.environment}) exited ${result.exitCode}.`,
+    `${result.command} exited ${result.exitCode}.`,
     result.output || "The command produced no output.",
   ].join("\n\n"));
 });

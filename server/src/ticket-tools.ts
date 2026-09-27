@@ -60,7 +60,6 @@ export interface RemyThreadControl {
     command: string;
     output: string;
     exitCode: number;
-    environment: string;
   }>;
 }
 
@@ -163,7 +162,7 @@ export function inProcessRemyMcpServer(
       ),
       tool(
         "run_with_environment",
-        "Run a program in this thread's workspace with its active environment. Values stay in Remy and exact matches are removed from output.",
+        "Run a program in this thread's workspace with its environment values. Values stay in Remy and exact matches are removed from output.",
         {
           program: z.string().min(1).max(500).describe("Executable name or absolute path"),
           args: z.array(z.string().max(20000)).max(200).optional().describe("Arguments passed directly to the executable"),
@@ -172,7 +171,7 @@ export function inProcessRemyMcpServer(
         async ({ program, args, timeout_seconds }) => {
           const result = await threads.runEnvironment({ program, args, timeoutSeconds: timeout_seconds });
           return ok([
-            `${result.command} (${result.environment}) exited ${result.exitCode}.`,
+            `${result.command} exited ${result.exitCode}.`,
             result.output || "The command produced no output.",
           ].join("\n\n"));
         },

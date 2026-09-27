@@ -46,7 +46,7 @@ test("only the provider keys Remy delivers are accepted", () => {
 
 test("a thread runs with the keys this computer was given", async () => {
   keys.applyHubModelKeys({ values: { ANTHROPIC_API_KEY: "test-anthropic-value" } });
-  assert.deepEqual(await environments.taskEnvironment("/tmp"), { ANTHROPIC_API_KEY: "test-anthropic-value" });
+  assert.deepEqual(await environments.taskEnvironment(), { ANTHROPIC_API_KEY: "test-anthropic-value" });
   assert.equal(environments.redactKnownSecrets("key test-anthropic-value here"), "key [REDACTED] here");
 });
 

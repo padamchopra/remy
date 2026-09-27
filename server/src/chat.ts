@@ -10,7 +10,7 @@ import { delimiter, join } from "node:path";
 import { agentCommand } from "./agent.js";
 import { deviceId } from "./board-log.js";
 import {
-  redactForCwd,
+  redactForThread,
   redactKnownSecrets,
   runWithEnvironment,
   type RuntimeCommandInput,
@@ -371,13 +371,13 @@ export class Chat {
     if (!trimmed && codeReferences.length === 0) return;
     const entryId = messageId ?? `u-${randomUUID()}`;
     if (this.record.entries.some((entry) => entry.id === entryId)) return;
-    const safeText = await redactForCwd(this.record.cwd, trimmed || "Review these comments.");
+    const safeText = redactForThread(this.record.id, trimmed || "Review these comments.");
     const safeReferences = await Promise.all(codeReferences.map(async (reference) => ({
       ...reference,
-      comment: await redactForCwd(this.record.cwd, reference.comment),
+      comment: redactForThread(this.record.id, reference.comment),
       lines: await Promise.all(reference.lines.map(async (line) => ({
         ...line,
-        text: await redactForCwd(this.record.cwd, line.text),
+        text: redactForThread(this.record.id, line.text),
       }))),
     })));
     const first = this.record.entries.length === 0;
@@ -395,7 +395,7 @@ export class Chat {
     const agentText = [referenceContext, agentContext, repeated ? "" : safeText]
       .filter(Boolean)
       .join("\n\n");
-    const agentPrompt: ChatPrompt = { text: agentText, attachments, environment:await taskEnvironment(this.record.cwd,this.record.id) };
+    const agentPrompt: ChatPrompt = { text: agentText, attachments, environment:await taskEnvironment(this.record.id) };
     this.append({
       id: entryId,
       kind: "user",
@@ -878,13 +878,13 @@ export class Chat {
         command: [input.program, ...(input.args ?? [])].join(" "),
       }, {
         signal: new AbortController().signal,
-        title: "Run with the workspace environment?",
+        title: "Run with this thread's environment?",
         reason: "The command receives configured values, and exact matches are removed from its output.",
         allowAlways: false,
       });
       if (decision === "deny") throw new Error("the runtime command was denied");
     }
-    return runWithEnvironment(this.record.cwd, input);
+    return runWithEnvironment(this.record.cwd, this.record.id, input);
   }
 
   private upsert(entry: ConvEntry): void {

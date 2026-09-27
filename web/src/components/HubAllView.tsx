@@ -1,6 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import type {
-  ComputerSummary,
   HubThread,
   Organization,
 } from "@remy/contract";
@@ -23,7 +22,6 @@ import {
   ItemContent,
   ItemDescription,
   ItemGroup,
-  ItemMedia,
   ItemTitle,
 } from "./ui/item";
 import {
@@ -35,14 +33,11 @@ import {
 } from "./ui/select";
 import {
   Github,
-  Laptop,
   ListTodo,
   Lock,
-  Plug,
   Plus,
   Users,
 } from "lucide-react";
-import { HubAccountPickerDialog } from "./HubAccountPickerDialog";
 import type { ConnectionsState } from "./HubConnections";
 import { ComposerMenu } from "./ComposerMenu";
 import type { HubThreadWorkspaceOption } from "./HubThreadComposer";
@@ -66,11 +61,6 @@ const Computers = lazy(() =>
 const General = lazy(() => import("./HubGeneralSettings"));
 const Connections = lazy(() =>
   import("./HubConnections").then((module) => ({ default: module.HubConnections })),
-);
-const Environments = lazy(() =>
-  import("./EnvironmentsSettings").then((module) => ({
-    default: module.EnvironmentsSettings,
-  })),
 );
 const WorkspaceDetails = lazy(() => import("./HubWorkspaceDetails"));
 
@@ -142,56 +132,6 @@ function useOwnedResources<T>(
         stale: false,
         error: "",
       },
-  );
-}
-
-function OwnerDescription({
-  organization,
-  detail,
-}: {
-  organization: Organization;
-  detail?: string;
-}) {
-  return (
-    <>
-      {organization.personal ? "Personal" : organization.name}
-      {detail ? ` · ${detail}` : ""}
-    </>
-  );
-}
-
-function AccountAction({
-  organizations,
-  label,
-  title,
-  description,
-  action = "Continue",
-  onSelect,
-}: {
-  organizations: Organization[];
-  label: string;
-  title: string;
-  description: string;
-  action?: string;
-  onSelect: (organizationId: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <Button onClick={() => setOpen(true)}>{label}</Button>
-      <HubAccountPickerDialog
-        open={open}
-        onOpenChange={setOpen}
-        organizations={organizations}
-        title={title}
-        description={description}
-        action={action}
-        onSelect={(organizationId) => {
-          setOpen(false);
-          onSelect(organizationId);
-        }}
-      />
-    </>
   );
 }
 
@@ -289,20 +229,6 @@ function AllThreads({
     </HubPersonalContext>
   );
 }
-
-type EnvironmentState = {
-  environments: {
-    id: string;
-    name: string;
-    variables: { name: string }[];
-  }[];
-};
-
-type SummaryResource = {
-  computers?: ComputerSummary[];
-  environments?: EnvironmentState["environments"];
-  connections?: ConnectionsState["connections"];
-};
 
 type ProviderConnection = {
   key: string;
@@ -455,153 +381,6 @@ function ConnectionsSummary({ organizations, navigate }: { organizations: Organi
   );
 }
 
-function SettingsSummary({
-  organizations,
-  kind,
-  navigate,
-}: {
-  organizations: Organization[];
-  kind: "devices" | "environments" | "connections";
-  navigate: (route: Route) => void;
-}) {
-  const path = kind === "devices" ? "/computers" : `/${kind}`;
-  const live =
-    kind === "devices" || kind === "environments" ? "/computers/live" : "/live";
-  const resources = useOwnedResources<SummaryResource>(organizations, path, live);
-  const rows = resources.flatMap((resource) => {
-    if (kind === "devices")
-      return (resource.value?.computers ?? []).map((item) => ({
-        id: item.computerId,
-        title: item.name,
-        detail: item.availability === "offline" ? "Offline" : "Online",
-        organization: resource.organization,
-        icon: Laptop,
-      }));
-    if (kind === "environments")
-      return (resource.value?.environments ?? []).map((item) => ({
-        id: item.id,
-        title: item.name,
-        detail: `${item.variables.length} ${item.variables.length === 1 ? "variable" : "variables"}`,
-        organization: resource.organization,
-        icon: Plug,
-      }));
-    if (kind === "connections")
-      return (resource.value?.connections ?? []).map((item) => ({
-        id: item.id,
-        title: item.label,
-        detail:
-          item.status === "reauth" ? "Reconnect your account" : "Connected",
-        organization: resource.organization,
-        icon: Plug,
-      }));
-    return [];
-  });
-  const loaded = resources.every((resource) => resource.value || resource.error);
-  const error = resources.find((resource) => resource.error)?.error;
-  const labels = {
-    devices: [
-      "Manage computers",
-      "Computer settings",
-      "Choose the account whose computers you want to manage.",
-    ],
-    environments: [
-      "Add environment",
-      "Environment settings",
-      "Choose the account that owns this environment.",
-    ],
-    connections: [
-      "Connect account",
-      "Connection settings",
-      "Choose the account that owns this connection.",
-    ],
-  } as const;
-  const [label, title, description] = labels[kind];
-  const empty = {
-    devices: [
-      "No computers yet",
-      "Connect a computer to run your threads.",
-    ],
-    environments: [
-      "No environments yet",
-      "Add an environment when workspaces need shared values.",
-    ],
-    connections: [
-      "No connections yet",
-      "Connect an account when you want Remy to use another tool.",
-    ],
-  } as const;
-  return (
-    <section
-      className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-6"
-      aria-label={title}
-    >
-      <div className="flex items-center justify-end">
-        <AccountAction
-          organizations={organizations}
-          label={label}
-          title={title}
-          description={description}
-          onSelect={(organizationId) =>
-            navigate({
-              name: "settings",
-              tab: kind,
-              organizationId: "all",
-              ownerOrganizationId: organizationId,
-            })
-          }
-        />
-      </div>
-      {error && <p role="alert">{error}</p>}
-      {!loaded ? (
-        <Spinner aria-label={`Loading ${kind}`} />
-      ) : rows.length ? (
-        <ItemGroup>
-          {rows.map((row) => {
-            const Icon = row.icon;
-            return (
-              <Item
-                key={`${row.organization.id}:${row.id}`}
-                variant="outline"
-                asChild
-              >
-                <Button
-                  variant="ghost"
-                  className="h-auto w-full justify-start whitespace-normal text-left"
-                  data-link
-                  onClick={() =>
-                    navigate({
-                      name: "settings",
-                      tab: kind,
-                      organizationId: "all",
-                      ownerOrganizationId: row.organization.id,
-                      ...(kind === "devices" ? { deviceId: row.id } : {}),
-                    })
-                  }
-                >
-                  <ItemMedia>
-                    <Icon />
-                  </ItemMedia>
-                  <ItemContent className="min-w-0">
-                    <ItemTitle>{row.title}</ItemTitle>
-                    <ItemDescription>
-                      <OwnerDescription
-                        organization={row.organization}
-                        detail={row.detail}
-                      />
-                    </ItemDescription>
-                  </ItemContent>
-                </Button>
-              </Item>
-            );
-          })}
-        </ItemGroup>
-      ) : (
-        <EmptyState title={empty[kind][0]} description={empty[kind][1]} />
-      )}
-    </section>
-  );
-}
-
 export default function HubAllView({
   organizations,
   route,
@@ -698,11 +477,6 @@ export default function HubAllView({
                   <Computers organizationId={selectedOwner.id} />
                 </div>
               )}
-              {section === "environments" && (
-                <div className="p-6">
-                  <Environments organizationId={selectedOwner.id} />
-                </div>
-              )}
               {section === "connections" && (
                 <Connections organizationId={selectedOwner.id} />
               )}
@@ -761,14 +535,6 @@ export default function HubAllView({
   }
   if (route.name === "settings" && route.tab === "connections")
     return <ConnectionsSummary organizations={organizations} navigate={navigate} />;
-  if (route.name === "settings" && route.tab === "environments")
-    return (
-      <SettingsSummary
-        organizations={organizations}
-        kind="environments"
-        navigate={navigate}
-      />
-    );
   return (
     <EmptyState
       title="Choose an account"

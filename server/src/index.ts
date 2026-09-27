@@ -85,20 +85,6 @@ import {
 } from "./browser.js";
 import { closeTerminal, openTerminal, resizeTerminal, writeTerminal } from "./terminal.js";
 import {
-  createEnvironment,
-  disableEnvironment,
-  deleteEnvironment,
-  deleteEnvironmentValue,
-  importEnvironmentFile,
-  listEnvironmentFiles,
-  listEnvironments,
-  renameEnvironment,
-  parseEnvironmentValues,
-  selectEnvironment,
-  setEnvironmentValues,
-  sharedEnvironmentAssignments,
-} from "./environments.js";
-import {
   createPullRequest,
   diffStatFor,
   mergePullRequest,
@@ -822,74 +808,6 @@ const server = createServer(async (req, res) => {
       // up here without anyone having to think about projects at all.
       await syncProjectBindings();
       return json(res, 200, { projects: listProjects() });
-    }
-    if (url.pathname === "/environments" && req.method === "GET") {
-      await syncProjectBindings();
-      return json(res, 200, {environments:listEnvironments("*"), assignments:sharedEnvironmentAssignments(), workspaces:listProjects().map(p=>({id:p.id,name:p.name}))});
-    }
-    if(parts[0]==="environments" && parts[1] && parts[2]==="assign" && req.method==="PUT") {
-      try {const input=await readJson(req);if(input.environmentId)selectEnvironment(decodeURIComponent(parts[1]),String(input.environmentId));else disableEnvironment(decodeURIComponent(parts[1]));broadcast({type:"environments"});return json(res,200,{ok:true});}catch{return json(res,400,{error:"Choose an available workspace and environment."});}
-    }
-    if (parts[0] === "environments") parts.splice(0, 1, "projects", "*", "environments");
-    if (parts[0] === "projects" && parts[1] && parts[2] === "environments") {
-      const projectId = decodeURIComponent(parts[1]);
-      try {
-        if (parts.length === 3 && req.method === "GET") {
-          return json(res, 200, { environments: listEnvironments(projectId) });
-        }
-        if (parts.length === 3 && req.method === "POST") {
-          const body = await readJson(req);
-          const environment = createEnvironment(projectId, body.name);
-          broadcast({ type: "environments", projectId });
-          return json(res, 201, { environment });
-        }
-        if (parts[3] === "files" && parts.length === 4 && req.method === "GET") {
-          return json(res, 200, { files: await listEnvironmentFiles(projectId) });
-        }
-        if (parts[3] === "active" && parts.length === 4 && req.method === "PUT") {
-          const body = await readJson(req);
-          const environmentId = String(body.environmentId ?? "");
-          if (!environmentId) {
-            disableEnvironment(projectId);
-            broadcast({ type: "environments", projectId });
-            return json(res, 200, { environment: null });
-          }
-          const environment = selectEnvironment(projectId, environmentId);
-          broadcast({ type: "environments", projectId });
-          return json(res, 200, { environment });
-        }
-        const environmentId = parts[3] ? decodeURIComponent(parts[3]) : "";
-        if (environmentId && parts.length === 4 && req.method === "PATCH") {
-          const input=await readJson(req);
-          let environment = input.name===undefined ? listEnvironments(projectId).find(e=>e.id===environmentId) : renameEnvironment(projectId, environmentId, input.name);
-          if(!environment)throw Error("Choose an available environment.");
-          if(input.values!==undefined && (!input.values || typeof input.values!=="object" || Array.isArray(input.values)))throw Error("Add named environment values.");
-          if(input.values!==undefined)environment=setEnvironmentValues(projectId,environmentId,input.values as Record<string,string>);
-          if(typeof input.remove==="string"){deleteEnvironmentValue(projectId,environmentId,input.remove);environment=listEnvironments(projectId).find(e=>e.id===environmentId);}
-          broadcast({ type: "environments", projectId });
-          return json(res, 200, { environment });
-        }
-        if (environmentId && parts.length === 4 && req.method === "DELETE") {
-          deleteEnvironment(projectId, environmentId);
-          broadcast({ type: "environments", projectId });
-          return json(res, 200, { ok: true });
-        }
-        if (environmentId && parts[4] === "import" && parts.length === 5 && req.method === "POST") {
-          const body = await readJson(req);
-          const environment = body.file !== undefined
-            ? await importEnvironmentFile(projectId, environmentId, body.file, body.remove === true)
-            : setEnvironmentValues(projectId, environmentId, parseEnvironmentValues(String(body.text ?? "")));
-          broadcast({ type: "environments", projectId });
-          return json(res, 200, { environment });
-        }
-        if (environmentId && parts[4] === "variables" && parts[5] && parts.length === 6 && req.method === "DELETE") {
-          deleteEnvironmentValue(projectId, environmentId, decodeURIComponent(parts[5]));
-          broadcast({ type: "environments", projectId });
-          return json(res, 200, { ok: true });
-        }
-      } catch (error) {
-        return json(res, 400, { error: (error as Error).message || "could not change that environment" });
-      }
     }
     if (parts[0] === "projects" && parts[1] && parts.length === 2 && req.method === "PATCH") {
       const body = await readJson(req);

@@ -4,7 +4,7 @@ import { Agent, Cursor, type Run, type SDKAgent, type SDKMessage } from "@cursor
 import { deviceId } from "./board-log.js";
 import { config } from "./config.js";
 import { db, getKv, setKv } from "./db.js";
-import { redactExact, redactForCwd, redactKnownSecrets } from "./environments.js";
+import { redactExact, redactForThread, redactKnownSecrets } from "./environments.js";
 import { broadcast } from "./notify.js";
 import { MAX_ARG, MAX_OUTPUT, MAX_TEXT, type ConvEntry } from "./transcript.js";
 
@@ -253,8 +253,8 @@ function objectText(value: unknown): string | undefined {
   }
 }
 
-async function safeCloudText(chat: Pick<CloudChatRecord, "cwd">, value: string, max: number): Promise<string> {
-  const environmentSafe = await redactForCwd(chat.cwd, value);
+async function safeCloudText(chat: { id?: string }, value: string, max: number): Promise<string> {
+  const environmentSafe = chat.id ? redactForThread(chat.id, value) : redactKnownSecrets(value);
   const apiKey = cleartextApiKey();
   return clip(redactExact(environmentSafe, apiKey ? [apiKey] : []), max);
 }
@@ -413,7 +413,7 @@ export async function createCursorCloudChat(input: {
   const requestedTitle = input.title?.trim() || "New thread";
   const chat: CloudChatRecord = {
     id: randomUUID(),
-    title: await safeCloudText({ cwd: input.cwd }, requestedTitle, 120),
+    title: await safeCloudText({}, requestedTitle, 120),
     cwd: input.cwd,
     origin: input.origin,
     startingRef: input.startingRef || "main",

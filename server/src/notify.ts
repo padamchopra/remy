@@ -101,7 +101,7 @@ function topicsFor(payload: unknown): string[] {
   }
   if (type === "settings" || type === "automatic-update") return ["settings"];
   if (type === "board") return ["board", "sidebar", "settings"];
-  if (type === "quick-replies" || type === "environments") return ["settings"];
+  if (type === "quick-replies") return ["settings"];
   return ["sidebar"];
 }
 

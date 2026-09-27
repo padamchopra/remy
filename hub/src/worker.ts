@@ -10,7 +10,7 @@ import { cloudToggleSchema, cloudConnectionSchema, cloudConnectionKey, modelSecr
 import { CursorCloudThreads, verifyCursorCloudKey } from "./cursor-cloud.js";
 import { allowedRequestOrigin } from "./request-origin.js";
 import { emailAvailable, sendAccountEmail, type AccountEmail } from "./email.js";
-import { EnvironmentStore } from "./environments.js";
+import { EnvironmentError, EnvironmentStore } from "./environments.js";
 import { ComputerModelKeyStore, computerModelKeyName, computerModelKeyWrite, publicComputerModelKeys } from "./computer-model-keys.js";
 import { ComputerAccountStore } from "./computer-accounts.js";
 import { cancelClaudeAccount, claudeAccountStatus, claudeComputerEnvironment, completeClaudeAccount, logoutClaudeAccount, startClaudeAccount } from "./claude-account.js";
@@ -350,25 +350,6 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     const org=decodeURIComponent(agentToolRoute[1]),computer=await authenticateComputer(request,org,computerStore);
     if(!computer)return jsonError("This computer cannot use organization tools.",403);
     return env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${org}`)).fetch(new Request(`https://internal/organization-tools/${agentToolRoute[2]}`,{method:"POST",headers:{"x-organization-id":org,"x-computer-id":computer.computerId,"content-type":"application/json"},body:request.body}));
-  }
-  const environmentSync=/^\/api\/organizations\/([^/]+)\/computers\/environments$/.exec(url.pathname);
-  if(environmentSync && request.method==="POST") {
-    const org=decodeURIComponent(environmentSync[1]),computer=await authenticateComputer(request,org,computerStore);
-    if(!computer)return jsonError("This computer cannot read environments.",403);
-    const envs=new EnvironmentStore(env.DB,()=>env.AUTH_SECRET.get());
-    const workspaces=[];
-    for(const local of computer.capabilities.workspaces) {
-      const workspace=local.origin?await organizationStore.workspaceByOrigin(org,repositoryOrigin(local.origin)):undefined;
-      if(!workspace)continue;
-      if(computer.ownership==="hosted") {
-        if(!await env.DB.prepare("SELECT 1 FROM hosted_workspace_bindings WHERE organization_id=? AND computer_id=? AND workspace_id=?").bind(org,computer.computerId,workspace.id).first())continue;
-      } else {
-        if(!computer.ownerUserId)continue;
-        try{await new OrganizationService(organizationStore).workspace(org,computer.ownerUserId,workspace.id);}catch{continue;}
-      }
-      workspaces.push({localId:local.id,profile:await envs.forWorkspace(org,workspace.id)});
-    }
-    return Response.json({workspaces},{headers:{"cache-control":"no-store"}});
   }
   const modelKeySync=/^\/api\/organizations\/([^/]+)\/computers\/model-keys$/.exec(url.pathname);
   if(modelKeySync && request.method==="POST") {
@@ -785,26 +766,31 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         await organizations.member(organizationId, identity.userId);
         return jsonError("Use the thread's own address.", 403);
       }
-      const environmentPath = /^environments(?:\/([^/]+)(?:\/(variables|assign))?)?$/.exec(tail);
+      const environmentPath = /^workspaces\/([^/]+)\/environment(?:\/([^/]+))?$/.exec(tail);
       if (environmentPath) {
-        const member=await organizations.member(organizationId,identity.userId);
-        if(member.role==="member" || identity.clientKind==="computer")return jsonError("Ask an admin to manage environments.",403);
-        if(!allowedRequestOrigin(request, env.PREVIEW_ORIGINS))return jsonError("Manage environments in Remy.",403);
-        const envs=new EnvironmentStore(env.DB,()=>env.AUTH_SECRET.get());
-        const id=environmentPath[1]?decodeURIComponent(environmentPath[1]):undefined;
+        if (identity.clientKind === "computer") return jsonError("Manage workspace values in Remy.", 403);
+        const workspaceId = decodeURIComponent(environmentPath[1]);
+        await organizations.workspace(organizationId, identity.userId, workspaceId);
+        const envs = new EnvironmentStore(env.DB, () => env.AUTH_SECRET.get());
+        const list = async () => Response.json({ values: await envs.list(organizationId, workspaceId, identity.userId, async (id) => (await store.profile(id))?.name || "Former member") }, { headers: { "cache-control": "no-store" } });
+        if (!environmentPath[2] && request.method === "GET") return list();
+        if (!allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Manage workspace values in Remy.", 403);
+        let changed: { workspace: boolean; personal: boolean };
         try {
-          let result:unknown;
-          if(!id && request.method==="GET")return Response.json({environments:await envs.list(organizationId),assignments:await envs.assignments(organizationId),workspaces:await organizations.workspaces(organizationId,identity.userId)},{headers:{"cache-control":"no-store"}});
-          if(!id && request.method==="POST")result={environment:await envs.create(organizationId,(await body<{name?:unknown}>(request))?.name)};
-          else if(id && environmentPath[2]==="assign" && request.method==="PUT") {
-            await organizations.workspace(organizationId,identity.userId,id);
-            const input=await body<{environmentId?:string}>(request);await envs.assign(organizationId,id,input?.environmentId??"");result={ok:true};
-          } else if(id && request.method==="PATCH" && !environmentPath[2])result={environment:await envs.update(organizationId,id,(await body(request)) ?? {})};
-          else if(id && request.method==="DELETE" && !environmentPath[2]){await envs.remove(organizationId,id);result={ok:true};}
-          else return jsonError("This environment action is unavailable.",405);
-          await organizationObject().fetch(new Request("https://internal/environment-changed",{method:"POST"}));
-          return Response.json(result,{headers:{"cache-control":"no-store"}});
-        } catch {return jsonError("Your environment could not be saved; check its name and values.",400);}
+          if (!environmentPath[2] && request.method === "POST") changed = await envs.add(organizationId, workspaceId, identity.userId, await body(request));
+          else if (environmentPath[2] && request.method === "DELETE") { const scope = await envs.remove(organizationId, workspaceId, identity.userId, decodeURIComponent(environmentPath[2])); changed = { workspace: scope === "workspace", personal: scope === "personal" }; }
+          else return jsonError("This environment action is unavailable.", 405);
+        } catch (error) {
+          if (error instanceof EnvironmentError) return jsonError(error.message, error.status);
+          throw error;
+        }
+        // Content-free: open views read the list again with their own access.
+        if (changed.workspace) await organizationObject().fetch(new Request("https://internal/environment/changed", { method: "POST" }));
+        if (changed.personal) {
+          const orgs = (await env.DB.prepare("SELECT organization_id FROM memberships WHERE user_id=?").bind(identity.userId).all<{ organization_id: string }>()).results;
+          await Promise.all(orgs.map(({ organization_id }) => env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${organization_id}`)).fetch(new Request("https://internal/environment/changed", { method: "POST", headers: { "x-user-id": identity.userId } }))));
+        }
+        return list();
       }
       const claudeAccount = /^claude-account(?:\/(start|complete|cancel|logout))?$/.exec(tail);
       if (claudeAccount) {
@@ -1508,7 +1494,11 @@ export class HubCoordinator {
       try{this.computerSocket(computerId)?.send(JSON.stringify({kind:"board.changed"}));}catch{}
       return new Response(null,{status:204});
     }
-    if(url.pathname==="/environment-changed" && request.method==="POST") {this.invalidateComputers();for(const socket of this.ctx.getWebSockets()){const meta=socket.deserializeAttachment() as {kind?:string};if(meta?.kind==="computer")try{socket.send(JSON.stringify({kind:"board.changed"}));}catch{}}return new Response(null,{status:204});}
+    if(url.pathname==="/environment/changed" && request.method==="POST") {
+      const user=request.headers.get("x-user-id");
+      for(const socket of this.ctx.getWebSockets()){const meta=socket.deserializeAttachment() as {kind?:string;userId?:string}|null;if(meta?.kind==="organization" && (!user || meta.userId===user))try{socket.send(JSON.stringify({kind:"environment.changed"}));}catch{}}
+      return new Response(null,{status:204});
+    }
     const removeWorkspace = /^\/hosted-workspace\/([^/]+)$/.exec(url.pathname);
     if(removeWorkspace && request.method === "DELETE") { for (const state of (await this.hostedService().list()).filter(s => s.workspaceId === decodeURIComponent(removeWorkspace[1]))) await this.hostedService().remove(state.computerId); return new Response(null,{status:204}); }
     const removeHosted=/^\/hosted-computers\/([^/]+)$/.exec(url.pathname);
@@ -1741,7 +1731,11 @@ export class HubCoordinator {
       const thread=threadId?await this.threads.get(computerId,threadId):undefined;
       const local=computer?.capabilities.workspaces.find(w=>w.id===(input as {workspaceId?:string}).workspaceId || (thread?.detail.cwd===w.path || typeof thread?.detail.cwd==="string" && thread.detail.cwd.startsWith(w.path.replace(/\/$/,"")+"/")));
       const workspace=local?.origin?await new D1OrganizationStore(this.env.DB).workspaceByOrigin(org,repositoryOrigin(local.origin)):undefined;
-      if(workspace)input={...input,hubEnvironment:await new EnvironmentStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).forWorkspace(org,workspace.id)};
+      // A thread's environment is its starter's Personal values under the
+      // workspace's own, read fresh for every turn so a change reaches the
+      // next one. A message from a participant still carries the starter's.
+      const starter=thread?.access.owner.id ?? actor.id;
+      input={...input,hubEnvironment:await new EnvironmentStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).forThread(org,workspace?.id,starter)};
       const current=input as Record<string, unknown>;
       try { input={...current, hubLinear: await linearAccountsFor(this.env).forThread(org, actor.id)}; }
       catch { input={...current, hubLinear:{kind:"off"}}; }

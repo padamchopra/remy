@@ -280,6 +280,15 @@ if (!real.realProviders) setProviderAdapterForTest({
                 if(input.prompt.includes("Repeat the release review")) {const next=new Date(Date.now()+65000);await call("create_organization_routine",{name:"Daily release review",prompt:"Review the release notes.",projectId:android.id,cadence:"daily",hour:next.getUTCHours(),minute:next.getUTCMinutes(),timeZone:"UTC"});toolReply="The daily release review is scheduled.";}
               } finally {await client.close();}
             }
+            // Says which of the named keys the thread's provider inherited:
+            // "KEY=?" asks for the value, a bare KEY only whether it is set, so
+            // a QA run proves delivery without writing a secret down.
+            const asked = /Which values reach this thread: (.+)/.exec(input.prompt)?.[1];
+            if (!toolReply && asked)
+              toolReply = asked.trim().split(/\s+/).map((name) => {
+                const key = name.replace(/=\?$/, ""), value = _options.env?.[key];
+                return value === undefined ? `${key} is not set` : name.endsWith("=?") ? `${key}=${value}` : `${key} is set`;
+              }).join(", ");
             const reply = toolReply ?? (input.prompt.includes("approval")
               ? "I’ll ask before changing the release notes."
               : "I’m checking the release notes with your latest feedback.");
