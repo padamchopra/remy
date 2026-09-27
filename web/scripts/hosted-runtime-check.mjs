@@ -1005,9 +1005,10 @@ try {
         // Settings → Computers is one list: Cloud first, then Connected.
         const computersList = page.getByRole("main", { name: "Computers", exact: true });
         const cloudList = computersList.getByRole("list", { name: "Cloud", exact: true });
-        await cloudList.getByRole("button", { name: "Fly.io Sprites", exact: true }).waitFor();
+        const personalCloudRow = name => cloudList.getByRole("button", { name: `${name}, Personal`, exact: true });
+        await personalCloudRow("Fly.io Sprites").waitFor();
         assert.deepEqual(await computersList.locator("section h2").allInnerTexts(), ["Cloud", "Connected"], "Cloud comes before Connected");
-        assert.deepEqual(await cloudList.locator('[data-slot="item-title"]').allInnerTexts(), ["Fly.io Sprites", "Modal", "Cursor Cloud", "Model access"]);
+        assert.deepEqual(await cloudList.locator('[data-slot="item-title"]').allInnerTexts(), ["Fly.io Sprites", "Modal", "Cursor Cloud", "Model access", "Model access"]);
         assert.equal(await computersList.getByRole("tab").count(), 0, "Computers is one list, not tabs");
         await computersList.getByRole("region", { name: "Connected", exact: true }).getByText("No computers connected", { exact: true }).waitFor();
         assert.equal(await page.getByRole("button", { name: "Add computer", exact: true }).count(), 0);
@@ -1028,7 +1029,7 @@ try {
           await page.goto(target.href);
           for (const reload of [false, true]) {
             if (reload) await page.reload();
-            await cloudList.getByRole("button", { name: "Fly.io Sprites", exact: true }).waitFor();
+            await personalCloudRow("Fly.io Sprites").waitFor();
             assert.equal(await page.getByRole("button",{name:"Add computer",exact:true}).count(),0);
             assert.equal(await page.getByLabel("Hosted workspace").count(), 0);
             assert.equal(await page.getByRole("button", { name: "Add a workspace", exact: true }).count(), 0);
@@ -1076,7 +1077,7 @@ try {
           await cloudList.waitFor();
         };
         const providerPage = async name => {
-          await cloudList.getByRole("button", { name, exact: true }).click();
+          await personalCloudRow(name).click();
           await page.getByRole("heading", { name, level: 1, exact: true }).waitFor();
         };
         for (const [name, id, keyLabel, fields] of [["Fly.io Sprites", "fly-sprites", "Sprites token", [["Token", "test-provider-secret"]]], ["Modal", "modal", "Modal token", [["Token ID", "test-modal-id"], ["Token secret", "test-provider-secret"]]]]) {
@@ -1097,11 +1098,11 @@ try {
           await page.waitForFunction(label => document.querySelector(`[role="switch"][aria-label="${label}"]`)?.getAttribute("aria-checked") === "true", `Run threads on ${name}`);
           await backToList();
         }
-        const cursorRow = cloudList.getByRole("button", { name: "Cursor Cloud", exact: true });
+        const cursorRow = personalCloudRow("Cursor Cloud");
         await cursorRow.getByText("Not set up", { exact: true }).waitFor();
         assert.equal(enabledProviders.size, 2, "Both cloud providers can be enabled together");
         await page.reload();
-        for (const name of ["Fly.io Sprites", "Modal"]) await cloudList.getByRole("button", { name, exact: true }).getByText("On", { exact: true }).waitFor();
+        for (const name of ["Fly.io Sprites", "Modal"]) await personalCloudRow(name).getByText("On", { exact: true }).waitFor();
         await providerPage("Fly.io Sprites");
         const flyToggle = page.getByRole("switch", { name: "Run threads on Fly.io Sprites", exact: true });
         const flyKeys = page.getByRole("region", { name: "Sprites tokens", exact: true });
@@ -1133,7 +1134,7 @@ try {
         available = true;
         await backToList();
         await page.reload();
-        await cloudList.getByRole("button", { name: "Fly.io Sprites", exact: true }).waitFor();
+        await personalCloudRow("Fly.io Sprites").waitFor();
         assert.equal(await computersList.getByText("Cloud computers are temporarily unavailable.", { exact: true }).count(), 0);
         assert.equal(await page.getByLabel("Hosted workspace").count(), 0);
         assert.equal(await page.getByRole("button", { name: "Add a workspace", exact: true }).count(), 0);
@@ -1148,7 +1149,7 @@ try {
         const modelAccess = page.getByRole("list", { name: "Model access", exact: true });
         await modelAccess.waitFor();
         assert.deepEqual(await modelAccess.locator(':scope > [role="listitem"] > div > [data-slot="item-content"] > [data-slot="item-title"]').allInnerTexts(), [
-          ...(org.personal ? ["ChatGPT"] : []),
+          "ChatGPT",
           "Anthropic",
           "OpenAI",
           "Router.com",
@@ -1157,25 +1158,21 @@ try {
         assert.equal(await modelAccess.getByText("Claude Code", { exact: true }).count(), 0);
         const accessRow = label => modelAccess.getByRole("listitem").filter({ has: page.getByRole("switch", { name: label, exact: true }) });
         const chatgptRow = modelAccess.getByRole("listitem").filter({ has: page.getByText("ChatGPT", { exact: true }) });
-        if (org.personal) {
-          // Your ChatGPT sign-in is yours: no workspace to pick and no computer to start.
-          assert.ok(await chatgptRow.getByRole("img", { name: "Codex" }).count());
-          await chatgptRow.getByRole("button", { name: "Sign in with ChatGPT", exact: true }).click();
-          await chatgptRow.getByLabel("ChatGPT sign-in code", { exact: true }).waitFor();
-          assert.equal(await chatgptRow.getByLabel("ChatGPT sign-in code", { exact: true }).inputValue(), "DEMO-0000");
-          await chatgptRow.getByRole("button", { name: "Cancel", exact: true }).click();
-          await chatgptRow.getByRole("button", { name: "Sign in with ChatGPT", exact: true }).waitFor();
-          assert.equal(await chatgptRow.getByRole("combobox").count(), 0);
-          assert.equal(await chatgptRow.getByRole("button", { name: "Start computer", exact: true }).count(), 0);
-          assert.equal(await page.getByRole("region", { name: "Your model access", exact: true }).count(), 0, "Personal has no per-organization switches");
-        } else {
-          assert.equal(await chatgptRow.count(), 0, "an organization's Model access never signs anyone in to ChatGPT");
-          await page.getByRole("region", { name: "Your model access", exact: true }).waitFor();
-        }
+        // Account-wide Computers opens the personal connection for editing,
+        // even when the person entered Settings from an organization.
+        assert.ok(await chatgptRow.getByRole("img", { name: "Codex" }).count());
+        await chatgptRow.getByRole("button", { name: "Sign in with ChatGPT", exact: true }).click();
+        await chatgptRow.getByLabel("ChatGPT sign-in code", { exact: true }).waitFor();
+        assert.equal(await chatgptRow.getByLabel("ChatGPT sign-in code", { exact: true }).inputValue(), "DEMO-0000");
+        await chatgptRow.getByRole("button", { name: "Cancel", exact: true }).click();
+        await chatgptRow.getByRole("button", { name: "Sign in with ChatGPT", exact: true }).waitFor();
+        assert.equal(await chatgptRow.getByRole("combobox").count(), 0);
+        assert.equal(await chatgptRow.getByRole("button", { name: "Start computer", exact: true }).count(), 0);
+        assert.equal(await page.getByRole("region", { name: "Your model access", exact: true }).count(), 0, "Personal has no per-organization switches");
         assert.ok(await accessRow("Anthropic").getByRole("img", { name: "Claude" }).count());
         assert.ok(await accessRow("OpenAI").getByRole("img", { name: "Codex" }).count());
-        await page.getByText(`${org.personal ? "Personal" : org.name} · Codex uses ChatGPT or an OpenAI key; Claude uses an Anthropic key.`, { exact: true }).waitFor();
-        await page.getByText(org.personal ? "Only threads you start use these. An organization uses them only where you turn them on." : "Every member's cloud threads here can use these.", { exact: true }).waitFor();
+        await page.getByText("Personal · Codex uses ChatGPT or an OpenAI key; Claude uses an Anthropic key.", { exact: true }).waitFor();
+        await page.getByText("These follow you into every thread you start.", { exact: true }).waitFor();
         const switchState = (label, state) => page.waitForFunction(([label, state]) => [...document.querySelectorAll('[role="list"][aria-label="Model access"] [role="switch"]')].find(el => el.getAttribute("aria-label") === label)?.getAttribute("aria-checked") === state, [label, state]);
         for(const [id,label] of [["anthropic","Anthropic"],["openai","OpenAI"],["router","Router.com"],["openrouter","OpenRouter"]]) {
           const section=accessRow(label);
@@ -1206,19 +1203,6 @@ try {
         assert.equal(savedKeys.get("openrouter"),"disposable-openrouter-team");
         assert.ok(await modelAccess.evaluate(list => { const pane = list.closest("main")?.querySelector(".overflow-auto"); return !!pane && pane.scrollWidth <= pane.clientWidth; }), "Named keys fit the model access pane");
         if (artifacts && org.personal) await page.screenshot({path: `${artifacts}/cloud-configured-${mobile ? "phone" : "desktop"}.png`});
-        if (!org.personal) {
-          // Your own key, once you turn it on here, is something this organization's cloud can run and default to.
-          await page.getByRole("switch", { name: "Use my Anthropic in Studio", exact: true }).click();
-          await page.waitForFunction(() => document.querySelector('[role="switch"][aria-label="Use my Anthropic in Studio"]')?.getAttribute("aria-checked") === "true");
-          await backToList();
-          await providerPage("Fly.io Sprites");
-          await canRun.getByText("OpenRouter", { exact: true }).waitFor();
-          await canRun.getByText("Your Anthropic", { exact: true }).waitFor();
-          await page.getByRole("region", { name: "Default model", exact: true }).locator("[data-model-picker]").click();
-          await page.getByRole("tablist", { name: "Providers", exact: true }).getByRole("tab", { name: /Your Anthropic/ }).waitFor();
-          await page.keyboard.press("Escape");
-          ownAccess.find(entry => entry.id === "anthropic").allowed = false;
-        }
         if (mobile) await page.getByRole("button", { name: "Toggle Sidebar" }).click();
         connected = true;
         enabledProviders.clear();
@@ -1279,7 +1263,7 @@ try {
         target.hash = `/threads?organization=${org.id}`;
         await page.goto(target.href);
         await page.reload();
-        await page.getByLabel("Thread computer",{exact:true}).getByText("Cloud · Modal",{exact:true}).waitFor();
+        await page.getByLabel("Thread computer",{exact:true}).getByText(org.personal ? "Cloud · Modal" : "Cloud · Modal · Reader · Default",{exact:true}).waitFor();
         await composer.getByRole("button",{name:"Model",exact:true}).click();
         disconnectLive = true;
         await Promise.all(liveSockets.splice(0).map(socket => socket.close()));
