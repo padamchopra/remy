@@ -29,7 +29,7 @@ function WorkspacePreview() {
 }
 function DiffPreview({ review = false }: { review?: boolean }) {
   const lines = review ? reviewDiff : sampleDiff;
-  return <aside className="diff-preview"><div className="diff-heading">{review ? "src/navigation.ts" : "src/pairing.ts"} <span>+{lines.filter((line) => line.kind === "add").length} −{lines.filter((line) => line.kind === "del").length}</span></div><ThreadDiff lines={lines} /></aside>;
+  return <aside className="diff-preview"><div className="diff-heading">{review ? "src/navigation.ts" : "src/invites.ts"} <span>+{lines.filter((line) => line.kind === "add").length} −{lines.filter((line) => line.kind === "del").length}</span></div><ThreadDiff lines={lines} /></aside>;
 }
 function Demo() {
   const requested = new URLSearchParams(location.search).get("scene") ?? "threads";
