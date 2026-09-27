@@ -1,5 +1,4 @@
 import { readOAuthSecret } from "./auth.js";
-import {linearFor} from "./linear-routes.js";
 import { githubFor } from "./github-routes.js";
 import {
   ConnectionError,
@@ -69,15 +68,11 @@ export function connectionProviders(env: Env): ConnectionProvider[] {
     },
     {
       id: "linear",
-      receive: async delivery=>{await linearFor(env).receive(delivery);const payload=JSON.parse(delivery.payload);const orgs=(await env.DB.prepare("SELECT DISTINCT l.organization_id FROM organization_linear_links l WHERE l.external_id=? UNION SELECT DISTINCT m.organization_id FROM organization_linear_links l JOIN organizations p ON p.id=l.organization_id AND p.personal_owner_id IS NOT NULL JOIN memberships m ON m.user_id=p.personal_owner_id WHERE l.external_id=? AND NOT EXISTS(SELECT 1 FROM organization_linear_links own WHERE own.organization_id=m.organization_id)").bind(String(payload.organizationId??''),String(payload.organizationId??'')).all<{organization_id:string}>()).results;for(const row of orgs)await env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${row.organization_id}`)).fetch(new Request("https://internal/linear/wake",{method:"POST",headers:{"x-organization-id":row.organization_id}}));},
       name: "Linear",
       subjects: ["member"],
       clientId: env.LINEAR_CLIENT_ID,
       clientSecret: env.LINEAR_CLIENT_SECRET
         ? () => env.LINEAR_CLIENT_SECRET!.get()
-        : undefined,
-      webhookSecret: env.LINEAR_WEBHOOK_SECRET
-        ? () => env.LINEAR_WEBHOOK_SECRET!.get()
         : undefined,
       authorizeUrl: "https://linear.app/oauth/authorize",
       tokenUrl: "https://api.linear.app/oauth/token",
@@ -117,29 +112,6 @@ export function connectionProviders(env: Env): ConnectionProvider[] {
           id: value.data.organization.id,
           label: value.data.organization.name,
           userId: value.data.viewer?.id,
-        };
-      },
-      verifyWebhook: async (request, raw, secret, now) => {
-        if (
-          !(await verifyConnectionSignature(
-            raw,
-            request.headers.get("linear-signature") ?? "",
-            secret,
-          ))
-        )
-          throw new ConnectionError("This update could not be verified.", 401);
-        const value = JSON.parse(raw) as {
-          webhookTimestamp?: number;
-          type?: string;
-        };
-        if (
-          !value.webhookTimestamp ||
-          Math.abs(now - value.webhookTimestamp) > 60_000
-        )
-          throw new ConnectionError("This update expired.", 401);
-        return {
-          id: request.headers.get("linear-delivery") ?? "",
-          event: value.type ?? "",
         };
       },
     },

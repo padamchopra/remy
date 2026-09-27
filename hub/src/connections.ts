@@ -57,7 +57,7 @@ export type ConnectionProvider = {
     token: string,
     send: typeof fetch,
   ) => Promise<{ id: string; label: string; userId?: string | undefined }>;
-  verifyWebhook: (
+  verifyWebhook?: (
     request: Request,
     raw: string,
     secret: string,
@@ -540,7 +540,7 @@ export async function ingestConnectionWebhook(
   queue: Queue<ConnectionJob>,
   now = Date.now(),
 ) {
-  if (!provider.webhookSecret)
+  if (!provider.webhookSecret || !provider.verifyWebhook)
     throw new ConnectionError("This connection is unavailable.", 404);
   const reader = request.body?.getReader();
   let size = 0,

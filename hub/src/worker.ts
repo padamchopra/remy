@@ -16,9 +16,7 @@ import { ComputerAccountStore } from "./computer-accounts.js";
 import { cancelClaudeAccount, claudeAccountStatus, claudeComputerEnvironment, completeClaudeAccount, logoutClaudeAccount, startClaudeAccount } from "./claude-account.js";
 import { encodeComputerConnectionKey } from "@remy/contract";
 import { personalSpace } from "./personal-space.js";
-import {LinearBoard} from "./linear-board.js";
-import {linearFor} from "./linear-routes.js";
-import {linearAccountRoute, linearAccountsFor, linearRoute} from "./linear-routes.js";
+import {linearAccountRoute, linearAccountsFor} from "./linear-routes.js";
 import { githubFor, githubRoute } from "./github-routes.js";
 import { connectionRoute, connectionWebhook, isGitHubConnectionCallback } from "./connection-routes.js";
 import { connectionProviders } from "./connection-providers.js";
@@ -31,7 +29,6 @@ import { HostedLifecycle } from "./hosted-lifecycle.js";
 import { threadStartProgress, type ManualThreadStart } from "./thread-start-progress.js";
 import { HttpRuntimeProvider } from "./computer-runtime.js";
 import { hostedSettingsSchema } from "@remy/contract";
-import { BoardAccess } from "./board-access.js";
 import { HubNotifications, type ApplePushConfig } from "./notifications.js";
 import { canReadThread, canWriteThread, threadMemberSchema, threadSnapshotSchema, type ThreadLiveFrame, type ThreadMember } from "@remy/contract";
 import { ThreadStore } from "./thread-store.js";
@@ -43,11 +40,6 @@ import {
   computerRegistrationInputSchema,
   computerAccessSchema,
   computerToHubFrameSchema,
-  boardActorSchema,
-  boardLogEventSchema,
-  boardAppendInputSchema,
-  boardProjectionEntitySchema,
-  boardVersionVectorSchema,
   hubErrorSchema,
   hubHealthSchema,
   requestOutcomeSchema,
@@ -66,7 +58,7 @@ import { authenticateComputer } from "./computer-auth.js";
 import { D1ComputerStore, type ComputerStore } from "./computer-store.js";
 import { ComputerService, versionBefore } from "./computers.js";
 import { D1OrganizationStore, type OrganizationStore } from "./organization-store.js";
-import { DurableBoardStorage, OrganizationBoard } from "./organization-board.js";
+import { clearRetiredTasks, DurableStorage } from "./durable-storage.js";
 import { repositoryOrigin, OrganizationError, OrganizationService } from "./organizations.js";
 
 export interface Env extends ApplePushConfig {
@@ -82,7 +74,6 @@ export interface Env extends ApplePushConfig {
   GITHUB_WEBHOOK_SECRET?: SecretsStoreSecret;
   LINEAR_CLIENT_ID?: string;
   LINEAR_CLIENT_SECRET?: SecretsStoreSecret;
-  LINEAR_WEBHOOK_SECRET?: SecretsStoreSecret;
   GITHUB_APP_ID?: string;
   GITHUB_APP_PRIVATE_KEY?: SecretsStoreSecret;
   HOSTED_ARCHIVE?: string;
@@ -400,25 +391,6 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       return proxyGit(request,grant,action,()=>repositoryToken(grant.computerId,grant.write));
     }
   }
-  const boardSyncMatch = /^\/api\/organizations\/([^/]+)\/computers\/board-sync$/.exec(url.pathname);
-  if (boardSyncMatch && request.method === "POST") {
-    const organizationId = decodeURIComponent(boardSyncMatch[1]);
-    const computer = await authenticateComputer(request, organizationId, computerStore);
-    if (!computer || computer.ownership === "hosted") return jsonError("This computer cannot synchronize your Tasks.", 403);
-    const grant = await env.DB.prepare(`SELECT g.granted_by FROM organization_board_computers g JOIN memberships m ON m.organization_id=g.organization_id AND m.user_id=g.granted_by WHERE g.organization_id=? AND g.computer_id=? AND m.role IN ('owner','admin')`).bind(organizationId, computer.computerId).first();
-    if (!grant) return jsonError("Allow Tasks synchronization in Computers settings.", 403);
-    const input = await body<{ version?: unknown; events?: unknown }>(request);
-    const version = boardVersionVectorSchema.safeParse(input?.version ?? {});
-    if (!version.success || !Array.isArray(input?.events) || input.events.length > 500 || JSON.stringify(input).length > 2_000_000) return jsonError("Choose a valid Tasks update.", 400);
-    const events = [];
-    for (const value of input.events) {
-      const parsed = boardLogEventSchema.safeParse(value);
-      if (!parsed.success) return jsonError("Choose a valid Tasks update.", 400);
-      events.push({ ...parsed.data, actor: { kind: "computer", id: computer.computerId, label: computer.name } });
-    }
-    const coordinator = env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${organizationId}`));
-    return coordinator.fetch(new Request("https://internal/board/sync", { method: "POST", headers:{"x-organization-id":organizationId,"x-user-id":String((grant as {granted_by:string}).granted_by)}, body: JSON.stringify({ version: version.data, events }) }));
-  }
   const detachMatch = /^\/api\/organizations\/([^/]+)\/computers\/detach$/.exec(url.pathname);
   if (detachMatch && request.method === "POST") {
     const org = decodeURIComponent(detachMatch[1]);
@@ -463,9 +435,6 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
   if (connectionResponse) return connectionResponse;
   const githubResponse=await githubRoute(request,env,identity.userId);if(githubResponse)return githubResponse;
   const linearAccountResponse=await linearAccountRoute(request,env,identity.userId,identity.clientKind);if(linearAccountResponse)return linearAccountResponse;
-  const linearResponse=await linearRoute(request,env,identity.userId);if(linearResponse)return linearResponse;
-  const linearBoardRoute=/^\/api\/organizations\/([^/]+)\/linear-board$/.exec(url.pathname);
-  if(linearBoardRoute){const org=decodeURIComponent(linearBoardRoute[1]);return env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${org}`)).fetch(new Request("https://internal/linear/board",{method:request.method,headers:{"x-organization-id":org,"x-user-id":identity.userId,"content-type":"application/json"},...(request.method==="GET"?{}:{body:request.body})}));}
   try {
     if (url.pathname === "/api/personal" && request.method === "GET") return Response.json({ personal: await personalSpace(env.DB, identity.userId) }, { headers: { "cache-control": "no-store" } });
     if (url.pathname === "/api/organizations" && request.method === "GET") return Response.json({ organizations: await organizations.list(identity.userId) });
@@ -493,7 +462,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     const organizationMatch = /^\/api\/organizations\/([^/]+)(?:\/(.*))?$/.exec(url.pathname);
     if (organizationMatch) {
       const organizationId = decodeURIComponent(organizationMatch[1]); const tail = organizationMatch[2] ?? "";
-      const board = () => env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${organizationId}`));
+      const organizationObject = () => env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${organizationId}`));
       if (tail === "github/profile" && request.method === "GET") {
         const github = await githubFor(env).api<{avatar_url:string}>(organizationId, identity.userId, "/user");
         const image = new URL(github.avatar_url);
@@ -512,7 +481,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       if (tail === "model-favorites" && (request.method === "GET" || request.method === "PATCH")) {
         await organizations.member(organizationId, identity.userId);
         const response = await modelFavorites(env.DB, organizationId, identity.userId, request);
-        if (request.method === "PATCH" && response.ok) await board().fetch(new Request("https://internal/model-favorites/changed", { method: "POST", headers: { "x-organization-id": organizationId, "x-user-id": identity.userId } }));
+        if (request.method === "PATCH" && response.ok) await organizationObject().fetch(new Request("https://internal/model-favorites/changed", { method: "POST", headers: { "x-organization-id": organizationId, "x-user-id": identity.userId } }));
         return response;
       }
       if (tail === "computers" && request.method === "POST") {
@@ -521,7 +490,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         const input = computerRegistrationInputSchema.safeParse(await body(request));
         if (!input.success) return jsonError("Choose valid computer details.", 400);
         const registration = await computers.register(organizationId, identity.userId, input.data);
-        await board().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId } }));
+        await organizationObject().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId } }));
         return Response.json(registration, { status: 201 });
       }
       if (tail === "computers" && request.method === "GET") {
@@ -539,7 +508,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         if (!input || !/^[a-fA-F0-9]{64,200}$/.test(input.token ?? "") || !["production", "sandbox"].includes(input.environment ?? "") || typeof input.name !== "string" || !input.name.trim() || input.name.length > 80) return jsonError("Choose valid phone details.", 400);
         const id = crypto.randomUUID();
         await env.DB.prepare("INSERT INTO member_push_devices (id,organization_id,user_id,session_id,token,environment,name) VALUES (?,?,?,?,?,?,?) ON CONFLICT(organization_id,token) DO UPDATE SET user_id=excluded.user_id,session_id=excluded.session_id,environment=excluded.environment,name=excluded.name,enabled=1").bind(id, organizationId, identity.userId, identity.sessionId, input.token!.toLowerCase(), input.environment, input.name.trim()).run();
-        await board().fetch(new Request("https://internal/notifications/changed", { method: "POST", headers: { "x-organization-id": organizationId, "x-user-id": identity.userId } }));
+        await organizationObject().fetch(new Request("https://internal/notifications/changed", { method: "POST", headers: { "x-organization-id": organizationId, "x-user-id": identity.userId } }));
         return Response.json({ ok: true }, { status: 201 });
       }
       const pushDevice = /^notifications\/devices\/([^/]+)$/.exec(tail);
@@ -552,13 +521,13 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           if (typeof input?.enabled !== "boolean") return jsonError("Choose whether this phone receives notifications.", 400);
           await env.DB.prepare("UPDATE member_push_devices SET enabled=? WHERE organization_id=? AND user_id=? AND id=?").bind(Number(input.enabled), organizationId, identity.userId, decodeURIComponent(pushDevice[1])).run();
         }
-        await board().fetch(new Request("https://internal/notifications/changed", { method: "POST", headers: { "x-organization-id": organizationId, "x-user-id": identity.userId } }));
+        await organizationObject().fetch(new Request("https://internal/notifications/changed", { method: "POST", headers: { "x-organization-id": organizationId, "x-user-id": identity.userId } }));
         return Response.json({ ok: true });
       }
       if (tail === "notifications" || tail === "notifications/live" || /^notifications\/[0-9a-f-]{36}\/read$/.test(tail)) {
         await organizations.member(organizationId, identity.userId);
         if (request.method !== "GET" && !allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Open notifications in Remy.", 403);
-        return board().fetch(new Request(`https://internal/${tail}`, { method: request.method, headers: { "x-organization-id": organizationId, "x-user-id": identity.userId, "x-session-id": identity.sessionId, upgrade: request.headers.get("upgrade") ?? "" } }));
+        return organizationObject().fetch(new Request(`https://internal/${tail}`, { method: request.method, headers: { "x-organization-id": organizationId, "x-user-id": identity.userId, "x-session-id": identity.sessionId, upgrade: request.headers.get("upgrade") ?? "" } }));
       }
       if (tail === "compute-shares" && request.method === "GET") {
         const member = await organizations.member(organizationId, identity.userId);
@@ -647,7 +616,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
             if (!existing) return Response.json({ ok: true });
             if (!owns && !admin) return jsonError("Ask an organization admin to change this computer’s sharing.", 403);
             sourceOrganizationId = existing.source_organization_id;
-            await board().fetch(new Request("https://internal/shared-threads/manifest", { method: "POST", headers: { "content-type": "application/json", "x-organization-id": organizationId, "x-source-organization-id": sourceOrganizationId, "x-computer-id": computerId }, body: JSON.stringify({ ids: [] }) }));
+            await organizationObject().fetch(new Request("https://internal/shared-threads/manifest", { method: "POST", headers: { "content-type": "application/json", "x-organization-id": organizationId, "x-source-organization-id": sourceOrganizationId, "x-computer-id": computerId }, body: JSON.stringify({ ids: [] }) }));
             await env.DB.prepare("DELETE FROM organization_computer_shares WHERE organization_id=? AND computer_id=?").bind(organizationId, computerId).run();
           }
         } else {
@@ -678,7 +647,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
             await env.DB.prepare("DELETE FROM organization_cloud_shares WHERE organization_id=? AND provider=?").bind(organizationId, provider).run();
           } else return jsonError("Ask an organization admin to change this computer’s sharing.", 403);
         }
-        await board().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId } }));
+        await organizationObject().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId } }));
         if (computerId) await env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${sourceOrganizationId}`)).fetch(new Request("https://internal/shared-computers/changed", { method: "POST", headers: { "x-organization-id": sourceOrganizationId, "x-computer-id": computerId } }));
         return Response.json({ ok: true });
       }
@@ -689,7 +658,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       }
       if (tail === "computers/live" && request.method === "GET") {
         await organizations.member(organizationId, identity.userId);
-        return board().fetch(new Request("https://internal/computers/live", { headers: { upgrade: request.headers.get("upgrade") ?? "", "x-organization-id": organizationId, "x-user-id": identity.userId, "x-session-id": identity.sessionId } }));
+        return organizationObject().fetch(new Request("https://internal/computers/live", { headers: { upgrade: request.headers.get("upgrade") ?? "", "x-organization-id": organizationId, "x-user-id": identity.userId, "x-session-id": identity.sessionId } }));
       }
       if (tail === "computers/connection-keys" && request.method === "POST") {
         const member = await organizations.member(organizationId, identity.userId);
@@ -722,7 +691,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         const input = computerModelKeyWrite.safeParse(await body(request));
         if (!input.success) return jsonError("Enter an API key for this provider.", 400);
         await keys.set(id, computerModelKeyName(input.data.id), input.data.apiKey);
-        await board().fetch(new Request("https://internal/computer-model-keys/changed", { method: "POST", headers: { "x-organization-id": organizationId, "x-computer-id": id } }));
+        await organizationObject().fetch(new Request("https://internal/computer-model-keys/changed", { method: "POST", headers: { "x-organization-id": organizationId, "x-computer-id": id } }));
         return Response.json({ providers: publicComputerModelKeys(await keys.names(id)) });
       }
       const computerMatch = /^computers\/([^/]+)$/.exec(tail);
@@ -736,7 +705,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           for (const targetOrganizationId of sharedOrganizationIds) await env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${targetOrganizationId}`)).fetch(new Request("https://internal/shared-threads/manifest", { method: "POST", headers: { "content-type": "application/json", "x-organization-id": targetOrganizationId, "x-source-organization-id": organizationId, "x-computer-id": id }, body: JSON.stringify({ ids: [] }) }));
           if(current?.ownership==="hosted") {
             if(!await computers.canManage(current,identity.userId,organizationId)) return jsonError("Computer not found.",404);
-            const removed=await board().fetch(new Request(`https://internal/hosted-computers/${encodeURIComponent(id)}`,{method:"DELETE",headers:{"x-organization-id":organizationId}}));
+            const removed=await organizationObject().fetch(new Request(`https://internal/hosted-computers/${encodeURIComponent(id)}`,{method:"DELETE",headers:{"x-organization-id":organizationId}}));
             if(!removed.ok) return removed;
           }
           await computers.remove(organizationId, id, identity.userId);
@@ -751,7 +720,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           if (access && !access.success) return jsonError("Choose who can use this computer.", 400);
           await computers.update(organizationId, id, identity.userId, { ...(typeof input.name === "string" ? { name: input.name.trim() } : {}), ...(typeof input.icon === "string" ? { icon: input.icon } : {}), ...(access?.success ? { access: access.data } : {}) });
         }
-        await board().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId, ...(request.method === "DELETE" ? { "x-removed-computer": id } : {}) } }));
+        await organizationObject().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId, ...(request.method === "DELETE" ? { "x-removed-computer": id } : {}) } }));
         return Response.json({ ok: true });
       }
       if (/^computers\/[^/]+\/(proxy|stream)(\/|$)/.test(tail)) {
@@ -775,7 +744,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           } else if(id && request.method==="PATCH" && !environmentPath[2])result={environment:await envs.update(organizationId,id,(await body(request)) ?? {})};
           else if(id && request.method==="DELETE" && !environmentPath[2]){await envs.remove(organizationId,id);result={ok:true};}
           else return jsonError("This environment action is unavailable.",405);
-          await board().fetch(new Request("https://internal/environment-changed",{method:"POST"}));
+          await organizationObject().fetch(new Request("https://internal/environment-changed",{method:"POST"}));
           return Response.json(result,{headers:{"cache-control":"no-store"}});
         } catch {return jsonError("Your environment could not be saved; check its name and values.",400);}
       }
@@ -806,7 +775,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
             : computerClaude[2] === "cancel" ? await cancelClaudeAccount(accounts, id)
             : await logoutClaudeAccount(accounts, id);
           if (computerClaude[2] === "complete" || computerClaude[2] === "logout") {
-            await board().fetch(new Request("https://internal/computer-model-keys/changed", { method: "POST", headers: { "x-organization-id": organizationId, "x-computer-id": id } }));
+            await organizationObject().fetch(new Request("https://internal/computer-model-keys/changed", { method: "POST", headers: { "x-organization-id": organizationId, "x-computer-id": id } }));
           }
           return Response.json(account, { headers: { "cache-control": "no-store" } });
         } catch (error) {
@@ -822,7 +791,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         if (computer.ownership === "hosted") return jsonError("Connect Codex on a computer you own.", 403);
         if (!(request.method === "GET" && !computerCodex[2]) && !(request.method === "POST" && computerCodex[2])) return jsonError("This account action is unavailable.", 405);
         if (request.method === "POST" && !allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Connect Codex from Remy.", 403);
-        return board().fetch(new Request(`https://internal/computer-account/${encodeURIComponent(id)}/codex${computerCodex[2] ? `/${computerCodex[2]}` : ""}`, {
+        return organizationObject().fetch(new Request(`https://internal/computer-account/${encodeURIComponent(id)}/codex${computerCodex[2] ? `/${computerCodex[2]}` : ""}`, {
           method: request.method, headers: { "x-organization-id": organizationId, "x-user-id": identity.userId },
         }));
       }
@@ -843,7 +812,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
                 ? await saveNamedModelKey(store, organizationId, id, await body(request), namedModel[2] ? decodeURIComponent(namedModel[2]) : undefined)
                 : null;
             if (!providers) return jsonError("This model action is unavailable.",405);
-            await board().fetch(new Request("https://internal/organization/changed",{method:"POST",headers:{"x-organization-id":organizationId}}));
+            await organizationObject().fetch(new Request("https://internal/organization/changed",{method:"POST",headers:{"x-organization-id":organizationId}}));
             return Response.json({providers});
           } catch { return jsonError("Your model access could not be saved; check your key and try again.",400); }
         }
@@ -853,7 +822,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         if(!allowedRequestOrigin(request,env.PREVIEW_ORIGINS)) return jsonError("Configure model access from Remy.",403);
         try {
           const providers=await saveModelAccess(store,organizationId,id,await body(request));
-          await board().fetch(new Request("https://internal/organization/changed",{method:"POST",headers:{"x-organization-id":organizationId}}));
+          await organizationObject().fetch(new Request("https://internal/organization/changed",{method:"POST",headers:{"x-organization-id":organizationId}}));
           return Response.json({providers});
         } catch {return jsonError("Your model access could not be saved; check your key and try again.",400);}
       }
@@ -878,7 +847,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
             await store.setSecret(organizationId,secretName,JSON.stringify(parsed.data));
           } catch(e) {return jsonError(e instanceof Error ? e.message : `${label} could not connect.`,502);}
         }
-        await board().fetch(new Request("https://internal/organization/changed",{method:"POST",headers:{"x-organization-id":organizationId}}));
+        await organizationObject().fetch(new Request("https://internal/organization/changed",{method:"POST",headers:{"x-organization-id":organizationId}}));
         return Response.json({saved:true});
       }
       if (tail === "cloud-connection/status" && request.method === "GET") {
@@ -900,12 +869,12 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
             const provider = (await body<{provider?:unknown}>(request))?.provider;
             if (typeof provider !== "string" || !(CLOUD_COMPUTER_PROVIDERS as readonly string[]).includes(provider)) return jsonError("Choose a cloud provider.", 400);
             const keys = await removeNamedCloudKey(store, organizationId, provider as HostedSettings["provider"], decodeURIComponent(namedCloud[1]));
-            await board().fetch(new Request("https://internal/organization/changed", { method: "POST", headers: { "x-organization-id": organizationId } }));
+            await organizationObject().fetch(new Request("https://internal/organization/changed", { method: "POST", headers: { "x-organization-id": organizationId } }));
             return Response.json({ keys });
           }
           if ((namedCloud[1] && request.method === "PATCH") || (!namedCloud[1] && request.method === "POST")) {
             const keys = await saveNamedCloudKey(store, organizationId, await body(request), namedCloud[1] ? decodeURIComponent(namedCloud[1]) : undefined);
-            await board().fetch(new Request("https://internal/organization/changed", { method: "POST", headers: { "x-organization-id": organizationId } }));
+            await organizationObject().fetch(new Request("https://internal/organization/changed", { method: "POST", headers: { "x-organization-id": organizationId } }));
             return Response.json({ keys });
           }
         } catch { return jsonError("Enter the credentials for your cloud provider.", 400); }
@@ -935,7 +904,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           const enabled = saved ? cloudConnectionSchema.parse(JSON.parse(saved)).enabled : parsed.data.enabled;
           await store.setSecret(organizationId, cloudConnectionKey(parsed.data.provider), JSON.stringify({ ...parsed.data, enabled }));
         }
-        await board().fetch(new Request("https://internal/organization/changed", { method: "POST", headers: { "x-organization-id": organizationId } }));
+        await organizationObject().fetch(new Request("https://internal/organization/changed", { method: "POST", headers: { "x-organization-id": organizationId } }));
         return Response.json({ saved: true });
       }
       const hostedMatch = /^hosted(?:\/([^/]+)(?:\/(prewarm|settings))?)?$/.exec(tail);
@@ -975,11 +944,11 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
             if(!parsed.success && !(workspaceId && input?.settings===null)) return jsonError("Choose valid hosted computer settings.",400);
             await settings.save(organizationId,workspaceId,input!.settings);
           }
-          await board().fetch(new Request("https://internal/organization/changed",{method:"POST",headers:{"x-organization-id":organizationId}}));
+          await organizationObject().fetch(new Request("https://internal/organization/changed",{method:"POST",headers:{"x-organization-id":organizationId}}));
           return Response.json({ok:true});
         }
         if(workspaceId && (request.method === "GET" || (request.method === "POST" && hostedMatch[2] === "prewarm"))) {
-          return board().fetch(new Request(`https://internal/hosted/${encodeURIComponent(workspaceId)}`,{method:request.method,headers:{"x-organization-id":organizationId}}));
+          return organizationObject().fetch(new Request(`https://internal/hosted/${encodeURIComponent(workspaceId)}`,{method:request.method,headers:{"x-organization-id":organizationId}}));
         }
       }
       if (tail === "threads" || tail === "threads/live" || /^threads\/starts\/[0-9a-f-]{36}$/.test(tail) || /^computers\/[^/]+\/workspaces\/[^/]+\/branches$/.test(tail) || /^computers\/[^/]+\/threads(?:\/|$)/.test(tail)) {
@@ -994,7 +963,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         if (request.headers.has("content-type")) headers.set("content-type", request.headers.get("content-type")!);
         if (request.headers.has("x-filename")) headers.set("x-filename", request.headers.get("x-filename")!);
         const internal = new URL(`https://internal/${tail}`); internal.search = url.search;
-        return board().fetch(new Request(internal, { method: request.method, headers, body: request.body, ...(request.body ? { duplex: "half" } : {}) }));
+        return organizationObject().fetch(new Request(internal, { method: request.method, headers, body: request.body, ...(request.body ? { duplex: "half" } : {}) }));
       }
       if(tail==="computers/choice" || tail==="computers/preference") {
         await organizations.member(organizationId,identity.userId);
@@ -1025,7 +994,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
           const override=input.computerId !== undefined ? input.computerId ?? undefined : preference?.computer_id;
           const choice=chooseComputer(all,{workspaceId:workspace.id,origin:workspace.origin,enabledProviders,...(override?{override}:{})});
           if(choice.hostedWorkspaceId && input.prewarm) {
-            const response=await board().fetch(new Request(`https://internal/hosted/${workspace.id}`,{method:"POST",headers:{"x-organization-id":organizationId},body:JSON.stringify({provider:choice.hostedProvider})}));
+            const response=await organizationObject().fetch(new Request(`https://internal/hosted/${workspace.id}`,{method:"POST",headers:{"x-organization-id":organizationId},body:JSON.stringify({provider:choice.hostedProvider})}));
             if(!response.ok)return response;
           }
           return Response.json({...choice,recommendedVisibility:choice.computerId && all.find(computer=>computer.computerId===choice.computerId)?.shared ? "open" : "private"});
@@ -1045,16 +1014,6 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         const policy=await env.DB.prepare("SELECT branches FROM workspace_git_policies WHERE organization_id=? AND workspace_id=?").bind(organizationId,workspace.id).first<{branches:string}>();
         return Response.json({branches:JSON.parse(policy?.branches??"[]")});
       }
-      const boardGrant = /^computers\/([^/]+)\/board-access$/.exec(tail);
-      if (boardGrant && ["GET", "PUT", "DELETE"].includes(request.method)) {
-        const member = await organizations.member(organizationId, identity.userId);
-        const computerId = decodeURIComponent(boardGrant[1]);
-        const computer = await computerStore.computer(organizationId, computerId);
-        if (!computer || computer.ownership === "hosted" || member.role === "member" || !await computers.canManage(computer, identity.userId, organizationId)) return jsonError("Computer not found.", 404);
-        if (request.method === "PUT") await env.DB.prepare("INSERT INTO organization_board_computers (organization_id,computer_id,granted_by,created_at) VALUES (?,?,?,?) ON CONFLICT(organization_id,computer_id) DO UPDATE SET granted_by=excluded.granted_by").bind(organizationId, computerId, identity.userId, Date.now()).run();
-        if (request.method === "DELETE") await env.DB.prepare("DELETE FROM organization_board_computers WHERE organization_id=? AND computer_id=?").bind(organizationId, computerId).run();
-        return Response.json({ enabled: !!await env.DB.prepare("SELECT 1 FROM organization_board_computers WHERE organization_id=? AND computer_id=?").bind(organizationId, computerId).first() });
-      }
       if (!tail && request.method === "GET") {
         const member = await organizations.member(organizationId, identity.userId);
         const organization = await organizationStore.organization(organizationId);
@@ -1062,30 +1021,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
       }
       if (tail === "live" && request.method === "GET") {
         await organizations.member(organizationId, identity.userId);
-        return board().fetch(new Request("https://internal/organization/live", { headers: { upgrade: request.headers.get("upgrade") ?? "", "x-organization-id": organizationId, "x-user-id": identity.userId, "x-session-id": identity.sessionId } }));
-      }
-      if (tail === "board/events" && request.method === "POST") {
-        await organizations.member(organizationId, identity.userId);
-        const input = boardAppendInputSchema.safeParse(await body(request));
-        if (!input.success) return jsonError("Choose a valid change.", 400);
-        const profile = await store.profile(identity.userId);
-        const actor = boardActorSchema.parse({ kind: "member", id: identity.userId, label: profile?.name ?? "Member" });
-        return board().fetch("https://internal/board/append", { method: "POST", headers: { "x-organization-id": organizationId, "x-user-id": identity.userId }, body: JSON.stringify({ input: input.data, actor }) });
-      }
-      if (tail === "board/live" && request.method === "GET") {
-        await organizations.member(organizationId, identity.userId);
-        if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return jsonError("Open a WebSocket connection.", 426);
-        const cursor = url.searchParams.get("cursor");
-        const live = new URL("https://internal/board/live");
-        if (cursor !== null) live.searchParams.set("cursor", cursor);
-        return board().fetch(new Request(live, { headers: { upgrade: "websocket", "x-organization-id": organizationId, "x-user-id": identity.userId, "x-session-id": identity.sessionId } }));
-      }
-      const boardMatch = /^board\/(tickets)(?:\/([^/]+))?$/.exec(tail);
-      if (boardMatch && request.method === "GET") {
-        await organizations.member(organizationId, identity.userId);
-        const entity = boardProjectionEntitySchema.parse(boardMatch[1]);
-        const entityId = boardMatch[2] ? decodeURIComponent(boardMatch[2]) : undefined;
-        return board().fetch(new Request(`https://internal/board/projections/${entity}${entityId ? `/${encodeURIComponent(entityId)}` : ""}`, { headers: { "x-organization-id": organizationId, "x-user-id": identity.userId } }));
+        return organizationObject().fetch(new Request("https://internal/organization/live", { headers: { upgrade: request.headers.get("upgrade") ?? "", "x-organization-id": organizationId, "x-user-id": identity.userId, "x-session-id": identity.sessionId } }));
       }
       if (tail === "members" && request.method === "GET") {
         const members = await organizations.members(organizationId, identity.userId);
@@ -1110,7 +1046,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         if (input?.access && (!Array.isArray(input.access.teamIds) || !input.access.teamIds.every((id) => typeof id === "string") || !Array.isArray(input.access.userIds) || !input.access.userIds.every((id) => typeof id === "string"))) return jsonError("Choose valid workspace access.", 400);
         return Response.json(await organizations.createWorkspace(organizationId, identity.userId, { name, origin, ...(input?.access ? { access: input.access as { teamIds: string[]; userIds: string[] } } : {}) }), { status: 201 });
       }
-      if (tail === "leave" && request.method === "POST") { await organizations.leave(organizationId, identity.userId); await board().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId } })); return new Response(null, { status: 204 }); }
+      if (tail === "leave" && request.method === "POST") { await organizations.leave(organizationId, identity.userId); await organizationObject().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId } })); return new Response(null, { status: 204 }); }
       if (tail === "transfer" && request.method === "POST") { const input = await body<{ userId?: string }>(request); if (!input?.userId) return jsonError("Choose a new owner.", 400); await organizations.transfer(organizationId, identity.userId, input.userId); return new Response(null, { status: 204 }); }
       if (tail === "deletion-impact" && request.method === "GET") return Response.json(await organizations.deletionImpact(organizationId, identity.userId));
       if (!tail && request.method === "PATCH") { const input = await body<{ name?: string }>(request); const name = input?.name?.trim(); if (!name || name.length > 120) return jsonError("Enter an organization name.", 400); await organizations.rename(organizationId, identity.userId, name); return new Response(null, { status: 204 }); }
@@ -1118,19 +1054,19 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         const input = await body<{ confirmation?: string }>(request);
         const impact = await organizations.deletionImpact(organizationId, identity.userId);
         if (input?.confirmation !== impact.name) return jsonError("Enter the organization name to confirm deletion.", 400);
-        const response = await board().fetch("https://internal/board", { method: "DELETE" });
-        if (!response.ok) throw new Error("Organization board deletion failed");
+        const response = await organizationObject().fetch("https://internal/storage", { method: "DELETE" });
+        if (!response.ok) throw new Error("Organization storage deletion failed");
         await organizations.delete(organizationId, identity.userId, input?.confirmation ?? "");
         return new Response(null, { status: 204 });
       }
       const memberMatch = /^members\/([^/]+)$/.exec(tail);
       if (memberMatch && request.method === "PATCH") { const input = await body<{ role?: "admin" | "member" }>(request); if (input?.role !== "admin" && input?.role !== "member") return jsonError("Choose admin or member access.", 400); await organizations.changeRole(organizationId, identity.userId, decodeURIComponent(memberMatch[1]), input.role); return new Response(null, { status: 204 }); }
-      if (memberMatch && request.method === "DELETE") { await organizations.removeMember(organizationId, identity.userId, decodeURIComponent(memberMatch[1])); await board().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId } })); return new Response(null, { status: 204 }); }
+      if (memberMatch && request.method === "DELETE") { await organizations.removeMember(organizationId, identity.userId, decodeURIComponent(memberMatch[1])); await organizationObject().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId } })); return new Response(null, { status: 204 }); }
       const teamMatch = /^teams\/([^/]+)$/.exec(tail);
       if (teamMatch && request.method === "PATCH") { const input = await body<{ name?: string }>(request); const name = input?.name?.trim(); if (!name || name.length > 120) return jsonError("Enter a team name.", 400); await organizations.renameTeam(organizationId, identity.userId, decodeURIComponent(teamMatch[1]), name); return new Response(null, { status: 204 }); }
-      if (teamMatch && request.method === "DELETE") { await organizations.deleteTeam(organizationId, identity.userId, decodeURIComponent(teamMatch[1])); await board().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId } })); return new Response(null, { status: 204 }); }
+      if (teamMatch && request.method === "DELETE") { await organizations.deleteTeam(organizationId, identity.userId, decodeURIComponent(teamMatch[1])); await organizationObject().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId } })); return new Response(null, { status: 204 }); }
       const teamMemberMatch = /^teams\/([^/]+)\/members\/([^/]+)$/.exec(tail);
-      if (teamMemberMatch && (request.method === "PUT" || request.method === "DELETE")) { await organizations.changeTeamMember(organizationId, identity.userId, decodeURIComponent(teamMemberMatch[1]), decodeURIComponent(teamMemberMatch[2]), request.method === "PUT"); await board().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId } })); return new Response(null, { status: 204 }); }
+      if (teamMemberMatch && (request.method === "PUT" || request.method === "DELETE")) { await organizations.changeTeamMember(organizationId, identity.userId, decodeURIComponent(teamMemberMatch[1]), decodeURIComponent(teamMemberMatch[2]), request.method === "PUT"); await organizationObject().fetch(new Request("https://internal/computers/changed", { method: "POST", headers: { "x-organization-id": organizationId } })); return new Response(null, { status: 204 }); }
       const teamMembersMatch = /^teams\/([^/]+)\/members$/.exec(tail);
       if (teamMembersMatch && request.method === "GET") return Response.json({ userIds: await organizations.teamMembers(organizationId, identity.userId, decodeURIComponent(teamMembersMatch[1])) });
       const workspaceMatch = /^workspaces\/([^/]+)$/.exec(tail);
@@ -1141,10 +1077,10 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         if (input.name !== undefined && (typeof input.name !== "string" || !input.name.trim() || input.name.length > 120)) return jsonError("Enter a workspace name.", 400);
         if (input.access !== undefined && input.access !== null && (!Array.isArray(input.access.teamIds) || !input.access.teamIds.every((id) => typeof id === "string") || !Array.isArray(input.access.userIds) || !input.access.userIds.every((id) => typeof id === "string"))) return jsonError("Choose valid workspace access.", 400);
         const updated = await organizations.updateWorkspace(organizationId, identity.userId, decodeURIComponent(workspaceMatch[1]), { ...(input.icon !== undefined ? {icon: String(input.icon)} : {}), ...(input.tint !== undefined ? {tint: String(input.tint)} : {}), ...(typeof input.name === "string" ? { name: input.name.trim() } : {}), ...(input.access !== undefined ? { access: input.access as { teamIds: string[]; userIds: string[] } | null } : {}) });
-        await board().fetch(new Request("https://internal/connections/changed", {method:"POST",headers:{"x-organization-id":organizationId}}));
+        await organizationObject().fetch(new Request("https://internal/connections/changed", {method:"POST",headers:{"x-organization-id":organizationId}}));
         return Response.json(updated);
       }
-      if (workspaceMatch && request.method === "DELETE") { if ((await organizations.member(organizationId, identity.userId)).role === "member") return jsonError("Only an administrator can remove a workspace.", 403); const cleanup = await board().fetch(new Request(`https://internal/hosted-workspace/${workspaceMatch[1]}`, {method:"DELETE"})); if (!cleanup.ok) return jsonError("This hosted computer could not be removed; try again.", 502); await organizations.deleteWorkspace(organizationId, identity.userId, decodeURIComponent(workspaceMatch[1])); return new Response(null, { status: 204 }); }
+      if (workspaceMatch && request.method === "DELETE") { if ((await organizations.member(organizationId, identity.userId)).role === "member") return jsonError("Only an administrator can remove a workspace.", 403); const cleanup = await organizationObject().fetch(new Request(`https://internal/hosted-workspace/${workspaceMatch[1]}`, {method:"DELETE"})); if (!cleanup.ok) return jsonError("This hosted computer could not be removed; try again.", 502); await organizations.deleteWorkspace(organizationId, identity.userId, decodeURIComponent(workspaceMatch[1])); return new Response(null, { status: 204 }); }
     }
   } catch (error) {
     if (error instanceof OrganizationError) return jsonError(error.message, error.status);
@@ -1255,7 +1191,6 @@ export function createHandler(overrides: Partial<HandlerDependencies> = {}) {
 
 export class HubCoordinator {
   private readonly connectionDeliveries = new Map<string,Promise<void>>();
-  private readonly board: OrganizationBoard;
   private readonly threads: ThreadStore;
   private threadPublishing = Promise.resolve();
   private hosted?: HostedLifecycle;
@@ -1268,24 +1203,9 @@ export class HubCoordinator {
   constructor(private readonly ctx: DurableObjectState, readonly env: Env) {
     this.computers = new D1ComputerStore(env.DB);
     this.notifications = new HubNotifications(env.DB, (computerId, threadId) => this.threads.get(computerId, threadId));
-    this.threads = new ThreadStore(new DurableBoardStorage(ctx.storage), (frame) => { this.threadPublishing = this.threadPublishing.then(() => this.publishThreadFrame(frame)).catch(() => undefined); });
-    this.board = new OrganizationBoard(new DurableBoardStorage(ctx.storage), {
-      publish: (frames) => {
-        this.ctx.waitUntil(this.scheduleAlarm(Date.now()+1000));
-        for (const socket of this.ctx.getWebSockets()) {
-          const attachment = socket.deserializeAttachment() as { kind?: string; boardSync?: boolean } | null;
-          if (attachment?.kind === "computer" && attachment.boardSync) { try { socket.send(JSON.stringify({ kind: "board.changed" })); } catch { socket.close(); } }
-          if (attachment?.kind !== "board") continue;
-          try {
-            void this.sendOrganizationReset(socket, frames.at(-1)?.cursor ?? 0);
-            const cursor = frames.at(-1)?.cursor;
-            if (cursor !== undefined) socket.serializeAttachment({ ...attachment, cursor });
-          } catch {
-            socket.close(1011, "Live updates stopped; reconnect to continue.");
-          }
-        }
-      },
-    });
+    this.threads = new ThreadStore(new DurableStorage(ctx.storage), (frame) => { this.threadPublishing = this.threadPublishing.then(() => this.publishThreadFrame(frame)).catch(() => undefined); });
+    // Tasks left the organization board and Linear sync bindings in this object's storage.
+    void ctx.blockConcurrencyWhile(() => clearRetiredTasks(new DurableStorage(ctx.storage)).then(() => undefined, (error) => { console.error("Retired Tasks storage was not cleared", error); }));
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -1438,49 +1358,20 @@ export class HubCoordinator {
       await this.scheduleAlarm(Date.now() + COMPUTER_HEARTBEAT_TIMEOUT_MS);
       return new Response(null, { status: 101, webSocket: client });
     }
-    if(url.pathname==="/linear/wake" && org){await this.scheduleAlarm(Date.now()+1000);return Response.json({ok:true});}
-    if(url.pathname==="/linear/board" && org && user) {
-      try {
-        if(request.method==="GET")return Response.json(await this.linearBoard(org).state(user));
-        if(request.method==="POST")return await this.withLinear(async()=>{
-          const input=await request.json() as {workspaceId:string;enabled:boolean};
-          if(typeof input.enabled!=="boolean")return jsonError("Choose a sync preference.",400);
-          await this.linearBoard(org).configure(user,input.workspaceId,input.enabled);await this.scheduleAlarm(Date.now()+1000);return Response.json(await this.linearBoard(org).state(user));
-        });
-      }catch{return jsonError("Your Linear sync preference could not be saved.",400);}
-    }
     const agentTool=/^\/organization-tools\/([^/]+)$/.exec(url.pathname);
     if(agentTool && request.method==="POST" && org) {
       const binding=await this.ctx.storage.get<{computerId:string;userId:string}>(`thread-run:${decodeURIComponent(agentTool[1])}`);
       if(!binding || binding.computerId!==request.headers.get("x-computer-id"))return jsonError("This thread cannot use organization tools.",403);
       const member=await new D1OrganizationStore(this.env.DB).membership(org,binding.userId);
       if(!member)return jsonError("This thread is unavailable.",403);
-      const input=await body<{action?:string;input?:{workspaceId?:string;prompt?:string;title?:string;ticketId?:string}}>(request);
+      const input=await body<{action?:string;input?:Record<string,unknown>}>(request);
       const action=input?.action,asked=input?.input??{},store=new D1OrganizationStore(this.env.DB);
-      if(action==="resolve_linear_ticket") {
-        const input=asked as Record<string,unknown>;
-        try{const resolved=await this.withLinear(()=>this.linearBoard(org).resolve(binding.userId,String(input.workspaceId),String(input.key)));return Response.json({...resolved,artifact:{kind:"ticket",organizationId:org,key:resolved.ticketId,title:resolved.issue.title}});}catch{return jsonError("This Linear ticket could not be resolved.",400);}
-      }
-      if(action==="comment_organization_ticket") {
-        const input=asked as Record<string,unknown>,ticket=await this.board.detail("tickets",String(input.ticketId));
-        if(!ticket || typeof input.text!=="string" || !input.text.trim() || input.text.length>60000 || !await new BoardAccess(store,this.board,org,binding.userId).canRead(ticket))return jsonError("This ticket is unavailable.",404);
-        return Response.json(await this.board.append({entity:"ticket",entityId:ticket.id,kind:"comment",payload:{text:input.text,threadId:decodeURIComponent(agentTool[1]),computerId:binding.computerId}},{kind:"member",id:binding.userId,label:(await new D1AccountStore(this.env.DB).profile(binding.userId))?.name??"Member"}));
-      }
       if(action==="github_action") {
         const githubInput=asked as Record<string,unknown>;
         try{return Response.json(await githubFor(this.env).action(org,binding.userId,String(githubInput.workspaceId),String(githubInput.action),githubInput));}catch{return jsonError("Your GitHub action could not complete.",400);}
       }
       if(action==="list_organization_workspaces")return Response.json({workspaces:await new OrganizationService(store).workspaces(org,binding.userId)});
       if(action==="list_organization_computers") {const threads=await this.visibleThreads(binding.userId);return Response.json({computers:(await this.computerService().list(org,binding.userId)).map(c=>({...c,activeThreads:threads.filter(t=>t.computerId===c.computerId && ["working","running","busy"].includes(String(t.detail.state))).length}))});}
-      if(action==="create_organization_ticket") {
-        if(!asked.workspaceId)return jsonError("Choose a workspace.",400);
-        const workspace=await new OrganizationService(store).workspace(org,binding.userId,asked.workspaceId);
-        const actor={id:binding.userId,label:(await new D1AccountStore(this.env.DB).profile(binding.userId))?.name??"Member"};
-        const change={entity:"ticket" as const,entityId:asked.ticketId??crypto.randomUUID(),kind:"create" as const,payload:{projectId:workspace.id,title:asked.title??"New ticket",body:asked.prompt??""}};
-        if(!await new BoardAccess(store,this.board,org,binding.userId).canWrite(change))return jsonError("This ticket is unavailable.",404);
-        const current=await this.board.detail("tickets",change.entityId);if(current && current.fields.projectId!==workspace.id)return jsonError("Choose the ticket's workspace.",403);
-        const result=await this.board.append(change,{kind:"member",...actor});return Response.json({...result,artifact:{kind:"ticket",organizationId:org,id:change.entityId,title:String(result.projection?.fields.title??"Ticket"),detail:workspace.name}});
-      }
       return jsonError("This organization tool is unavailable.",403);
     }
     if(url.pathname==="/codex-tokens" && request.method==="POST") {
@@ -1570,72 +1461,11 @@ export class HubCoordinator {
       await this.ctx.storage.put("uptime.latest", frame);
       return new Response(null, { status: 204 });
     }
-    if (request.method === "POST" && url.pathname === "/board/sync") {
-      const input = await request.json() as { events: unknown[]; version: Record<string, number> };
-      const rows=input.events.map(v=>boardLogEventSchema.parse(v));
-      if(rows.some(e=>!["project","ticket"].includes(e.entity)))return jsonError("Agents and their memories stay with your organization.",403);
-      if(!org || !user)return jsonError("Tasks access is unavailable.",403);
-      const access=new BoardAccess(new D1OrganizationStore(this.env.DB),this.board,org,user);
-      for(const e of rows)if(e.entity==="ticket") {const existing=await this.board.detail("tickets",e.entityId);if(existing && !await access.canRead(existing))return jsonError("Ticket not found.",404);const assigned=e.payload.assigneeAgentId??e.payload.toAgentId;if(assigned && !["you","workspace"].includes(String(assigned)))return jsonError("Assign organization agents from Settings.",403);}
-      await this.board.mergeRemote(rows);
-      const outgoing=await this.board.eventsSince(input.version,500,true);
-      return Response.json({events:outgoing.filter(e=>["project","ticket"].includes(e.entity)),version:await this.board.versionVector()});
-    }
-    if (request.method === "POST" && url.pathname === "/board/append") {
-      const input = await body<{ input?: unknown; actor?: unknown }>(request);
-      const actor = boardActorSchema.safeParse(input?.actor);
-      if (!actor.success) return jsonError("Invalid board actor", 400);
-      try {
-        const parsed = boardAppendInputSchema.parse(input?.input);
-        if (org && user && !await new BoardAccess(new D1OrganizationStore(this.env.DB), this.board, org, user).canWrite(parsed)) return jsonError("Ticket not found.", 404);
-        const event=await this.board.append(parsed, actor.data);
-        return Response.json(event, { status: 201 });
-      } catch {
-        return jsonError("Invalid board event", 400);
-      }
-    }
-    if (request.method === "POST" && url.pathname === "/board/merge") {
-      const input = await body<{ events?: unknown }>(request);
-      return Response.json(await this.board.mergeRemote(input?.events));
-    }
-    if (request.method === "POST" && url.pathname === "/board/events") {
-      const input = await body<{ version?: unknown; limit?: unknown }>(request);
-      const version = boardVersionVectorSchema.safeParse(input?.version ?? {});
-      if (!version.success) return jsonError("Invalid board version", 400);
-      const limit = typeof input?.limit === "number" ? input.limit : 500;
-      return Response.json({ events: await this.board.eventsSince(version.data, limit), version: await this.board.versionVector() });
-    }
-    if (request.method === "DELETE" && url.pathname === "/board") {
+    if (request.method === "DELETE" && url.pathname === "/storage") {
       for (const socket of this.ctx.getWebSockets()) socket.close(1001, "This organization was deleted.");
       for (const state of await this.hostedService().list()) await this.hostedService().remove(state.computerId);
       await this.ctx.storage.deleteAll();
       return new Response(null, { status: 204 });
-    }
-    const projectionMatch = /^\/board\/projections\/(tickets|agents|memories|routines)(?:\/([^/]+))?$/.exec(url.pathname);
-    if (request.method === "GET" && projectionMatch) {
-      const entity = boardProjectionEntitySchema.parse(projectionMatch[1]);
-      const access = org && user ? new BoardAccess(new D1OrganizationStore(this.env.DB), this.board, org, user) : undefined;
-      if (!projectionMatch[2]) {
-        const result = await this.board.list(entity);
-        if (access) result.items = (await Promise.all(result.items.map(async (p) => await access.canRead(p) ? p : undefined))).filter((p): p is NonNullable<typeof p> => !!p);
-        return Response.json({ ...result, cursor: (await this.board.liveFramesAfter()).cursor });
-      }
-      const projection = await this.board.detail(entity, decodeURIComponent(projectionMatch[2]));
-      return projection && (!access || await access.canRead(projection)) ? Response.json(projection) : jsonError("Not found", 404);
-    }
-    if (request.method === "GET" && url.pathname === "/board/live") {
-      if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return jsonError("Expected WebSocket", 426);
-      const rawCursor = url.searchParams.get("cursor");
-      const cursor = rawCursor === null ? undefined : Number(rawCursor);
-      if (cursor !== undefined && (!Number.isSafeInteger(cursor) || cursor < 0)) return jsonError("Invalid cursor", 400);
-      const replay = await this.board.liveFramesAfter(cursor);
-      const pair = new WebSocketPair();
-      const [client, server] = Object.values(pair);
-      this.ctx.acceptWebSocket(server);
-      server.serializeAttachment({ kind: "board", cursor: replay.cursor, userId: user, sessionId: request.headers.get("x-session-id") });
-      if (user) await this.sendOrganizationReset(server, replay.cursor);
-      else for (const frame of replay.frames) server.send(JSON.stringify(frame));
-      return new Response(null, { status: 101, webSocket: client });
     }
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -1665,7 +1495,7 @@ export class HubCoordinator {
       }
       const now = Date.now();
       if (organizationId) await this.computers.seen(organizationId, attachment.computerId, now, frame.capabilities, frame.daemonVersion);
-      socket.serializeAttachment({ ...attachment, ready: true, boardSync: frame.boardSync === true, lastSeenAt: now });
+      socket.serializeAttachment({ ...attachment, ready: true, lastSeenAt: now });
       this.invalidateComputers();
       await this.pushRetiredHostedThreads(attachment.computerId, socket);
       return;
@@ -1701,11 +1531,6 @@ export class HubCoordinator {
       await this.threads.snapshot(attachment.computerId, frame.snapshot);
       const running=(await this.threads.list()).some(t=>t.computerId===attachment.computerId && ["working","running","busy","needs_input"].includes(String(t.detail.state)));
       await this.hostedService().activity(attachment.computerId,running,frame.snapshot.detail.entries.some(e=>e.kind==="assistant"));
-
-      if(!["working","running","busy","needs_input"].includes(String(frame.snapshot.detail.state))) {
-        const text=frame.snapshot.detail.entries.filter(e=>e.kind==="assistant"&&e.text).map(e=>e.text).join("\n\n");
-        this.ctx.waitUntil(this.withLinear(async()=>{try{const service=this.linearBoard(organizationId);const artifacts=await service.artifacts(frame.snapshot.id,frame.snapshot.detail.entries.flatMap(e=>Array.isArray(e.artifacts)?e.artifacts:[]));await service.reply(attachment.computerId!,frame.snapshot.id,`${text}${artifacts?`\n\n${artifacts}`:''}`);}catch{await this.scheduleAlarm(Date.now()+60_000);}}));
-      }
       return;
     }
     if (frame.kind === "thread.manifest") {
@@ -1909,7 +1734,7 @@ export class HubCoordinator {
   private hostedService(): HostedLifecycle {
     if(this.hosted) return this.hosted;
     const settings=new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get());
-    this.hosted=new HostedLifecycle(new DurableBoardStorage(this.ctx.storage),id=>{
+    this.hosted=new HostedLifecycle(new DurableStorage(this.ctx.storage),id=>{
       if(!isGuestCloudProvider(id)) throw new Error("Hosted computers are not configured.");
       if(!this.env.PROVIDER_RUNTIME && (!this.env.HOSTED_CONTROL_URL || !this.env.HOSTED_CONTROL_TOKEN)) throw new Error("Hosted computers are not configured.");
       return new HttpRuntimeProvider(id,this.env.HOSTED_CONTROL_URL ?? "https://provider.internal",
@@ -1983,7 +1808,7 @@ export class HubCoordinator {
 
   private async sendOrganizationReset(socket: WebSocket, cursor = 0): Promise<void> {
     const meta = socket.deserializeAttachment() as { kind?: string; userId?: string; sessionId?: string } | null;
-    if (!meta || !["board", "organization"].includes(meta.kind ?? "")) return;
+    if (meta?.kind !== "organization") return;
     const org = await this.ctx.storage.get<string>("organizationId");
     if (meta.userId) {
       const member = org && await new D1OrganizationStore(this.env.DB).membership(org, meta.userId);
@@ -2272,21 +2097,6 @@ export class HubCoordinator {
         if(state?.settings.provider && !await canStartOnCloud(new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()),org,actor.id,state.settings.provider,start.provider,start.model)) return jsonError(START_PROVIDER_DENIED,403);
       }
     }
-    if(id && action==="message" && snapshot) {
-      const org=request.headers.get("x-organization-id")!;
-      try {
-        const input=JSON.parse(new TextDecoder().decode(payload)),key=typeof input.text==="string"?/\bwork on\s+([A-Z][A-Z0-9]*-\d+)\b/i.exec(input.text)?.[1]?.toUpperCase():undefined;
-        if(key){const local=target.capabilities.workspaces.find(w=>w.path===snapshot.detail.cwd),workspace=local?.origin?await new D1OrganizationStore(this.env.DB).workspaceByOrigin(org,repositoryOrigin(local.origin)):undefined;
-          if(workspace&&(await this.linearBoard(org).policies()).some(p=>p.enabled&&p.workspace_id===workspace.id)) {
-            const resolved=await this.withLinear(()=>this.linearBoard(org).resolve(actor.id,workspace.id,key));
-            input.text+=`\n\nLinked Linear ticket ${resolved.issue.identifier}: ${resolved.issue.title}\n${resolved.issue.description??''}\n${resolved.issue.url}`;
-            if(resolved.ticketId)await this.linearBoard(org).attachRun(resolved.ticketId,computerId,id,actor.id);
-            if(resolved.ticketId)await this.board.append({entity:"ticket",entityId:resolved.ticketId,kind:"link",payload:{chatId:id,computerId}},{kind:"member",id:actor.id,label:actor.label});
-            payload=new TextEncoder().encode(JSON.stringify(input)).buffer;
-          }
-        }
-      }catch{return jsonError("This Linear ticket could not be resolved in your workspace.",400);}
-    }
     let input:Record<string,unknown>={};
     if(payload.byteLength){try{input=JSON.parse(new TextDecoder().decode(payload));}catch{return jsonError("Send a valid thread request.",400);}}
     if(input.hubEnvironment!==undefined || input.hubTaskId!==undefined || input.hubLinear!==undefined)return jsonError("This thread configuration is unavailable.",403);
@@ -2310,19 +2120,7 @@ export class HubCoordinator {
     if (current === null || at < current) await this.ctx.storage.setAlarm(at);
   }
 
-  private linearWork:Promise<unknown>|undefined;
-  private async withLinear<T>(work:()=>Promise<T>):Promise<T> {const before=this.linearWork,job=(async()=>{await before?.catch(()=>undefined);return work();})();this.linearWork=job;try{return await job;}finally{if(this.linearWork===job)this.linearWork=undefined;}}
-  private linearBoard(org:string){return new LinearBoard(org,linearFor(this.env),this.board,new DurableBoardStorage(this.ctx.storage),new URL(this.env.WEB_APP_URL ?? this.env.BETTER_AUTH_URL).origin);}
-
   async alarm(): Promise<void> {
-    const linearOrg=await this.ctx.storage.get<string>("organizationId");
-    if(linearOrg) await this.withLinear(async()=>{
-      const service=this.linearBoard(linearOrg);await service.tick();
-      for(const [key,run] of await this.ctx.storage.list<{computerId:string;ticketId:string}>({prefix:"linear:run:"})){
-        const id=key.slice("linear:run:".length);if(await this.ctx.storage.get(`linear:run-done:${id}`))continue;
-        const thread=await this.threads.get(run.computerId,id);if(thread&&!['working','running','busy','needs_input'].includes(String(thread.detail.state)))try{const text=thread.detail.entries.filter(e=>e.kind==='assistant'&&e.text).map(e=>e.text).join("\n\n"),artifacts=await service.artifacts(id,thread.detail.entries.flatMap(e=>Array.isArray(e.artifacts)?e.artifacts:[]));await service.reply(run.computerId,id,`${text}${artifacts?`\n\n${artifacts}`:''}`);}catch{}
-      }
-    });
     await this.hostedService().idle();
     const hostedDue=(await this.hostedService().list()).length ? Date.now()+60_000 : undefined;
 
@@ -2332,7 +2130,6 @@ export class HubCoordinator {
     const pushDue = notificationOrg ? await this.env.DB.prepare("SELECT MIN(next_attempt_at) AS due FROM notification_pushes WHERE organization_id=?").bind(notificationOrg).first<{ due: number | null }>() : null;
     let next: number | undefined = pushDue?.due ? Math.max(Date.now() + 1000, pushDue.due) : undefined;
     if(hostedDue) next=Math.min(next ?? hostedDue,hostedDue);
-    if(linearOrg && (await this.linearBoard(linearOrg).policies()).some(p=>p.enabled))next=Math.min(next??Infinity,Date.now()+60_000);
     for (const socket of this.ctx.getWebSockets()) {
       const attachment = socket.deserializeAttachment() as { kind?: string; lastSeenAt?: number } | null;
       if (attachment?.kind !== "computer" || !attachment.lastSeenAt) continue;

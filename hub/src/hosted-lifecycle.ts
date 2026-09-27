@@ -1,6 +1,6 @@
 import { HostedStartupError } from "./hosted-startup-error.js";
 import type { HostedComputerState, HostedSettings } from "@remy/contract";
-import type { BoardStorage } from "./organization-board.js";
+import type { KeyValueStorage } from "./durable-storage.js";
 import type {
   ComputerRuntime,
   ComputerRuntimeProvider,
@@ -25,7 +25,7 @@ type State = HostedComputerState & {
 export class HostedLifecycle {
   private readonly running = new Map<string, Promise<unknown>>();
   constructor(
-    private readonly storage: BoardStorage,
+    private readonly storage: KeyValueStorage,
     private readonly provider: (id: string) => ComputerRuntimeProvider,
     private readonly prepare: (state: State) => Promise<ProvisionComputerInput>,
     private readonly ready: (computerId: string) => Promise<void>,

@@ -203,7 +203,7 @@ export const computerToHubFrameSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("notification"), organizationId: z.string().min(1).optional(), notification: hubNotificationInputSchema }),
   z.object({ kind: z.literal("thread.snapshot"), snapshot: threadSnapshotSchema }),
   z.object({ kind: z.literal("thread.manifest"), organizationId: z.string().min(1).optional(), ids: z.array(z.string().uuid()) }),
-  z.object({ kind: z.literal("hello"), boardSync: z.boolean().optional(), protocolVersion: z.number().int().positive(), daemonVersion: z.string().min(1), capabilities: computerCapabilitiesSchema }),
+  z.object({ kind: z.literal("hello"), protocolVersion: z.number().int().positive(), daemonVersion: z.string().min(1), capabilities: computerCapabilitiesSchema }),
   z.object({ kind: z.literal("heartbeat"), availability: z.enum(["available", "busy"]), observedAt: z.number().int().nonnegative() }),
   z.object({ kind: z.literal("response"), id: z.string().min(1), status: z.number().int().min(100).max(599), headers: proxyHeadersSchema, body: z.string() }),
   z.object({ kind: z.literal("stream"), id: z.string().min(1), payload: z.string() }),
@@ -330,64 +330,6 @@ export type OrganizationWorkspace = z.infer<typeof organizationWorkspaceSchema>;
 export const organizationDeletionImpactSchema = z.object({ organizationId: z.string().min(1), name: z.string().min(1), members: z.number().int().nonnegative(), teams: z.number().int().nonnegative(), invites: z.number().int().nonnegative(), workspaces: z.number().int().nonnegative(), deletes: z.array(z.string().min(1)) });
 export type OrganizationDeletionImpact = z.infer<typeof organizationDeletionImpactSchema>;
 
-export const boardLogEntitySchema = z.enum(["project", "ticket"]);
-export type BoardLogEntity = z.infer<typeof boardLogEntitySchema>;
-export const boardProjectionEntitySchema = z.enum(["tickets"]);
-export type BoardProjectionEntity = z.infer<typeof boardProjectionEntitySchema>;
-export const boardLogKindSchema = z.enum(["create", "field", "status", "comment", "comment_edit", "comment_delete", "link", "unlink", "tombstone"]);
-export type BoardLogKind = z.infer<typeof boardLogKindSchema>;
-export const boardActorSchema = z.object({
-  kind: z.enum(["member", "computer"]),
-  id: z.string().min(1),
-  label: z.string().min(1),
-});
-export type BoardActor = z.infer<typeof boardActorSchema>;
-export const boardLogEventSchema = z.object({
-  id: z.string().min(1),
-  deviceId: z.string().min(1),
-  lamport: z.number().int().positive(),
-  at: z.number().int().nonnegative(),
-  entity: boardLogEntitySchema,
-  entityId: z.string().min(1),
-  kind: boardLogKindSchema,
-  payload: z.record(z.string(), z.unknown()),
-  actor: boardActorSchema,
-});
-export type BoardLogEvent = z.infer<typeof boardLogEventSchema>;
-export const boardAppendInputSchema = z.object({
-  entity: boardLogEntitySchema,
-  entityId: z.string().min(1),
-  kind: boardLogKindSchema,
-  payload: z.record(z.string(), z.unknown()).default({}),
-});
-export type BoardAppendInput = z.infer<typeof boardAppendInputSchema>;
-export const boardActivitySchema = z.object({
-  eventId: z.string().min(1),
-  at: z.number().int().nonnegative(),
-  kind: boardLogKindSchema,
-  actor: boardActorSchema,
-  payload: z.record(z.string(), z.unknown()),
-});
-export type BoardActivity = z.infer<typeof boardActivitySchema>;
-export const boardProjectionSchema = z.object({
-  entity: boardLogEntitySchema,
-  id: z.string().min(1),
-  fields: z.record(z.string(), z.unknown()),
-  activity: z.array(boardActivitySchema),
-  createdAt: z.number().int().nonnegative(),
-  updatedAt: z.number().int().nonnegative(),
-  lastActor: boardActorSchema,
-});
-export type BoardProjection = z.infer<typeof boardProjectionSchema>;
-export const boardVersionVectorSchema = z.record(z.string(), z.number().int().nonnegative());
-export type BoardVersionVector = z.infer<typeof boardVersionVectorSchema>;
-export const boardLiveFrameSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("event"), cursor: z.number().int().positive(), event: boardLogEventSchema }),
-  z.object({ kind: z.literal("reset"), cursor: z.number().int().nonnegative(), reason: z.literal("cursor_unavailable") }),
-]);
-export type BoardLiveFrame = z.infer<typeof boardLiveFrameSchema>;
-export const boardAppendResultSchema = z.object({ event: boardLogEventSchema, projection: boardProjectionSchema.nullable(), cursor: z.number().int().positive(), version: boardVersionVectorSchema });
-export type BoardAppendResult = z.infer<typeof boardAppendResultSchema>;
 
 export const hubRoutes = {
   health: { method: "GET", path: "/health", response: hubHealthSchema },
@@ -405,67 +347,7 @@ export const hubRoutes = {
   connectComputer: { method: "GET", path: "/api/organizations/:organizationId/computers/connect", response: hubToComputerFrameSchema },
   organizationWorkspace: { method: "GET", path: "/api/organizations/:organizationId/workspaces/:workspaceId", response: organizationWorkspaceSchema },
   organizationDeletionImpact: { method: "GET", path: "/api/organizations/:organizationId/deletion-impact", response: organizationDeletionImpactSchema },
-  organizationBoard: { method: "GET", path: "/api/organizations/:organizationId/board/:entity", response: z.object({ items: z.array(boardProjectionSchema), version: boardVersionVectorSchema }) },
-  organizationBoardEntity: { method: "GET", path: "/api/organizations/:organizationId/board/:entity/:entityId", response: boardProjectionSchema },
-  appendOrganizationBoardEvent: { method: "POST", path: "/api/organizations/:organizationId/board/events", response: boardAppendResultSchema },
-  organizationBoardLive: { method: "GET", path: "/api/organizations/:organizationId/board/live", response: boardLiveFrameSchema },
 } as const;
-
-function compareEvents(left: BoardLogEvent, right: BoardLogEvent): number {
-  return left.lamport - right.lamport || left.deviceId.localeCompare(right.deviceId) || left.id.localeCompare(right.id);
-}
-
-const editable: Record<BoardLogEntity, readonly string[]> = {
-  project: ["name", "keyPrefix", "defaultProvider", "defaultModel", "defaultEffort", "defaultPermissionMode"],
-  ticket: ["number", "keyPrefix", "linearIssueId", "externalUrl", "assigneeMemberId", "assigneeName", "labels", "title", "body", "status", "priority", "parentId", "rank", "deviceId", "branch", "startedAt", "closedAt"],
-};
-
-function applyFields(fields: Record<string, unknown>, payload: Record<string, unknown>, allowed: readonly string[]): Record<string, unknown> {
-  const next = { ...fields };
-  for (const key of allowed) if (payload[key] !== undefined) next[key] = payload[key];
-  return next;
-}
-
-function createdFields(entity: BoardLogEntity, event: BoardLogEvent): Record<string, unknown> | undefined {
-  if (entity === "ticket") return applyFields({ number: Number(event.payload.number ?? 0), projectId: String(event.payload.projectId ?? ""), title: "Untitled", body: "", status: "backlog", priority: 0, rank: "n" }, event.payload, editable.ticket);
-  return { ...event.payload };
-}
-
-export function foldBoardEvents(entity: BoardLogEntity, id: string, events: BoardLogEvent[]): BoardProjection | undefined {
-  let fields: Record<string, unknown> | undefined;
-  let createdAt = 0;
-  let updatedAt = 0;
-  let lastActor: BoardActor | undefined;
-  const activity: BoardProjection["activity"] = [];
-  const links = new Map<string, Record<string, unknown>>();
-
-  for (const event of events.sort(compareEvents)) {
-    if (event.kind === "tombstone") return undefined;
-    if (event.kind === "create") {
-      fields = createdFields(entity, event);
-      createdAt = event.at;
-    } else if (fields && (event.kind === "field" || event.kind === "status")) {
-      fields = applyFields(fields, event.payload, editable[entity]);
-      if (event.kind === "status" && event.payload.status === "in_progress" && fields.startedAt === undefined) fields.startedAt = event.at;
-      if (event.kind === "status") {
-        if (event.payload.status === "done" || event.payload.status === "cancelled") fields.closedAt = event.at;
-        else delete fields.closedAt;
-      }
-    } else if (fields && (event.kind === "link" || event.kind === "unlink")) {
-      const key = `${String(event.payload.computerId ?? event.payload.deviceId ?? event.deviceId)}:${String(event.payload.chatId ?? "")}`;
-      if (event.kind === "link") links.set(key, { ...event.payload, computerId: event.payload.computerId ?? event.payload.deviceId ?? event.deviceId, deviceId: event.payload.deviceId ?? event.deviceId, createdAt: event.at });
-      else links.delete(key);
-    }
-    if (!fields) continue;
-    updatedAt = event.at;
-    lastActor = event.actor;
-    activity.push({ eventId: event.id, at: event.at, kind: event.kind, actor: event.actor, payload: event.payload });
-  }
-
-  if (!fields || !lastActor) return undefined;
-  if (entity === "ticket" && links.size > 0) fields = { ...fields, threads: [...links.values()] };
-  return { entity, id, fields, activity, createdAt, updatedAt, lastActor };
-}
 
 export const CLOUD_COMPUTER_PROVIDERS = ["fly-sprites", "modal", "cursor-cloud"] as const;
 export type CloudComputerProvider = (typeof CLOUD_COMPUTER_PROVIDERS)[number];
