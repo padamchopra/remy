@@ -124,7 +124,7 @@ A composed screen assembles primitives; it never replaces one that exists. A con
 
 A workspace icon is `WorkspaceIcon` for the glyph or image, and `WorkspaceMark` when it sits in a tinted well. Hosted and local both go through those. Do not render `projectIcon` or a second hosted icon component at a call site — sizing may change, the glyph, fill, and rounded well must not.
 
-`WorkspaceMark` `sm` is the inline list and picker mark, `md` is the settings list (matching the IconPicker well), and `lg` sits on the composer heading. IconPicker wraps `WorkspaceMarkFrame` so its trigger is that well, not an outline button with a competing background.
+`WorkspaceMark` `sm` is the inline list and picker mark, `row` is the 28px well on a Workspaces list row, `md` is the settings well (matching the IconPicker), and `lg` sits on the composer heading. IconPicker wraps `WorkspaceMarkFrame` so its trigger is that well, not an outline button with a competing background.
 
 BAD
 ```tsx

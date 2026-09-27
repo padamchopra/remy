@@ -18,6 +18,7 @@ import {
   Building2,
   Plug,
   Bell,
+  Plus,
 } from "lucide-react";
 import type { HubThread, Organization } from "@remy/contract";
 import type { HubRuntime } from "@/lib/hub-session";
@@ -28,6 +29,7 @@ import {
   watchHubThreads,
 } from "@/lib/hub-threads";
 import { watchHubResource } from "@/lib/hub-computers";
+import { requestComposerWorkspace } from "@/lib/composer-workspace";
 import { currentLocation, listenToLocationChanges, navigateLocation, normalizeLocation, parseLocation, type Route } from "@/lib/route";
 import { apiError } from "@/lib/api-error";
 import { Button } from "@/components/ui/button";
@@ -101,6 +103,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
   const [error, setError] = useState("");
   const [threads, setThreads] = useState<HubThread[]>([]);
   const [create, setCreate] = useState(false);
+  const [addingWorkspace, setAddingWorkspace] = useState(false);
   const [notificationsAccount, setNotificationsAccount] = useState<string>();
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -367,7 +370,13 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           }}
         />
         <SidebarInset className="h-svh min-w-0 overflow-hidden">
-          {showPaneHeader && <PaneHeader sidebar crumbs={paneCrumbs} />}
+          {showPaneHeader && <PaneHeader sidebar crumbs={paneCrumbs}>
+            {workspacesListOpen && (isAll ? contexts : organization ? [organization] : []).some(o => o.role !== "member") && (
+              <Button className="h-7 gap-1.5 rounded-md px-2.5 text-xs has-[>svg]:px-2.5 [&_svg:not([class*='size-'])]:size-3.5" onClick={() => setAddingWorkspace(true)}>
+                <Plus strokeWidth={2} />Add workspace
+              </Button>
+            )}
+          </PaneHeader>}
           {error && (
             <p role="alert" className="px-4 py-2">
               {error}
@@ -395,6 +404,14 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                   <WorkspacesList
                     organizations={contexts}
                     filter={organizationId ?? "all"}
+                    threads={threads}
+                    open={workspacesListOpen}
+                    adding={addingWorkspace}
+                    onAddingChange={setAddingWorkspace}
+                    onNewThread={(owner, workspaceId) => {
+                      requestComposerWorkspace({ organizationId: owner, workspaceId });
+                      navigate({ name: "threads", organizationId });
+                    }}
                     onOpenWorkspace={(owner, id) => navigate({
                       name: "workspaces",
                       workspaceId: id,
@@ -459,27 +476,20 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                   <Connections organizationId={organization.id} />
                 </Deferred>
               </div>
-              {(["members", "teams", "workspaces"] as const).map((kind) => (
-                <div
-                  hidden={
-                    section !== kind || (isPersonal && kind !== "workspaces")
-                  }
-                  key={kind}
-                  className="min-h-0 overflow-auto"
-                >
-                  <Deferred
-                    open={
-                      section === kind && (!isPersonal || kind === "workspaces")
-                    }
-                  >
-                    {kind === "workspaces" && route.name === "workspaces" && route.workspaceId ? (
-                      <WorkspaceDetails key={`${organization.id}:${route.workspaceId}`} organizationId={organization.id} workspaceId={route.workspaceId} role={organization.role} onBack={() => navigate({ name: "workspaces", organizationId: organization.id })} />
-                    ) : (
-                      <OrganizationSettings organizationId={organization.id} kind={kind} role={organization.role} onOpenWorkspace={workspaceId => navigate({ name: "workspaces", workspaceId, organizationId: organization.id })} />
-                    )}
+              {(["members", "teams"] as const).map((kind) => (
+                <div hidden={section !== kind || isPersonal} key={kind} className="min-h-0 overflow-auto">
+                  <Deferred open={section === kind && !isPersonal}>
+                    <OrganizationSettings organizationId={organization.id} kind={kind} role={organization.role} />
                   </Deferred>
                 </div>
               ))}
+              <div hidden={section !== "workspaces"} className="min-h-0 overflow-auto">
+                <Deferred open={section === "workspaces"}>
+                  {route.name === "workspaces" && route.workspaceId && (
+                    <WorkspaceDetails key={`${organization.id}:${route.workspaceId}`} organizationId={organization.id} workspaceId={route.workspaceId} role={organization.role} onBack={() => navigate({ name: "workspaces", organizationId: organization.id })} />
+                  )}
+                </Deferred>
+              </div>
             </div>
           )}
             </>

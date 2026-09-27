@@ -27,6 +27,7 @@ import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { usePersonalHub } from "@/lib/hub-scope";
 import { composerSnapshot, saveComposerSnapshot, type ComposerSnapshot } from "@/lib/hub-composer-cache";
 import { cacheHubWorkspaces, cachedHubWorkspaces, hasCachedHubWorkspaces } from "@/lib/hub-workspace-cache";
+import { takeComposerWorkspace, useComposerWorkspaceRequest } from "@/lib/composer-workspace";
 export type HubThreadWorkspaceOption = {
   key: string;
   organizationId: string;
@@ -104,6 +105,15 @@ export function HubThreadComposer({
   const message = controlledMessage ?? draftMessage;
   const setMessage = onMessageChange ?? setDraftMessage;
   const workspaceId = controlledWorkspaceId ?? localWorkspaceId;
+  // New thread on a workspace row opens the composer on that workspace, once
+  // this account's list holds it.
+  const requested = useComposerWorkspaceRequest();
+  useEffect(() => {
+    if (controlledWorkspaceId !== undefined || !requested || requested.organizationId !== organizationId) return;
+    if (!workspaces.some((w) => w.id === requested.workspaceId)) return;
+    setWorkspace(requested.workspaceId);
+    takeComposerWorkspace(requested);
+  }, [requested, organizationId, workspaces, controlledWorkspaceId]);
   useEffect(() => {
     if (controlledWorkspaceId === undefined && (catalogue.value || workspaces.length))
       setWorkspace((id) =>

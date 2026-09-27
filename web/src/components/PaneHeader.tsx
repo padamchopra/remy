@@ -41,7 +41,7 @@ export function PaneHeader({
   children?: ReactNode;
 }) {
   return (
-    <div data-slot="pane-header" className="flex shrink-0 items-center gap-3 border-b border-border px-5 py-4">
+    <div data-slot="pane-header" className="flex min-h-14 shrink-0 items-center gap-3 border-b border-border py-2 pr-6 pl-5">
       {sidebar && <SidebarTrigger className="shrink-0 md:hidden" />}
       {selection ? selection : <>
       <Breadcrumb className="min-w-0">
