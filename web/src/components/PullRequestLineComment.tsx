@@ -10,7 +10,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Markdown } from "@/components/Markdown";
 import { LinkedThreadChip, ThreadDot } from "@/components/PullRequestLinkedThread";
 import { initials, timeAgo } from "@/lib/pull-request-detail";
-import { lineRangeLabel, type ReviewAuthor, type ReviewComment, type ReviewThread } from "@/lib/pull-request-review-state";
+import { lineCommentActions, lineRangeLabel, type LineCommentAction, type ReviewAuthor, type ReviewComment, type ReviewThread } from "@/lib/pull-request-review-state";
 import { cn } from "@/lib/utils";
 
 /// Where a line comment can go. Every box offers GitHub: Comment posts now,
@@ -26,7 +26,7 @@ export interface LineCommentDestination {
   label: string;
 }
 
-export type LineCommentAction = "comment" | "review" | "send";
+export type { LineCommentAction };
 
 /// What every comment box and conversation in the diff needs from the Files
 /// tab, provided once rather than threaded through each hunk.
@@ -34,6 +34,8 @@ export interface ReviewSurface {
   viewer?: ReviewAuthor;
   repository: string;
   destinations: LineCommentDestination[];
+  /// You have a pending review, so GitHub takes new comments only into it.
+  pending: boolean;
   onOpenThread: (thread: HubThread) => void;
   onOpenLink: (href: string) => void;
   /// Posts a reply to a conversation, queues it, or sends it on.
@@ -124,10 +126,12 @@ function DestinationMenu({ destinations, current, onChange }: {
 
 /// The comment box under a selection or a conversation. Which button you
 /// press is where the comment goes: with a destination, Send is primary (⌘↵)
-/// and names it; without one, Add to review is. Escape cancels.
+/// and names it; without one, Add to review is. With a pending review there is
+/// no Comment, because GitHub refuses one posted now. Escape cancels.
 export function LineCommentBox({
   viewer,
   destinations,
+  pending = false,
   onOpenThread,
   onSubmit,
   onCancel,
@@ -137,6 +141,7 @@ export function LineCommentBox({
 }: {
   viewer?: ReviewAuthor;
   destinations: LineCommentDestination[];
+  pending?: boolean;
   onOpenThread: (thread: HubThread) => void;
   onSubmit: (action: LineCommentAction, text: string, destination?: LineCommentDestination) => Promise<void>;
   onCancel: () => void;
@@ -150,7 +155,7 @@ export function LineCommentBox({
   const [chosen, setChosen] = useState<string>();
   const destination = destinations.find((entry) => entry.id === chosen) ?? destinations[0];
   const menu = destinations.some((entry) => entry.kind === "review-agent");
-  const primary: LineCommentAction = destination ? "send" : "review";
+  const { actions, primary } = lineCommentActions({ destination: Boolean(destination), pending });
   useEffect(() => { input.current?.focus({ preventScroll: true }); }, []);
 
   const submit = async (action: LineCommentAction) => {
@@ -210,18 +215,13 @@ export function LineCommentBox({
           : <LinkedThreadChip compact thread={destination.thread} onOpen={() => onOpenThread(destination.thread)} className="max-sm:max-w-full" />)}
         <span aria-hidden className="min-w-0 flex-1" />
         <div className="flex min-w-0 shrink-0 flex-wrap items-center justify-end gap-2 max-sm:w-full">
-          {destination ? (
-            <>
-              {button("review", "Add to review")}
-              {button("comment", "Comment")}
-              {button("send", destination.kind === "review-agent" ? "Send to review agent" : "Send to thread", <span aria-hidden className="pl-0.5 font-mono text-[11px] leading-4 font-normal text-primary-foreground/75 max-sm:hidden">⌘↵</span>)}
-            </>
-          ) : (
-            <>
-              {button("comment", "Comment")}
-              {button("review", "Add to review")}
-            </>
-          )}
+          {actions.map((action) => (
+            <span key={action} className="contents">
+              {action === "review" && button("review", "Add to review")}
+              {action === "comment" && button("comment", "Comment")}
+              {action === "send" && destination && button("send", destination.kind === "review-agent" ? "Send to review agent" : "Send to thread", <span aria-hidden className="pl-0.5 font-mono text-[11px] leading-4 font-normal text-primary-foreground/75 max-sm:hidden">⌘↵</span>)}
+            </span>
+          ))}
         </div>
       </div>
     </div>
@@ -355,6 +355,7 @@ export function ReviewConversation({ thread, where, className }: { thread: Revie
         <LineCommentBox
           viewer={surface.viewer}
           destinations={surface.destinations}
+          pending={surface.pending}
           onOpenThread={surface.onOpenThread}
           placeholder="Reply"
           onCancel={() => surface.setOpenReply(undefined)}

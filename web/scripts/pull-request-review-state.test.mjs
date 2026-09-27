@@ -105,3 +105,16 @@ test("Finish review says what goes out with it", () => {
   assert.equal(review.finishReviewSummary(3), "Three comments go out with it.");
   assert.equal(review.finishReviewSummary(42), "42 comments go out with it.");
 });
+
+test("a pending review is one with comments of yours still in it", () => {
+  assert.equal(review.hasPendingReview(undefined), false);
+  assert.equal(review.hasPendingReview({ threads: [thread("t1")] }), false);
+  assert.equal(review.hasPendingReview({ threads: [thread("t1"), { ...thread("t2"), comments: [comment("c", true)] }] }), true);
+});
+
+test("the comment box drops Comment while a review is pending, and the primary stays", () => {
+  assert.deepEqual(review.lineCommentActions({ destination: false, pending: false }), { actions: ["comment", "review"], primary: "review" });
+  assert.deepEqual(review.lineCommentActions({ destination: false, pending: true }), { actions: ["review"], primary: "review" });
+  assert.deepEqual(review.lineCommentActions({ destination: true, pending: false }), { actions: ["review", "comment", "send"], primary: "send" });
+  assert.deepEqual(review.lineCommentActions({ destination: true, pending: true }), { actions: ["review", "send"], primary: "send" });
+});

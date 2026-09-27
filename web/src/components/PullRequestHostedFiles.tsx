@@ -28,6 +28,7 @@ import { parsePullRequestPatch } from "@/lib/pull-request-patch";
 import { findingLines, flagFindingMessage, placeFindings, setFindingStatus } from "@/lib/review-agent";
 import {
   extendSelection,
+  hasPendingReview,
   isOwnPullRequest,
   isViewed,
   lineCommentReference,
@@ -605,9 +606,12 @@ export function PullRequestHostedFiles({ organizationId, pullRequest, active, th
       await pullRequestAction(organizationId, pullRequest.workspaceId, pullRequest.number, action, input);
     } catch (caught) {
       toast.error(failure, { description: apiError(caught) });
+      // GitHub says you have a pending review this screen hadn't seen: read
+      // it, so the box offers Add to review instead of Comment.
+      if (caught instanceof HubRequestError && caught.status === 409) void refresh();
       throw caught;
     }
-  }, [organizationId, pullRequest.workspaceId, pullRequest.number]);
+  }, [organizationId, pullRequest.workspaceId, pullRequest.number, refresh]);
 
   const submitSelection = useCallback(async (action: LineCommentAction, text: string, destination?: LineCommentDestination) => {
     const chosen = selection;
@@ -660,10 +664,12 @@ export function PullRequestHostedFiles({ organizationId, pullRequest, active, th
     if (current) onReviewChanged?.({ ...current, findings: current.findings.map((entry) => (entry.id === updated.id ? updated : entry)) });
   }, [organizationId, onReviewChanged]);
 
+  const pending = hasPendingReview(review);
   const surface = useMemo<ReviewSurface>(() => ({
     viewer: review?.viewer,
     repository: pullRequest.repository,
     destinations,
+    pending,
     onOpenThread,
     onOpenLink,
     openReply,
@@ -736,13 +742,14 @@ export function PullRequestHostedFiles({ organizationId, pullRequest, active, th
       toast.success("The review agent has your flag.");
     },
     focusedFinding: highlighted,
-  }), [review?.viewer, pullRequest.repository, pullRequest.workspaceId, pullRequest.number, organizationId, destinations, onOpenThread, onOpenLink, openReply, sendToThread, act, refresh, markFinding, reviewThread, highlighted]);
+  }), [review?.viewer, pullRequest.repository, pullRequest.workspaceId, pullRequest.number, organizationId, destinations, pending, onOpenThread, onOpenLink, openReply, sendToThread, act, refresh, markFinding, reviewThread, highlighted]);
 
   const composer = selection ? (
     <LineCommentBox
       key={`${selection.path}:${selection.hunk}:${selection.anchor}`}
       viewer={review?.viewer}
       destinations={destinations}
+      pending={pending}
       onOpenThread={onOpenThread}
       onCancel={() => setSelection(undefined)}
       onSubmit={submitSelection}

@@ -55,6 +55,30 @@ export function queuedComments(review: Pick<HostedReview, "threads"> | undefined
   return review?.threads.reduce((sum, thread) => sum + thread.comments.filter((comment) => comment.pending).length, 0) ?? 0;
 }
 
+/// Whether you have a pending review on GitHub. While you do, GitHub refuses
+/// a line comment or reply posted now: it only goes into that review.
+export function hasPendingReview(review: Pick<HostedReview, "threads"> | undefined): boolean {
+  return queuedComments(review) > 0;
+}
+
+/// Where a comment box can send its words: Comment posts to GitHub now, Add
+/// to review queues it in your pending review, Send gives it to a Remy thread.
+export type LineCommentAction = "comment" | "review" | "send";
+
+/// The buttons a comment box shows, left to right, and which is primary.
+/// With a Remy thread to send to, Send is primary and last; without one, Add
+/// to review is. While a review is pending there is no Comment, as on GitHub.
+export function lineCommentActions({ destination, pending }: { destination: boolean; pending: boolean }): {
+  actions: LineCommentAction[];
+  primary: LineCommentAction;
+} {
+  const actions: LineCommentAction[] = destination ? ["review", "comment", "send"] : ["comment", "review"];
+  return {
+    actions: pending ? actions.filter((action) => action !== "comment") : actions,
+    primary: destination ? "send" : "review",
+  };
+}
+
 /// Your own pull request: GitHub refuses your approval or change request on it.
 export function isOwnPullRequest(review: Pick<HostedReview, "viewer" | "author"> | undefined): boolean {
   return Boolean(review?.author && review.viewer.login.toLowerCase() === review.author.toLowerCase());
