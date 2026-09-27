@@ -11,7 +11,6 @@ process.env.MC_CONFIG_DIR = stateDir;
 process.env.HOME = stateDir;
 
 const {
-  hasTailscaleServePreference,
   devicePreferenceOrder,
   patchSettings,
   publicSettings,
@@ -47,7 +46,7 @@ test("starts on the defaults a fresh install should have", () => {
   assert.equal(settings.deviceIcon, "");
   assert.equal(settings.deviceTint, "");
   assert.deepEqual(settings.devicePreferenceOrder, []);
-  assert.equal(settings.tailscaleServeEnabled, false);
+  assert.equal("tailscaleServeEnabled" in settings, false);
   assert.deepEqual(settings.favoriteModels, []);
   assert.deepEqual(settings.enabledProviders, ["claude", "codex", "cursor"]);
 });
@@ -55,13 +54,6 @@ test("starts on the defaults a fresh install should have", () => {
 test("keeps hub mode behind an explicit setting", () => {
   assert.equal(patchSettings({ hubMode: true }).hubMode, true);
   assert.equal(patchSettings({ hubMode: "true" }).hubMode, false);
-});
-
-test("remembers whether Tailnet reachability was explicitly chosen", () => {
-  assert.equal(hasTailscaleServePreference(), false);
-  assert.equal(patchSettings({ tailscaleServeEnabled: true }).tailscaleServeEnabled, true);
-  assert.equal(hasTailscaleServePreference(), true);
-  assert.equal(patchSettings({ tailscaleServeEnabled: false }).tailscaleServeEnabled, false);
 });
 
 test("keeps at least one provider on and moves defaults off a disabled provider", () => {

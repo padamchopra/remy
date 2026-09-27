@@ -373,7 +373,7 @@ export function setEnvironmentValues(
   return listEnvironments(projectId).find((entry) => entry.id === environmentId)!;
 }
 
-/// Removes one value and leaves a tombstone for peer convergence.
+/// Removes one value and leaves a tombstone so a newer hub record cannot revive it.
 export function deleteEnvironmentValue(projectId: string, environmentId: string, askedName: unknown): void {
   environment(environmentId, projectId);
   const name = variableName(askedName);
@@ -669,45 +669,6 @@ export async function runWithEnvironment(cwd: string, input: RuntimeCommandInput
   };
 }
 
-/// Decrypts sync records only for an authenticated peer-to-peer exchange.
-export function exportEnvironmentSync(): EnvironmentSyncRecord[] {
-  const environments = db.prepare("select * from workspace_environments").all() as unknown as EnvironmentRow[];
-  const records: EnvironmentSyncRecord[] = environments.map((row) => ({
-    kind: "environment",
-    id: row.id,
-    projectId: row.project_id,
-    environmentId: row.id,
-    name: row.name,
-    updatedAt: row.updated_at,
-    deviceId: row.device_id,
-    ...(row.deleted ? { deleted: true } : {}),
-  }));
-  for (const row of db.prepare("select * from workspace_environment_values").all() as unknown as ValueRow[]) {
-    const parent = environments.find((candidate) => candidate.id === row.environment_id);
-    if (!parent) continue;
-    records.push({
-      kind: "value",
-      projectId: parent.project_id,
-      environmentId: row.environment_id,
-      name: row.name,
-      ...(row.deleted ? {} : { value: decrypt(row) }),
-      updatedAt: row.updated_at,
-      deviceId: row.device_id,
-      ...(row.deleted ? { deleted: true } : {}),
-    });
-  }
-  for (const row of db.prepare("select * from workspace_environment_selection").all() as unknown as SelectionRow[]) {
-    records.push({
-      kind: "selection",
-      projectId: row.project_id,
-      environmentId: row.environment_id,
-      updatedAt: row.updated_at,
-      deviceId: row.device_id,
-    });
-  }
-  return records;
-}
-
 function syncRecord(value: unknown): EnvironmentSyncRecord | undefined {
   if (!value || typeof value !== "object") return undefined;
   const row = value as Record<string, unknown>;
@@ -733,7 +694,7 @@ function syncRecord(value: unknown): EnvironmentSyncRecord | undefined {
   };
 }
 
-/// Merges peer records by timestamp and device id, encrypting every incoming
+/// Merges hub records by timestamp and device id, encrypting every incoming
 /// value with this machine's own key before it reaches SQLite.
 export function mergeEnvironmentSync(input: unknown): number {
   const records = (Array.isArray(input) ? input : []).map(syncRecord).filter((row): row is EnvironmentSyncRecord => !!row);

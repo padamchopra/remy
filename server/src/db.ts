@@ -142,21 +142,6 @@ function migrate(database: DatabaseSync): void {
       primary key (ticket_id, device_id, chat_id)
     );
     create index if not exists ticket_threads_chat on ticket_threads(chat_id);
-    -- The other machines this one is paired with. The token is theirs, not
-    -- ours: it is what this daemon presents when it calls them, which is why
-    -- pairing lives here rather than in any one client.
-    create table if not exists peers (
-      id text primary key,
-      name text not null,
-      url text not null,
-      token text not null,
-      icon text,
-      tint text,
-      -- Whether notifications raised here are routed to that machine.
-      notify integer not null default 0,
-      paired_at integer not null,
-      last_seen integer
-    );
     -- iPhones that receive Apple Push from this daemon. A token is the phone's
     -- identity; the name is whatever it called itself when it registered.
     create table if not exists push_devices (
@@ -166,8 +151,8 @@ function migrate(database: DatabaseSync): void {
       last_seen integer not null
     );
     -- Shared workspace environments are encrypted independently on each
-    -- machine. Sync decrypts only in daemon memory, over the authenticated peer
-    -- channel, then re-encrypts with the receiving machine's key.
+    -- machine. Values from the hub arrive over the authenticated computer
+    -- channel and are re-encrypted with this machine's key.
     create table if not exists workspace_environments (
       id text primary key,
       project_id text not null,
@@ -242,6 +227,10 @@ function migrate(database: DatabaseSync): void {
   database.exec("drop table if exists agent_memories");
   database.exec("drop table if exists agents");
   database.exec("drop table if exists recurrences");
+  // Pairing computers directly was replaced by the hub. The table held other
+  // machines' bearer tokens, so it goes rather than sitting inert.
+  database.exec("drop table if exists peers");
+  database.exec("delete from kv where key = 'pairing'");
   try {
     database.exec("alter table workspaces add column icon text");
   } catch {
@@ -259,11 +248,6 @@ function migrate(database: DatabaseSync): void {
   }
   try {
     database.exec("alter table projects add column tint text");
-  } catch {
-    // Column already exists on databases created after this migration.
-  }
-  try {
-    database.exec("alter table peers add column tint text");
   } catch {
     // Column already exists on databases created after this migration.
   }

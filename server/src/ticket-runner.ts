@@ -1,7 +1,6 @@
 import { deviceId } from "./board-log.js";
 import { createChat, deleteChat, getChat, sendChatMessage } from "./chat.js";
 import { config, type CheckoutMode } from "./config.js";
-import { callPeer, getPeer } from "./peers.js";
 import { workspaceForProject } from "./projects.js";
 import {
   getTicket,
@@ -42,17 +41,8 @@ function runnerThread(ticket: TicketView): TicketThread | undefined {
 }
 
 async function deliverComment(thread: TicketThread, body: string): Promise<boolean> {
-  if (thread.deviceId === deviceId) {
-    if (!getChat(thread.chatId)) return false;
-    await sendChatMessage(thread.chatId, body);
-    return true;
-  }
-  const peer = getPeer(thread.deviceId);
-  if (!peer) return false;
-  await callPeer(peer, `/chats/${encodeURIComponent(thread.chatId)}/message`, {
-    method: "POST",
-    body: { text: body },
-  });
+  if (thread.deviceId !== deviceId || !getChat(thread.chatId)) return false;
+  await sendChatMessage(thread.chatId, body);
   return true;
 }
 
@@ -105,7 +95,7 @@ async function start(id: string, options: TicketStartOptions): Promise<ReturnTyp
 }
 
 /// Starts a board thread once, even when status and assignee events arrive in
-/// adjacent microtasks or from two devices in the same sync round.
+/// adjacent microtasks.
 export function startTicketThread(
   id: string,
   options: TicketStartOptions = {},

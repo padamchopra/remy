@@ -199,7 +199,7 @@ const INITIAL_CHAT_WINDOW_BYTES = 96 * 1024;
 // `claude` process each for as long as the host is up.
 const IDLE_SHUTDOWN_MS = 15 * 60_000;
 // Text arrives token by token; repainting every client on every token would
-// spend the whole tailnet budget on one paragraph.
+// spend the whole relay budget on one paragraph.
 const STREAM_FLUSH_MS = 120;
 
 function nowMs(): number {

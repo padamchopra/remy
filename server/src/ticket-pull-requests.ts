@@ -15,7 +15,7 @@ import { listWorkspaces } from "./workspaces.js";
 /// `tickets.ts` owns the rule — which columns a ready or merged pull request may
 /// move — and this owns finding the pull request that belongs to a ticket. Only
 /// the machine holding the repository can ask GitHub, so only it sweeps; the
-/// status event it writes reaches every paired machine through the board log.
+/// status event it writes reaches the hub through the board log.
 
 const SWEEP_INTERVAL_MS = 60_000;
 

@@ -24,7 +24,7 @@ class FakeSocket extends EventEmitter {
 
 const settleFrames = () => new Promise((resolve) => setTimeout(resolve, 25));
 
-test("peer relays resume sequenced frames without echoing relayed traffic", async () => {
+test("a resumed stream replays sequenced frames it missed", async () => {
   const notify = await import("./notify.js");
   const local = new FakeSocket();
   notify.attachNotifyStream(local as unknown as WebSocket, false);
@@ -33,22 +33,15 @@ test("peer relays resume sequenced frames without echoing relayed traffic", asyn
   await settleFrames();
   assert.equal(local.sent[1]?.sequence, 1);
 
-  const relay = new FakeSocket();
+  const resumed = new FakeSocket();
   notify.attachNotifyStream(
-    relay as unknown as WebSocket,
+    resumed as unknown as WebSocket,
     false,
-    new URLSearchParams(`relay=1&afterSequence=0&streamId=${local.sent[0]?.streamId}`),
+    new URLSearchParams(`afterSequence=0&streamId=${local.sent[0]?.streamId}`),
   );
-  assert.equal(relay.sent[0]?.type, "hello");
-  assert.deepEqual(relay.sent[1], local.sent[1]);
-
-  notify.broadcastPeer("peer-one", { type: "chat", chatId: "remote" });
-  assert.deepEqual(local.sent.at(-1), {
-    type: "peer-frame",
-    serverId: "peer-one",
-    payload: { type: "chat", chatId: "remote" },
-  });
-  assert.equal(relay.sent.length, 2);
+  assert.equal(resumed.sent[0]?.type, "hello");
+  assert.equal("peerStreams" in (resumed.sent[0] ?? {}), false);
+  assert.deepEqual(resumed.sent[1], local.sent[1]);
 });
 
 test("scoped clients receive only owned surfaces and acquire detail explicitly", async () => {
@@ -129,7 +122,7 @@ test("a bounded cursor replays its topics and a stale cursor resets", async () =
   assert.equal(stale.sent.length, 1);
 });
 
-test("settings subscribers receive automatic updates locally, through peers, and after reconnect", async () => {
+test("settings subscribers receive automatic updates live and after reconnect", async () => {
   const notify = await import("./notify.js");
   const client = new FakeSocket();
   notify.attachNotifyStream(client as unknown as WebSocket, false, new URLSearchParams("scoped=1&topic=settings"));
@@ -137,8 +130,6 @@ test("settings subscribers receive automatic updates locally, through peers, and
   notify.broadcast({ type: "settings" });
   notify.broadcast({ type: "automatic-update", status: { phase: "countdown", deadline: 30_000 } });
   assert.equal(client.sent.at(-1)?.type, "automatic-update");
-  notify.broadcastPeer("studio", { type: "automatic-update", status: { phase: "waiting" } });
-  assert.equal(client.sent.at(-1)?.type, "peer-frame");
   const resumed = new FakeSocket();
   notify.attachNotifyStream(resumed as unknown as WebSocket, false,
     new URLSearchParams(`scoped=1&topic=settings&afterSequence=${hello.sequence}&streamId=${hello.streamId}`));

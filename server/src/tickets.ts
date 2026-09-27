@@ -743,8 +743,8 @@ export function syncParentTicket(id: string, parentId = getTicket(id)?.parentId)
   if (!parentId) return;
   const parent = getTicket(parentId);
   if (!parent) return;
-  // The parent's own machine rolls it up. Two paired machines both see the
-  // sub-ticket move, and only one of them should write the parent's.
+  // The parent's own machine rolls it up, so a parent recorded by another
+  // computer is never written from here.
   if (parent.deviceId && parent.deviceId !== deviceId) return;
   const children = subTickets(parent.id);
   if (children.length === 0) return;

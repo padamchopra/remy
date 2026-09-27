@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
-import { createServer, type RequestListener } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test, { type TestContext } from "node:test";
+import test from "node:test";
 import type { PullRequestGuide } from "./pull-request-guides.js";
 
 const stateDir = mkdtempSync(join(tmpdir(), "remy-pull-request-guides-"));
@@ -15,7 +14,6 @@ const {
   discoverPullRequestGuide, readSavedPullRequestGuide, pullRequestGuideContext, generatePullRequestGuide,
 } = await import("./pull-request-guides.js");
 const { db } = await import("./db.js");
-const { acceptAnnouncement } = await import("./peers.js");
 
 function savedGuide(number: number): PullRequestGuide {
   return {
@@ -28,22 +26,7 @@ function savedGuide(number: number): PullRequestGuide {
   };
 }
 
-async function pairedServer(t: TestContext, id: string, handler: RequestListener) {
-  const server = createServer(handler);
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  assert.ok(address && typeof address !== "string");
-  acceptAnnouncement({ deviceId: id, name: id, token: "test-peer-token", url: `http://127.0.0.1:${address.port}` });
-  t.after(async () => {
-    db.prepare("delete from peers where id = ?").run(id);
-    server.closeAllConnections();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-  });
-}
-
-test("reuses durable local guides without GitHub, a model, or peer discovery", async (t) => {
-  let requests = 0;
-  await pairedServer(t, "local-priority", (_req, res) => { requests++; res.end("{}"); });
+test("reuses durable local guides without GitHub or a model", async () => {
   const guide = savedGuide(101);
   db.prepare("insert into pull_request_guides (repository, number, json, updated_at) values (?, ?, ?, ?)")
     .run(guide.repository, guide.number, JSON.stringify(guide), Date.now());
@@ -52,57 +35,10 @@ test("reuses durable local guides without GitHub, a model, or peer discovery", a
   assert.deepEqual(await discoverPullRequestGuide(guide.repository, guide.number), { guide });
   assert.deepEqual((await pullRequestGuideContext(guide.repository, guide.number)).guide, guide);
   assert.deepEqual(await generatePullRequestGuide({ repository: guide.repository, number: guide.number }), guide);
-  assert.equal(requests, 0);
 });
 
-test("shares online lookup and returns the owner without copying its guide", async (t) => {
-  const guide = savedGuide(102);
-  let requests = 0;
-  await pairedServer(t, "saved-owner", (req, res) => {
-    requests++;
-    assert.equal(req.headers.authorization, "Bearer test-peer-token");
-    assert.equal(req.url, "/pull-requests/guide/saved?repository=example%2Frepo&number=102");
-    res.setHeader("Content-Type", "application/json");
-    res.end(JSON.stringify({ guide }));
-  });
-  const [first, second] = await Promise.all([
-    discoverPullRequestGuide(guide.repository, guide.number),
-    discoverPullRequestGuide(guide.repository, guide.number),
-  ]);
-  assert.deepEqual(first, { guide, peerId: "saved-owner" });
-  assert.deepEqual(second, first);
-  assert.equal(requests, 1);
-  assert.equal(readSavedPullRequestGuide(guide.repository, guide.number), undefined);
-});
-
-test("ignores offline, incompatible, wrong-PR, and malformed saved guides", async (t) => {
-  let offlineRequests = 0;
-  await pairedServer(t, "offline-owner", (_req, res) => { offlineRequests++; res.end("{}"); });
-  db.prepare("update peers set last_seen = ? where id = ?").run(Date.now() - 120_000, "offline-owner");
-  await pairedServer(t, "old-version", (_req, res) => { res.writeHead(404); res.end("{}"); });
-  await pairedServer(t, "wrong-pr", (_req, res) => { res.end(JSON.stringify({ guide: savedGuide(999) })); });
-  await pairedServer(t, "malformed", (_req, res) => {
-    res.end(JSON.stringify({ guide: { ...savedGuide(103), steps: [{ title: "Incomplete step" }] } }));
-  });
-
-  assert.deepEqual(await discoverPullRequestGuide("example/repo", 103), {});
-  assert.equal(offlineRequests, 0);
-});
-
-test("a slow online device does not hold up a matching guide", async (t) => {
-  const guide = savedGuide(104);
-  await pairedServer(t, "slow-owner", () => {});
-  await pairedServer(t, "fast-owner", (_req, res) => { res.end(JSON.stringify({ guide })); });
-  const start = Date.now();
-  assert.deepEqual(await discoverPullRequestGuide(guide.repository, guide.number), { guide, peerId: "fast-owner" });
-  assert.ok(Date.now() - start < 1_000);
-});
-
-test("silent online devices have a bounded lookup deadline", async (t) => {
-  await pairedServer(t, "silent-owner", () => {});
-  const start = Date.now();
-  assert.deepEqual(await discoverPullRequestGuide("example/repo", 105), {});
-  assert.ok(Date.now() - start < 4_000);
+test("a pull request without a saved guide on this computer has none", async () => {
+  assert.deepEqual(await discoverPullRequestGuide("example/repo", 102), {});
 });
 
 test("keeps each guided-review hunk in one model-authored step", () => {
@@ -200,16 +136,14 @@ test("guide hunks retain exact revisions and file metadata outside the model pro
   assert.ok(!compactGuideHunks(hunks).includes(revision.head));
 });
 
-test("persists revisions and rejects malformed revision metadata from storage or a paired device", async (t) => {
+test("persists revisions and rejects malformed revision metadata from storage", async () => {
   const guide = savedGuide(106);
   guide.hunks[0].revision = { head: "a".repeat(40), base: "b".repeat(40), deleted: true };
   const save = (value: unknown) => db.prepare("insert or replace into pull_request_guides (repository, number, json, updated_at) values (?, ?, ?, ?)")
     .run(guide.repository, guide.number, JSON.stringify(value), Date.now());
   save(guide);
   assert.deepEqual(readSavedPullRequestGuide(guide.repository, guide.number), guide);
-  await pairedServer(t, "revision-owner", (_req, res) => { res.end(JSON.stringify({ guide })); });
-  db.prepare("delete from pull_request_guides where number = ?").run(guide.number);
-  assert.deepEqual(await discoverPullRequestGuide(guide.repository, guide.number), { guide, peerId: "revision-owner" });
+  assert.deepEqual(await discoverPullRequestGuide(guide.repository, guide.number), { guide });
   for (const revision of [null, { head: "main" }, { head: "a".repeat(40), deleted: "true" }]) {
     const invalid = { ...guide, hunks: [{ ...guide.hunks[0], revision }] };
     save(invalid);

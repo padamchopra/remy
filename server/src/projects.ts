@@ -342,9 +342,7 @@ export async function workspaceForProject(projectId: string): Promise<Workspace 
 /// The next ticket number for a project.
 ///
 /// Derived from the numbers that exist rather than a stored counter, so it
-/// stays correct when events arrive out of order. Once peers land this gains a
-/// per-device block so two machines cannot mint the same number while they
-/// cannot see each other.
+/// stays correct when events arrive out of order.
 export function nextTicketNumber(projectId: string): number {
   const row = db
     .prepare("select max(number) as high from tickets where project_id = ?")

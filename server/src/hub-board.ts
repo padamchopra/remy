@@ -12,7 +12,6 @@ import {
   deviceId,
   eventsSince,
   onLocalAppend,
-  onRemoteMerge,
   type LogEvent,
 } from "./board-log.js";
 import { broadcast } from "./notify.js";
@@ -193,12 +192,7 @@ export class HubBoardSync {
         mergeHubBoard(this.org, [portable(event)]);
       void this.sync();
     };
-    const local = onLocalAppend(changed);
-    const remote = onRemoteMerge(changed);
-    this.off = () => {
-      local();
-      remote();
-    };
+    this.off = onLocalAppend(changed);
     void this.sync();
   }
   stop() {

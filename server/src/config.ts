@@ -52,18 +52,14 @@ export interface Config {
   /// The face on your messages: empty for the default, `preset:<id>` for one
   /// of the built-in ones, or a `data:` URL for a picture you chose.
   avatar: string;
-  /// How this machine introduces itself to a newly paired device. Empty values
-  /// fall back to the hostname and the ordinary laptop mark.
+  /// How this computer introduces itself to the hub. Empty values fall back to
+  /// the hostname and the ordinary laptop mark.
   deviceName: string;
   deviceIcon: string;
   deviceTint: string;
-  /// The order this client should try paired devices for work with no
+  /// The order this client should try computers for work with no
   /// workspace. Unknown devices stay at the end until someone places them.
   devicePreferenceOrder: string[];
-  /// Whether this machine should keep its daemon exposed through Tailscale
-  /// Serve. The observed mapping can disappear or point at an older port, so
-  /// the preference has to outlive the mapping it asks for.
-  tailscaleServeEnabled: boolean;
   /// What Remy puts in front of a branch it creates for a worktree. Seeded
   /// from the GitHub login at boot, so a branch someone else sees says who
   /// made it.
@@ -215,15 +211,6 @@ export function devicePreferenceOrder(value: unknown): string[] {
   }))].slice(0, 100);
 }
 
-let tailscaleServePreferenceStored = false;
-
-/// Older installs persisted the Tailscale mapping itself, but not the intent
-/// behind it. Startup uses this distinction once to adopt an existing Remy
-/// mapping without turning a deliberately disabled one back on later.
-export function hasTailscaleServePreference(): boolean {
-  return tailscaleServePreferenceStored;
-}
-
 /// A GitHub login, held to what GitHub itself allows. It ends up on the right
 /// of an `@` in every commit an agent signs, so anything else is dropped rather
 /// than passed through.
@@ -249,7 +236,6 @@ export function branchPrefix(value: unknown): string | undefined {
 
 function load(): Config {
   const parsed = getKv<Partial<Config> & { preventSleepWhileBusy?: boolean }>("config") ?? {};
-  tailscaleServePreferenceStored = typeof parsed.tailscaleServeEnabled === "boolean";
   const hubMode = parsed.hubMode === true;
   const enabled = enabledProviders(parsed.enabledProviders, hubMode);
   const defaultProvider = enabled[0];
@@ -280,16 +266,10 @@ function load(): Config {
     deviceIcon: deviceAppearanceValue(parsed.deviceIcon, DEVICE_ICONS),
     deviceTint: deviceAppearanceValue(parsed.deviceTint, DEVICE_TINTS),
     devicePreferenceOrder: devicePreferenceOrder(parsed.devicePreferenceOrder),
-    tailscaleServeEnabled: parsed.tailscaleServeEnabled === true,
     // Absent means this is the only device, so it is the one to buzz.
     notifySelf: parsed.notifySelf !== false,
   };
-  if (tailscaleServePreferenceStored) {
-    setKv("config", config);
-  } else {
-    const { tailscaleServeEnabled: _tailscaleServeEnabled, ...withoutUnchosenTailnetPreference } = config;
-    setKv("config", withoutUnchosenTailnetPreference);
-  }
+  setKv("config", config);
   return config;
 }
 
@@ -315,7 +295,6 @@ export interface PublicSettings {
   deviceIcon: string;
   deviceTint: string;
   devicePreferenceOrder: string[];
-  tailscaleServeEnabled: boolean;
   notifySelf: boolean;
 }
 
@@ -340,7 +319,6 @@ export function publicSettings(): PublicSettings {
     deviceIcon: config.deviceIcon,
     deviceTint: config.deviceTint,
     devicePreferenceOrder: config.devicePreferenceOrder,
-    tailscaleServeEnabled: config.tailscaleServeEnabled,
     notifySelf: config.notifySelf,
   };
 }
@@ -406,10 +384,6 @@ export function patchSettings(patch: Record<string, unknown>): PublicSettings {
   }
   if (patch.devicePreferenceOrder !== undefined) {
     set("devicePreferenceOrder", devicePreferenceOrder(patch.devicePreferenceOrder));
-  }
-  if (patch.tailscaleServeEnabled !== undefined) {
-    set("tailscaleServeEnabled", patch.tailscaleServeEnabled === true);
-    tailscaleServePreferenceStored = true;
   }
   if (patch.notifySelf !== undefined) {
     set("notifySelf", patch.notifySelf === true);

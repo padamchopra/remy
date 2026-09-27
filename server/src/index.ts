@@ -11,7 +11,7 @@ import { prepareServiceRestart, pendingChatStarts, automaticUpdateStatus, automa
 import { localAnalytics } from "./analytics.js";
 import { threadAnalytics, threadPerformance } from "./thread-metrics.js";
 import { archiveChat, deleteArchivedChat, getArchivedChat, listArchivedChats, listArchivedChatSummaries } from "./archives.js";
-import { deviceId, onLocalAppend, onRemoteMerge, type LogEvent } from "./board-log.js";
+import { deviceId, onLocalAppend, type LogEvent } from "./board-log.js";
 import {
   adoptWorkspace,
   listProjects,
@@ -88,8 +88,7 @@ import {
   updateCursorCloudChat,
 } from "./cursor-cloud.js";
 import { handleHookEvent } from "./events.js";
-import { attachNotifyStream, broadcast, deliverFromPeer, notificationSequence, pushSession, pushSessionList } from "./notify.js";
-import { startPeerStreamRelay } from "./peer-stream.js";
+import { attachNotifyStream, broadcast, notificationSequence, pushSession, pushSessionList } from "./notify.js";
 import {
   browserSnapshotText,
   browserView,
@@ -108,49 +107,15 @@ import {
 } from "./browser.js";
 import { closeTerminal, openTerminal, resizeTerminal, writeTerminal } from "./terminal.js";
 import { forgetPushDevice, pushStatus, registerPushDevice } from "./push.js";
-import { canPairWithoutConfirmation, discover, sameTailnetHost } from "./tailnet.js";
-import {
-  approvePair,
-  askToPair,
-  checkPairing,
-  denyPair,
-  forgetPairing,
-  pairStatus,
-  pendingPairRequests,
-  startPairing,
-} from "./pairing.js";
-import {
-  acceptAnnouncement,
-  acceptEvents,
-  completePair,
-  identity,
-  isAuthenticatedPeerRequest,
-  listPeers,
-  pairWith,
-  peerViews,
-  proxyToPeer,
-  removePeer,
-  startPeerSync,
-  startTailnetExposureReconciler,
-  syncAnswer,
-  syncNow,
-  thisMachineIcon,
-  thisMachineName,
-  thisMachineTint,
-  updateIdentity,
-  updatePeer,
-} from "./peers.js";
 import {
   createEnvironment,
   disableEnvironment,
   deleteEnvironment,
   deleteEnvironmentValue,
-  exportEnvironmentSync,
   importEnvironmentFile,
   listEnvironmentFiles,
   listEnvironments,
   renameEnvironment,
-  mergeEnvironmentSync,
   parseEnvironmentValues,
   selectEnvironment,
   setEnvironmentValues,
@@ -337,15 +302,6 @@ function sameMessage(transcriptText: string | undefined, queued: string): boolea
   return key(transcriptText) === key(queued);
 }
 
-// A link can arrive from another device just after its thread changed state.
-// Replaying active local threads when peer events land closes that race; idle
-// threads are skipped so restarting a daemon cannot clear Needs input.
-function syncActiveTicketThreads(): void {
-  for (const chat of listChats()) {
-    if (chat.state !== "idle") syncTicketFromThread(chat.id, chat.state);
-  }
-}
-
 function activeChatCount(): number {
   return pendingChatStarts + listAllChats().filter((chat) => chat.state === "working" || chat.state === "needs_input").length;
 }
@@ -357,26 +313,6 @@ const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? "/", "http://localhost");
     const parts = url.pathname.split("/").filter(Boolean);
-
-    // These bootstrap routes keep their opaque, expiring, single-use claims.
-    // Same-owner Serve identity can replace the target-side confirmation.
-    if (url.pathname === "/pair/request" && req.method === "POST") {
-      const body = await readJson(req);
-      try {
-        const asked = askToPair(body);
-        if (await canPairWithoutConfirmation(req.headers, req.socket.remoteAddress, body.url)) {
-          const self = await identity();
-          approvePair(asked.requestId, self.url);
-        }
-        broadcast({ type: "pair-requests" });
-        return json(res, 201, asked);
-      } catch (error) {
-        return json(res, 429, { error: (error as Error).message });
-      }
-    }
-    if (url.pathname === "/pair/status" && req.method === "GET") {
-      return json(res, 200, pairStatus(url.searchParams.get("id") ?? ""));
-    }
 
     const fullAccess = authorized(req);
     const scopedChatId = fullAccess ? undefined : remyToolChatId(req.headers.authorization);
@@ -744,32 +680,6 @@ const server = createServer(async (req, res) => {
       }
     }
 
-    // Who this machine is, and the link another machine pairs with. The token
-    // is in the answer because the caller already presented it to get here.
-    if (url.pathname === "/server/identity" && req.method === "GET") {
-      return json(res, 200, await identity());
-    }
-    // Whether anything off this machine can reach it. The daemon binds
-    // loopback, so `tailscale serve` is the whole answer — and it is what the
-    // phone and every paired machine come in through, not only pairing. Serve,
-    // never funnel: the tailnet reaches it, the public internet cannot.
-    if (url.pathname === "/server/identity" && req.method === "PATCH") {
-      const body = await readJson(req);
-      if (
-        body.exposed === undefined &&
-        body.name === undefined &&
-        body.icon === undefined &&
-        body.tint === undefined
-      ) {
-        return json(res, 400, { error: "say what should change about this machine" });
-      }
-      try {
-        return json(res, 200, await updateIdentity(body));
-      } catch (error) {
-        return json(res, 409, { error: (error as Error).message });
-      }
-    }
-
     // iPhones that receive Apple Push from this machine when no window is open.
     if (url.pathname === "/push/devices" && req.method === "GET") {
       return json(res, 200, pushStatus());
@@ -785,208 +695,6 @@ const server = createServer(async (req, res) => {
       const token = decodeURIComponent(parts[2]);
       if (!forgetPushDevice(token)) return json(res, 404, { error: "no such phone" });
       return json(res, 200, { ok: true });
-    }
-
-    // Your machines on the tailnet, each marked with whether Remy answered and
-    // whether it is already paired. Tailscale already knows your devices, so
-    // nothing has to be typed or carried to get this list.
-    if (url.pathname === "/tailnet" && req.method === "GET") {
-      const found = await discover(url.searchParams.get("refresh") === "1");
-      const paired = listPeers();
-      const self = await identity();
-      return json(res, 200, {
-        devices: found
-          .filter((device) => device.host !== self.tailnetHost)
-          .map((device) => ({
-            host: device.host,
-            name: device.name,
-            os: device.os,
-            online: device.online,
-            remy: Boolean(device.url),
-            ...(device.url ? { url: device.url } : {}),
-            paired: paired.some((peer) => sameTailnetHost(peer.url, device.host)),
-          })),
-      });
-    }
-
-    // Asking a discovered machine to pair. The code comes back so this machine
-    // can show it beside the one shown over there.
-    if (url.pathname === "/pair/start" && req.method === "POST") {
-      const body = await readJson(req);
-      try {
-        const self = await identity();
-        const attempt = await startPairing({
-          url: body.url,
-          name: body.name,
-          self: { url: self.url, name: self.name, icon: self.icon, tint: self.tint },
-        });
-        const result = await checkPairing(attempt.id, completePair);
-        if (result.state === "approved") broadcast({ type: "peers" });
-        return json(res, 201, result);
-      } catch (error) {
-        return json(res, 400, { error: (error as Error).message });
-      }
-    }
-    // Where that ask has got to. Approval is also completion: the answer
-    // carries their token, so the peer lands here in the same call.
-    if (parts[0] === "pair" && parts[1] === "attempt" && parts.length === 3) {
-      const attemptId = decodeURIComponent(parts[2]);
-      if (req.method === "GET") {
-        try {
-          const attempt = await checkPairing(attemptId, completePair);
-          if (attempt.state === "approved") broadcast({ type: "peers" });
-          return json(res, 200, attempt);
-        } catch (error) {
-          return json(res, 404, { error: (error as Error).message });
-        }
-      }
-      if (req.method === "DELETE") {
-        forgetPairing(attemptId);
-        return json(res, 200, { ok: true });
-      }
-    }
-
-    // Requests from other machines, waiting on a person here.
-    if (url.pathname === "/pair/pending" && req.method === "GET") {
-      return json(res, 200, { requests: pendingPairRequests() });
-    }
-    if (parts[0] === "pair" && parts[1] === "pending" && parts.length === 4 && req.method === "POST") {
-      const requestId = decodeURIComponent(parts[2]);
-      const decision = parts[3];
-      if (decision === "deny") {
-        denyPair(requestId);
-        broadcast({ type: "pair-requests" });
-        return json(res, 200, { ok: true });
-      }
-      if (decision === "approve") {
-        try {
-          const self = await identity();
-          const approved = approvePair(requestId, self.url);
-          broadcast({ type: "pair-requests" });
-          // They collect the token on their next poll; nothing is pushed.
-          return json(res, 200, { request: { id: approved.id, state: approved.state } });
-        } catch (error) {
-          return json(res, 409, { error: (error as Error).message });
-        }
-      }
-    }
-
-    // The machines this one is paired with.
-    if (url.pathname === "/peers" && req.method === "GET") {
-      return json(res, 200, {
-        deviceId,
-        name: thisMachineName(),
-        icon: thisMachineIcon(),
-        tint: thisMachineTint(),
-        configured: {
-          name: Boolean(config.deviceName),
-          icon: Boolean(config.deviceIcon),
-          tint: Boolean(config.deviceTint),
-        },
-        peers: peerViews(),
-      });
-    }
-    if (url.pathname === "/peers" && req.method === "POST") {
-      const body = await readJson(req);
-      try {
-        const peer = await pairWith(body);
-        broadcast({ type: "peers" });
-        return json(res, 201, { peer });
-      } catch (error) {
-        return json(res, 400, { error: (error as Error).message });
-      }
-    }
-    // A peer completing its half of the pair. Authorised by this machine's own
-    // token, which it holds only because its link was pasted over there.
-    if (url.pathname === "/peers/announce" && req.method === "POST") {
-      const body = await readJson(req);
-      try {
-        const peer = acceptAnnouncement(body);
-        broadcast({ type: "peers" });
-        return json(res, 200, { peer });
-      } catch (error) {
-        return json(res, 400, { error: (error as Error).message });
-      }
-    }
-    // Board sync: the caller's gaps out, this machine's cursor back.
-    if (url.pathname === "/peers/sync" && req.method === "POST") {
-      return json(res, 200, syncAnswer(await readJson(req)));
-    }
-    if (url.pathname === "/peers/events" && req.method === "POST") {
-      const landed = acceptEvents(await readJson(req));
-      if (landed > 0) {
-        syncActiveTicketThreads();
-        broadcast({ type: "board" });
-      }
-      return json(res, 200, { landed });
-    }
-    // Environment values use a second daemon-only proof. The ordinary bearer
-    // token is also used by clients, so it is not enough for an endpoint that
-    // carries decrypted values between paired machines.
-    if (url.pathname === "/peers/environments/sync" && req.method === "POST") {
-      if (!isAuthenticatedPeerRequest(req.headers, req.method, url.pathname)) {
-        return json(res, 403, { error: "environment sync is available only to paired devices" });
-      }
-      const body = await readJson(req);
-      const landed = mergeEnvironmentSync(body.records);
-      if (landed > 0) broadcast({ type: "environments" });
-      return json(res, 200, { records: exportEnvironmentSync() });
-    }
-    // A round now, rather than at the next tick.
-    if (url.pathname === "/peers/sync-now" && req.method === "POST") {
-      return json(res, 200, { landed: await syncNow() });
-    }
-    // A notification another machine routed here.
-    if (url.pathname === "/peers/notify" && req.method === "POST") {
-      const body = await readJson(req);
-      await deliverFromPeer({
-        session: typeof body.session === "string" ? body.session : "",
-        title: typeof body.title === "string" ? body.title : "",
-        message: typeof body.message === "string" ? body.message : "",
-        highPriority: body.highPriority === true,
-        ...(typeof body.click === "string" ? { click: body.click } : {}),
-        ...(typeof body.device === "string" ? { device: body.device } : {}),
-      });
-      return json(res, 202, { ok: true });
-    }
-    if (parts[0] === "peers" && parts.length === 2 && req.method === "PATCH") {
-      const body = await readJson(req);
-      try {
-        const peer = updatePeer(decodeURIComponent(parts[1]), body);
-        broadcast({ type: "peers" });
-        return json(res, 200, { peer });
-      } catch (error) {
-        return json(res, 404, { error: (error as Error).message });
-      }
-    }
-    if (parts[0] === "peers" && parts.length === 2 && req.method === "DELETE") {
-      removePeer(decodeURIComponent(parts[1]));
-      broadcast({ type: "peers" });
-      return json(res, 200, { ok: true });
-    }
-    // Browser clients reach a paired machine through here because its token
-    // never enters the renderer and the peer exposes no CORS headers. A native
-    // phone may also use this route to bootstrap its own direct fleet link.
-    if (parts[0] === "peers" && parts[2] === "api" && parts.length >= 4) {
-      const peerId = decodeURIComponent(parts[1]);
-      const target = `/${parts.slice(3).join("/")}${url.search}`;
-      const imageUpload = req.method === "POST" && /^\/chats\/[^/]+\/upload(?:\?|$)/.test(target);
-      const rawBody = imageUpload ? await readRawBody(req, MAX_CHAT_IMAGE_BYTES) : undefined;
-      const body = req.method === "GET" || req.method === "HEAD" || imageUpload ? undefined : await readJson(req);
-      try {
-        const data = await proxyToPeer(peerId, target, {
-          method: req.method ?? "GET",
-          ...(rawBody ? {
-            rawBody,
-            filename: String(req.headers["x-filename"] ?? "image"),
-            contentType: String(req.headers["content-type"] ?? "application/octet-stream"),
-          } : {}),
-          ...(body && Object.keys(body).length > 0 ? { body } : {}),
-        });
-        return json(res, 200, data);
-      } catch (error) {
-        return json(res, 502, { error: (error as Error).message });
-      }
     }
 
     // Refreshing repositories: what the schedule does, and what the button in
@@ -1184,7 +892,7 @@ const server = createServer(async (req, res) => {
     // ── the board ───────────────────────────────────────────────────────────
     // Tickets and projects are folds of `board_log`, so every write here
     // appends an event and reprojects rather than touching a row. The reply is
-    // always the projected shape, which is what a peer would compute.
+    // always the projected shape.
 
     if (req.method === "GET" && url.pathname === "/projects") {
       // Binding is cheap and idempotent, so a repo added from Workspaces turns
@@ -2514,9 +2222,9 @@ server.on("upgrade", (req, socket, head) => {
   wss.handleUpgrade(req, socket, head, (ws) => attachStream(ws, name, url.searchParams));
 });
 
-// Loopback-only. External reach comes solely through `tailscale serve`, which
-// terminates TLS and restricts access to the tailnet — the process is never
-// exposed on the LAN or any public interface.
+// Loopback-only. The hub reaches this computer over the outbound connection in
+// `hub-computer.ts`; the process is never exposed on the LAN or any public
+// interface.
 configureAutomaticUpdates({
   enabled: () => config.automaticUpdates,
   busy: activeChatCount,
@@ -2526,7 +2234,6 @@ setInterval(syncAutomaticUpdates, 1_000).unref();
 
 server.listen(config.port, "127.0.0.1", () => {
   console.log(`remy server listening on 127.0.0.1:${config.port}`);
-  startTailnetExposureReconciler();
   startHubComputerConnection();
 });
 setSleepBusyCheck(() =>
@@ -2548,7 +2255,7 @@ startTicketPullRequestSync();
 function reconcileBoardEvent(event: LogEvent): void {
   if (event.entity === "ticket") {
     // A sub-ticket moving is also its parent moving. Here rather than in the
-    // writer so a sub-ticket a paired machine moved rolls its parent up too.
+    // writer so every path that moves a sub-ticket rolls its parent up.
     syncParentTicket(event.entityId);
   }
 }
@@ -2557,7 +2264,6 @@ onLocalAppend((event) => {
   broadcast({ type: "board" });
   reconcileBoardEvent(event);
 });
-onRemoteMerge(reconcileBoardEvent);
 
 // Who this machine is signed in as, asked once. It names the branches Remy
 // creates; Remy names itself when `gh` cannot say, so a branch always carries
@@ -2570,10 +2276,3 @@ if (!config.worktreeBranchPrefix || !config.githubLogin) {
     });
   });
 }
-// Board events flow between paired machines whether or not a window is open —
-// the daemon is what is paired, so the sync runs here rather than in a client.
-startPeerSync(() => {
-  syncActiveTicketThreads();
-  broadcast({ type: "board" });
-});
-startPeerStreamRelay();
