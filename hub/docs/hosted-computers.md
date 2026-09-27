@@ -6,9 +6,9 @@ Cloud settings contain provider connections and model access. Workspace creation
 
 ## Model access (unreleased)
 
-Computers → Model access lists Anthropic, OpenAI, Router.com, and OpenRouter API keys. Cloud Codex uses the OpenAI key; cloud Claude uses the Anthropic key. Sign in to Claude Code or Codex with a ChatGPT or Claude account on a computer you own — not on a Fly, Modal, or other hosted computer. Keys autosave after typing pauses; disabling a provider retains its encrypted key and excludes it from new cloud computers. Re-enable it without entering the key again. Keys are never returned to the browser. Pending unsaved edits are cancelled when the section is disabled.
+Computers → Model access lists Anthropic, OpenAI, Router.com, and OpenRouter API keys. In Personal it lists Codex first: sign in once with a ChatGPT device code (see [ChatGPT sign-in for cloud Codex](#chatgpt-sign-in-for-cloud-codex-unreleased)), or let cloud Codex use the OpenAI key. Cloud Claude uses the Anthropic key; Claude Code account login runs only on a computer you own, because Anthropic does not allow Claude subscriptions in third-party products. Keys autosave after typing pauses; disabling a provider retains its encrypted key and excludes it from new cloud computers. Re-enable it without entering the key again. Keys are never returned to the browser. Pending unsaved edits are cancelled when the section is disabled.
 
-Choose the provider and model when starting a thread. Anthropic, OpenAI, Router.com and OpenRouter remain independent; gateway connections do not override one another. Model catalogs for gateways load when a key is saved. Cloud threads retain their explicit choice when resumed. Existing computers keep their startup credentials; newly allocated task computers receive the current enabled connections.
+Choose the provider and model when starting a thread. Anthropic, OpenAI, Router.com and OpenRouter remain independent; gateway connections do not override one another or ChatGPT. Model catalogs for gateways load when a key is saved. Cloud threads retain their explicit choice when resumed. Existing computers keep their startup credentials; newly allocated task computers receive the current enabled connections.
 
 OpenRouter uses its [Responses API](https://openrouter.ai/docs/api/api-reference/responses/create-responses). Real model execution requires a valid key.
 
@@ -30,13 +30,27 @@ Organization → Computers can grant an organization use of a member's enabled P
 
 For a self-hosted hub, the standalone `hub/runtime/Dockerfile` remains supported. Run it behind HTTPS with `REMY_RUNTIME_TOKEN`, bind the same value as `HOSTED_CONTROL_TOKEN`, and configure `HOSTED_CONTROL_URL` instead of the private container binding. Do not expose that service without TLS and its management credential.
 
-Administrators add organization model API keys in Computers. They are AES-GCM encrypted in D1 with organization-bound authenticated data and a key derived from AUTH_SECRET. Back up that secret: rotation requires re-encrypting the records. Reads return configured names only. Bootstrap injects those keys into process environments; Codex's configuration refers to OPENAI_API_KEY without writing its value. Cloud computers do not run ChatGPT device-code or Claude Code account login. Sign in to Codex or Claude Code on a computer you own. A hostile process can deliberately write its own environment; filesystem snapshots are not a protection against that action.
+Administrators add organization model API keys in Computers. They are AES-GCM encrypted in D1 with organization-bound authenticated data and a key derived from AUTH_SECRET. Back up that secret: rotation requires re-encrypting the records. Reads return configured names only. Bootstrap injects those keys into process environments; Codex's configuration refers to OPENAI_API_KEY without writing its value. Each person's ChatGPT sign-in is sealed the same way under their Personal scope, in its own table, and never enters a computer's environment. Cloud computers never run Claude Code account login. A hostile process can deliberately write its own environment; filesystem snapshots are not a protection against that action.
 
 The provider enforces the outbound domain allowlist outside the guest. The computer carries its own Ed25519 identity, never an organization administration credential. The Node control service is trusted management infrastructure and must be isolated from guests.
 
+## ChatGPT sign-in for cloud Codex (unreleased)
+
+Your ChatGPT sign-in is yours, like any Personal connection. Open Personal → Computers → Cloud → Model access, choose Connect Codex, open OpenAI's sign-in page, and enter the displayed code. There is no workspace to pick and no computer to start: the hub runs the device-code flow itself, mirroring the Codex CLI (`codex-rs/login/src/device_code_auth.rs` and `auth/manager.rs` in openai/codex). Device code login must be enabled in your ChatGPT security settings or workspace permissions. Cancel an attempt, or retry one that expired after 15 minutes, from the same place.
+
+In each organization you belong to, Organization → Computers → Your subscriptions has your own ChatGPT switch. It starts on, the way a Personal connection is available to every organization, and only you can change it; administrators cannot turn it on or off for you. Any member of an organization with a Fly.io or Modal connection, its own or shared into it, can start cloud Codex threads on their own ChatGPT. Nobody else's sign-in ever starts your thread, and the composer shows **ChatGPT** only when you are signed in and your switch is on for that organization. A share grant's provider list does not limit it, because the plan is yours, not the share owner's.
+
+A thread keeps its starter's sign-in for its whole life: the Codex session belongs to whoever started it, so a turn another participant sends in that thread still runs on the starter's plan.
+
+The hub is the only holder of the tokens, because a refresh token rotates and only one place can spend it. They are AES-GCM sealed in D1 under your Personal scope (`personal_chatgpt_accounts`). One Durable Object per person polls the device code, exchanges it, and refreshes the tokens one request at a time. A cloud task computer asks `/computers/codex-tokens` with its own signed identity; the hub finds the thread's starter, checks that their switch is on for that organization, and returns only a short-lived access token and ChatGPT account id. Codex on the task uses its external-token login and asks again through the same route when it needs a refresh. Management reads return phase and email only; browsers, logs, computer environments and thread snapshots never receive tokens.
+
+Disconnecting removes the stored tokens. Turning your switch off in an organization, or a refresh OpenAI rejects, has the same effect on running threads there: their next turn or refresh fails and asks you to reconnect Codex. Threads started on an OpenAI, Router.com or OpenRouter key never ask for ChatGPT tokens.
+
+A real ChatGPT account, and OpenAI's acceptance of device-code and refresh requests from Cloudflare Workers, have not been exercised. The flow, rotation, per-person serving and the organization switch are covered against a fake OpenAI auth server (`hub/scripts/fake-openai-auth.mjs`; `QA_CHATGPT=1 node hub/scripts/qa-threads.mjs`, then `web/scripts/qa-hub-codex-account.mjs`).
+
 ## Account login on a computer you own
 
-Sign in to Codex with ChatGPT, or to Claude Code with your Claude account, from Computers → Connected on a Mac or other computer you own. Cloud Model access does not start those logins. Hub routes that would begin a ChatGPT device code or Claude Code paste-code session on a hosted computer return an error. Claude Code and Codex must already be installed on that computer; Remy does not install them remotely. Connect Claude Code stores the account for the next Claude session; Connect Codex needs Codex installed so it can run ChatGPT device-code on the machine.
+Sign in to Codex with ChatGPT, or to Claude Code with your Claude account, from Computers → Connected on a Mac or other computer you own. Hub routes that would begin a Claude Code paste-code session for a cloud computer return an error, as does the per-computer Codex route on a task computer; cloud Codex uses your Personal ChatGPT sign-in instead. Claude Code and Codex must already be installed on that computer; Remy does not install them remotely. Connect Claude Code stores the account for the next Claude session; Connect Codex needs Codex installed so it can run ChatGPT device-code on the machine.
 
 ## Provider keys on a computer you connected
 
@@ -64,7 +78,7 @@ A directory-only snapshot into a pre-warmed base would require a second allocati
 
 Settings → Environments stores reusable encrypted values and assigns them to one or more workspaces. Authenticated computer channels synchronize assignments to registered local clones and task computers. Providers inherit the assigned values; updates apply on the next turn, restarting the provider session when values change. Offline computers retain their last synchronized state until reconnecting. Management responses contain names only. Exact redaction cannot recognise encoded or transformed values, and providers or commands can deliberately read their inherited values.
 
-The new per-task allocation and environment delivery paths are covered by isolated runtime/protocol fixtures.
+The new per-task allocation, environment delivery, and ChatGPT token paths are covered by isolated runtime/protocol fixtures.
 
 ### Sprite activity
 

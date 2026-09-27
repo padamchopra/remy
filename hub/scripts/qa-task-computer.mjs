@@ -59,6 +59,36 @@ setProviderAdapterForTest({
     };
   },
 });
+// A Codex stand-in that asks the hub for this task's ChatGPT tokens, the way the real
+// adapter's external-token login does, and reports only which account answered.
+if (bootstrap.taskId) process.env.REMY_HOSTED_TASK = "1";
+setProviderAdapterForTest({
+  id: "codex",
+  discover: () => true,
+  createSession(_options, handlers) {
+    return {
+      close() {},
+      turn() {
+        return {
+          interrupt() {},
+          done: (async () => {
+            handlers.event({ type: "turn.started" });
+            let text;
+            try {
+              const { hostedTaskCodexTokens } = await import("../../server/dist/hub-computer.js");
+              const tokens = await hostedTaskCodexTokens();
+              text = tokens ? `ChatGPT account ${tokens.chatgptAccountId}.` : "No ChatGPT account.";
+            } catch (error) {
+              text = error instanceof Error ? error.message : "Codex could not reconnect.";
+            }
+            handlers.event({ type: "entry.updated", entry: { id: crypto.randomUUID(), kind: "assistant", text } });
+            handlers.event({ type: "turn.completed" });
+          })(),
+        };
+      },
+    };
+  },
+});
 const { HubComputerConnection } =
   await import("../../server/dist/hub-computer.js");
 const registration = {

@@ -204,14 +204,17 @@ export function HubThreadComposer({
   const inheritedModel = resolveModelDefault(resolvedDefaults?.workspace, resolvedDefaults?.computer, {provider:"",model:""});
   const usingCloud=!!cloudComputerProvider(selected);
   const usingCursorCloud=cloudComputerProvider(selected)==="cursor-cloud";
+  // Your own ChatGPT sign-in, when you allow it in this organization. Nobody else's shows here.
+  const codexAccount=useHubResource<{available:boolean}>(organizationId, usingCloud && !usingCursorCloud ? "/chatgpt" : null, "/computers/live");
+  const chatgpt=codexAccount.value?.available === true;
   const cloudStart = usingCloud ? cloudConnections.value?.cloudStart?.[cloudComputerProvider(selected) ?? ""] : undefined;
   const allowedCloudRuntimes = cloudStart && !cloudStart.owner ? new Set(cloudStart.providers.filter(provider => provider.allowed).map(provider => provider.id)) : undefined;
-  const resolvedChoice = hostedComposerChoice(modelAccess.value?.providers ?? [], inheritedModel);
+  const resolvedChoice = hostedComposerChoice(modelAccess.value?.providers ?? [], inheritedModel, chatgpt);
   const modelChoice = pickedModel?.workspaceId === workspaceId ? pickedModel.choice : resolvedChoice;
-  const cloudModels = hostedModels(modelAccess.value?.providers ?? [], modelChoice).filter(provider => cloudShareAllowsProvider(allowedCloudRuntimes, provider.id));
+  const cloudModels = hostedModels(modelAccess.value?.providers ?? [], modelChoice, chatgpt).filter(provider => (chatgpt && provider.id === "codex") || cloudShareAllowsProvider(allowedCloudRuntimes, provider.id));
   const localModels = computerModels(computers.find(c=>c.computerId===selected)?.capabilities.providers ?? []);
   const modelCatalogue = usingCursorCloud ? [] : usingCloud || !selected ? cloudModels : localModels;
-  const cataloguePending = usingCloud && !modelAccess.value && !modelAccess.error;
+  const cataloguePending = usingCloud && ((!modelAccess.value && !modelAccess.error) || (!usingCursorCloud && !codexAccount.value && !codexAccount.error));
   const selectedChoice = modelCatalogue.some(p=>p.id===modelChoice.provider && p.models.some(m=>m.value===modelChoice.model))
     ? modelChoice
     : {provider:modelCatalogue[0]?.id ?? modelChoice.provider, model:modelCatalogue[0]?.models[0]?.value ?? modelChoice.model};
@@ -364,7 +367,7 @@ export function HubThreadComposer({
     >
       <ThreadComposerEditor
         textarea={{ id: "hub-thread-message", maxLength: 64000, value: message, onChange: e => setMessage(e.target.value), required: true, disabled: false }}
-        canSend={!!memberId && !!workspace && !!selected && preferenceLoaded && visibilityLoaded && !!resolvedDefaults && !!message.trim() && !!catalogue.value && !catalogue.stale && !(usingCloud && !usingCursorCloud && !modelAccess.value) && (usingCursorCloud || !(usingCloud || selectedChoice.provider) || !!choiceValid)}
+        canSend={!!memberId && !!workspace && !!selected && preferenceLoaded && visibilityLoaded && !!resolvedDefaults && !!message.trim() && !!catalogue.value && !catalogue.stale && !(usingCloud && !usingCursorCloud && !modelAccess.value) && !(usingCloud && !usingCursorCloud && !codexAccount.value && !codexAccount.error) && (usingCursorCloud || !(usingCloud || selectedChoice.provider) || !!choiceValid)}
         busy={false} sendLabel="Send"
         controls={modelReady
           ? (usingCursorCloud
