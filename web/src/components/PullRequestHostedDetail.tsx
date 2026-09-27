@@ -27,6 +27,13 @@ import { LinkedThreadChip, ThreadDot } from "@/components/PullRequestLinkedThrea
 import { PullRequestStackEntry, PullRequestStackRows, stackEntriesInOrder } from "@/components/PullRequestStack";
 import { LinkedTicketChip } from "@/components/PullRequestLinkedTicket";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
+import { ReviewAgentHeaderButton } from "@/components/ReviewAgentHeader";
+import type { ReviewTarget } from "@/components/ReviewAgentStart";
+import type { ReviewPaneView } from "@/components/ReviewAgentPane";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { forgetThreadStart, useThreadStarts } from "@/lib/hub-thread-start";
+import { rememberReviewPane, reviewPaneOpen, type ReviewFinding } from "@/lib/review-agent";
+import { usePullRequestReview, useReviewRules } from "@/lib/review-agent-data";
 import { apiError } from "@/lib/api-error";
 import { useAccountResources } from "@/lib/hub-account-resources";
 import { hubRequest, hubThreadBase, hubThreadPath } from "@/lib/hub-threads";
@@ -51,6 +58,8 @@ import type { AuthoredPullRequest } from "@/components/PullRequests";
 const PullRequestHostedFiles = lazy(() => import("@/components/PullRequestHostedFiles").then((module) => ({ default: module.PullRequestHostedFiles })));
 // So is the timeline; only its badge's count is read before it opens.
 const PullRequestHostedActivity = lazy(() => import("@/components/PullRequestHostedActivity").then((module) => ({ default: module.PullRequestHostedActivity })));
+// The review agent pane arrives the first time it opens.
+const ReviewAgentPane = lazy(() => import("@/components/ReviewAgentPane").then((module) => ({ default: module.ReviewAgentPane })));
 
 /// A private repository's attachments load only from the signed copies GitHub
 /// renders for this reader. They expire within minutes, so they are read when
@@ -317,7 +326,7 @@ export function PullRequestHostedDetail({
   view,
   onViewChange,
   onBack,
-  reviewAgentAction,
+  stackPullRequest,
 }: {
   pullRequest: AuthoredPullRequest;
   organizationId: string;
@@ -333,10 +342,8 @@ export function PullRequestHostedDetail({
   view?: PullRequestView;
   onViewChange: (view?: PullRequestView) => void;
   onBack: () => void;
-  /// Slot for the review agent's header control ("Review with agent" or
-  /// "Review agent"), which a later change adds between Open thread and
-  /// Open on GitHub. Nothing renders here until then.
-  reviewAgentAction?: ReactNode;
+  /// Another pull request of this list by number, for a stack note's Review #n too.
+  stackPullRequest?: (number: number) => AuthoredPullRequest | undefined;
 }) {
   const [revision, setRevision] = useState(0);
   const [filesToolbar, setFilesToolbar] = useState<HTMLDivElement | null>(null);
@@ -362,7 +369,45 @@ export function PullRequestHostedDetail({
   );
   const resources = useAccountResources(accounts);
   const computers = useMemo(() => accounts.flatMap((id) => resources[id]?.computers ?? []), [accounts, resources]);
-  const thread = linkedPullRequestThread(pullRequest, candidates, computers);
+  // Your review agent: its review, its thread, a start still on its way, and the pane.
+  const { review, setReview, reload: reloadReview } = usePullRequestReview(organizationId, pullRequest.repository, pullRequest.number);
+  const reviewThread = review ? threads.find((entry) => entry.id === review.threadId && entry.computerId === review.computerId) : undefined;
+  const starts = useThreadStarts();
+  const start = useMemo(() => starts.filter((entry) =>
+    entry.organizationId === organizationId && entry.review
+    && entry.review.repository.toLowerCase() === pullRequest.repository.toLowerCase()
+    && entry.review.number === pullRequest.number).at(-1), [starts, organizationId, pullRequest.repository, pullRequest.number]);
+  const starting = review ? undefined : start;
+  useEffect(() => {
+    if (start && review && start.created?.id === review.threadId) forgetThreadStart(start.requestId);
+  }, [start, review]);
+  // A start that is through reads the review it made, in case its frame came first.
+  useEffect(() => { if (start?.phase === "ready") void reloadReview(); }, [start?.phase, reloadReview]);
+  const phone = useIsMobile();
+  const [desktopPane, setDesktopPane] = useState(() => reviewPaneOpen(pullRequest.repository, pullRequest.number));
+  const [phonePane, setPhonePane] = useState(false);
+  const [paneView, setPaneView] = useState<ReviewPaneView>("review");
+  const reviewing = Boolean(review || starting);
+  const paneShown = phone ? phonePane : desktopPane && (reviewing || paneView === "rules");
+  const showPane = (open: boolean, view: ReviewPaneView = "review") => {
+    setPaneView(view);
+    if (phone) { setPhonePane(open); return; }
+    setDesktopPane(open);
+    rememberReviewPane(pullRequest.repository, pullRequest.number, open);
+  };
+  const rules = useReviewRules(organizationId, pullRequest.repository, reviewing || paneShown);
+  const [focusFinding, setFocusFinding] = useState<{ id: string; at: number }>();
+  const showFinding = useCallback((finding: ReviewFinding) => {
+    setFocusFinding({ id: finding.id, at: Date.now() });
+    if (view !== "files") onViewChange("files");
+    if (phone) setPhonePane(false);
+  }, [view, onViewChange, phone]);
+  const reviewTarget = (entry: AuthoredPullRequest): ReviewTarget => ({
+    organizationId, workspaceId: entry.workspaceId, repository: entry.repository, number: entry.number,
+    title: entry.title, headRefName: entry.headRefName, baseRefName: entry.baseRefName,
+  });
+
+  const thread = linkedPullRequestThread(pullRequest, candidates, computers, (entry) => entry.id === review?.threadId);
 
   const checks: PullRequestDetailCheck[] = detail?.checks ?? pullRequest.checks;
   const reviewers: PullRequestDetailReviewer[] = detail?.reviewers ?? pullRequest.reviewers ?? [];
@@ -395,7 +440,8 @@ export function PullRequestHostedDetail({
 
   return (
     <TooltipProvider>
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div data-slot="pull-request-with-review" className="flex min-h-0 min-w-0 flex-1">
+      <main className={cn("flex min-h-0 min-w-0 flex-1 flex-col", phone && paneShown && "hidden")}>
         <PaneHeader sidebar crumbs={[{ label: "Pull requests", onClick: onBack }, { label }]}>
           <div className="flex shrink-0 items-center gap-2.5">
             <Button
@@ -422,7 +468,18 @@ export function PullRequestHostedDetail({
                 Open thread
               </Button>
             )}
-            {reviewAgentAction}
+            {open && (
+              <ReviewAgentHeaderButton
+                target={reviewTarget(pullRequest)}
+                reviewing={reviewing}
+                state={starting ? (starting.phase === "failed" ? "idle" : "working") : reviewThread?.detail.state}
+                paneOpen={paneShown}
+                rules={rules.rules}
+                onTogglePane={() => showPane(!paneShown)}
+                onViewRules={() => showPane(true, "rules")}
+                onStarted={() => showPane(true)}
+              />
+            )}
             <Tooltip>
               <TooltipTrigger
                 render={(
@@ -587,6 +644,10 @@ export function PullRequestHostedDetail({
                 pullRequest={pullRequest}
                 active={view === "files"}
                 thread={thread}
+                review={review}
+                reviewThread={reviewThread}
+                onReviewChanged={setReview}
+                focusFinding={focusFinding}
                 onOpenThread={onOpenThread}
                 onOpenLink={openLink}
                 toolbar={filesToolbar}
@@ -610,6 +671,39 @@ export function PullRequestHostedDetail({
           </TabsContent>
         </Tabs>
       </main>
+      <Deferred open={paneShown} fallback={<div className={cn("shrink-0 border-l border-border bg-background", phone ? "w-full flex-1" : "w-[400px]")} />}>
+        {/* Latched: hiding the pane keeps what you were writing to the agent. */}
+        <div className={paneShown ? "contents" : "hidden"}>
+          <ReviewAgentPane
+            organizationId={organizationId}
+            target={reviewTarget(pullRequest)}
+            workspace={{
+              name: workspace.name,
+              smallMark: <WorkspaceMark home={false} workspace={workspace.workspace} size="sm" organizationId={workspace.organizationId} />,
+            }}
+            review={review}
+            start={starting}
+            thread={reviewThread}
+            rules={rules.rules}
+            view={paneView}
+            onView={setPaneView}
+            onClose={() => showPane(false)}
+            phone={phone}
+            headSha={detail?.headRefOid}
+            commits={detail?.commits}
+            stackTarget={(number) => { const entry = stackPullRequest?.(number); return entry ? reviewTarget(entry) : undefined; }}
+            onOpenPullRequest={(number) => { if (canOpen(number)) onOpen(number); }}
+            onOpenThread={onOpenThread}
+            onFinding={showFinding}
+            onReviewChanged={setReview}
+            onStarted={(target) => {
+              toast.success(`The review agent is reviewing #${target.number}.`, { action: canOpen(target.number) ? { label: "Open", onClick: () => onOpen(target.number) } : undefined });
+            }}
+            onRulesChanged={() => void rules.reload()}
+          />
+        </div>
+      </Deferred>
+      </div>
     </TooltipProvider>
   );
 }

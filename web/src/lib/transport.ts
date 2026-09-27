@@ -223,7 +223,7 @@ export const transport: Transport = proxyTransport();
 export const hubTransport = {
   kind: "hub" as const,
   async request(path: string, method = "GET", body?: unknown): Promise<Response> {
-    if (!/^\/api\/(organizations(?:\/[^/]+(?:\/.*)?)?|auth\/.*|sessions(?:\/.*)?|profile|personal|device\/.*|invitations\/(?:accept|preview))$/.test(path) || path.includes("..")) throw new Error("Open this page in Remy.");
+    if (!/^\/api\/(organizations(?:\/[^/]+(?:\/.*)?)?|auth\/.*|sessions(?:\/.*)?|profile|personal|review-rules(?:[/?].*)?|device\/.*|invitations\/(?:accept|preview))$/.test(path) || path.includes("..")) throw new Error("Open this page in Remy.");
     return fetch(path, { method, credentials: "same-origin", headers: body === undefined ? {} : { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   },
 };

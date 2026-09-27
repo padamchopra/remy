@@ -740,6 +740,7 @@ export class GitHubConnection {
             latestReviews(first: 20) { nodes { author { login ... on User { name } } state } }
             reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login name } } } }
             stack { entries(first: 20) { nodes { pullRequest { number state mergeable } } } }
+            recentCommits: commits(last: 30) { nodes { commit { oid messageHeadline } } }
             commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 50) { nodes {
               ... on CheckRun { name conclusion status startedAt completedAt detailsUrl title summary }
               ... on StatusContext { context state createdAt description targetUrl }
@@ -775,6 +776,13 @@ export class GitHubConnection {
       authorName: names.get(loginOf(pr.author).toLowerCase()) ?? null,
       reviewers: pullRequestReviewers(pr).map((reviewer) => ({ ...reviewer, name: names.get(reviewer.login.toLowerCase()) ?? null })),
       checks: pullRequestCheckDetails(pr),
+      // The latest commits, oldest first, so the review agent can list what
+      // arrived after the commit it reviewed.
+      commits: nodesOf(pr.recentCommits as { nodes?: unknown[] } | undefined).flatMap((node) => {
+        const commit = (node as { commit?: { oid?: unknown; messageHeadline?: unknown } } | null)?.commit;
+        if (typeof commit?.oid !== "string" || !/^[0-9a-f]{40}$/i.test(commit.oid)) return [];
+        return [{ sha: commit.oid.toLowerCase(), title: typeof commit.messageHeadline === "string" ? commit.messageHeadline.slice(0, 300) : "" }];
+      }),
       stack: nodesOf(stack?.entries).flatMap((node) => {
         const member = (node as { pullRequest?: { number?: unknown; state?: unknown; mergeable?: unknown } } | null)?.pullRequest;
         if (!member || !positive(member.number)) return [];

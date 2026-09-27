@@ -1,23 +1,27 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import type { HubThread } from "@remy/contract";
+import type { HubThread, ReviewFinding } from "@remy/contract";
+import { Bot, ChevronDown, MessagesSquare } from "lucide-react";
+import { Menu, MenuContent, MenuGroup, MenuGroupLabel, MenuItem, MenuItemCheck, MenuTrigger } from "@/components/ui/menu-base";
+import type { ChatCodeReference } from "@/state/types";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar-base";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog-base";
 import { Spinner } from "@/components/ui/spinner";
 import { Markdown } from "@/components/Markdown";
-import { LinkedThreadChip } from "@/components/PullRequestLinkedThread";
+import { LinkedThreadChip, ThreadDot } from "@/components/PullRequestLinkedThread";
 import { initials, timeAgo } from "@/lib/pull-request-detail";
 import { lineRangeLabel, type ReviewAuthor, type ReviewComment, type ReviewThread } from "@/lib/pull-request-review-state";
 import { cn } from "@/lib/utils";
 
 /// Where a line comment can go. Every box offers GitHub: Comment posts now,
 /// Add to review queues it in your pending review. A destination beside those
-/// is a Remy thread that reads it instead; today that is only the linked
-/// thread, and the footer draws it as that thread's chip. A second kind (the
-/// review agent) turns the chip into a picker of destinations.
+/// is a Remy thread that reads it instead: the linked thread, and the review
+/// agent's thread when this pull request has a review. With only the linked
+/// thread the footer draws that thread's chip; with a review agent the chip
+/// becomes a menu of the destinations that exist.
 export interface LineCommentDestination {
   id: string;
-  kind: "thread";
+  kind: "thread" | "review-agent";
   thread: HubThread;
   label: string;
 }
@@ -38,6 +42,13 @@ export interface ReviewSurface {
   deleteComment: (comment: ReviewComment) => Promise<void>;
   openReply?: string;
   setOpenReply: (threadId: string | undefined) => void;
+  /// The review agent's findings in the diff: drafting one into your pending
+  /// review, dismissing it, and flagging it to the agent with why.
+  addFinding?: (finding: ReviewFinding) => Promise<void>;
+  dismissFinding?: (finding: ReviewFinding) => Promise<void>;
+  flagFinding?: (finding: ReviewFinding, words: string, reference: ChatCodeReference) => Promise<void>;
+  /// The finding the pane last asked the diff to show.
+  focusedFinding?: string;
 }
 
 export const ReviewSurfaceContext = createContext<ReviewSurface | undefined>(undefined);
@@ -66,10 +77,54 @@ const FOOTER_BUTTON = "h-7 rounded-lg px-3 text-xs leading-4 font-normal shadow-
 const OUTLINE_BUTTON = cn(FOOTER_BUTTON, "border-input bg-transparent text-foreground/70 hover:text-foreground dark:bg-transparent");
 const PRIMARY_BUTTON = cn(FOOTER_BUTTON, "font-semibold");
 
+/// The chip on the left of a comment box with a review agent: which Remy
+/// thread Send goes to, from the destinations that exist.
+function DestinationMenu({ destinations, current, onChange }: {
+  destinations: LineCommentDestination[];
+  current: LineCommentDestination;
+  onChange: (destination: LineCommentDestination) => void;
+}) {
+  const Icon = current.kind === "review-agent" ? Bot : MessagesSquare;
+  return (
+    <Menu>
+      <MenuTrigger
+        aria-label={`Send to ${current.label}`}
+        render={(
+          <button
+            type="button"
+            data-slot="line-comment-destination"
+            className="flex h-7 max-w-[300px] min-w-0 items-center gap-[7px] rounded-lg border border-input pr-2 pl-[9px] text-[11px] leading-4 text-foreground/70 outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[popup-open]:bg-accent max-sm:max-w-full"
+          />
+        )}
+      >
+        <Icon aria-hidden className="size-[13px] shrink-0 text-muted-foreground" />
+        <span className="min-w-0 truncate">{current.label}</span>
+        <ThreadDot state={current.thread.detail.state} />
+        <ChevronDown aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+      </MenuTrigger>
+      <MenuContent align="start" className="w-[380px] max-w-[var(--available-width)] rounded-[10px] p-1">
+        <MenuGroup>
+          <MenuGroupLabel className="px-2 pt-1.5 pb-1 text-[11px] leading-4 font-normal text-muted-foreground">Send to</MenuGroupLabel>
+          {destinations.map((destination) => {
+            const RowIcon = destination.kind === "review-agent" ? Bot : MessagesSquare;
+            return (
+              <MenuItem key={destination.id} onClick={() => onChange(destination)} className="h-8 gap-2 rounded-md px-2 text-xs">
+                <RowIcon aria-hidden className="size-[13px] text-foreground/70" />
+                <span className="min-w-0 flex-1 truncate">{destination.label}</span>
+                <ThreadDot state={destination.thread.detail.state} />
+                <MenuItemCheck checked={destination.id === current.id} />
+              </MenuItem>
+            );
+          })}
+        </MenuGroup>
+      </MenuContent>
+    </Menu>
+  );
+}
+
 /// The comment box under a selection or a conversation. Which button you
-/// press is where the comment goes: with a destination, its chip sits on the
-/// left and Send to thread is primary (⌘↵); without one, Add to review is.
-/// Escape cancels.
+/// press is where the comment goes: with a destination, Send is primary (⌘↵)
+/// and names it; without one, Add to review is. Escape cancels.
 export function LineCommentBox({
   viewer,
   destinations,
@@ -92,7 +147,9 @@ export function LineCommentBox({
   const [text, setText] = useState(initial);
   const [busy, setBusy] = useState<LineCommentAction>();
   const input = useRef<HTMLTextAreaElement>(null);
-  const destination = destinations[0];
+  const [chosen, setChosen] = useState<string>();
+  const destination = destinations.find((entry) => entry.id === chosen) ?? destinations[0];
+  const menu = destinations.some((entry) => entry.kind === "review-agent");
   const primary: LineCommentAction = destination ? "send" : "review";
   useEffect(() => { input.current?.focus({ preventScroll: true }); }, []);
 
@@ -148,16 +205,16 @@ export function LineCommentBox({
         />
       </div>
       <div className="flex flex-wrap items-center gap-2 px-3 pb-3">
-        {destination && (
-          <LinkedThreadChip compact thread={destination.thread} onOpen={() => onOpenThread(destination.thread)} className="max-sm:max-w-full" />
-        )}
+        {destination && (menu
+          ? <DestinationMenu destinations={destinations} current={destination} onChange={(next) => setChosen(next.id)} />
+          : <LinkedThreadChip compact thread={destination.thread} onOpen={() => onOpenThread(destination.thread)} className="max-sm:max-w-full" />)}
         <span aria-hidden className="min-w-0 flex-1" />
         <div className="flex min-w-0 shrink-0 flex-wrap items-center justify-end gap-2 max-sm:w-full">
           {destination ? (
             <>
               {button("review", "Add to review")}
               {button("comment", "Comment")}
-              {button("send", "Send to thread", <span aria-hidden className="pl-0.5 font-mono text-[11px] leading-4 font-normal text-primary-foreground/75 max-sm:hidden">⌘↵</span>)}
+              {button("send", destination.kind === "review-agent" ? "Send to review agent" : "Send to thread", <span aria-hidden className="pl-0.5 font-mono text-[11px] leading-4 font-normal text-primary-foreground/75 max-sm:hidden">⌘↵</span>)}
             </>
           ) : (
             <>

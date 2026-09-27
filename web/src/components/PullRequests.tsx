@@ -594,6 +594,7 @@ export function PullRequests({
           workspace={pullRequestTileWorkspace(selected, [], hostedWorkspaces)}
           threads={hubThreads}
           canOpen={(number) => Boolean(members(number))}
+          stackPullRequest={members}
           onOpen={(number) => open({ repository: selected.repository, number })}
           onOpenThread={(thread) => onOpenHubThread?.(thread)}
           onOpenWorkspace={onOpenHostedWorkspace}

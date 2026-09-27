@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode
 import { createPortal } from "react-dom";
 import { ChevronRight, Code, FileDiff, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
-import type { HubThread } from "@remy/contract";
+import type { HubThread, ReviewFinding, ReviewState } from "@remy/contract";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox-base";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible-base";
@@ -11,6 +11,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { pullRequestAction } from "@/components/PullRequestHostedActions";
 import { FinishReview } from "@/components/PullRequestFinishReview";
+import { ReviewFindingCard } from "@/components/PullRequestReviewFinding";
 import {
   conversationPlace,
   LineCommentBox,
@@ -24,6 +25,7 @@ import { apiError } from "@/lib/api-error";
 import { splitByRanges, hunkWordDiff, type WordRange } from "@/lib/diff-words";
 import { hubRequest, HubRequestError, hubThreadBase, hubThreadPath } from "@/lib/hub-threads";
 import { parsePullRequestPatch } from "@/lib/pull-request-patch";
+import { findingLines, flagFindingMessage, placeFindings, setFindingStatus } from "@/lib/review-agent";
 import {
   extendSelection,
   isOwnPullRequest,
@@ -233,12 +235,16 @@ interface HunkProps {
   path: string;
   selection?: LineSelection;
   threadsAt: Map<string, ReviewThread[]>;
+  findingsAt: Map<string, ReviewFinding[]>;
+  /// Draw the rows now, for a finding the pane asked to show.
+  eager?: boolean;
   onSelect: (path: string, hunk: number, index: number, extend: boolean) => void;
   composer?: ReactNode;
 }
 
-const Hunk = memo(function Hunk({ hunk, hunkIndex, path, selection, threadsAt, onSelect, composer }: HunkProps) {
-  const [ref, near] = useNearScreen<HTMLDivElement>();
+const Hunk = memo(function Hunk({ hunk, hunkIndex, path, selection, threadsAt, findingsAt, eager, onSelect, composer }: HunkProps) {
+  const [ref, seen] = useNearScreen<HTMLDivElement>();
+  const near = seen || Boolean(eager);
   const marks = useMemo(() => (near ? hunkWordDiff(hunk.lines) : new Map<number, WordRange[]>()), [near, hunk.lines]);
   const mine = selection?.hunk === hunkIndex ? selection : undefined;
   const from = mine ? Math.min(mine.anchor, mine.focus) : -1;
@@ -253,6 +259,7 @@ const Hunk = memo(function Hunk({ hunk, hunkIndex, path, selection, threadsAt, o
       <div ref={ref} className="font-mono text-[11px] leading-5" style={near ? undefined : { height: hunk.lines.length * LINE_HEIGHT }}>
         {near && hunk.lines.map((line, index) => {
           const threads = threadsAt.get(`${hunkIndex}:${index}`);
+          const findings = findingsAt.get(`${hunkIndex}:${index}`);
           return (
             <div key={index} className="contents">
               <DiffRow
@@ -270,6 +277,11 @@ const Hunk = memo(function Hunk({ hunk, hunkIndex, path, selection, threadsAt, o
               {threads?.map((thread) => (
                 <div key={thread.id} className="pt-3.5 pr-4 pb-5 pl-3 font-sans sm:pl-[60px]">
                   <ReviewConversation thread={thread} />
+                </div>
+              ))}
+              {findings?.map((finding) => (
+                <div key={finding.id} className="py-3 pr-4 pl-3 font-sans sm:pl-[60px]">
+                  <ReviewFindingCard finding={finding} lines={hunk.lines} />
                 </div>
               ))}
             </div>
@@ -327,6 +339,8 @@ const FileDiffView = memo(function FileDiffView({
   onViewedChange,
   url,
   threads,
+  findings,
+  focusedFinding,
   selection,
   onSelect,
   composer,
@@ -340,16 +354,33 @@ const FileDiffView = memo(function FileDiffView({
   onViewedChange: (path: string, viewed: boolean) => void;
   url: string;
   threads: readonly ReviewThread[];
+  findings: readonly ReviewFinding[];
+  focusedFinding?: string;
   selection?: LineSelection;
   onSelect: (path: string, hunk: number, index: number, extend: boolean) => void;
   composer?: ReactNode;
 }) {
   const hunks = useMemo(() => (file.patch ? parsePullRequestPatch(file.patch) : []), [file.patch]);
   const placed = useMemo(() => placeThreads(threads, file.path, hunks), [threads, file.path, hunks]);
+  const agent = useMemo(() => placeFindings(findings, file.path, hunks), [findings, file.path, hunks]);
   const name = file.path.split("/").at(-1) ?? file.path;
   const folder = file.path.slice(0, file.path.length - name.length);
   const elsewhere = placed.elsewhere;
   const outdated = elsewhere.every((thread) => thread.isOutdated);
+  const [foldOpen, setFoldOpen] = useState(false);
+  // A finding the pane points at that is off these lines opens the fold it sits in.
+  useEffect(() => {
+    if (focusedFinding && agent.elsewhere.some((finding) => finding.id === focusedFinding)) setFoldOpen(true);
+  }, [focusedFinding, agent.elsewhere]);
+  const focusedHunk = focusedFinding
+    ? [...agent.atRow.entries()].find(([, list]) => list.some((finding) => finding.id === focusedFinding))?.[0].split(":")[0]
+    : undefined;
+  const foldLabel = [
+    elsewhere.length ? (outdated
+      ? `${elsewhere.length} outdated ${elsewhere.length === 1 ? "conversation" : "conversations"}`
+      : `${elsewhere.length} ${elsewhere.length === 1 ? "conversation" : "conversations"} not on these lines`) : "",
+    agent.elsewhere.length ? `${agent.elsewhere.length} ${agent.elsewhere.length === 1 ? "finding" : "findings"} not on these lines` : "",
+  ].filter(Boolean).join(" · ");
   return (
     <Collapsible
       id={fileId(index)}
@@ -380,17 +411,16 @@ const FileDiffView = memo(function FileDiffView({
         <MarkRead path={file.path} viewed={viewed} disabled={!canMarkRead} onChange={(next) => onViewedChange(file.path, next)} />
       </div>
       <CollapsibleContent>
-        {elsewhere.length > 0 && (
-          <Collapsible className="border-b border-border">
+        {(elsewhere.length > 0 || agent.elsewhere.length > 0) && (
+          <Collapsible open={foldOpen} onOpenChange={setFoldOpen} className="border-b border-border">
             <CollapsibleTrigger className="group/elsewhere flex h-8 w-full items-center gap-2 px-4 text-left text-[11px] leading-4 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring/50">
               <ChevronRight aria-hidden className="size-3 transition-transform group-data-[panel-open]/elsewhere:rotate-90" />
-              {outdated
-                ? `${elsewhere.length} outdated ${elsewhere.length === 1 ? "conversation" : "conversations"}`
-                : `${elsewhere.length} ${elsewhere.length === 1 ? "conversation" : "conversations"} not on these lines`}
+              {foldLabel}
             </CollapsibleTrigger>
             <CollapsibleContent>
               <div className="flex flex-col gap-4 pt-1 pr-4 pb-5 pl-3 sm:pl-[60px]">
                 {elsewhere.map((thread) => <ReviewConversation key={thread.id} thread={thread} where={conversationPlace(thread)} />)}
+                {agent.elsewhere.map((finding) => <ReviewFindingCard key={finding.id} finding={finding} where={findingLines(finding)} />)}
               </div>
             </CollapsibleContent>
           </Collapsible>
@@ -404,6 +434,8 @@ const FileDiffView = memo(function FileDiffView({
               path={file.path}
               selection={selection}
               threadsAt={placed.atRow}
+              findingsAt={agent.atRow}
+              eager={focusedHunk === String(hunkIndex)}
               onSelect={onSelect}
               composer={selection?.hunk === hunkIndex ? composer : undefined}
             />
@@ -431,12 +463,19 @@ function initiallyOpen(files: HostedFile[], review: HostedReview | undefined) {
 /// per file. Choosing lines opens a comment box right under them; which button
 /// you press is where it goes. `j` and `k` move between files the way they do
 /// on GitHub.
-export function PullRequestHostedFiles({ organizationId, pullRequest, active, thread, onOpenThread, onOpenLink, toolbar }: {
+export function PullRequestHostedFiles({ organizationId, pullRequest, active, thread, review: agentReview, reviewThread, onReviewChanged, focusFinding, onOpenThread, onOpenLink, toolbar }: {
   organizationId: string;
   pullRequest: AuthoredPullRequest;
   active: boolean;
   /// The pull request's linked thread, when there is one: Send to thread goes there.
   thread?: HubThread;
+  /// Your review agent's review and its thread, when there is one: its
+  /// findings sit at their lines, and Send can go to it.
+  review?: ReviewState | null;
+  reviewThread?: HubThread;
+  onReviewChanged?: (review: ReviewState) => void;
+  /// A finding the pane asked to show; `at` changes on every ask.
+  focusFinding?: { id: string; at: number };
   onOpenThread: (thread: HubThread) => void;
   onOpenLink: (href: string) => void;
   /// Where Finish review sits: the tab row of the pull request.
@@ -542,9 +581,14 @@ export function PullRequestHostedFiles({ organizationId, pullRequest, active, th
   }, [active, files, current, goTo, selection]);
 
   const destinations = useMemo<LineCommentDestination[]>(
-    () => (thread ? [{ id: `thread:${thread.id}`, kind: "thread", thread, label: thread.detail.title || "Untitled thread" }] : []),
-    [thread],
+    () => [
+      ...(reviewThread ? [{ id: `review:${reviewThread.id}`, kind: "review-agent" as const, thread: reviewThread, label: "Review agent" }] : []),
+      ...(thread ? [{ id: `thread:${thread.id}`, kind: "thread" as const, thread, label: thread.detail.title || "Untitled thread" }] : []),
+    ],
+    [thread, reviewThread],
   );
+  const reached = (destination: LineCommentDestination, what: string) =>
+    destination.kind === "review-agent" ? `The review agent has the ${what}.` : `Your thread has the ${what}.`;
 
   const sendToThread = useCallback(async (destination: LineCommentDestination, text: string, reference: ReturnType<typeof lineCommentReference>) => {
     const target = destination.thread;
@@ -575,10 +619,10 @@ export function PullRequestHostedFiles({ organizationId, pullRequest, active, th
       try {
         await sendToThread(destination, text, lineCommentReference(chosen.path, target, text));
       } catch (caught) {
-        toast.error("Couldn't send the comment to your thread", { description: apiError(caught) });
+        toast.error(destination.kind === "review-agent" ? "Couldn't send the comment to the review agent" : "Couldn't send the comment to your thread", { description: apiError(caught) });
         throw caught;
       }
-      toast.success("Your thread has the comment.");
+      toast.success(reached(destination, "comment"));
     } else {
       const where = { path: chosen.path, line: target.line, side: target.side, ...(target.startLine ? { startLine: target.startLine, startSide: target.side } : {}), body: text };
       if (action === "comment") {
@@ -591,6 +635,30 @@ export function PullRequestHostedFiles({ organizationId, pullRequest, active, th
     }
     setSelection(undefined);
   }, [selection, sendToThread, act, refresh]);
+
+  // The finding the pane pointed at is marked for a moment once it is in view.
+  const [highlighted, setHighlighted] = useState<string>();
+  useEffect(() => {
+    if (!focusFinding) return;
+    setHighlighted(focusFinding.id);
+    const timer = window.setTimeout(() => setHighlighted(undefined), 1600);
+    return () => window.clearTimeout(timer);
+  }, [focusFinding]);
+
+  const agentReviewRef = useRef(agentReview);
+  agentReviewRef.current = agentReview;
+  /// Your decision on a finding: on screen at once, from the hub's answer.
+  const markFinding = useCallback(async (finding: ReviewFinding, status: "open" | "dismissed" | "added-to-github", githubCommentId?: string) => {
+    let updated: ReviewFinding;
+    try {
+      updated = await setFindingStatus(organizationId, finding.id, status, githubCommentId);
+    } catch (caught) {
+      toast.error(status === "dismissed" ? "Couldn't dismiss the finding" : status === "open" ? "Couldn't bring the finding back" : "Couldn't mark the finding added", { description: apiError(caught) });
+      throw caught;
+    }
+    const current = agentReviewRef.current;
+    if (current) onReviewChanged?.({ ...current, findings: current.findings.map((entry) => (entry.id === updated.id ? updated : entry)) });
+  }, [organizationId, onReviewChanged]);
 
   const surface = useMemo<ReviewSurface>(() => ({
     viewer: review?.viewer,
@@ -619,10 +687,10 @@ export function PullRequestHostedFiles({ organizationId, pullRequest, active, th
             });
           }
         } catch (caught) {
-          toast.error("Couldn't send the reply to your thread", { description: apiError(caught) });
+          toast.error(destination.kind === "review-agent" ? "Couldn't send the reply to the review agent" : "Couldn't send the reply to your thread", { description: apiError(caught) });
           throw caught;
         }
-        toast.success("Your thread has the reply.");
+        toast.success(reached(destination, "reply"));
         return;
       }
       await act("reply", { threadId: conversation.id, body: text, pending: action === "review" }, action === "review" ? "Couldn't add the reply to your review" : "Couldn't post the reply");
@@ -637,7 +705,38 @@ export function PullRequestHostedFiles({ organizationId, pullRequest, active, th
       await act("delete-comment", { commentId: comment.id }, "Couldn't delete the comment");
       await refresh();
     },
-  }), [review?.viewer, pullRequest.repository, destinations, onOpenThread, onOpenLink, openReply, sendToThread, act, refresh]);
+    addFinding: async (finding) => {
+      const body = [`**${finding.title}**`, finding.body, finding.suggestion ? `\`\`\`suggestion\n${finding.suggestion}\n\`\`\`` : ""].filter(Boolean).join("\n\n");
+      const posted = await pullRequestAction<{ id?: string | null }>(organizationId, pullRequest.workspaceId, pullRequest.number, "pending-comment", {
+        path: finding.path, line: finding.endLine, side: finding.side,
+        ...(finding.startLine < finding.endLine ? { startLine: finding.startLine, startSide: finding.side } : {}),
+        body,
+      }).catch((caught) => { toast.error("Couldn't add the finding to your review", { description: apiError(caught) }); throw caught; });
+      void refresh();
+      await markFinding(finding, "added-to-github", posted?.id ?? undefined);
+      toast.success("It's in your pending review.");
+    },
+    dismissFinding: async (finding) => {
+      await markFinding(finding, "dismissed");
+      toast("Finding dismissed.", { action: { label: "Undo", onClick: () => void markFinding(finding, "open").catch(() => undefined) } });
+    },
+    flagFinding: async (finding, words, reference) => {
+      if (!reviewThread) return;
+      try {
+        await hubRequest(`${hubThreadPath(reviewThread.access.organizationId, reviewThread.computerId, reviewThread.id)}/message`, "POST", {
+          text: flagFindingMessage(finding, words),
+          messageId: `u-${crypto.randomUUID()}`,
+          attachmentIds: [],
+          codeReferences: [reference],
+        });
+      } catch (caught) {
+        toast.error("Couldn't send your flag to the review agent", { description: apiError(caught) });
+        throw caught;
+      }
+      toast.success("The review agent has your flag.");
+    },
+    focusedFinding: highlighted,
+  }), [review?.viewer, pullRequest.repository, pullRequest.workspaceId, pullRequest.number, organizationId, destinations, onOpenThread, onOpenLink, openReply, sendToThread, act, refresh, markFinding, reviewThread, highlighted]);
 
   const composer = selection ? (
     <LineCommentBox
@@ -655,6 +754,32 @@ export function PullRequestHostedFiles({ organizationId, pullRequest, active, th
     for (const entry of review?.threads ?? []) map.set(entry.path, [...(map.get(entry.path) ?? []), entry]);
     return map;
   }, [review?.threads]);
+
+  const findingsByPath = useMemo(() => {
+    const map = new Map<string, ReviewFinding[]>();
+    for (const finding of agentReview?.findings ?? []) map.set(finding.path, [...(map.get(finding.path) ?? []), finding]);
+    return map;
+  }, [agentReview?.findings]);
+
+  // The pane asked for a finding: open its file, draw its hunk, and bring it
+  // into view once it is on the page.
+  useEffect(() => {
+    if (!focusFinding || !files?.length) return;
+    const finding = agentReviewRef.current?.findings.find((entry) => entry.id === focusFinding.id);
+    const index = finding ? files.findIndex((file) => file.path === finding.path) : -1;
+    if (index < 0) return;
+    onOpenChange(index, true);
+    let frames = 0;
+    let timer = 0;
+    const find = () => {
+      const element = document.getElementById(`review-finding-${focusFinding.id}`);
+      if (element) { element.scrollIntoView({ block: "center" }); return; }
+      if (frames++ === 0) document.getElementById(fileId(index))?.scrollIntoView({ block: "start" });
+      if (frames < 30) timer = window.requestAnimationFrame(find);
+    };
+    timer = window.requestAnimationFrame(find);
+    return () => window.cancelAnimationFrame(timer);
+  }, [focusFinding, files, onOpenChange]);
 
   const queued = queuedComments(review);
   const submitReview = useCallback(async (event: string, body: string) => {
@@ -766,6 +891,8 @@ export function PullRequestHostedFiles({ organizationId, pullRequest, active, th
                   onViewedChange={onViewedChange}
                   url={pullRequest.url}
                   threads={threadsByPath.get(file.path) ?? NO_THREADS}
+                  findings={findingsByPath.get(file.path) ?? NO_FINDINGS}
+                  focusedFinding={focusFinding?.id}
                   selection={selection?.path === file.path ? selection : undefined}
                   onSelect={onSelect}
                   composer={selection?.path === file.path ? composer : undefined}
@@ -780,3 +907,4 @@ export function PullRequestHostedFiles({ organizationId, pullRequest, active, th
 }
 
 const NO_THREADS: ReviewThread[] = [];
+const NO_FINDINGS: ReviewFinding[] = [];

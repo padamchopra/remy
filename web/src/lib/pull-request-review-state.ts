@@ -132,15 +132,22 @@ function rowKeys(line: PullRequestDiffLine): string[] {
   ];
 }
 
+/// Where each `SIDE:line` sits in a file's diff, as `hunk:row`: the first row
+/// that shows that line on that side.
+export function diffRowIndex(hunks: readonly PullRequestDiffHunk[]): Map<string, string> {
+  const byKey = new Map<string, string>();
+  hunks.forEach((hunk, hunkIndex) => hunk.lines.forEach((line, lineIndex) => {
+    for (const key of rowKeys(line)) if (!byKey.has(key)) byKey.set(key, `${hunkIndex}:${lineIndex}`);
+  }));
+  return byKey;
+}
+
 /// Conversations placed on a file's diff. A current conversation sits under
 /// the row it ends on. One that is outdated, about the whole file, or on a
 /// line this diff does not show goes to `elsewhere`, which the file shows
 /// folded above its hunks, as GitHub folds outdated conversations.
 export function placeThreads(threads: readonly ReviewThread[], path: string, hunks: readonly PullRequestDiffHunk[]) {
-  const byKey = new Map<string, string>();
-  hunks.forEach((hunk, hunkIndex) => hunk.lines.forEach((line, lineIndex) => {
-    for (const key of rowKeys(line)) if (!byKey.has(key)) byKey.set(key, `${hunkIndex}:${lineIndex}`);
-  }));
+  const byKey = diffRowIndex(hunks);
   const atRow = new Map<string, ReviewThread[]>();
   const elsewhere: ReviewThread[] = [];
   for (const thread of threads) {

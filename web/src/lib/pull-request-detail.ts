@@ -29,6 +29,8 @@ export interface PullRequestDetail {
   reviewers?: PullRequestDetailReviewer[];
   checks?: PullRequestDetailCheck[];
   stack?: { number: number; state: string; mergeable: string }[];
+  /// The latest commits, oldest first.
+  commits?: { sha: string; title: string }[];
 }
 
 /// How long a check ran, the way CI says it: "48s", "1m 04s", "1h 02m".

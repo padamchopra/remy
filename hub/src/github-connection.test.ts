@@ -66,6 +66,7 @@ function fixture() {
           latestReviews: { nodes: [{ author: { login: "linus", name: "Linus" }, state: "APPROVED" }] },
           reviewRequests: { nodes: [{ requestedReviewer: { login: "grace", name: "Grace Hopper" } }] },
           stack: { entries: { nodes: [{ pullRequest: { number: 5, state: "OPEN", mergeable: "CONFLICTING" } }, { pullRequest: { number: 7, state: "OPEN", mergeable: "MERGEABLE" } }] } },
+          recentCommits: { nodes: [{ commit: { oid: "B".repeat(40), messageHeadline: "Debounce repository search" } }, { commit: { oid: "not a sha", messageHeadline: "x" } }, { commit: { oid: "a".repeat(40), messageHeadline: "Count filtered rows" } }] },
           commits: { nodes: [{ commit: { statusCheckRollup: { contexts: { nodes: [
             { name: "typecheck", conclusion: "FAILURE", status: "COMPLETED", startedAt: "2026-09-23T09:00:00Z", completedAt: "2026-09-23T09:01:04Z", detailsUrl: "https://github.com/release/remy/actions/runs/1", title: "2 errors", summary: "src/a.ts: Type 'string' is not assignable" },
             { name: "bundle", conclusion: "SUCCESS", status: "COMPLETED", startedAt: "2026-09-23T09:00:00Z", completedAt: "2026-09-23T09:00:48Z", detailsUrl: "javascript:alert(1)" },
@@ -664,6 +665,10 @@ test("pull request detail reads mergeability, check durations and reviewer names
     ["deploy", "pending", "2026-09-23T09:00:00Z", null, "https://ci.example.test/1"],
   ]);
   assert.equal(detail.checks[0].summary, "2 errors");
+  assert.deepEqual(detail.commits, [
+    { sha: "b".repeat(40), title: "Debounce repository search" },
+    { sha: "a".repeat(40), title: "Count filtered rows" },
+  ]);
   assert.deepEqual(detail.stack, [
     { number: 5, state: "OPEN", mergeable: "CONFLICTING" },
     { number: 7, state: "OPEN", mergeable: "MERGEABLE" },
