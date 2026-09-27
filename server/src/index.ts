@@ -106,7 +106,6 @@ import {
   zoomBrowser,
 } from "./browser.js";
 import { closeTerminal, openTerminal, resizeTerminal, writeTerminal } from "./terminal.js";
-import { forgetPushDevice, pushStatus, registerPushDevice } from "./push.js";
 import {
   createEnvironment,
   disableEnvironment,
@@ -678,23 +677,6 @@ const server = createServer(async (req, res) => {
       } catch (error) {
         return json(res, 404, { error: (error as Error).message || "no such archive" });
       }
-    }
-
-    // iPhones that receive Apple Push from this machine when no window is open.
-    if (url.pathname === "/push/devices" && req.method === "GET") {
-      return json(res, 200, pushStatus());
-    }
-    if (url.pathname === "/push/register" && req.method === "POST") {
-      try {
-        return json(res, 200, { device: registerPushDevice(await readJson(req)) });
-      } catch (error) {
-        return json(res, 400, { error: (error as Error).message });
-      }
-    }
-    if (parts[0] === "push" && parts[1] === "devices" && parts.length === 3 && req.method === "DELETE") {
-      const token = decodeURIComponent(parts[2]);
-      if (!forgetPushDevice(token)) return json(res, 404, { error: "no such phone" });
-      return json(res, 200, { ok: true });
     }
 
     // Refreshing repositories: what the schedule does, and what the button in
@@ -2212,8 +2194,7 @@ server.on("upgrade", (req, socket, head) => {
   }
   if (isNotify) {
     // `notify=0` subscribes to live state without becoming a notification
-    // target — the phone's role, since its banners come from Apple Push.
-    // Absent means yes, so an older desktop client keeps receiving them.
+    // target. Absent means yes.
     const notifies = url.searchParams.get("notify") !== "0";
     wss.handleUpgrade(req, socket, head, (ws) => attachNotifyStream(ws, notifies, url.searchParams));
     return;

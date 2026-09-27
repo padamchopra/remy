@@ -69,10 +69,6 @@ export interface Config {
   /// How often Remy refreshes the repositories it knows about. `off` never
   /// does, which is the setting for anyone who wants git touched only by them.
   repoUpdate: RepoUpdateEvery;
-  /// Whether notifications raised on this machine are shown on this machine.
-  /// Off routes them only to the paired devices that asked for them, which is
-  /// the setting for a machine that runs the work while you watch from another.
-  notifySelf: boolean;
   /// What Remy runs its own small jobs on — naming a thread, and whatever else
   /// comes to need a model later. Separate from what your threads think with:
   /// this one should stay cheap. `off` declines them
@@ -266,8 +262,6 @@ function load(): Config {
     deviceIcon: deviceAppearanceValue(parsed.deviceIcon, DEVICE_ICONS),
     deviceTint: deviceAppearanceValue(parsed.deviceTint, DEVICE_TINTS),
     devicePreferenceOrder: devicePreferenceOrder(parsed.devicePreferenceOrder),
-    // Absent means this is the only device, so it is the one to buzz.
-    notifySelf: parsed.notifySelf !== false,
   };
   setKv("config", config);
   return config;
@@ -295,7 +289,6 @@ export interface PublicSettings {
   deviceIcon: string;
   deviceTint: string;
   devicePreferenceOrder: string[];
-  notifySelf: boolean;
 }
 
 export function publicSettings(): PublicSettings {
@@ -319,7 +312,6 @@ export function publicSettings(): PublicSettings {
     deviceIcon: config.deviceIcon,
     deviceTint: config.deviceTint,
     devicePreferenceOrder: config.devicePreferenceOrder,
-    notifySelf: config.notifySelf,
   };
 }
 
@@ -384,9 +376,6 @@ export function patchSettings(patch: Record<string, unknown>): PublicSettings {
   }
   if (patch.devicePreferenceOrder !== undefined) {
     set("devicePreferenceOrder", devicePreferenceOrder(patch.devicePreferenceOrder));
-  }
-  if (patch.notifySelf !== undefined) {
-    set("notifySelf", patch.notifySelf === true);
   }
   // Seeded from `gh` at boot rather than typed, but it has to be settable for
   // that seeding to persist it.

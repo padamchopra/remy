@@ -1,7 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type { WebSocket } from "ws";
-import { config } from "./config.js";
-import { sendPush } from "./push.js";
 import type { RegistryEntry } from "./registry.js";
 import { attachAppUpdateHost } from "./app-update.js";
 import { attachNativeBrowserHost } from "./browser-host.js";
@@ -12,7 +10,7 @@ export interface NotifyEvent {
   title: string;
   message: string;
   highPriority: boolean;
-  /// Where tapping the push should land. Threads set their own deep link.
+  /// Where opening the notification should land. Threads set their own deep link.
   click?: string;
   /// Stable routing identity for this computer.
   deviceId?: string;
@@ -310,16 +308,12 @@ export async function sendNotification(evt: NotifyEvent): Promise<void> {
   if (now - (lastSent.get(throttleKey) ?? 0) < THROTTLE_MS) return;
   lastSent.set(throttleKey, now);
   for (const route of notificationRouters) if (route(evt)) return;
-  if (config.notifySelf) await deliverHere(evt);
+  deliverHere(evt);
 }
 
-async function deliverHere(evt: NotifyEvent): Promise<void> {
-  if (notifyTargets.size > 0) {
-    const payload = JSON.stringify({ type: "notification", ...evt });
-    for (const ws of notifyTargets) {
-      if (ws.readyState === ws.OPEN) ws.send(payload);
-    }
-    return;
+function deliverHere(evt: NotifyEvent): void {
+  const payload = JSON.stringify({ type: "notification", ...evt });
+  for (const ws of notifyTargets) {
+    if (ws.readyState === ws.OPEN) ws.send(payload);
   }
-  await sendPush(evt);
 }

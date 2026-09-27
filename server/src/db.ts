@@ -142,14 +142,6 @@ function migrate(database: DatabaseSync): void {
       primary key (ticket_id, device_id, chat_id)
     );
     create index if not exists ticket_threads_chat on ticket_threads(chat_id);
-    -- iPhones that receive Apple Push from this daemon. A token is the phone's
-    -- identity; the name is whatever it called itself when it registered.
-    create table if not exists push_devices (
-      token text primary key,
-      name text not null,
-      registered_at integer not null,
-      last_seen integer not null
-    );
     -- Shared workspace environments are encrypted independently on each
     -- machine. Values from the hub arrive over the authenticated computer
     -- channel and are re-encrypted with this machine's key.
@@ -230,6 +222,9 @@ function migrate(database: DatabaseSync): void {
   // Pairing computers directly was replaced by the hub. The table held other
   // machines' bearer tokens, so it goes rather than sitting inert.
   database.exec("drop table if exists peers");
+  // Apple Push from the daemon served the retired iPhone app; the hub sends
+  // its own notifications.
+  database.exec("drop table if exists push_devices");
   database.exec("delete from kv where key = 'pairing'");
   try {
     database.exec("alter table workspaces add column icon text");
