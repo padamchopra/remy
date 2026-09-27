@@ -359,7 +359,8 @@ const FileDiffView = memo(function FileDiffView({
       data-slot="pull-request-file"
       className="scroll-mt-0 border-b border-border last:border-b-0"
     >
-      <div className="sticky top-0 z-10 flex h-10 min-w-0 items-center gap-2.5 border-b border-border bg-background px-4">
+      {/* One pixel above the edge: at a fractional scroll position a header pinned at 0 can sit half a pixel low and let the diff show through above it. */}
+      <div className="sticky -top-px z-10 flex h-10 min-w-0 items-center gap-2.5 border-b border-border bg-background px-4">
         <CollapsibleTrigger
           data-file-index={index}
           aria-label={`${open ? "Collapse" : "Expand"} ${file.path}`}
