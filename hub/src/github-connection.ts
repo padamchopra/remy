@@ -977,6 +977,17 @@ export class GitHubConnection {
       return data.data;
     };
     const done = <T>(value: T) => { this.forget(org, user); return value; };
+    // GitHub refuses a comment posted now while your review is pending, with
+    // the same 422 as a bad line. Say which one it was.
+    const postNow = async <T>(post: () => Promise<T>) => {
+      try {
+        return await post();
+      } catch (error) {
+        if (error instanceof ConnectionError && error.status === 400 && (await this.pendingReview(org, user, pullRequestId, sha, false)).id)
+          throw new ConnectionError("You have a pending review; add this to it or submit it first.", 409);
+        throw error;
+      }
+    };
 
     if (action === "view-file") {
       const path = typeof input.path === "string" ? input.path : "";
@@ -997,7 +1008,7 @@ export class GitHubConnection {
       const body = reviewBody(input);
       if (body === undefined) throw new ConnectionError("Write a comment of up to 65,000 characters.");
       if (action === "line-comment") {
-        const posted = await this.api<{ id?: number; node_id?: string }>(org, user, `${prefix}/pulls/${number}/comments`, "POST", {
+        const posted = await postNow(() => this.api<{ id?: number; node_id?: string }>(org, user, `${prefix}/pulls/${number}/comments`, "POST", {
           body,
           commit_id: sha,
           path: target.path,
@@ -1007,7 +1018,7 @@ export class GitHubConnection {
         }, {
           422: ["GitHub can't place a comment on those lines. Refresh the diff and try again.", 400],
           403: ["You can't comment on pull requests in this repository.", 403],
-        });
+        }));
         return done({ id: posted?.node_id ?? null });
       }
       const reviewId = await this.pendingReview(org, user, pullRequestId, sha);
@@ -1039,10 +1050,10 @@ export class GitHubConnection {
       }
       const top = nodesOf(node.comments as { nodes?: unknown[] } | undefined)[0] as { databaseId?: unknown } | undefined;
       if (!positive(top?.databaseId)) throw new ConnectionError("Choose a conversation on this pull request.", 404);
-      await this.api(org, user, `${prefix}/pulls/${number}/comments/${top!.databaseId}/replies`, "POST", { body }, {
+      await postNow(() => this.api(org, user, `${prefix}/pulls/${number}/comments/${top!.databaseId}/replies`, "POST", { body }, {
         422: ["GitHub couldn't post that reply. Refresh the diff and try again.", 400],
         403: ["You can't comment on pull requests in this repository.", 403],
-      });
+      }));
       return done({ pending: false });
     }
 

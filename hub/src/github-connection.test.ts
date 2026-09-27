@@ -27,13 +27,17 @@ function fixture() {
   let searchFails = false;
   let omitViewer = false;
   let githubDelayMs = 0;
-  const reviewState = { pending: false, viewer: "grace" };
+  const reviewState = { pending: false, viewer: "grace", strict: false };
   const send = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input)).pathname,
       method = init?.method ?? "GET",
       actor = new Headers(init?.headers).get("authorization") ?? "",
       body = init?.body ? JSON.parse(String(init.body)) : undefined;
     calls.push({ path, method, actor, body });
+    // As GitHub does: nothing posts now while your review is pending, and a
+    // line outside the diff is the same 422.
+    if (reviewState.strict && method === "POST" && (path === "/repos/release/remy/pulls/7/comments" || path.endsWith("/replies")) && (reviewState.pending || body?.line === 999))
+      return Response.json({ message: "Validation Failed" }, { status: 422 });
     if (path === "/repos/release/remy/pulls/7/files") {
       // 205 files: two full pages and a short third, the last one binary.
       const page = Number(new URL(String(input)).searchParams.get("page"));
@@ -733,6 +737,18 @@ test("the review read carries viewed state, conversations and pending comments f
   assert.deepEqual([outdated.line, outdated.originalLine, outdated.side, outdated.isOutdated, outdated.comments[0].author.login], [null, 4, "LEFT", true, "github-actions[bot]"]);
   await assert.rejects(service.pullRequestReview("studio", "grace", "someone/else", 7), /one of your workspaces/);
   await assert.rejects(service.pullRequestReview("studio", "stranger", "release/remy", 7), /unavailable/);
+});
+
+test("a comment posted now while your review is pending says so instead of blaming the lines", async () => {
+  const { service, reviewState } = fixture();
+  reviewState.strict = true;
+  const workspace = await service.organizations.createWorkspace("studio", "ada", { name: "Remy", origin: "git@github.com:release/remy.git" });
+  const now = { number: 7, path: "src/a.ts", line: 12, side: "RIGHT", body: "Now." };
+  await assert.rejects(service.action("studio", "grace", workspace.id, "line-comment", { ...now, line: 999 }), /can't place a comment on those lines/);
+  await service.action("studio", "grace", workspace.id, "pending-comment", { number: 7, path: "src/a.ts", line: 3, side: "LEFT", body: "Why?" });
+  const pending = (error: Error & { status?: number }) => /pending review; add this to it or submit it first/.test(error.message) && error.status === 409;
+  await assert.rejects(service.action("studio", "grace", workspace.id, "line-comment", now), pending);
+  await assert.rejects(service.action("studio", "grace", workspace.id, "reply", { number: 7, threadId: "PRRT_1", body: "Done." }), pending);
 });
 
 test("line comments, replies, the pending review and viewed marks go through the member's own connection", async () => {
