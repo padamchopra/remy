@@ -377,6 +377,10 @@ test("members share their own computers and start-provider grants block only new
     assert.equal(replied?.status, 200);
     assert.equal((await replied!.json() as { error?: string }).error, undefined);
     assert.ok(forwarded.some(entry => String(entry[3]).includes("/message")));
+    const unicodeText = "界".repeat(34_000);
+    const longReply = await handle(request("ada", `/computers/${computerId}/threads/${threadId}/message`, "POST", { text: unicodeText, messageId: `u-${crypto.randomUUID()}` }));
+    assert.equal(longReply?.status, 200);
+    assert.equal((forwarded.at(-1)![4] as { text?: string }).text, unicodeText);
     // Lines sent from a pull request's diff reach the computer with the message.
     const reference = { id: "r1", path: "web/src/a.tsx", startLine: 170, endLine: 172, comment: "Collapse past ten.", lines: [{ kind: "add", oldLine: null, newLine: 170, text: "{rows.map(" }] };
     const referenced = await handle(request("ada", `/computers/${computerId}/threads/${threadId}/message`, "POST", { text: "Collapse past ten.", messageId: `u-${crypto.randomUUID()}`, codeReferences: [reference] }));

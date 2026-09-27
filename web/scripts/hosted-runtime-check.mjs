@@ -13,7 +13,8 @@ try {
   for (const returning of [false, true]) {
     for (const mobile of [false, true]) {
       const captureComposer = artifacts && process.env.QA_COMPOSER_ONLY === "1" && !returning && !mobile;
-      const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1280, height: 850 }, isMobile: mobile, hasTouch: mobile, ...(captureComposer ? { recordVideo: { dir: artifacts, size: { width: 1280, height: 850 } } } : {}) });
+      const captureThreadRecovery = artifacts && process.env.QA_THREAD_RECOVERY_ONLY === "1" && !returning && !mobile;
+      const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1280, height: 850 }, isMobile: mobile, hasTouch: mobile, ...((captureComposer || captureThreadRecovery) ? { recordVideo: { dir: artifacts, size: { width: 1280, height: 850 } } } : {}) });
       if (captureComposer) await context.addInitScript(() => {
         window.addEventListener("pointerdown", (event) => {
           const mark = document.createElement("div");
@@ -48,6 +49,8 @@ try {
       let preference=null;
       let failToggle=false;
       let failPreference=false;
+      let failThreadReads=process.env.QA_THREAD_RECOVERY_ONLY === "1";
+      const threadReads=new Map();
       let connected = false;
       let sharedComputer = false;
       let sharedCloud = false;
@@ -148,6 +151,10 @@ try {
           }
           return route.fulfill({status:409,json:{error:"Preview request captured."}});
         }
+        if(process.env.QA_THREAD_RECOVERY_ONLY === "1" && path===`${base}/threads` && route.request().method()==="GET") {
+          const reads=(threadReads.get(org.id)??0)+1;threadReads.set(org.id,reads);
+          if(org.personal && failThreadReads)return route.fulfill({status:500,json:{error:"Internal server error"}});
+        }
         if(process.env.QA_START_ONLY === "1" && /\/threads\/starts\/[0-9a-f-]{36}$/.test(path) && route.request().method()==="GET") {
           startStatusCalls++;
           if(startCalls===1 && !startReleased) return route.fulfill({json:{phase: startStatusCalls < 3 ? "creating" : "waking"}});
@@ -234,7 +241,7 @@ try {
         if (!(path in responses)) unexpected.push(path);
         return route.fulfill({ status: path in responses ? 200 : 404, json: responses[path] ?? { error: "Not found" } });
       });
-      if (process.env.QA_PROFILE_ONLY === "1" || process.env.QA_START_ONLY === "1" || process.env.QA_COMPUTER_ONLY === "1" || process.env.QA_BRANCH_ONLY === "1" || process.env.QA_DEFAULTS_ONLY === "1" || process.env.QA_COMPUTER_DEFAULTS_ONLY === "1" || process.env.QA_EXPLICIT_COMPUTER_ONLY === "1" || process.env.QA_SCOPE_ONLY === "1" || process.env.QA_COMPOSER_ONLY === "1") {
+      if (process.env.QA_PROFILE_ONLY === "1" || process.env.QA_START_ONLY === "1" || process.env.QA_COMPUTER_ONLY === "1" || process.env.QA_BRANCH_ONLY === "1" || process.env.QA_DEFAULTS_ONLY === "1" || process.env.QA_COMPUTER_DEFAULTS_ONLY === "1" || process.env.QA_EXPLICIT_COMPUTER_ONLY === "1" || process.env.QA_SCOPE_ONLY === "1" || process.env.QA_COMPOSER_ONLY === "1" || process.env.QA_THREAD_RECOVERY_ONLY === "1") {
         holdColdReads=false;holdSetupReads=false;releaseColdReads();releaseWorkspaces();releaseComputers();
         hasWorkspace=true;cloudEnabled=true;connections.add("fly-sprites");connections.add("modal");enabledProviders.add("fly-sprites");enabledProviders.add("modal");
         if(process.env.QA_COMPOSER_ONLY === "1") {
@@ -251,10 +258,21 @@ try {
           computerDefaults.set("cloud:fly-sprites",{provider:"openrouter",model:"openrouter/auto"});
           preference="cloud:fly-sprites";
         }
-        const target=new URL(url);target.hash="/threads?organization=personal";await page.goto(target.href);
-        await page.waitForURL(current=>!current.hash);
-        assert.equal(new URL(page.url()).hash,"","Hosted navigation removes legacy hash routes");
+        const target=new URL(url);
+        if(process.env.QA_THREAD_RECOVERY_ONLY === "1")await page.goto(new URL("threads?organization=personal",url).href);
+        else {target.hash="/threads?organization=personal";await page.goto(target.href);await page.waitForURL(current=>!current.hash);assert.equal(new URL(page.url()).hash,"","Hosted navigation removes legacy hash routes");}
         assert.equal(new URL(page.url()).pathname,"/app/threads","Hosted navigation uses a clean path");
+        if(process.env.QA_THREAD_RECOVERY_ONLY === "1") {
+          const alert=page.locator('p[role="alert"].px-4.py-2:not(.text-sm)',{hasText:"Internal server error"});
+          await alert.waitFor();
+          if(captureThreadRecovery){await page.screenshot({path:`${artifacts}/thread-recovery-before.png`});await page.waitForTimeout(800);}
+          failThreadReads=false;
+          await alert.waitFor({state:"hidden"});
+          if(captureThreadRecovery){await page.waitForTimeout(800);await page.screenshot({path:`${artifacts}/thread-recovery-after.png`});}
+          assert.ok((threadReads.get(personal.id)??0)>=2,"The failed account retries its thread list");
+          assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);
+          await context.close();console.log(`Thread recovery passed: ${returning?"saved local state":"fresh profile"}, ${mobile?"touch phone":"desktop"}.`);continue;
+        }
         if(process.env.QA_COMPOSER_ONLY === "1") {
           const composer=page.getByRole("form",{name:"New thread",exact:true});
           await composer.waitFor();

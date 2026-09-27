@@ -38,6 +38,7 @@ import {
   COMPUTER_HEARTBEAT_INTERVAL_MS,
   COMPUTER_HEARTBEAT_TIMEOUT_MS,
   COMPUTER_PROTOCOL_VERSION,
+  THREAD_REQUEST_MAX_BYTES,
   computerRegistrationInputSchema,
   computerAccessSchema,
   computerToHubFrameSchema,
@@ -1849,7 +1850,7 @@ export class HubCoordinator {
     if (action !== "join" && request.method !== "GET" && !canWriteThread(snapshot.access, actor.id)) return jsonError("Join this thread before replying.", 403);
     const allowed = ((request.method === "GET" || request.method === "PATCH" || request.method === "DELETE") && !action) || (request.method === "POST" && !!action);
     if (!allowed) return jsonError("This action is not available.", 404);
-    const payload = await limitedBody(request, 96_000);
+    const payload = await limitedBody(request, THREAD_REQUEST_MAX_BYTES);
     if (!payload) return jsonError("Send a shorter message.", 413);
     let input: Record<string, unknown> = {};
     if (payload.byteLength) { try { input = JSON.parse(new TextDecoder().decode(payload)); } catch { return jsonError("Send a valid thread request.", 400); } }
@@ -2285,7 +2286,7 @@ export class HubCoordinator {
       if (hostedRetire) { await this.retireHostedThread(computerId, id!); return Response.json({ ok: true }); }
       return jsonError("This computer is offline; try again when it reconnects.", 503);
     }
-    let payload = await limitedBody(request, 96_000);
+    let payload = await limitedBody(request, THREAD_REQUEST_MAX_BYTES);
     if (!payload) return jsonError("Send a shorter message.", 413);
     if (!id) {
       let input;
