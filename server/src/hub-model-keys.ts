@@ -3,8 +3,10 @@ import { openSecret, rememberSecrets, sealSecret } from "./environments.js";
 
 /// Provider keys someone set on this computer from the web, so signing Claude
 /// Code or Codex in never means opening a shell on the machine that holds the
-/// repositories. Claude reads the first, Codex the second.
-export const HUB_MODEL_KEY_NAMES = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"] as const;
+/// repositories. Claude reads the first, Codex the second, and Cursor's
+/// `agent acp` the third (the CLI documents `CURSOR_API_KEY` beside `--api-key`;
+/// the environment keeps it out of the command line).
+export const HUB_MODEL_KEY_NAMES = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CURSOR_API_KEY"] as const;
 
 const STORED = "hubModelKeys";
 const VALUE_LIMIT = 8192;

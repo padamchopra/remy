@@ -1,5 +1,5 @@
 import { useContext, useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { ArrowLeft, Check, CircleSlash, Star } from "lucide-react";
+import { ArrowLeft, Check, CircleDashed, CircleSlash, Star } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -261,8 +261,11 @@ function ModelStep({
           keywords={[inheritedLabel(providers, defaultChoice), ...(defaultChoice ? [defaultChoice.provider, defaultChoice.model] : [])]}
           onSelect={() => pick({ provider: REMY_DEFAULT, model: "", effort: "" })}
         >
-          <ProviderMark provider={defaultChoice?.provider ?? "claude"} />
-          <span className="min-w-0 truncate">{inheritedLabel(providers, defaultChoice)}</span>
+          {defaultChoice ? <ProviderMark provider={defaultChoice.provider} /> : <CircleDashed className="text-muted-foreground" />}
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate">{inheritedLabel(providers, defaultChoice)}</span>
+            {!defaultChoice && <span className="truncate text-xs text-muted-foreground">Threads start on your last pick.</span>}
+          </span>
           {inherited ? <Check className="ml-auto" /> : null}
         </CommandItem>
       )}

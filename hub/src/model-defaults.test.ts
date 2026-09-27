@@ -22,6 +22,10 @@ test("defaults belong to a computer, isolate members, and have no account or wor
   assert.equal((await (await call('ada',undefined,'other','cloud:fly-sprites')).json() as any).computer,null);
   await assert.rejects(call('ada',computerChoice,'org','cloud:unknown'));
   assert.equal((await call('ada',{provider:'default',model:''},'org','cloud:fly-sprites')).status,400);
+  const own={provider:'own:openrouter',model:'openrouter/auto',effort:''};
+  assert.equal((await call('ada',own,'org','cloud:fly-sprites')).status,200,"A default picked from your own key keeps its own: id");
+  assert.deepEqual(await (await call('ada',undefined,'org','cloud:fly-sprites')).json(),{computer:own});
+  assert.equal((await call('ada',{provider:'own:codex',model:''},'org','cloud:fly-sprites')).status,400);
   await call('ada',null,'org','cloud:fly-sprites');
   assert.equal((await (await call('ada',undefined,'org','cloud:fly-sprites')).json() as any).computer,null);
   const {ComputerService}=await import('./computers.js');const {D1ComputerStore}=await import('./computer-store.js');const {D1OrganizationStore}=await import('./organization-store.js');

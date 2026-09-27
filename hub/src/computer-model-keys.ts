@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /// Provider keys a person sets on a computer they already connected, so nobody
-/// has to open a shell on that machine and sign Claude Code or Codex in by hand.
+/// has to open a shell on that machine and sign Claude Code, Codex or Cursor in by hand.
 ///
 /// The value is only ever readable by the computer it belongs to: management
 /// reads return the configured state, and the computer pulls the cleartext over
@@ -9,6 +9,7 @@ import { z } from "zod";
 export const COMPUTER_MODEL_KEYS = [
   { id: "anthropic", label: "Anthropic", name: "ANTHROPIC_API_KEY", runtime: "Claude" },
   { id: "openai", label: "OpenAI", name: "OPENAI_API_KEY", runtime: "Codex" },
+  { id: "cursor", label: "Cursor", name: "CURSOR_API_KEY", runtime: "Cursor" },
 ] as const;
 export type ComputerModelKeyId = (typeof COMPUTER_MODEL_KEYS)[number]["id"];
 export type ComputerModelKeyName = (typeof COMPUTER_MODEL_KEYS)[number]["name"];

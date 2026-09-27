@@ -23,11 +23,20 @@ export function configureHostedCodex(home: string, connected: boolean) {
   }
 }
 
+/// The registration says what kind of computer this is. A hosted task sets it
+/// with `ownership: "hosted"` beside `hostedWorkspaceId`; a computer you
+/// connected with `remy login` has only the registration, and a stray
+/// `hostedWorkspaceId` left in its database must not turn it into a task.
+function hostedComputer() {
+  const registration = getKv<{ ownership?: unknown }>("hubComputerRegistration");
+  return registration ? registration.ownership === "hosted" : Boolean(getKv("hostedWorkspaceId"));
+}
+
 function accountHome() {
-  const hosted = Boolean(getKv("hostedWorkspaceId"));
-  const connected = Boolean(getKv("hubComputerRegistration")) && !hosted;
-  if (hosted) return process.env.CODEX_HOME;
-  if (!connected) return;
+  const registered = Boolean(getKv("hubComputerRegistration"));
+  if (hostedComputer()) return process.env.CODEX_HOME;
+  if (!registered) return;
+  // A computer you own signs Codex in where its own CLI reads it.
   const home = process.env.CODEX_HOME || join(homedir(), ".codex");
   mkdirSync(home, { recursive: true });
   return home;
@@ -63,7 +72,7 @@ export async function hostedCodexAccountRequest(
     );
   try {
     if (!account) {
-      const hosted = Boolean(getKv("hostedWorkspaceId"));
+      const hosted = hostedComputer();
       account = new CodexAccount({
         command: agentCommand("codex")!,
         cwd: home,

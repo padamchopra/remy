@@ -9,6 +9,7 @@ import test from "node:test";
 process.env.MC_CONFIG_DIR = mkdtempSync(join(tmpdir(), "mc-hub-model-keys-"));
 delete process.env.ANTHROPIC_API_KEY;
 delete process.env.OPENAI_API_KEY;
+delete process.env.CURSOR_API_KEY;
 
 const keys = await import("./hub-model-keys.js");
 const environments = await import("./environments.js");
@@ -21,6 +22,14 @@ test("delivered keys are stored sealed, inherited, and reported as changed once"
 
   assert.equal(keys.applyHubModelKeys({ values: { ANTHROPIC_API_KEY: "test-next-value" } }), true);
   assert.equal(process.env.ANTHROPIC_API_KEY, "test-next-value");
+});
+
+test("a Cursor key is delivered and inherited like the others", () => {
+  assert.equal(keys.applyHubModelKeys({ values: { CURSOR_API_KEY: "test-cursor-value" } }), true);
+  assert.deepEqual(keys.hubModelKeys(), { CURSOR_API_KEY: "test-cursor-value" });
+  assert.equal(process.env.CURSOR_API_KEY, "test-cursor-value");
+  keys.applyHubModelKeys({ values: {} });
+  assert.equal(process.env.CURSOR_API_KEY, undefined);
 });
 
 test("a removed key stops being inherited", () => {

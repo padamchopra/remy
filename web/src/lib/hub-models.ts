@@ -108,14 +108,54 @@ export function hostedModels(
   return cloudModels;
 }
 
+/// Your own model access in an organization, as `GET /own-model-access` sends
+/// it: what you configured in Personal and whether you turned it on there.
+export interface OwnModelAccessEntry {
+  id: "chatgpt" | "anthropic" | "openai" | "router" | "openrouter";
+  configured: boolean;
+  allowed: boolean;
+  keyName: string | null;
+  models: string[];
+}
+export interface OwnModelAccessResponse { personal: boolean; providers: OwnModelAccessEntry[] }
+
+/// Picker ids for your own key, so it sits beside the organization's key for
+/// the same provider rather than replacing it.
+export const OWN_PREFIX = "own:";
+export const isOwnProvider = (id: string) => id.startsWith(OWN_PREFIX);
+
+/// Your own API keys that you turned on in this organization, as providers a
+/// cloud thread can start on. ChatGPT is not here: it rides the `chatgpt` flag.
+export function ownModels(entries: OwnModelAccessEntry[], ensure?: ModelChoice): Provider[] {
+  return entries.filter((entry) => entry.id !== "chatgpt" && entry.configured && entry.allowed).flatMap((entry) => {
+    const runtime = runtimeFor(entry.id);
+    if (!runtime) return [];
+    const id = `${OWN_PREFIX}${entry.id}`;
+    return [{
+      ...runtime,
+      id,
+      label: `Your ${HOSTED_LABELS[entry.id] ?? runtime.label}`,
+      efforts: [],
+      models: withEnsuredModel(hostedModelsFor({ id: entry.id, enabled: true, configured: true, models: entry.models }), ensure?.provider === id ? ensure.model : undefined),
+    }];
+  });
+}
+
+/// Everything a cloud thread can start on for you here: the account's model
+/// access, then your own keys, each its own tab.
+export function cloudCatalogue(entries: ModelAccessEntry[], ensure?: ModelChoice, chatgpt = false, own: OwnModelAccessEntry[] = []): Provider[] {
+  return [...hostedModels(entries, ensure, chatgpt), ...ownModels(own, ensure)];
+}
+
 /// The model a new cloud thread should send: the saved default when that
 /// account can run it, otherwise the first enabled provider.
 export function hostedComposerChoice(
   entries: ModelAccessEntry[],
   inherited: ModelChoice,
   chatgpt = false,
+  own: OwnModelAccessEntry[] = [],
 ): ModelChoice {
-  const catalogue = hostedModels(entries, inherited, chatgpt);
+  const catalogue = cloudCatalogue(entries, inherited, chatgpt, own);
   const match = catalogue.find((entry) => entry.id === inherited.provider);
   if (match?.models.some((model) => model.value === inherited.model)) return inherited;
   if (match) return { provider: match.id, model: match.models[0]?.value ?? "" };
@@ -126,7 +166,8 @@ export function hostedComposerChoice(
 
 /// Maps a composer or stored gateway choice onto the runtime pair POST /threads
 /// accepts. A model that already carries `remy:` keeps that prefix.
-export function hostedExecutionChoice(choice: ModelChoice): { provider: string; model: string } {
+export function hostedExecutionChoice(choice: ModelChoice): { provider: string; model: string; modelSource?: "own" } {
+  if (isOwnProvider(choice.provider)) return { ...hostedExecutionChoice({ ...choice, provider: choice.provider.slice(OWN_PREFIX.length) }), modelSource: "own" };
   if (choice.provider === "anthropic") return { provider: "claude", model: choice.model };
   if (choice.provider === "openai" || choice.provider === "router" || choice.provider === "openrouter") {
     const model = choice.model.startsWith("remy:") ? choice.model : `remy:${choice.provider}:${choice.model}`;

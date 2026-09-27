@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useState } from "react";
-import { Bot, ChevronDown } from "lucide-react";
+import { Bot, ChevronDown, CircleDashed } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { InputGroupButton, InputGroupText } from "@/components/ui/input-group";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover-base";
@@ -59,7 +59,7 @@ export function displayModel(model: ProviderModel): string {
 }
 
 export function inheritedLabel(providers: Provider[], choice?: ModelChoice): string {
-  return choice ? `Default - ${resolvedModelLabel(providers, choice)} · ${effortLabel(providers, choice)}` : "Default";
+  return choice ? `Default - ${resolvedModelLabel(providers, choice)} · ${effortLabel(providers, choice)}` : "No default";
 }
 
 const { Surface: ModelPickerPanel, preload } = preloadable(() => import("./ModelPickerPanel"));
@@ -114,8 +114,9 @@ export function ModelPickerButton({
   const label = catalogue && !cataloguePending && !hasChoice && !inherited && value.model !== OFF ? (value.provider ? `${value.model || value.provider} · Unavailable` : "Choose a model") : inherited
     ? inheritedLabel(providers, defaultChoice)
     : value.model === OFF ? "Off" : `${modelLabel(providers, value)}${providers.find(p => p.id === value.provider)?.efforts.length ? ` · ${effortLabel(providers, value)}` : ""}`;
+  // Nothing saved has no provider behind it, so it wears no provider's mark.
   const mark = !hasChoice && !inherited ? <Bot className="size-4 shrink-0" /> : inherited
-    ? <ProviderMark provider={defaultChoice?.provider ?? "claude"} />
+    ? defaultChoice ? <ProviderMark provider={defaultChoice.provider} /> : <CircleDashed className="size-4 shrink-0 text-muted-foreground" />
     : <ProviderMark provider={value.provider} />;
 
   if (disabled && variant === "composer") {
