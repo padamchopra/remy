@@ -33,7 +33,10 @@ export async function hubOrganizationTool(
       signal: AbortSignal.timeout(15000),
     },
   );
-  if (!response.ok)
-    throw Error("This thread could not complete the organization action.");
+  // The hub's own words say what to fix, such as a finding off the diff.
+  if (!response.ok) {
+    const body = await response.json().catch(() => undefined) as { error?: unknown } | undefined;
+    throw Error(typeof body?.error === "string" && body.error.trim() ? body.error.slice(0, 2000) : "This thread could not complete the organization action.");
+  }
   return response.json();
 }

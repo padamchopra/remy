@@ -276,3 +276,60 @@ test("thread snapshots retain the confirmed branch", async () => {
   assert.equal(hubThreadSnapshot(chat.id, "org")?.detail.branch, "feature/snapshot");
   deleteChat(chat.id);
 });
+
+test("lines sent from a pull request reach the provider as review context and stay on the message", async () => {
+  const { setProviderAdapterForTest } = await import(
+    "./provider-adapters/index.js"
+  );
+  const { loadChat } = await import("./chat-storage.js");
+  const prompts: string[] = [];
+  const restore = setProviderAdapterForTest({
+    id: "claude",
+    discoverModels: async () => [],
+    answer: async () => undefined,
+    createSession: () => ({
+      close() {},
+      turn: (input: { prompt: string }) => { prompts.push(input.prompt); return { done: Promise.resolve(), interrupt() {} }; },
+    }),
+  });
+  const chat = createChat({ cwd: state, provider: "claude" });
+  try {
+    shareHubThread(chat.id, "org", owner, "manual");
+    const reference = {
+      id: "r-1",
+      path: "web/src/components/AddWorkspace.tsx",
+      startLine: 170,
+      endLine: 172,
+      comment: "Collapse a group once it passes ten repositories.",
+      lines: [
+        { kind: "add", oldLine: null, newLine: 170, text: "{rows.map((repository) => (" },
+        { kind: "add", oldLine: null, newLine: 171, text: "<RepositoryRow repository={repository} />" },
+        { kind: "add", oldLine: null, newLine: 172, text: "))}" },
+      ],
+    };
+    const messageId = "u-0b6f0ad2-5d8a-4c3c-9f4e-1a2b3c4d5e6f";
+    const response = await handleHubThreadRequest("org", owner, "POST", `/hub/threads/${chat.id}/message`, {
+      text: reference.comment,
+      messageId,
+      codeReferences: [reference],
+    }, noAttachment);
+    assert.equal(response.status, 200);
+    const entry = loadChat(chat.id, 50)!.entries.find((value) => value.id === messageId)!;
+    assert.equal(entry.codeReferences?.[0]?.path, reference.path);
+    assert.deepEqual(entry.codeReferences?.[0]?.lines.map((line) => line.newLine), [170, 171, 172]);
+    for (let wait = 0; wait < 50 && !prompts.length; wait++) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.match(prompts[0] ?? "", /<review-context>\nFile: web\/src\/components\/AddWorkspace\.tsx \(L170-172\)/);
+    // The comment is the reference's own; it is not said twice.
+    assert.equal((prompts[0] ?? "").split(reference.comment).length - 1, 1);
+
+    const refused = await handleHubThreadRequest("org", owner, "POST", `/hub/threads/${chat.id}/message`, {
+      text: "Look here.",
+      messageId: "u-1b6f0ad2-5d8a-4c3c-9f4e-1a2b3c4d5e6f",
+      codeReferences: [{ ...reference, lines: [] }],
+    }, noAttachment);
+    assert.equal(refused.status, 400);
+  } finally {
+    deleteChat(chat.id);
+    restore();
+  }
+});

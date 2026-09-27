@@ -316,7 +316,8 @@ export interface PullRequestTimelineItem {
 export interface ConvArtifact {
   organizationId?: string;
   computerId?: string;
-  kind: "thread" | "workspace";
+  /// A review's findings card names its thread; a proposed rule names the proposal.
+  kind: "thread" | "workspace" | "review-findings" | "review-rule";
   id?: string;
   title: string;
   detail?: string;

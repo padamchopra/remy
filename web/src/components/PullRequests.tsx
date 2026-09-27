@@ -1,10 +1,11 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { Check, CircleDot, GitPullRequest, RefreshCw, Search, X } from "lucide-react";
+import { Check, CircleDot, GitPullRequest, Github, RefreshCw, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover-base";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs-base";
 import { PaneHeader } from "@/components/PaneHeader";
@@ -22,6 +23,8 @@ import { transport } from "@/lib/transport";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
 import type { Chat, PullRequestStack, Server, Workspace } from "@/state/types";
+import type { HubThread } from "@remy/contract";
+import type { PullRequestView } from "@/lib/route";
 
 // The list is what a person scans first, so the detail views — the local one
 // carries the whole diff and review — arrive only when a pull request opens.
@@ -35,7 +38,7 @@ export interface PullRequestAddress {
   repository: string;
   number: number;
   /// The tab in front, when it is not the summary.
-  view?: "files";
+  view?: PullRequestView;
 }
 
 interface PullRequestCheck {
@@ -54,6 +57,8 @@ export interface AuthoredPullRequest {
   isDraft: boolean;
   reviewDecision: string;
   authorLogin?: string;
+  /// Hosted only, and only from a hub that sends it.
+  createdAt?: string;
   updatedAt: string;
   additions: number;
   deletions: number;
@@ -228,6 +233,59 @@ function sameAddress(pullRequest: { repository: string; number: number }, addres
     && pullRequest.repository.toLowerCase() === address.repository.toLowerCase();
 }
 
+/// An empty list as Paper 55N-0 and 561-0 draw it: a mark in a well, the
+/// state, what to do, and that action.
+const EMPTY = "min-h-0 flex-1 gap-3.5 p-10";
+const EMPTY_WELL = "mb-0 size-11 rounded-xl border border-input bg-card text-muted-foreground [&_svg:not([class*='size-'])]:size-5";
+const EMPTY_TITLE = "text-[15px] leading-[21px] font-semibold tracking-normal text-foreground";
+const EMPTY_DETAIL = "text-xs leading-[19px] text-muted-foreground";
+const EMPTY_BUTTON = "h-8 rounded-[9px] px-3.5 text-xs font-semibold";
+
+/// 55N-0: nothing is open. Pull requests come from threads, so that is the way on.
+function NoPullRequests({ onStartThread }: { onStartThread?: () => void }) {
+  return (
+    <Empty data-slot="pull-requests-empty" className={EMPTY}>
+      <EmptyHeader className="max-w-[380px] gap-1.5">
+        <EmptyMedia variant="icon" className={EMPTY_WELL}><GitPullRequest /></EmptyMedia>
+        <EmptyTitle className={cn(EMPTY_TITLE, "mt-2")}>No open pull requests</EmptyTitle>
+        <EmptyDescription className={EMPTY_DETAIL}>Ask an agent to open one from a thread, and it arrives with the branch, the checks and the review.</EmptyDescription>
+      </EmptyHeader>
+      {onStartThread && (
+        <EmptyContent className="mt-0.5">
+          <Button type="button" data-link onClick={onStartThread} className={EMPTY_BUTTON}>Start a thread</Button>
+        </EmptyContent>
+      )}
+    </Empty>
+  );
+}
+
+/// 561-0: nothing to read with. Pull requests are read with your own GitHub
+/// account, so connecting it is the way on.
+function GitHubNotConnected({ onConnect }: { onConnect?: () => void }) {
+  return (
+    <Empty data-slot="pull-requests-not-connected" className={EMPTY}>
+      <EmptyHeader className="max-w-[420px] gap-1.5">
+        <EmptyMedia variant="icon" className={EMPTY_WELL}><Github /></EmptyMedia>
+        <EmptyTitle className={cn(EMPTY_TITLE, "mt-2")}>Connect GitHub to review here</EmptyTitle>
+        <EmptyDescription className={EMPTY_DETAIL}>Remy reads pull requests with your own GitHub account, in the repositories you added as workspaces.</EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent className="mt-0.5 flex-row justify-center gap-2.5">
+        {onConnect && <Button type="button" data-link onClick={onConnect} className={EMPTY_BUTTON}>Connect GitHub</Button>}
+        <Popover>
+          <PopoverTrigger render={<Button type="button" variant="outline" className={cn(EMPTY_BUTTON, "border-input bg-transparent px-[13px] font-normal text-foreground/70 shadow-none dark:bg-transparent")} />}>
+            What it can read
+          </PopoverTrigger>
+          <PopoverContent align="center" className="flex w-[300px] flex-col gap-2 p-3.5 text-left text-xs leading-[18px]">
+            <p className="font-semibold text-foreground">What Remy reads</p>
+            <p className="text-muted-foreground">Your open pull requests and the ones you're asked to review, with their diffs, checks, reviews and comments.</p>
+            <p className="text-muted-foreground">Only repositories you added as workspaces, and only what your GitHub account can already see. Your token never reaches the browser or your computers.</p>
+          </PopoverContent>
+        </Popover>
+      </EmptyContent>
+    </Empty>
+  );
+}
+
 export function PullRequests({
   servers,
   workspaces,
@@ -237,11 +295,24 @@ export function PullRequests({
   hostedOrganizationIds,
   selected: selectedAddress,
   onSelect,
+  hubThreads = [],
+  onOpenHubThread,
+  onOpenHostedWorkspace,
+  onStartThread,
+  onConnectGitHub,
 }: {
   servers: Server[];
   workspaces: Workspace[];
   onOpenThread: (id: string) => void;
   onOpenWorkspace: (id: string) => void;
+  /// Hosted only: the threads you can read, which the detail finds its
+  /// linked thread among.
+  hubThreads?: HubThread[];
+  onOpenHubThread?: (thread: HubThread) => void;
+  onOpenHostedWorkspace?: (organizationId: string, workspaceId: string) => void;
+  /// Hosted only: the empty list's next steps.
+  onStartThread?: () => void;
+  onConnectGitHub?: () => void;
   hostedOrganizationId?: string;
   hostedOrganizationIds?: string[];
   /// The open pull request lives in the route, so Back returns to the list and
@@ -272,6 +343,8 @@ export function PullRequests({
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(!hasCachedPullRequests(serverIds));
   const [githubError, setGithubError] = useState("");
+  // Every account answered that it has no GitHub connection to read with.
+  const [notConnected, setNotConnected] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   // Accounts still answering after the first landed; the refresh control spins
   // for them instead of the list waiting on the slowest one.
@@ -299,6 +372,7 @@ export function PullRequests({
       }
       const organizations = hostedIdsRef.current;
       const errors: string[] = [];
+      let unconnected = 0;
       let settled = 0;
       let landed = false;
       if (!answered.current) setPending(organizations.length);
@@ -320,6 +394,7 @@ export function PullRequests({
         } catch (caught) {
           const message = caught instanceof Error ? caught.message : "Connect GitHub to see pull requests.";
           const known = caught instanceof HubRequestError && caught.status === 409 ? pullRequestCache.get(serverId) : undefined;
+          if (caught instanceof HubRequestError && caught.status === 409 && !known?.length) unconnected += 1;
           batch = known?.length ? { pullRequests: known } : { error: message };
         }
         if (currentRequest !== requestId.current) return;
@@ -336,11 +411,13 @@ export function PullRequests({
         if (next.length > 0 || landed) {
           setPullRequests(next);
           setGithubError("");
+          setNotConnected(false);
         }
         if (next.length > 0 || settled === organizations.length) setLoading(false);
         if (settled === organizations.length && !landed && next.length === 0) {
           setPullRequests([]);
           setGithubError(errors[0] || "Connect GitHub to see pull requests.");
+          setNotConnected(unconnected === organizations.length);
         }
       }));
       if (progressRequestId.current === currentRequest) {
@@ -506,7 +583,7 @@ export function PullRequests({
     return (
       <Suspense fallback={(
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <PaneHeader sidebar crumbs={[{ label: "Pull requests", onClick: back }, { label: `${selected.repository} #${selected.number}` }]} />
+          <PaneHeader sidebar crumbs={[{ label: "Pull requests", onClick: back }, { label: `${selected.workspaceName} #${selected.number}` }]} />
           <PullRequestDetailLoading />
         </main>
       )}>
@@ -514,8 +591,14 @@ export function PullRequests({
           key={selected.url}
           pullRequest={selected}
           organizationId={hostedOrganizationOf(selected.serverId)}
+          workspace={pullRequestTileWorkspace(selected, [], hostedWorkspaces)}
+          threads={hubThreads}
           canOpen={(number) => Boolean(members(number))}
+          stackPullRequest={members}
           onOpen={(number) => open({ repository: selected.repository, number })}
+          onOpenThread={(thread) => onOpenHubThread?.(thread)}
+          onOpenWorkspace={onOpenHostedWorkspace}
+          onChanged={() => void load({ refresh: true })}
           view={selectedAddress?.view}
           onViewChange={(view) => onSelect({ repository: selected.repository, number: selected.number, ...(view ? { view } : {}) })}
           onBack={back}
@@ -649,6 +732,10 @@ export function PullRequests({
       </div>
       {loading ? (
         <PullRequestListLoading />
+      ) : visible.length === 0 && hosted && notConnected ? (
+        <GitHubNotConnected onConnect={onConnectGitHub} />
+      ) : visible.length === 0 && hosted && !githubError && pullRequests.length === 0 ? (
+        <NoPullRequests onStartThread={onStartThread} />
       ) : visible.length === 0 ? (
         <Empty className="min-h-0 flex-1">
           <EmptyHeader>

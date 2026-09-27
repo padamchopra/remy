@@ -6,6 +6,7 @@ import {
   type ThreadSnapshot,
 } from "@remy/contract";
 import { githubRepository } from "./hosted-git.js";
+import { codeReferencesError, codeReferencesText } from "./code-references.js";
 import type { ThreadStore } from "./thread-store.js";
 
 const CURSOR_API = "https://api.cursor.com";
@@ -303,7 +304,10 @@ export class CursorCloudThreads {
       if (Array.isArray(input.attachmentIds) && input.attachmentIds.length) {
         return Response.json({ error: "Cursor Cloud cannot attach images." }, { status: 400 });
       }
-      const text = typeof input.text === "string" ? input.text.trim() : "";
+      const referencesError = codeReferencesError(input.codeReferences);
+      if (referencesError) return Response.json({ error: referencesError }, { status: 400 });
+      // Cursor Cloud takes text alone, so the lines a message points at travel in it.
+      const text = [codeReferencesText(input.codeReferences), typeof input.text === "string" ? input.text.trim() : ""].filter(Boolean).join("\n\n");
       if (!text) return Response.json({ error: "Enter a message." }, { status: 400 });
       if (!apiKey) return Response.json({ error: "Connect Cursor Cloud in Computers settings." }, { status: 409 });
       await this.send(id, text, apiKey, actor);

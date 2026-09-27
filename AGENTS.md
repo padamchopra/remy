@@ -35,6 +35,8 @@ QA_HUB_WEB=1 QA_COMPUTER_POLICY=1 node hub/scripts/qa-threads.mjs
 
 It prints `QA_SESSION` (a session file with test-only tokens; never upload it), `QA_HUB` (the hub URL, which also serves the app) and `QA_ROUTE`. Drive the app at `QA_HUB` with a scenario such as `QA_SESSION=<file> QA_WEB_URL=<hub URL> node web/scripts/qa-hub-threads.mjs`. The hub is real Workers, D1, R2, authentication and computer sockets on loopback; only the language-model provider, email and the QA secret store are fixtures. Its computer strips inherited `REMY_*` and `MC_*` values and keeps its state in a temporary directory, so it never touches the daemon on `127.0.0.1:8420` or `~/.remy/remy.db`. Stop the command to remove that state. `hub/docs/web.md` has the other scenarios. `assemble-hub.mjs` rewrites `web/dist` into the deployed layout, with the app under `app/`; the hub needs it.
 
+Test pull requests, reviews and the review agent on this local QA hub against a real sandbox repository: put `QA_GITHUB_REPOSITORY` and `QA_GITHUB_TOKEN` (and optionally `QA_GITHUB_REVIEWER_TOKEN` and `QA_LINEAR_TOKEN`) in the git-ignored `hub/.qa.env`. The workspace becomes a clone of the sandbox, Ada and Grace get those tokens as their GitHub connections, and a test pull request is opened when none is open. The fixture model drives the review agent's real tools; `QA_REAL_PROVIDERS=1` swaps in this Mac's signed-in providers, which agent-driven QA does not use. `QA_ENV_FILE=0` ignores the file for fixture-only scenarios. `hub/docs/web.md` (**Real GitHub, Linear and models**) has the scopes and what each variable does.
+
 Leave the daemon on port 8420 running. Never stop it from a thread it is hosting.
 
 Skip `VITE_MC_FIXTURE=1`; that is fake data, not your real state.
@@ -87,7 +89,12 @@ mistake in this repo, so check the table before naming anything.
 Nothing a person reads says project, job, workflow, cron, daemon, projection,
 runner, fold, board log, lamport or event. Agents, routines, routing and Tasks (the
 board and its tickets) were removed from the product, so nothing anybody reads
-mentions those either. Linear stays: a thread reaches it through each person's
+mentions those either. The one exception is **review agent**: the thread
+that reviews a pull request is called the review agent in everything a person
+reads about it (Review with agent, Review agent, Send to review agent), because
+that is the name the person asked for. It is a thread with a pull request
+attached, not a return of Agents: no roster, no persona, no settings of its own
+beyond your review rules. Linear stays: a thread reaches it through each person's
 own Linear account. Machine is
 fine — the app says "this machine" — and so is worktree, which is a git word
 anyone using worktrees already has.

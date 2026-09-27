@@ -186,3 +186,39 @@ test("removing Tasks drops the board and Linear sync tables and keeps each perso
   for (const kept of ["linear_accounts", "organization_linear_links", "connections", "connection_deliveries"]) assert.equal(tables.has(kept), true, kept);
   assert.deepEqual(database.prepare("SELECT id FROM connection_deliveries").all().map((row) => row.id), ["github-one"]);
 });
+
+test("monitoring is dropped, Activity gets read marks, and recorded GitHub activity stays", () => {
+  const database = new DatabaseSync(":memory:");
+  database.exec("PRAGMA foreign_keys = ON");
+  const directory = new URL("../migrations/", import.meta.url);
+  const files = readdirSync(directory).filter((file) => file.endsWith(".sql")).sort();
+  for (const file of files.filter((file) => file < "0034")) database.exec(readFileSync(new URL(file, directory), "utf8"));
+  database.exec("INSERT INTO organizations(id,name,createdAt,updatedAt) VALUES('org','Org',1,1); INSERT INTO organization_workspaces(id,organization_id,name,origin,created_at,updated_at) VALUES('w','org','Remy','github.com/release/remy',1,1)");
+  database.exec("INSERT INTO github_activity(id,organization_id,workspace_id,event,pull_number,summary,created_at) VALUES('a','org','w','issue_comment',7,'Comment updated',1)");
+  database.exec(readFileSync(new URL("0034_pull_request_seen.sql", directory), "utf8"));
+  const tables = new Set(database.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all().map((row) => String(row.name)));
+  assert.equal(tables.has("github_monitoring"), false);
+  for (const kept of ["pull_request_seen", "github_activity"]) assert.equal(tables.has(kept), true, kept);
+  assert.equal(tables.has("pull_request_follows"), false);
+  assert.equal(columns(database, "github_activity").includes("delivered_at"), false);
+  assert.deepEqual({ ...database.prepare("SELECT id, summary FROM github_activity").get() }, { id: "a", summary: "Comment updated" });
+});
+
+test("the review agent's tables keep rules per person and go with their review thread", () => {
+  const database = new DatabaseSync(":memory:");
+  database.exec("PRAGMA foreign_keys = ON");
+  const directory = new URL("../migrations/", import.meta.url);
+  for (const file of readdirSync(directory).filter((file) => file.endsWith(".sql")).sort()) database.exec(readFileSync(new URL(file, directory), "utf8"));
+  database.exec("INSERT INTO user(id,name,email,createdAt,updatedAt) VALUES('ada','Ada','ada@example.test',1,1); INSERT INTO organizations(id,name,createdAt,updatedAt) VALUES('org','Org',1,1); INSERT INTO organization_workspaces(id,organization_id,name,origin,created_at,updated_at) VALUES('w','org','Remy','github.com/release/remy',1,1)");
+  database.exec("INSERT INTO review_rules(id,user_id,repository,text,enabled,created_at,updated_at) VALUES('r','ada',NULL,'Rule',1,1,1)");
+  database.exec("INSERT INTO review_threads(organization_id,computer_id,thread_id,user_id,workspace_id,repository,pull_number,title,base_ref,head_ref,started_sha,head_sha,created_at,updated_at) VALUES('org','mac','t','ada','w','release/remy',7,'T','main','b','s','s',1,1)");
+  database.exec("INSERT INTO review_findings(id,organization_id,computer_id,thread_id,path,start_line,end_line,side,severity,title,body,commit_sha,position,created_at,updated_at) VALUES('f','org','mac','t','a.ts',1,1,'RIGHT','must','T','B','s',1,1,1)");
+  database.exec("INSERT INTO review_rule_proposals(id,organization_id,computer_id,thread_id,text,scope,reason,created_at,updated_at) VALUES('p','org','mac','t','Rule','all','r',1,1)");
+  assert.throws(() => database.exec("INSERT INTO review_findings(id,organization_id,computer_id,thread_id,path,start_line,end_line,side,severity,title,body,commit_sha,position,created_at,updated_at) VALUES('g','org','mac','t','a.ts',1,1,'UP','must','T','B','s',2,1,1)"));
+  database.exec("DELETE FROM review_threads WHERE thread_id='t'");
+  assert.equal(database.prepare("SELECT count(*) AS n FROM review_findings").get()?.n, 0);
+  assert.equal(database.prepare("SELECT count(*) AS n FROM review_rule_proposals").get()?.n, 0);
+  assert.equal(database.prepare("SELECT count(*) AS n FROM review_rules").get()?.n, 1);
+  database.exec("DELETE FROM user WHERE id='ada'");
+  assert.equal(database.prepare("SELECT count(*) AS n FROM review_rules").get()?.n, 0);
+});

@@ -1,7 +1,4 @@
 import { startHubThread } from "@/lib/hub-thread-start";
-import { cloudShareAllowsProvider, computerModels, hostedComposerChoice, hostedExecutionChoice, hostedModels } from "@/lib/hub-models";
-import { resolveModelDefault } from "@/lib/model-defaults";
-import { useHubModelDefaults } from "./HubModelDefault";
 import { BranchPicker } from "./BranchPicker";
 import type { GitBranch } from "@/state/types";
 import { toast } from "sonner";
@@ -14,18 +11,17 @@ import { InputGroupButton, InputGroupText } from "./ui/input-group";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "./ui/dropdown-menu";
 import { EmptyState } from "@/components/EmptyState";
 import { ModelPickerButton } from "./ModelPicker";
-import { type ModelChoice } from "@/lib/providers";
-import type { ModelAccessResponse } from "./HubModelAccess";
-import { CLOUD_COMPUTERS, CURSOR_CLOUD_COMPUTER_ID, cloudComputerProvider } from "@remy/contract";
+import { CURSOR_CLOUD_COMPUTER_ID, cloudComputerProvider } from "@remy/contract";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ComputerSummary } from "@remy/contract";
 import { Button } from "@/components/ui/button";
 import { PaneLoading } from "@/components/PaneLoading";
 import { useHubResource } from "@/lib/hub-organization";
+import { useHubStartChoice } from "@/lib/hub-start-choice";
 import { navigateLocation } from "@/lib/route";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { usePersonalHub } from "@/lib/hub-scope";
-import { composerSnapshot, saveComposerSnapshot, type ComposerSnapshot } from "@/lib/hub-composer-cache";
+import { saveComposerSnapshot, type ComposerSnapshot } from "@/lib/hub-composer-cache";
 import { cacheHubWorkspaces, cachedHubWorkspaces, hasCachedHubWorkspaces } from "@/lib/hub-workspace-cache";
 import { takeComposerWorkspace, useComposerWorkspaceRequest } from "@/lib/composer-workspace";
 export type HubThreadWorkspaceOption = {
@@ -96,12 +92,8 @@ export function HubThreadComposer({
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
   const base = hubThreadBase(organizationId),
     [localWorkspaceId, setWorkspace] = useState(""),
-    [picked, pick] = useState<{ workspaceId: string; computerId: string }>(),
-    [preference, setPreference] = useState<{ workspaceId: string; computerId: string | null }>(),
-    [fallback, setFallback] = useState<{ workspaceId: string; computerId?: string; hostedProvider?: string }>(),
     [visibilityOverride, setVisibilityOverride] = useState<"private" | "open">(),
-    [draftMessage, setDraftMessage] = useState(""),
-    [error, setError] = useState("");
+    [draftMessage, setDraftMessage] = useState("");
   const message = controlledMessage ?? draftMessage;
   const setMessage = onMessageChange ?? setDraftMessage;
   const workspaceId = controlledWorkspaceId ?? localWorkspaceId;
@@ -122,31 +114,6 @@ export function HubThreadComposer({
           : (workspaces[0]?.id ?? ""),
       );
   }, [catalogue.value, workspaces, controlledWorkspaceId]);
-  useEffect(() => {
-    setBranch("");
-    setRequestId(crypto.randomUUID());
-    setVisibilityOverride(undefined);
-    setError("");
-    setResolvingBranch(true);
-  }, [workspaceId, organizationId]);
-  // What this device last settled on for the workspace. It paints the toolbar
-  // while the reads below are in flight, and it lets them start with the
-  // computer they will most likely end on. It never decides anything.
-  const snapshot = useMemo(() => composerSnapshot(organizationId, workspaceId), [organizationId, workspaceId]);
-  // The saved preference is a cheap read that needs only the workspace, so it
-  // starts at once rather than after the computers and cloud settings it is
-  // later checked against.
-  useEffect(() => {
-    if (!workspaceId) return;
-    let cancelled = false;
-    void hubRequest<{ computerId: string | null }>(`${base}/computers/preference?workspaceId=${encodeURIComponent(workspaceId)}`)
-      .then(value => { if (!cancelled) setPreference({ workspaceId, computerId: value.computerId }); })
-      .catch(() => { if (!cancelled) setPreference({ workspaceId, computerId: null }); });
-    return () => { cancelled = true; };
-  }, [base, workspaceId]);
-  const modelAccess = useHubResource<ModelAccessResponse>(organizationId,"/model-access");
-  const cloudConnections = useHubResource<{settings?:{provider?:string};enabledProviders?: string[];cloudStart?: Record<string, {owner:boolean;providers:{id:string;allowed:boolean}[]}>}>(organizationId, "/hosted");
-  const cloudOptions = useMemo(() => CLOUD_COMPUTERS.filter(c => cloudConnections.value?.enabledProviders?.includes(c.provider)), [cloudConnections.value?.enabledProviders]);
   const workspaceChoices: HubThreadWorkspaceOption[] = workspaceOptions ?? workspaces.map((item) => ({
     ...item,
     key: item.id,
@@ -154,83 +121,19 @@ export function HubThreadComposer({
     label: item.name,
   }));
   const workspace = workspaceChoices.find((item) => item.organizationId === organizationId && item.id === workspaceId);
-  const eligible = useMemo(() => computers.filter(
-    (c) =>
-      c.ownership !== "hosted" &&
-      c.canUse &&
-      c.availability !== "offline" &&
-      !c.updateRequired &&
-      (c.ownerUserId === memberId || (c.capabilities.providers?.length ?? 0) > 0) &&
-      c.capabilities.workspaces.some(
-        (w) => w.id === workspaceId || w.origin === workspace?.origin,
-      ),
-  ), [computers, memberId, workspace?.origin, workspaceId]);
-  const optionsKnown = computersLoaded && !!cloudConnections.value;
-  const options = useMemo(() => [...cloudOptions.map(c => c.id), ...eligible.map(c => c.computerId)], [cloudOptions, eligible]);
-  const saved = preference?.workspaceId === workspaceId ? preference : undefined;
-  const savedValid = !!saved?.computerId && options.includes(saved.computerId);
-  // Only when there is no usable preference does the hub have to choose, which
-  // lists every computer and is the slowest read here.
-  const needsFallback = !!workspaceId && !!saved && optionsKnown && !savedValid;
+  const {
+    snapshot, modelAccess, cloudConnections, cloudOptions, eligible, picked, pick, selected,
+    preferenceLoaded, likelyComputer, defaults, resolvedDefaults, usingCloud, usingCursorCloud,
+    modelCatalogue, cataloguePending, codexAccountPending, selectedChoice, chosenProvider, choiceValid, executionChoice,
+    setPickedModel, computerName, modelReady, error, setError,
+  } = useHubStartChoice({ organizationId, memberId, computers, computersLoaded, workspaceId, workspaceOrigin: workspace?.origin });
   useEffect(() => {
-    if (!needsFallback) return;
-    let cancelled = false;
-    void hubRequest<{ computerId?: string; hostedProvider?: string }>(`${base}/computers/choice`, "POST", { workspaceId, trigger: "manual" })
-      .then(value => { if (!cancelled) setFallback({ workspaceId, ...value }); })
-      .catch(e => {
-        if (cancelled) return;
-        setFallback({ workspaceId });
-        setError(e instanceof Error ? e.message : "Your default computer could not be loaded.");
-      });
-    return () => { cancelled = true; };
-  }, [base, needsFallback, workspaceId]);
-  const chosen = (() => {
-    if (!optionsKnown || !saved) return "";
-    if (savedValid) return saved.computerId!;
-    const resolved = fallback?.workspaceId === workspaceId ? fallback : undefined;
-    if (!resolved) return "";
-    let next = resolved.computerId && options.includes(resolved.computerId) ? resolved.computerId : "";
-    if (!next && resolved.hostedProvider) next = cloudOptions.find(c => c.provider === resolved.hostedProvider)?.id ?? "";
-    if (!next && cloudConnections.value?.settings?.provider) next = cloudOptions.find(c => c.provider === cloudConnections.value?.settings?.provider)?.id ?? "";
-    return next || eligible[0]?.computerId || cloudOptions[0]?.id || "";
-  })();
-  const userPick = picked?.workspaceId === workspaceId && (!optionsKnown || options.includes(picked.computerId)) ? picked.computerId : undefined;
-  /// The computer the thread starts on: yours, or the one the reads settled on.
-  const selected = userPick ?? chosen;
-  const unresolved = !!workspaceId && optionsKnown && !!saved && !savedValid && fallback?.workspaceId === workspaceId && !chosen;
-  useEffect(() => {
-    if (unresolved) setError("No computer is available for this workspace.");
-  }, [unresolved]);
-  const preferenceLoaded = !!selected || unresolved;
-  // Reads keyed on the computer start with the one they will most likely end
-  // on, so the model default and branch do not wait for the choice to settle.
-  const likelyComputer = selected || saved?.computerId || (saved ? "" : snapshot?.computerId) || "";
-  const defaults = useHubModelDefaults(organizationId, workspaceId || undefined, likelyComputer || undefined);
-  const [pickedModel,setPickedModel]=useState<{workspaceId:string;choice:ModelChoice}>();
-  const latchedDefaults = useRef(defaults.value);
-  if (defaults.value) latchedDefaults.current = defaults.value;
-  useEffect(() => { latchedDefaults.current = undefined; }, [workspaceId, organizationId]);
-  const resolvedDefaults = defaults.value ?? latchedDefaults.current;
-  const inheritedModel = resolveModelDefault(resolvedDefaults?.workspace, resolvedDefaults?.computer, {provider:"",model:""});
-  const usingCloud=!!cloudComputerProvider(selected);
-  const usingCursorCloud=cloudComputerProvider(selected)==="cursor-cloud";
-  // Your own ChatGPT sign-in, when you allow it in this organization. Nobody else's shows here.
-  const codexAccount=useHubResource<{available:boolean}>(organizationId, usingCloud && !usingCursorCloud ? "/chatgpt" : null, "/computers/live");
-  const chatgpt=codexAccount.value?.available === true;
-  const cloudStart = usingCloud ? cloudConnections.value?.cloudStart?.[cloudComputerProvider(selected) ?? ""] : undefined;
-  const allowedCloudRuntimes = cloudStart && !cloudStart.owner ? new Set(cloudStart.providers.filter(provider => provider.allowed).map(provider => provider.id)) : undefined;
-  const resolvedChoice = hostedComposerChoice(modelAccess.value?.providers ?? [], inheritedModel, chatgpt);
-  const modelChoice = pickedModel?.workspaceId === workspaceId ? pickedModel.choice : resolvedChoice;
-  const cloudModels = hostedModels(modelAccess.value?.providers ?? [], modelChoice, chatgpt).filter(provider => (chatgpt && provider.id === "codex") || cloudShareAllowsProvider(allowedCloudRuntimes, provider.id));
-  const localModels = computerModels(computers.find(c=>c.computerId===selected)?.capabilities.providers ?? []);
-  const modelCatalogue = usingCursorCloud ? [] : usingCloud || !selected ? cloudModels : localModels;
-  const cataloguePending = usingCloud && ((!modelAccess.value && !modelAccess.error) || (!usingCursorCloud && !codexAccount.value && !codexAccount.error));
-  const selectedChoice = modelCatalogue.some(p=>p.id===modelChoice.provider && p.models.some(m=>m.value===modelChoice.model))
-    ? modelChoice
-    : {provider:modelCatalogue[0]?.id ?? modelChoice.provider, model:modelCatalogue[0]?.models[0]?.value ?? modelChoice.model};
-  const chosenProvider=modelCatalogue.find(p=>p.id===selectedChoice.provider);
-  const choiceValid=chosenProvider?.models.some(m=>m.value===selectedChoice.model);
-  const executionChoice=choiceValid ? hostedExecutionChoice(selectedChoice) : {};
+    setBranch("");
+    setRequestId(crypto.randomUUID());
+    setVisibilityOverride(undefined);
+    setError("");
+    setResolvingBranch(true);
+  }, [workspaceId, organizationId, setError]);
   // Whether the computer is shared is on the computer itself, which is what the
   // hub's recommendation read; asking it again cost a slow round trip.
   const recommendedVisibility: "private" | "open" | undefined = isPersonal
@@ -294,18 +197,9 @@ export function HubThreadComposer({
   useEffect(() => {
     if (preferenceLoaded && !branchReady) setResolvingBranch(false);
   }, [preferenceLoaded, branchReady]);
-  const modelAccessReady = !!modelAccess.value || !!modelAccess.error;
-  const defaultsReady = defaults.value !== undefined || !!defaults.error;
-  const computerName = cloudOptions.find(c => c.id === selected)?.name ?? eligible.find(c => c.computerId === selected)?.name ?? (preferenceLoaded ? "Computer unavailable" : "");
   // Each control shows as soon as its own reads answer, rather than the whole
   // toolbar waiting for the slowest of them.
   const computerReady = preferenceLoaded;
-  // Once shown for a workspace, the model stays while a new computer's default
-  // is read, rather than blinking out.
-  const modelShown = useRef("");
-  const modelKey = `${organizationId}:${workspaceId}`;
-  const modelReady = !!selected && modelAccessReady && (defaultsReady || modelShown.current === modelKey);
-  if (modelReady) modelShown.current = modelKey;
   const branchShown = !resolvingBranch || !!branch;
   /// The last settled toolbar, drawn in place of controls whose reads have not
   /// answered. Nothing in it can be opened or sent.
@@ -363,6 +257,7 @@ export function HubThreadComposer({
           !catalogue.value ||
           catalogue.stale ||
           (usingCloud && !usingCursorCloud && !modelAccess.value) ||
+          codexAccountPending ||
           (!usingCursorCloud && (usingCloud || !!selectedChoice.provider) && !choiceValid)
         )
           return;
@@ -377,12 +272,12 @@ export function HubThreadComposer({
     >
       <ThreadComposerEditor
         textarea={{ id: "hub-thread-message", maxLength: 64000, value: message, onChange: e => setMessage(e.target.value), required: true, disabled: false }}
-        canSend={!!memberId && !!workspace && !!selected && preferenceLoaded && visibilityLoaded && !!resolvedDefaults && !!message.trim() && !!catalogue.value && !catalogue.stale && !(usingCloud && !usingCursorCloud && !modelAccess.value) && !(usingCloud && !usingCursorCloud && !codexAccount.value && !codexAccount.error) && (usingCursorCloud || !(usingCloud || selectedChoice.provider) || !!choiceValid)}
+        canSend={!!memberId && !!workspace && !!selected && preferenceLoaded && visibilityLoaded && !!resolvedDefaults && !!message.trim() && !!catalogue.value && !catalogue.stale && !(usingCloud && !usingCursorCloud && !modelAccess.value) && !codexAccountPending && (usingCursorCloud || !(usingCloud || selectedChoice.provider) || !!choiceValid)}
         busy={false} sendLabel="Send"
         controls={modelReady
           ? (usingCursorCloud
             ? <InputGroupText>Cursor Cloud default</InputGroupText>
-            : <ModelPickerButton variant="composer" value={selectedChoice} onPick={choice=>setPickedModel({workspaceId,choice})} catalogue={modelCatalogue} cataloguePending={cataloguePending} disabled={false} />)
+            : <ModelPickerButton variant="composer" value={selectedChoice} onPick={setPickedModel} catalogue={modelCatalogue} cataloguePending={cataloguePending} disabled={false} />)
           : early?.model
             ? <ModelPickerButton variant="composer" value={early.model.choice} onPick={() => undefined} catalogue={[early.model.provider]} pending />
             : early?.cloud && early.computerId === CURSOR_CLOUD_COMPUTER_ID

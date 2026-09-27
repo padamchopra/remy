@@ -25,3 +25,6 @@ mobile/dist/
 
 # Staged npm package for @padamchopra/remy
 .npm-package/
+
+# Real tokens for the disposable QA hub (hub/scripts/qa-threads.mjs)
+hub/.qa.env

@@ -15,6 +15,8 @@ export function remyMcpProcess(input: {
   provider?: string;
   chatId?: string;
   hubInbox?: boolean;
+  /// A review thread: its review tools are offered and github_action is not.
+  review?: boolean;
   deviceId?: string;
   agentId?: string;
   dm?: boolean;
@@ -33,6 +35,7 @@ export function remyMcpProcess(input: {
       ...(input.token ? { REMY_API_TOKEN: input.token } : {}),
       ...(input.provider ? { REMY_MCP_PROVIDER: input.provider } : {}),
       ...(input.hubInbox ? {REMY_HUB_INBOX:"1"} : {}),
+      ...(input.review ? { REMY_REVIEW: "1" } : {}),
       ...(input.chatId ? { REMY_CHAT_ID: input.chatId } : {}),
       ...(input.deviceId ? { REMY_DEVICE_ID: input.deviceId } : {}),
       ...(input.agentId ? { REMY_AGENT_ID: input.agentId } : {}),

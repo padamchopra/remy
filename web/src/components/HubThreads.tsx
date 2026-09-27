@@ -10,14 +10,17 @@ import { InputGroupText } from "./ui/input-group";
 import { ModelPickerButton } from "./ModelPicker";
 import { ComposerMenu } from "./ComposerMenu";
 import { PERMISSIONS, permissionOf } from "@/lib/chat-options";
-import { computerModels, hostedModels } from "@/lib/hub-models";
+import { threadModelPicker } from "@/lib/hub-models";
 import { useHubResource } from "@/lib/hub-organization";
 import type { ModelAccessResponse } from "./HubModelAccess";
 import { AvatarFrom } from "./UserAvatar";
 import { useHubProfile } from "@/lib/hub-profile";
 import { useThreadStarts, retryHubThread, forgetThreadStart } from "@/lib/hub-thread-start";
 import { ThreadStartMarker } from "./ThreadStartMarker";
-import { MessagesSquare, MoreHorizontal } from "lucide-react";
+import { FileCode2, MessagesSquare, MoreHorizontal } from "lucide-react";
+import { Attachment, AttachmentContent, AttachmentDescription, AttachmentGroup, AttachmentMedia, AttachmentTitle } from "@/components/ui/attachment";
+import { referenceLabel } from "@/lib/pull-request-review";
+import type { ChatCodeReference } from "@/state/types";
 import { TabStrip, WorkbenchTabTrigger, tabListClass } from "@/components/WorkbenchTabs";
 import { Tabs, TabsList } from "@/components/ui/tabs";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuLabel, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
@@ -194,14 +197,8 @@ export default function HubThreads({
     !!thread && !!member && canWriteThread(thread.access, member.id);
   const disabled = !!pending || busy || !thread || thread.stale || !writable;
   const path = actingComputer ? hubThreadPath(organizationId, actingComputer, actingThread) : "";
-  const runtimeProvider = String(thread?.detail.provider ?? pending?.provider ?? "codex");
-  const runtimeModel = String(thread?.detail.model ?? pending?.model ?? "");
-  const gateway = /^remy:(openrouter|router|openai):(.+)$/.exec(runtimeModel);
-  // A thread on a computer that runs the provider itself picks from that
-  // computer's own named models; a cloud thread picks from model access.
-  const computerCatalogue = !gateway && computer ? computerModels(computer.capabilities?.providers ?? []).filter(p => p.id === runtimeProvider) : [];
-  const modelProvider = computerCatalogue.length ? runtimeProvider : gateway?.[1] ?? (runtimeProvider === "claude" ? "anthropic" : runtimeProvider);
-  const providers = computerCatalogue.length ? computerCatalogue : hostedModels(modelAccess.value?.providers ?? [], {provider: modelProvider, model: gateway?.[2] ?? runtimeModel}, modelProvider === "codex");
+  const picker = threadModelPicker({ provider: thread?.detail.provider ?? pending?.provider, model: thread?.detail.model ?? pending?.model, effort: thread?.detail.effort }, computer, modelAccess.value?.providers ?? []);
+  const { runtimeProvider, modelProvider, providers } = picker;
   const permission = permissionOf(typeof thread?.detail.permissionMode === "string" ? thread.detail.permissionMode : undefined);
   const approval = thread?.detail.approval as Approval | undefined;
   const question = thread?.detail.question as Question | undefined;
@@ -328,6 +325,20 @@ export default function HubThreads({
                         {String(entry.text ?? entry.output ?? entry.arg ?? "")}
                       </BubbleContent>
                     </Bubble>
+                    {entry.kind === "user" && Array.isArray(entry.codeReferences) && entry.codeReferences.length > 0 && (
+                      // Lines sent from a pull request's diff, named the way the diff names them.
+                      <AttachmentGroup data-slot="code-references" className="max-w-full justify-end py-0">
+                        {(entry.codeReferences as ChatCodeReference[]).map((reference) => (
+                          <Attachment key={reference.id} size="sm" className="max-w-80">
+                            <AttachmentMedia><FileCode2 /></AttachmentMedia>
+                            <AttachmentContent>
+                              <AttachmentTitle title={reference.path}>{referenceLabel(reference)}</AttachmentTitle>
+                              {reference.comment !== entry.text && <AttachmentDescription>{reference.comment}</AttachmentDescription>}
+                            </AttachmentContent>
+                          </Attachment>
+                        ))}
+                      </AttachmentGroup>
+                    )}
                     {shownArtifacts(entry.artifacts).map((artifact, index) => {
                       const route = organizationArtifactRoute(artifact);
                       return <Button key={index} data-link variant="outline" className="h-auto justify-start whitespace-normal text-left" disabled={!route} onClick={() => route && navigate(route)}>
@@ -462,8 +473,8 @@ export default function HubThreads({
                 onStop={() => void act("interrupt")}
                 canSend={!disabled && !draft.uploading && !!draft.text.trim()}
                 controls={<>
-                  {cursorCloud ? <InputGroupText>Cursor Cloud default</InputGroupText> : <ModelPickerButton variant="composer" catalogue={providers} onlyProvider={modelProvider} value={{provider:modelProvider,model:gateway?.[2] ?? runtimeModel,effort:String(thread.detail.effort ?? "")}} disabled={disabled}
-                    onPick={choice => void act("options", {model:gateway ? `remy:${gateway[1]}:${choice.model}` : choice.model,effort:choice.effort ?? null})} />}
+                  {cursorCloud ? <InputGroupText>Cursor Cloud default</InputGroupText> : <ModelPickerButton variant="composer" catalogue={providers} onlyProvider={modelProvider} value={picker.value} disabled={disabled}
+                    onPick={choice => void act("options", picker.options(choice))} />}
                   <ComposerMenu icon={permission.icon} label={permission.label} value={permission.value} options={PERMISSIONS} disabled={disabled} onChange={permissionMode => void act("options", {permissionMode})} />
                 </>}
                 context={<>

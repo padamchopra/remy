@@ -1,6 +1,6 @@
-import { Children, createContext, memo, useContext, useMemo, useState, type MouseEvent, type ReactNode } from "react";
+import { Children, createContext, isValidElement, memo, useContext, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import { ChevronRight, ImageOff, Square, SquareCheckBig } from "lucide-react";
-import ReactMarkdown, { type Components } from "react-markdown";
+import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { remarkGitHubReferences } from "@/lib/github-references";
@@ -48,8 +48,17 @@ function MarkdownImage({ alt, src, width, height }: { alt?: string; src?: string
       loading="lazy"
       referrerPolicy="no-referrer"
       onError={() => setFailed(resolved)}
-      className="h-auto max-w-full rounded-md"
+      className="inline-block h-auto max-w-full rounded-md align-middle"
     />
+  );
+}
+
+function DetailsSummary({ children }: { children?: ReactNode }) {
+  return (
+    <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none data-[state=open]:[&_svg]:rotate-90">
+      <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform" />
+      <span className="min-w-0 wrap-break-word">{children}</span>
+    </CollapsibleTrigger>
   );
 }
 
@@ -120,7 +129,12 @@ const COMPONENTS: Components = {
       : <Square className="mr-2 inline-block size-3.5 align-[-0.125em] text-muted-foreground" />
     : null,
   details: ({ children, open }) => {
-    const [summary, ...content] = Children.toArray(children);
+    // Raw HTML keeps the whitespace between tags as text children, and a
+    // `summary` need not come first, so find it rather than assume it.
+    const parts = Children.toArray(children).filter((child) => typeof child !== "string" || child.trim());
+    const at = parts.findIndex((child) => isValidElement<{ node?: { tagName?: string } }>(child) && child.props.node?.tagName === "summary");
+    const summary = at >= 0 ? parts[at] : <DetailsSummary>Details</DetailsSummary>;
+    const content = parts.filter((_, index) => index !== at);
     return (
       <Collapsible defaultOpen={open} className="group/details overflow-hidden rounded-lg border border-border">
         {summary}
@@ -130,12 +144,7 @@ const COMPONENTS: Components = {
       </Collapsible>
     );
   },
-  summary: ({ children }) => (
-    <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none data-[state=open]:[&_svg]:rotate-90">
-      <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform" />
-      <span className="min-w-0 wrap-break-word">{children}</span>
-    </CollapsibleTrigger>
-  ),
+  summary: ({ children }) => <DetailsSummary>{children}</DetailsSummary>,
 };
 
 interface MarkdownNode {
@@ -316,13 +325,36 @@ function withLinkHandler(components: Components, onOpenLink?: (href: string) => 
   };
 }
 
+type HtmlPlugins = NonNullable<Options["rehypePlugins"]>;
+let htmlPlugins: HtmlPlugins | undefined;
+let loadingHtmlPlugins: Promise<HtmlPlugins> | undefined;
+
+/// Whether text holds a tag the raw-HTML pass would render. Most messages
+/// don't, and they never load the HTML parser.
+function hasHtml(text: string): boolean {
+  return /<\/?[a-z][a-z0-9-]*(?:\s[^<>]*)?\/?>/i.test(text);
+}
+
+function useHtmlPlugins(needed: boolean): HtmlPlugins | undefined {
+  const [plugins, setPlugins] = useState(htmlPlugins);
+  useEffect(() => {
+    if (!needed || plugins) return;
+    let live = true;
+    loadingHtmlPlugins ??= import("@/lib/markdown-html").then((module) => (htmlPlugins = module.githubHtmlPlugins));
+    void loadingHtmlPlugins.then((loaded) => { if (live) setPlugins(loaded); });
+    return () => { live = false; };
+  }, [needed, plugins]);
+  return needed ? plugins : undefined;
+}
+
 /// Claude answers in markdown, so the feed renders it rather than showing the
 /// `##` and backticks raw.
 ///
 /// Every element is styled here because this project has no typography plugin,
-/// and chat prose wants tighter sizes than article prose anyway. Arbitrary raw
-/// HTML stays off; the exact `details` and `summary` shape GitHub emits becomes
-/// a safe disclosure before the HTML node reaches React.
+/// and chat prose wants tighter sizes than article prose anyway. Raw HTML is
+/// rendered the way GitHub renders it, through GitHub's sanitizer allowlist.
+/// Until that parser has loaded, the exact `details` and `img` shapes GitHub
+/// emits are turned into safe nodes and any other tag shows as text.
 export const Markdown = memo(function Markdown({
   text,
   className,
@@ -345,10 +377,15 @@ export const Markdown = memo(function Markdown({
     [onOpenLink],
   );
   const source = useMemo(() => stripMarkdownHtmlComments(text), [text]);
+  const html = useHtmlPlugins(useMemo(() => hasHtml(source), [source]));
+  const remarkPlugins = useMemo(() => {
+    const references = repository ? [[remarkGitHubReferences, { repository }] as const] : [];
+    return html ? [remarkGfm, ...references] : [remarkGfm, remarkDetails, remarkImages, ...references];
+  }, [html, repository]);
   return (
     <div className={cn("flex flex-col gap-3 text-sm leading-relaxed", className)}>
       <ImageSources value={images}>
-        <ReactMarkdown remarkPlugins={repository ? [remarkGfm, remarkDetails, remarkImages, [remarkGitHubReferences, { repository }]] : [remarkGfm, remarkDetails, remarkImages]} components={components}>
+        <ReactMarkdown remarkPlugins={remarkPlugins as Options["remarkPlugins"]} rehypePlugins={html} components={components}>
           {source}
         </ReactMarkdown>
       </ImageSources>

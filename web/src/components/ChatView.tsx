@@ -1,7 +1,7 @@
 import { modelSwitch, speaker } from "@/lib/thread-message";
 import { BranchName } from "./BranchName";
 import { ReplyComposer, replyComposerFrame, replyComposerForm } from "./ReplyComposer";
-import { organizationArtifactRoute, shownArtifacts } from "@/lib/artifact-route";
+import { organizationArtifactRoute, shownArtifacts, type ShownArtifact } from "@/lib/artifact-route";
 import { LinearThreadNotice } from "./LinearConnection";
 import { navigateLocation } from "@/lib/route";
 import type { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, ReactNode, RefObject } from "react";
@@ -117,7 +117,7 @@ import { workingToolGroupId } from "@/lib/working-tool";
 import { rowAt, virtualLayout, virtualRange, type VirtualLayout, type VirtualRange } from "@/lib/virtual-list";
 import { useStore } from "@/state/store";
 import { ThreadDiff as Diff } from "@/components/ThreadDiff";
-import type { ArchivedThread, Chat, ChatApproval, ChatCodeReference, ChatQuestionRequest, ConvArtifact, ConvEntry } from "@/state/types";
+import type { ArchivedThread, Chat, ChatApproval, ChatCodeReference, ChatQuestionRequest, ConvEntry } from "@/state/types";
 
 interface ThreadCheckpoint {
   id: string;
@@ -1508,7 +1508,7 @@ function ArtifactCard({
   artifact,
   onOpen,
 }: {
-  artifact: ConvArtifact;
+  artifact: ShownArtifact;
   onOpen?: () => void;
 }) {
   const organizationRoute = organizationArtifactRoute(artifact);

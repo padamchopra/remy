@@ -21,7 +21,7 @@ import {linearAccountRoute, linearAccountsFor} from "./linear-routes.js";
 import { githubFor, githubRoute } from "./github-routes.js";
 import { connectionRoute, connectionWebhook, isGitHubConnectionCallback } from "./connection-routes.js";
 import { connectionProviders } from "./connection-providers.js";
-import type { ConnectionDelivery, ConnectionJob } from "./connections.js";
+import { ConnectionError, type ConnectionDelivery, type ConnectionJob } from "./connections.js";
 import { chooseComputer } from "./computer-choice.js";
 import { advertisedCloudProvidersFor, advertisedProviderIds, canStartWithShareGrant, parseStartProviderInput, parseStartProviders, providersFromCapabilities, publicStartProviders, serializeStartProviders, START_PROVIDER_DENIED } from "./computer-start-access.js";
 import { GitCapabilities, GithubInstallation, githubRepository, proxyGit } from "./hosted-git.js";
@@ -61,6 +61,10 @@ import { ComputerService, versionBefore } from "./computers.js";
 import { D1OrganizationStore, type OrganizationStore } from "./organization-store.js";
 import { clearRetiredTasks, DurableStorage } from "./durable-storage.js";
 import { repositoryOrigin, OrganizationError, OrganizationService } from "./organizations.js";
+import { codeReferencesError } from "./code-references.js";
+import { ReviewAgent } from "./review-agent.js";
+import { reviewRequest, reviewRulesRoute } from "./review-routes.js";
+import { hubReviewSchema, reviewStartSchema, type HubReview } from "@remy/contract";
 
 export interface Env extends ApplePushConfig {
   ASSETS?: Fetcher;
@@ -251,6 +255,8 @@ async function identityFor(request: Request, service: AccountService) {
   return service.authenticate(bearerToken(request) ?? "");
 }
 
+const REVIEW_ON_CURSOR_CLOUD = "A review agent needs Remy's tools, which Cursor Cloud threads do not have. Choose another computer.";
+
 export function createRouteHandler(dependencies: AccountRouteDependencies = {}) {
   return async (request: Request, env: Env): Promise<Response> => {
   const url = new URL(request.url);
@@ -311,6 +317,8 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     || url.pathname === "/api/sessions"
     || url.pathname === "/api/sessions/revoke-all"
     || url.pathname === "/api/profile"
+    || url.pathname === "/api/review-rules"
+    || /^\/api\/review-rules\/[^/]+$/.test(url.pathname)
     || url.pathname === "/api/personal"
     || url.pathname === "/api/chatgpt-account"
     || url.pathname.startsWith("/api/chatgpt-account/")
@@ -458,8 +466,9 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
   if (!identity) return jsonError("Sign in again.", 401);
   const connectionResponse = await connectionRoute(request, env, identity.userId, identity.clientKind);
   if (connectionResponse) return connectionResponse;
-  const githubResponse=await githubRoute(request,env,identity.userId);if(githubResponse)return githubResponse;
+  const githubResponse=await githubRoute(request,env,identity.userId,identity.clientKind);if(githubResponse)return githubResponse;
   const linearAccountResponse=await linearAccountRoute(request,env,identity.userId,identity.clientKind);if(linearAccountResponse)return linearAccountResponse;
+  const reviewRulesResponse=await reviewRulesRoute(request,env,identity.userId,identity.clientKind);if(reviewRulesResponse)return reviewRulesResponse;
   try {
     if (url.pathname === "/api/personal" && request.method === "GET") return Response.json({ personal: await personalSpace(env.DB, identity.userId) }, { headers: { "cache-control": "no-store" } });
     const chatgptAccount = /^\/api\/chatgpt-account(?:\/(start|cancel|logout))?$/.exec(url.pathname);
@@ -1010,6 +1019,20 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         const internal = new URL(`https://internal/${tail}`); internal.search = url.search;
         return organizationObject().fetch(new Request(internal, { method: request.method, headers, body: request.body, ...(request.body ? { duplex: "half" } : {}) }));
       }
+      // A review's findings and proposals are its owner's, read and decided in
+      // Remy; a computer session never reaches them.
+      if (tail === "reviews" || tail.startsWith("reviews/")) {
+        await organizations.member(organizationId, identity.userId);
+        if (identity.clientKind === "computer") return jsonError("Review pull requests in Remy.", 403);
+        if (request.method !== "GET" && !allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Open this review in Remy.", 403);
+        const profile = await store.profile(identity.userId);
+        const actor = threadMemberSchema.parse({ id: identity.userId, label: profile?.name || "Member" });
+        const headers = new Headers({ "x-thread-member": encodeURIComponent(JSON.stringify(actor)), "x-thread-session": identity.sessionId, "x-organization-id": organizationId });
+        if (request.headers.get("upgrade") === "websocket") headers.set("upgrade", "websocket");
+        if (request.headers.has("content-type")) headers.set("content-type", request.headers.get("content-type")!);
+        const internal = new URL(`https://internal/${tail}`); internal.search = url.search;
+        return organizationObject().fetch(new Request(internal, { method: request.method, headers, body: request.body, ...(request.body ? { duplex: "half" } : {}) }));
+      }
       if(tail==="computers/choice" || tail==="computers/preference") {
         await organizations.member(organizationId,identity.userId);
         // Reading your saved preference needs no cloud settings; the composer
@@ -1436,9 +1459,35 @@ export class HubCoordinator {
       if(!member)return jsonError("This thread is unavailable.",403);
       const input=await body<{action?:string;input?:Record<string,unknown>}>(request);
       const action=input?.action,asked=input?.input??{},store=new D1OrganizationStore(this.env.DB);
+      const threadId=decodeURIComponent(agentTool[1]);
+      const reviews=new ReviewAgent(this.env.DB);
+      const review=await reviews.review(org,binding.computerId,threadId);
+      if(action==="report_review_findings" || action==="propose_review_rule") {
+        if(!review || review.user_id!==binding.userId)return jsonError("This thread is not reviewing a pull request.",403);
+        try {
+          if(action==="propose_review_rule") {
+            const proposal=await reviews.propose(review,asked);
+            this.reviewsChanged(review.user_id,{kind:"review",computerId:review.computer_id,threadId});
+            return Response.json({proposal,artifact:{kind:"review-rule",organizationId:org,computerId:review.computer_id,id:proposal.id,title:proposal.text.slice(0,200),detail:proposal.scope==="repository"?review.repository:"All workspaces"}});
+          }
+          const {files}=await githubFor(this.env).pullRequestFiles(org,review.user_id,review.repository,review.pull_number);
+          const reported=await reviews.report(review,asked,files);
+          this.reviewsChanged(review.user_id,{kind:"review",computerId:review.computer_id,threadId});
+          const state=await reviews.state((await reviews.review(org,binding.computerId,threadId))!,review.user_id);
+          const open=state.findings.filter(finding=>finding.status==="open");
+          const count=(severity:string)=>open.filter(finding=>finding.severity===severity).length;
+          return Response.json({findings:reported.ids,resolved:reported.resolved,commit:reported.commit,open:open.length,artifact:{kind:"review-findings",organizationId:org,computerId:review.computer_id,id:threadId,title:`${open.length} open finding${open.length===1?"":"s"}`,detail:[`${count("must")} must fix`,`${count("should")} should fix`,`${count("note")} note${count("note")===1?"":"s"}`].join(" · ")}});
+        } catch(error) {
+          return jsonError(error instanceof ConnectionError?error.message:"Your review could not be saved; try again.",error instanceof ConnectionError?error.status:500);
+        }
+      }
+      // The review agent never posts to GitHub; its owner does, from Remy.
+      if(review && action==="github_action")return jsonError("A review agent does not post to GitHub. Report findings with report_review_findings; the person adds them to their GitHub review.",403);
       if(action==="github_action") {
         const githubInput=asked as Record<string,unknown>;
-        try{return Response.json(await githubFor(this.env).action(org,binding.userId,String(githubInput.workspaceId),String(githubInput.action),githubInput));}catch{return jsonError("Your GitHub action could not complete.",400);}
+        // What a thread posts carries a signed marker naming it, so Activity
+        // says which thread wrote it.
+        try{return Response.json(await githubFor(this.env).action(org,binding.userId,String(githubInput.workspaceId),String(githubInput.action),githubInput,{computerId:binding.computerId,threadId}));}catch{return jsonError("Your GitHub action could not complete.",400);}
       }
       if(action==="list_organization_workspaces")return Response.json({workspaces:await new OrganizationService(store).workspaces(org,binding.userId)});
       if(action==="list_organization_computers") {const threads=await this.visibleThreads(binding.userId);return Response.json({computers:(await this.computerService().list(org,binding.userId)).map(c=>({...c,activeThreads:threads.filter(t=>t.computerId===c.computerId && ["working","running","busy"].includes(String(t.detail.state))).length}))});}
@@ -1491,6 +1540,9 @@ export class HubCoordinator {
       }
       if(request.method==="GET") return Response.json({state:safe(await this.hostedService().get(workspace))});
     }
+    if (url.pathname === "/review-rules/changed" && request.method === "POST" && user) { this.reviewsChanged(user, { kind: "rules" }); return new Response(null, { status: 204 }); }
+    const reviewResponse = await this.reviewRoute(request);
+    if (reviewResponse) return reviewResponse;
     const threadResponse = await this.threadRequest(request);
     if (threadResponse) return threadResponse;
     const proxyMatch = /^\/computers\/([^/]+)\/proxy(\/.*)$/.exec(url.pathname);
@@ -1695,6 +1747,16 @@ export class HubCoordinator {
       const current=input as Record<string, unknown>;
       try { input={...current, hubLinear: await linearAccountsFor(this.env).forThread(org, actor.id)}; }
       catch { input={...current, hubLinear:{kind:"off"}}; }
+      // Every message to a review carries its owner's rules as they are now
+      // and the commit it is about, so a rule saved mid-review applies from
+      // the next turn and Review new changes reaches the worktree.
+      const reviews=new ReviewAgent(this.env.DB);
+      const review=threadId?await reviews.review(org,computerId,threadId):undefined;
+      if(review) {
+        const rules=await reviews.enabledRules(review.user_id,review.repository);
+        input={...(input as Record<string,unknown>),hubReview:{repository:review.repository,number:review.pull_number,title:review.title,baseRef:review.base_ref,headRef:review.head_ref,headSha:review.head_sha,stack:[],rules} satisfies HubReview};
+        await reviews.rulesSent(review,rules.length);
+      }
     }
     if (computer && computer.organizationId !== org) {
       const coordinator = this.env.COORDINATOR.get(this.env.COORDINATOR.idFromName(`organization:${computer.organizationId}`));
@@ -1859,6 +1921,8 @@ export class HubCoordinator {
     const ids = [threadId, ...(await this.threads.list()).filter((thread) => thread.computerId === computerId && thread.detail.parentChatId === threadId).map((thread) => thread.id)];
     for (const id of ids) await this.ctx.storage.put(`threads:retired:${computerId}:${id}`, true);
     await this.threads.removeGroup(computerId, threadId);
+    const org = await this.ctx.storage.get<string>("organizationId");
+    if (org) await new ReviewAgent(this.env.DB).forget(org, computerId, threadId);
     this.computerSocket(computerId)?.send(JSON.stringify({ kind: "thread.retired", threadIds: ids }));
   }
   private async pushRetiredHostedThreads(computerId: string, socket: WebSocket): Promise<void> {
@@ -1952,6 +2016,7 @@ export class HubCoordinator {
       visibility?: string | undefined;
       provider?: string | undefined;
       model?: string | undefined;
+      review?: HubReview | undefined;
       chatgpt?: boolean | undefined;
     },
     key: string,
@@ -1970,6 +2035,9 @@ export class HubCoordinator {
         input.chatgpt === true,
       );
       const computer = await this.computers.computer(org, choice.computerId);
+      // Cursor Cloud threads run without Remy's tools, so a review there could
+      // not report what it found.
+      if (input.review && choice.computerId === CURSOR_CLOUD_COMPUTER_ID) throw Error(REVIEW_ON_CURSOR_CLOUD);
       if (choice.computerId === CURSOR_CLOUD_COMPUTER_ID) {
         const workspace = await new OrganizationService(new D1OrganizationStore(this.env.DB)).workspace(org, actor.id, input.workspaceId);
         const started = await this.startCursorCloudThread(org, actor, {
@@ -1991,7 +2059,7 @@ export class HubCoordinator {
         const current = await this.ctx.storage.get<ManualThreadStart>(key);
         await this.ctx.storage.put(key, { ...current, started: true, phase: "preparing_branch", workspaceId: input.workspaceId, at: current?.at ?? Date.now() });
       }
-      const made = await this.dispatchComputer(choice.computerId, actor, "POST", "/hub/threads", {workspaceId:choice.workspaceId, hubTaskId:key, permissionMode:"default", branch:input.branch, provider:input.provider, model:input.model, visibility:input.visibility ?? "private", title:typeof input.title === "string" ? input.title.slice(0,200) : undefined});
+      const made = await this.dispatchComputer(choice.computerId, actor, "POST", "/hub/threads", {workspaceId:choice.workspaceId, hubTaskId:key, permissionMode:"default", branch:input.branch, provider:input.provider, model:input.model, visibility:input.visibility ?? "private", title:typeof input.title === "string" ? input.title.slice(0,200) : undefined, ...(input.review ? {hubReview:input.review} : {})});
       if (!made.ok) {
         const body = await made.json().catch(() => undefined) as { error?: unknown } | undefined;
         const error = typeof body?.error === "string" && body.error.trim() ? body.error : "Your computer could not start; try again.";
@@ -2001,6 +2069,11 @@ export class HubCoordinator {
       }
       const thread = threadSnapshotSchema.parse(await made.json());
       await this.threads.snapshot(choice.computerId, thread);
+      if (input.review) {
+        const review = input.review;
+        await new ReviewAgent(this.env.DB).record({ organization_id: org, computer_id: choice.computerId, thread_id: thread.id, user_id: actor.id, workspace_id: input.workspaceId, repository: review.repository, pull_number: review.number, title: review.title, base_ref: review.baseRef, head_ref: review.headRef, started_sha: review.headSha, provider: input.provider ?? null, model: input.model ?? null, rules_applied: review.rules.length });
+        this.reviewsChanged(actor.id, { kind: "review", computerId: choice.computerId, threadId: thread.id });
+      }
       await this.ctx.storage.put(key, { computerId: choice.computerId, id: thread.id });
       await this.ctx.storage.put(`thread-run:${thread.id}`, { computerId: choice.computerId, userId: actor.id });
       this.invalidateComputers();
@@ -2015,6 +2088,49 @@ export class HubCoordinator {
         workspaceId: input.workspaceId,
         at: current?.at ?? Date.now(),
       });
+    }
+  }
+
+  /// The review routes, as the review's owner: their findings, proposals and
+  /// Review new changes, plus a live socket that says which review changed.
+  private async reviewRoute(request: Request): Promise<Response | undefined> {
+    const url = new URL(request.url);
+    if (url.pathname !== "/reviews" && !url.pathname.startsWith("/reviews/")) return undefined;
+    let actor: ThreadMember;
+    try { actor = threadMemberSchema.parse(JSON.parse(decodeURIComponent(request.headers.get("x-thread-member") ?? "null"))); } catch { return jsonError("Sign in again.", 401); }
+    const org = request.headers.get("x-organization-id")!;
+    if (url.pathname === "/reviews/live" && request.method === "GET") {
+      if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return jsonError("Open a WebSocket connection.", 426);
+      const [client, server] = Object.values(new WebSocketPair()); this.ctx.acceptWebSocket(server);
+      server.serializeAttachment({ kind: "reviews", userId: actor.id, sessionId: request.headers.get("x-thread-session") });
+      server.send(JSON.stringify({ kind: "reset" }));
+      return new Response(null, { status: 101, webSocket: client });
+    }
+    return reviewRequest(request, {
+      org,
+      actor,
+      reviews: new ReviewAgent(this.env.DB),
+      github: githubFor(this.env),
+      thread: async (computerId, threadId) => {
+        const snapshot = await this.threads.get(computerId, threadId);
+        return snapshot && canReadThread(snapshot.access, actor.id) ? snapshot : undefined;
+      },
+      send: async (computerId, threadId, text) => (await this.threadRequest(new Request(`https://internal/computers/${encodeURIComponent(computerId)}/threads/${threadId}/message`, {
+        method: "POST",
+        headers: { "x-thread-member": request.headers.get("x-thread-member")!, "x-organization-id": org, "content-type": "application/json" },
+        body: JSON.stringify({ text, messageId: `u-${crypto.randomUUID()}`, attachmentIds: [] }),
+      }))) ?? jsonError("This thread is no longer available.", 404),
+      changed: (userId, computerId, threadId) => this.reviewsChanged(userId, { kind: "review", computerId, threadId }),
+    });
+  }
+
+  /// Tells one member's open review panes what changed, so they read it again.
+  private reviewsChanged(userId: string, frame: { kind: "review"; computerId: string; threadId: string } | { kind: "rules" }): void {
+    for (const socket of this.ctx.getWebSockets()) {
+      const meta = socket.deserializeAttachment() as { kind?: string; userId?: string } | null;
+      if (meta?.kind === "reviews" && meta.userId === userId) {
+        try { socket.send(JSON.stringify(frame)); } catch { socket.close(); }
+      }
     }
   }
 
@@ -2069,9 +2185,25 @@ export class HubCoordinator {
     }
     if (url.pathname === "/threads" && request.method === "POST") {
       const org = request.headers.get("x-organization-id")!;
-      const input = await body<{workspaceId?: string; title?: string; requestId?: string; computerId?:string|null; provider?:string; model?:string; branch?:string; visibility?:string}>(request);
+      const input = await body<{workspaceId?: string; title?: string; requestId?: string; computerId?:string|null; provider?:string; model?:string; branch?:string; visibility?:string; review?:unknown}>(request);
       if (!input || typeof input.workspaceId !== "string" || typeof input.requestId !== "string" || !/^[0-9a-f-]{36}$/.test(input.requestId)) return jsonError("Choose a workspace and retry your thread.", 400);
       const workspace = await new OrganizationService(new D1OrganizationStore(this.env.DB)).workspace(org, actor.id, input.workspaceId);
+      // A review is a thread with a pull request attached. The pull request is
+      // read with your own GitHub connection and must be this workspace's.
+      let review: HubReview | undefined;
+      if (input.review !== undefined) {
+        const asked = reviewStartSchema.safeParse(input.review);
+        if (!asked.success) return jsonError("Choose a pull request to review.", 400);
+        if (input.branch !== undefined) return jsonError("A review starts at the pull request's head; leave the branch out.", 400);
+        if (input.computerId === CURSOR_CLOUD_COMPUTER_ID) return jsonError(REVIEW_ON_CURSOR_CLOUD, 409);
+        try {
+          const target = await githubFor(this.env).reviewTarget(org, actor.id, workspace.id, asked.data.repository, asked.data.number);
+          review = hubReviewSchema.parse({ ...target, rules: await new ReviewAgent(this.env.DB).enabledRules(actor.id, target.repository) });
+        } catch (error) {
+          return jsonError(error instanceof ConnectionError ? error.message : "GitHub could not read this pull request.", error instanceof ConnectionError ? error.status : 502);
+        }
+        input.title = `Review #${review.number}: ${review.title}`.slice(0, 200);
+      }
       if(input.computerId !== undefined && input.computerId !== null && typeof input.computerId !== "string") return jsonError("Choose a computer.",400);
       const start=hostedStartChoice(input.provider,input.model);
       if(start.provider !== undefined && !["claude","codex","cursor"].includes(start.provider))return jsonError("Choose a provider.",400);
@@ -2111,6 +2243,7 @@ export class HubCoordinator {
         visibility: input.visibility,
         provider: start.provider,
         model: start.model,
+        review,
         chatgpt,
       }, key);
       this.manualStarts.set(key, work);
@@ -2165,7 +2298,7 @@ export class HubCoordinator {
     if (!id) {
       let input;
       try { input = JSON.parse(new TextDecoder().decode(payload)); } catch { return jsonError("Choose a workspace.", 400); }
-      if(input.hubInstructions!==undefined || input.hubInbox!==undefined || input.hubEnvironment!==undefined || input.hubTaskId!==undefined || input.hubLinear!==undefined)return jsonError("This thread configuration is unavailable.",403);
+      if(input.hubInstructions!==undefined || input.hubInbox!==undefined || input.hubEnvironment!==undefined || input.hubTaskId!==undefined || input.hubLinear!==undefined || input.hubReview!==undefined)return jsonError("This thread configuration is unavailable.",403);
       if (typeof input.workspaceId !== "string" || !await this.computerService().canUseWorkspace(target, actor.id, input.workspaceId, request.headers.get("x-organization-id")!)) return jsonError("This workspace is not available to you.", 404);
       const start=hostedStartChoice(typeof input.provider === "string" ? input.provider : undefined, typeof input.model === "string" ? input.model : undefined);
       if(!await this.computerService().canStartWithProvider(target, actor.id, request.headers.get("x-organization-id")!, start.provider)) return jsonError(START_PROVIDER_DENIED,403);
@@ -2177,7 +2310,9 @@ export class HubCoordinator {
     }
     let input:Record<string,unknown>={};
     if(payload.byteLength){try{input=JSON.parse(new TextDecoder().decode(payload));}catch{return jsonError("Send a valid thread request.",400);}}
-    if(input.hubEnvironment!==undefined || input.hubTaskId!==undefined || input.hubLinear!==undefined)return jsonError("This thread configuration is unavailable.",403);
+    if(input.hubEnvironment!==undefined || input.hubTaskId!==undefined || input.hubLinear!==undefined || input.hubReview!==undefined)return jsonError("This thread configuration is unavailable.",403);
+    const referencesError=action==="message"?codeReferencesError(input.codeReferences):undefined;
+    if(referencesError)return jsonError(referencesError,400);
     // A cloud Codex thread switched to plain Codex runs on its starter's ChatGPT, never an API key.
     let chatgptTask: string | undefined, chatgptModel = false;
     if (id && action === "options" && "model" in input && target.ownership === "hosted" && snapshot?.detail.provider === "codex") {
@@ -2197,6 +2332,7 @@ export class HubCoordinator {
     if (id && (request.method === "DELETE" || action === "archive")) {
       if (answer.ok) {
         await this.threads.removeGroup(computerId, id);
+        await new ReviewAgent(this.env.DB).forget(request.headers.get("x-organization-id")!, computerId, id);
         return answer;
       }
       if (hostedRetire) { await this.retireHostedThread(computerId, id); return Response.json({ ok: true }); }

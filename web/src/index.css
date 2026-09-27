@@ -72,6 +72,17 @@
   --color-sidebar-accent: var(--sidebar-accent);
   --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
+  --color-diff-add: var(--diff-add);
+  --color-diff-add-word: var(--diff-add-word);
+  --color-diff-add-number: var(--diff-add-number);
+  --color-diff-add-text: var(--diff-add-text);
+  --color-diff-del: var(--diff-del);
+  --color-diff-del-word: var(--diff-del-word);
+  --color-diff-del-number: var(--diff-del-number);
+  --color-diff-del-text: var(--diff-del-text);
+  --color-diff-selected: var(--diff-selected);
+  --color-diff-selected-number: var(--diff-selected-number);
+  --color-diff-selected-text: var(--diff-selected-text);
 }
 
 :root {
@@ -150,6 +161,22 @@
   --sidebar-accent: oklch(100% 0 0 / 7%);
   --sidebar-accent-foreground: var(--foreground);
   --sidebar-ring: var(--ring);
+
+  /* A diff's rows, derived from the status colours so both schemes follow:
+     a faint tint for the line, a stronger one for the words that changed in
+     it, and its number and text leaning toward the same hue. A selected
+     range reads in the info blue. */
+  --diff-add: color-mix(in srgb, var(--success) 9%, transparent);
+  --diff-add-word: color-mix(in srgb, var(--success) 28%, transparent);
+  --diff-add-number: color-mix(in oklab, var(--success-foreground) 45%, var(--muted-foreground));
+  --diff-add-text: color-mix(in oklab, var(--foreground) 78%, var(--success-foreground));
+  --diff-del: color-mix(in srgb, var(--error) 10%, transparent);
+  --diff-del-word: color-mix(in srgb, var(--error) 30%, transparent);
+  --diff-del-number: color-mix(in oklab, var(--error-foreground) 40%, var(--muted-foreground));
+  --diff-del-text: color-mix(in oklab, var(--foreground) 78%, var(--error-foreground));
+  --diff-selected: color-mix(in srgb, var(--info) 15%, transparent);
+  --diff-selected-number: color-mix(in oklab, var(--info-foreground) 70%, var(--muted-foreground));
+  --diff-selected-text: color-mix(in oklab, var(--foreground) 82%, var(--info-foreground));
 }
 
 .light {

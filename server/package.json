@@ -11,7 +11,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && npm run build && node --test dist/*.test.js dist/provider-adapters/*.test.js",
+    "test": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && npm run build && NODE_OPTIONS=\"${NODE_OPTIONS:---import=$PWD/../contract/node_modules/tsx/dist/loader.mjs}\" node --test dist/*.test.js dist/provider-adapters/*.test.js",
     "start": "node dist/index.js",
     "postinstall": "find node_modules/node-pty/prebuilds -name spawn-helper -exec chmod +x {} +"
   },

@@ -1,6 +1,8 @@
 import { startHostedCodexFixture } from "./qa-codex-account.mjs";
 import { startFakeOpenAIAuth } from "./fake-openai-auth.mjs";
 import { startConnectionProvider } from "./qa-connection-provider.mjs";
+import { fixtureReviewTurn, isReviewThread } from "./qa-review-fixture.mjs";
+import { assertNoSecrets, cloneWithToken, loadQaEnv, qaRealInputs, seedPullRequest, writeGitCredentialHelper } from "./qa-github.mjs";
 import { createServer } from "node:http";
 import { builtinModules } from "node:module";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
@@ -20,18 +22,37 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
+// QA_ENV_FILE=0 runs a fixture-only hub even when hub/.qa.env exists.
+if (process.env.QA_ENV_FILE !== "0") loadQaEnv(process.env.QA_ENV_FILE || join(root, "hub/.qa.env"));
+const real = qaRealInputs();
 const temp = mkdtempSync(join(tmpdir(), "remy-thread-qa-"));
+// However the run ends, its state (and any sandbox token file) goes with it.
+process.on("exit", () => rmSync(temp, { recursive: true, force: true }));
 for (const key of Object.keys(process.env))
   if (/^(MC_|REMY_)/.test(key)) delete process.env[key];
 process.env.MC_CONFIG_DIR = join(temp, "computer");
+// Started from inside a Claude Code session, the script inherits that host's
+// session variables (its entrypoint, API proxy and auth refresh), which would
+// make a real Claude thread use the host's session instead of this Mac's own
+// sign-in. A person's own settings outside those names pass through.
+if (real.realProviders) {
+  if (process.env.CLAUDECODE) delete process.env.ANTHROPIC_BASE_URL;
+  for (const key of Object.keys(process.env))
+    if (/^(CLAUDECODE$|CLAUDE_CODE_|CLAUDE_AGENT_SDK_|CLAUDE_PID$|CLAUDE_EFFORT$|CLAUDE_PREVIEW_)/.test(key)) delete process.env[key];
+}
 const codexFixture = process.env.QA_CODEX_ACCOUNT || process.env.QA_CHATGPT ? await startHostedCodexFixture(temp, root) : undefined;
 // The hub's own ChatGPT device-code sign-in talks to a fake OpenAI auth server, never OpenAI.
 const chatgptAuth = process.env.QA_CHATGPT ? await startFakeOpenAIAuth() : undefined;
 if (codexFixture) { process.env.QA_HOSTED = "1"; process.env.QA_HOSTED_CONTROL = codexFixture.url; }
 const workspacePath = join(temp, "release-workspace");
 mkdirSync(workspacePath);
-execFileSync("git", ["init", "-q", workspacePath]);
-execFileSync("git", ["-C", workspacePath, "remote", "add", "origin", process.env.QA_GITHUB ? "https://github.com/release/remy.git" : "https://example.test/studio/release.git"]);
+if (real.repository) await cloneWithToken(real.repository, workspacePath, writeGitCredentialHelper(temp, real.token));
+else {
+  execFileSync("git", ["init", "-q", workspacePath]);
+  execFileSync("git", ["-C", workspacePath, "remote", "add", "origin", process.env.QA_GITHUB ? "https://github.com/release/remy.git" : "https://example.test/studio/release.git"]);
+}
+// Loopback-only proof that a request may seed a connection with a real token.
+const seedToken = real.secrets.length ? randomBytes(32).toString("base64url") : undefined;
 const oauth = process.env.QA_CONNECTIONS ? await startConnectionProvider() : undefined;
 const bundle = join(temp, "worker.mjs");
 await build({
@@ -39,9 +60,27 @@ await build({
     contents: process.env.QA_HUB_WEB === "1" ? `
       import worker from "./hub/src/worker.ts";
       import { HubCoordinator as Coordinator } from "./hub/src/worker.ts";
+      import { connectionsFor } from "./hub/src/connection-routes.ts";
+      // Stores a real token exactly as the Connections flow does: the GitHub
+      // personal access token path, or the Linear OAuth save and link.
+      const seed = async (request, env) => {
+        const { organizationId, userId, provider, token } = await request.json();
+        const connections = connectionsFor(env);
+        try {
+          if (provider === "github") await connections.personalToken(organizationId, userId, token);
+          else await connections.saveTokens(userId, "linear", { organization_id: organizationId, subject: userId, epoch: 0 }, { access_token: token });
+          const listed = await connections.list(organizationId, userId);
+          const label = provider === "github" ? listed.connections.find(c => c.provider === "github")?.label : listed.linearAccounts[0]?.label;
+          return Response.json({ label });
+        } catch (error) { return Response.json({ error: error?.message ?? "Seeding failed" }, { status: 400 }); }
+      };
       const secrets = env => ({ ...env, ...(env.QA_CONNECTIONS ? {LINEAR_CLIENT_SECRET:{get:async()=>"disposable-secret"},GITHUB_CONNECTION_CLIENT_SECRET:{get:async()=>"disposable-secret"},GITHUB_WEBHOOK_SECRET:{get:async()=>"disposable-webhook"},LINEAR_WEBHOOK_SECRET:{get:async()=>"disposable-linear-webhook"}} : {}), AUTH_SECRET: { get: async () => "disposable-qa-secret-with-more-than-thirty-two-characters" }, HOSTED_CONTROL_TOKEN: { get: async () => env.QA_HOSTED_TOKEN || "disposable-runtime-credential-for-failure-check" } });
       export class HubCoordinator extends Coordinator { constructor(ctx,env) { super(ctx,secrets(env)); } }
       export default { ...worker, fetch(request, env, ctx) {
+        if (env.QA_SEED_TOKEN && request.method === "POST" && new URL(request.url).pathname === "/__qa/connections") {
+          if (request.headers.get("x-qa-seed") !== env.QA_SEED_TOKEN) return new Response(null, { status: 404 });
+          return seed(request, { ...secrets(env), BETTER_AUTH_URL: new URL(request.url).origin });
+        }
         return worker.fetch(request, { ...secrets(env), BETTER_AUTH_URL: new URL(request.url).origin, WEB_APP_URL: new URL(request.url).origin,
           AUTH_SECRET: { get: async () => "disposable-qa-secret-with-more-than-thirty-two-characters" },
           EMAIL_FROM: "no-reply@remy.example",
@@ -61,13 +100,20 @@ await build({
   external: ["node:*", "cloudflare:*"],
   plugins: [
     ...(oauth ? [{name:"disposable-oauth-provider",setup(build) {
-      build.onLoad({filter:/(connection-providers|github-connection)\.ts$/},async ({path})=>({loader:"ts",contents:readFileSync(path,"utf8")
-        .replaceAll("https://github.com/login/oauth/authorize",oauth.url+"/authorize")
-        .replaceAll("https://linear.app/oauth/authorize",oauth.url+"/authorize")
-        .replaceAll("https://github.com/login/oauth/access_token",oauth.url+"/token")
-        .replaceAll("https://api.linear.app/oauth/token",oauth.url+"/token")
-        .replaceAll("https://api.linear.app/graphql",oauth.url+"/graphql")
-        .replaceAll("https://api.github.com",oauth.url)}));
+      // A real token means the real vendor: leave that vendor's endpoints alone.
+      const vendor = (text, from, to, keep) => keep ? text : text.replaceAll(from, to);
+      build.onLoad({filter:/(connection-providers|github-connection)\.ts$/},async ({path})=>{
+        let text = readFileSync(path,"utf8");
+        for (const [from, to, keep] of [
+          ["https://github.com/login/oauth/authorize",oauth.url+"/authorize",real.repository],
+          ["https://linear.app/oauth/authorize",oauth.url+"/authorize",real.linearToken],
+          ["https://github.com/login/oauth/access_token",oauth.url+"/token",real.repository],
+          ["https://api.linear.app/oauth/token",oauth.url+"/token",real.linearToken],
+          ["https://api.linear.app/graphql",oauth.url+"/graphql",real.linearToken],
+          ["https://api.github.com",oauth.url,real.repository],
+        ]) text = vendor(text, from, to, keep);
+        return {loader:"ts",contents:text};
+      });
     }}] : []),
     {
       name: "node-builtins",
@@ -105,6 +151,7 @@ const mf = new Miniflare(
         },
         bindings: {
           ...(oauth?{QA_CONNECTIONS:true,GITHUB_APP_ID:"12",LINEAR_CLIENT_ID:"disposable-linear",GITHUB_CONNECTION_CLIENT_ID:"disposable-github"}:{}),
+          ...(seedToken ? { QA_SEED_TOKEN: seedToken } : {}),
           ENVIRONMENT: "staging",
           PREVIEW_ORIGINS: process.env.QA_PREVIEW_ORIGINS ?? "",
           RELEASE: "qa",
@@ -176,11 +223,28 @@ for (const [id, name, kind] of [
     )
     .run();
 }
+const seedConnection = async (userId, provider, token) => {
+  const response = await fetch(hubUrl + "/__qa/connections", {
+    method: "POST",
+    headers: { "x-qa-seed": seedToken, "content-type": "application/json" },
+    body: JSON.stringify({ organizationId, userId, provider, token }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(`The ${provider} token for ${userId} was refused: ${data.error}`);
+  return data.label;
+};
+const connected = {};
+if (real.token) connected.ada = { github: await seedConnection("ada", "github", real.token) };
+if (real.reviewerToken) connected.grace = { github: await seedConnection("grace", "github", real.reviewerToken) };
+if (real.linearToken) (connected.ada ??= {}).linear = await seedConnection("ada", "linear", real.linearToken);
+const pullRequests = real.repository && real.seed ? (await seedPullRequest(real.repository, real.token)).urls : [];
 const { setProviderAdapterForTest } = await import(
   "../../server/dist/provider-adapters/index.js"
 );
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-setProviderAdapterForTest({
+// Real providers are whatever this Mac has signed in: Claude Code through
+// HOME's own credentials, Codex and Cursor through theirs.
+if (!real.realProviders) setProviderAdapterForTest({
   id: "claude",
   discoverModels: async () => [],
   answer: async () => undefined,
@@ -202,6 +266,9 @@ setProviderAdapterForTest({
             handlers.event({ type: "turn.started" });
             const id = randomUUID();
             let toolReply;
+            if (isReviewThread(_options.developerInstructions) && _options.inProcessMcp)
+              toolReply = await fixtureReviewTurn({ ..._options, prompt: input.prompt, event: handlers.event })
+                .catch((error) => `The review fixture could not finish: ${error.message}`);
             if(process.env.QA_BUILTINS && _options.developerInstructions?.includes("organization")) {
               const {Client}=await import("../../server/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js");
               const {InMemoryTransport}=await import("../../server/node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.js");
@@ -268,7 +335,7 @@ const {
 } = await import("../../server/dist/hub-computer.js");
 const { config } = await import("../../server/dist/config.js");
 config.deviceName = "Studio";
-const workspace = await addWorkspace("Release notes", workspacePath);
+const workspace = await addWorkspace(real.repository ? real.repository.split("/")[1] : "Release notes", workspacePath);
 if (process.env.QA_THREAD_PICKER) {
   const second = join(temp, "android-workspace"); mkdirSync(second); execFileSync("git", ["init", "-q", second]);
   execFileSync("git", ["-C", second, "remote", "add", "origin", "https://example.test/studio/android.git"]);
@@ -303,6 +370,11 @@ const request = async (path, member = "ada", method = "GET", body) => {
     throw new Error(`${response.status}: ${JSON.stringify(data)}`);
   return data;
 };
+// The organization's own record of the sandbox, which pull request lists and
+// review starts are checked against, as adding it in Workspaces makes one.
+const hubWorkspace = real.repository
+  ? (await request("/workspaces", "ada", "POST", { name: real.repository.split("/")[1], origin: `https://github.com/${real.repository}` }))
+  : undefined;
 if (!process.env.QA_COMPUTER_POLICY) await request(`/computers/${registration.computerId}`, "ada", "PATCH", { access: { mode: "organization", userIds: [], teamIds: [] } });
 for (let attempt = 0; attempt < 150; attempt++) {
   if (
@@ -398,12 +470,22 @@ const info = {
   threadId: thread.id,
   tokens,
   temp,
+  // Account labels only; the tokens stay in the hub's encrypted store.
+  connected,
+  ...(real.repository ? { github: { repository: real.repository, workspaceId: hubWorkspace?.id, computerWorkspaceId: workspace.id, pullRequests } } : {}),
+  realProviders: real.realProviders,
 };
-writeFileSync(join(temp, "session.json"), JSON.stringify(info), {
+const session = JSON.stringify(info);
+assertNoSecrets(session, real.secrets);
+writeFileSync(join(temp, "session.json"), session, {
   mode: 0o600,
 });
 console.log(`QA_SESSION=${join(temp, "session.json")}`);
 console.log(`QA_HUB=${hubUrl} PID=${process.pid}`);
+for (const url of pullRequests) console.log(`QA_GITHUB_PULL_REQUEST=${url}`);
+for (const [member, accounts] of Object.entries(connected))
+  console.log(`QA_CONNECTED=${member} ${Object.entries(accounts).map(([provider, label]) => `${provider}:${label}`).join(" ")}`);
+if (real.realProviders) console.log("QA_PROVIDERS=real");
 console.log(
   `QA_ROUTE=#/threads/${thread.id}?organization=${organizationId}&computer=${registration.computerId}`,
 );

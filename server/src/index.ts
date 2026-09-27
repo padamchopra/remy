@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import {hubOrganizationTool} from "./hub-organization-tools.js";
+import { threadReview } from "./review-agent.js";
+import { isReviewTool } from "./review-tools.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { WebSocketServer } from "ws";
@@ -111,13 +113,6 @@ import { commentOnPullRequest, listAuthoredPullRequests, markPullRequestFileView
 import { pullRequestFileContent, validPullRequestFileRequest } from "./pull-request-file.js";
 import { askPullRequestQuestion, discoverPullRequestQuestions, readPullRequestQuestions } from "./pull-request-questions.js";
 import { validateChatCodeReferences } from "./chat-references.js";
-import { startPullRequestMonitor } from "./pull-request-monitor.js";
-import {
-  clearThreadPullRequestMonitoring,
-  pullRequestMonitoring,
-  resetPullRequestMonitoring,
-  setPullRequestMonitoring,
-} from "./pull-request-monitoring.js";
 import { setSleepBusyCheck, sleepSupported, syncSleepAssertion } from "./sleep.js";
 import { highlightedIndex, parsePanePrompt } from "./prompt.js";
 import { questionBroker } from "./questions.js";
@@ -309,7 +304,14 @@ const server = createServer(async (req, res) => {
     }
     if(req.method==="POST" && /^\/organization-tools\/[a-z_]+$/.test(url.pathname)) {
       if(!scopedChatId)return json(res,403,{error:"Open a thread on this computer first."});
-      return json(res,200,await hubOrganizationTool(scopedChatId,url.pathname.split("/")[2],await readJson(req)));
+      const action=url.pathname.split("/")[2]!;
+      // Review tools belong to a review thread, and a review never posts to
+      // GitHub. The hub checks both again against its own record.
+      const review=threadReview(scopedChatId);
+      if(isReviewTool(action) && !review)return json(res,403,{error:"This thread is not reviewing a pull request."});
+      if(action==="github_action" && review)return json(res,403,{error:"A review agent does not post to GitHub."});
+      try { return json(res,200,await hubOrganizationTool(scopedChatId,action,await readJson(req))); }
+      catch(error){ return json(res,409,{error:(error as Error).message}); }
     }
     if (req.method === "GET" && url.pathname === "/health") {
       return json(res, 200, { ok: true, release: serviceRelease, instance: serviceInstance });
@@ -1108,14 +1110,12 @@ const server = createServer(async (req, res) => {
           if (chat.parentChatId) {
             void closeBrowser(id);
             closeTerminal(`thread-${id}`);
-            clearThreadPullRequestMonitoring(id);
             deleteChat(id);
           } else {
             const group = await stopChatGroup(id);
             await Promise.all(group.map((member) => closeBrowser(member.id).catch(() => undefined)));
             for (const member of group) {
               closeTerminal(`thread-${member.id}`);
-              clearThreadPullRequestMonitoring(member.id);
             }
             deleteChatGroup(id);
           }
@@ -1144,7 +1144,6 @@ const server = createServer(async (req, res) => {
             });
             void closeBrowser(id);
             closeTerminal(`thread-${id}`);
-            clearThreadPullRequestMonitoring(id);
             deleteChat(id);
             return json(res, 200, { archive });
           }
@@ -1159,7 +1158,6 @@ const server = createServer(async (req, res) => {
           }));
           for (const member of group) {
             closeTerminal(`thread-${member.id}`);
-            clearThreadPullRequestMonitoring(member.id);
           }
           deleteChatGroup(id);
           return json(res, 200, { archive: archives[0], archives });
@@ -1292,33 +1290,6 @@ const server = createServer(async (req, res) => {
         } catch (error) {
           return json(res, 404, { error: (error as Error).message || "no such chat" });
         }
-      }
-    }
-
-    if (url.pathname === "/pull-request-monitoring") {
-      const repository = url.searchParams.get("repository") ?? "";
-      const number = Number(url.searchParams.get("number") ?? "0");
-      if (!repository || !Number.isInteger(number) || number <= 0) {
-        return json(res, 400, { error: "name the pull request to follow" });
-      }
-      try {
-        if (req.method === "GET") {
-          return json(res, 200, { policy: pullRequestMonitoring(repository, number) });
-        }
-        if (req.method === "PATCH") {
-          const body = await readJson(req);
-          const policy = setPullRequestMonitoring(repository, number, {
-            enabled: body.enabled === true,
-            chatId: String(body.chatId ?? "") || null,
-          });
-          return json(res, 200, { policy });
-        }
-        if (req.method === "DELETE") {
-          return json(res, 200, { policy: resetPullRequestMonitoring(repository, number) });
-        }
-      } catch (error) {
-        const message = (error as Error).message || "could not change pull request monitoring";
-        return json(res, /not found|no such/.test(message) ? 404 : 400, { error: message });
       }
     }
 
@@ -1925,9 +1896,6 @@ setSleepBusyCheck(() =>
 syncSleepAssertion();
 syncRepoUpdateSchedule();
 
-// GitHub state belongs to registered workspaces. The monitor sends what changed
-// to the thread that asked to follow that pull request.
-startPullRequestMonitor();
 // Project changes can originate outside an HTTP handler, such as a workspace
 // joining its repository. Keep every open window live without making each
 // writer remember to send its own frame.

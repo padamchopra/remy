@@ -36,6 +36,38 @@ QA_SESSION=<printed session file> node web/scripts/qa-hub-web.mjs
 
 The test signs in two people, creates an organization, delivers and accepts an invitation, restricts a workspace, grants and revokes team access live, changes roles, reloads deep links, switches organizations, and checks a narrow viewport. Capture authorization and invitation setup outside any reviewer recording.
 
+### Real GitHub, Linear and models
+
+Pull requests, reviews and the review agent are verified on this same disposable hub, against a sandbox repository and a real model, not on production and not against fixtures. Every variable is optional; with none set the hub behaves as above. They need `QA_HUB_WEB=1`. `qa-threads.mjs` reads `hub/.qa.env` (`KEY=VALUE` lines, git-ignored) first, and a variable already in the environment wins. `QA_ENV_FILE=<path>` reads another file, and `QA_ENV_FILE=0` skips it for a fixture-only run such as `qa-hub-threads.mjs`, which expects the fixture workspace.
+
+| Variable | Effect |
+| --- | --- |
+| `QA_GITHUB_REPOSITORY` | `owner/name` of a disposable sandbox. The QA workspace is a real clone of it, named after the repository, with `https://github.com/<repo>.git` as its origin, and the organization gets the matching workspace record, as adding it under Workspaces does, so pull request lists and review starts find it. Requires `QA_GITHUB_TOKEN`. |
+| `QA_GITHUB_TOKEN` | Ada's GitHub connection, stored through the same personal access token path as Connections (`Connections.personalToken`, encrypted in `connections`), so every `github/*` route and the review agent use it. It also clones the sandbox and seeds the pull request. |
+| `QA_GITHUB_SEED` | `0` skips seeding. Otherwise, when the sandbox has no open pull request, the hub opens one from `qa/<timestamp>` that swaps one word in `qa/review-sample.md` and adds a few lines. The first run commits that file to the default branch, or to a `qa/sample-base` branch the pull request targets when the default branch refuses a direct commit. Open pull requests print as `QA_GITHUB_PULL_REQUEST=<url>`. |
+| `QA_GITHUB_REVIEWER_TOKEN` | Grace's GitHub connection. She is a member of the QA organization, so she can open the workspace and approve or request changes on Ada's pull request. Use a second GitHub account with access to the sandbox; GitHub refuses an author's own approval. |
+| `QA_LINEAR_TOKEN` | Ada's Linear account, saved and linked to the QA organization as the Linear OAuth callback does (`linear_accounts`, `organization_linear_links`), for the linked ticket chip. The hub sends it as `Authorization: Bearer`, as it does an OAuth token. |
+| `QA_REAL_PROVIDERS=1` | The computer runs the providers installed and signed in on this Mac — Claude Code with its own `~/.claude` sign-in (or `ANTHROPIC_API_KEY` when set), Codex and Cursor — instead of the fixture model. `HOME` and `PATH` pass through; `MC_*` and `REMY_*` are still stripped, and so are a surrounding Claude Code session's own variables (`CLAUDECODE`, `CLAUDE_CODE_*`, and its `ANTHROPIC_BASE_URL`), so a run started from an agent uses this Mac's sign-in rather than the agent's. State still lives in the temporary `MC_CONFIG_DIR`. Turns cost real usage; agent-driven QA keeps the fixture model. |
+
+Token scopes: a classic token with `repo` works for both GitHub accounts (`public_repo` for a public sandbox); add `read:org` when the sandbox belongs to an organization, for reviewer suggestions. A fine-grained token needs Metadata read, Contents read and write, Pull requests read and write, Issues read and write, and Checks and Commit statuses read on the sandbox; the reviewer needs Pull requests read and write. When `QA_CONNECTIONS=1` is also set, the disposable OAuth provider still answers for any vendor without a real token.
+
+```sh
+cat > hub/.qa.env <<'EOF'
+QA_GITHUB_REPOSITORY=you/remy-qa-sandbox
+QA_GITHUB_TOKEN=...
+QA_GITHUB_REVIEWER_TOKEN=...
+EOF
+QA_HUB_WEB=1 QA_COMPUTER_POLICY=1 node hub/scripts/qa-threads.mjs
+```
+
+Tokens never appear in argv, a URL, a log or the session file; the script refuses to write a session file that contains one, which lists only the connected account names (`connected`) and the sandbox's pull requests (`github`). Seeding goes through a loopback-only `POST /__qa/connections` that exists only when a real token is set and requires a random per-run header. Git reaches the sandbox through a credential helper in the temporary directory that reads a `0600` token file; the clone's local config resets every other helper for it, so the token never reaches your keychain or `gh`, and the computer's later fetches of a review's pull request ref use it too. A real provider working in that clone can read that file, as it could any computer's own Git login, so keep the tokens scoped to the sandbox. Stopping the script, or a failed start, removes the directory and the token file with it.
+
+With the fixture model, a review thread still goes through the real tools (`hub/scripts/qa-review-fixture.mjs`): its start message and each Review new changes make the fixture run `git diff --unified=0 origin/<base>...HEAD` in the review's worktree and report one `should` finding on the first added line through `report_review_findings`, so the hub's diff check, the findings beside the diff and Add to GitHub review can be checked. A flag message makes it call `propose_review_rule` with that finding's id. Anything else gets a plain reply.
+
+Webhooks are not replayed. The hub acts on a GitHub delivery only for a GitHub App installation, which a personal access token has none of, and Activity and its badge read GitHub's timeline directly, so new comments and reviews show on the next read without one.
+
+`node --test hub/scripts/qa-github.test.mjs` covers `.qa.env` parsing, input checks, the credential helper, the pull request seed and the review fixture's diff anchor without the network.
+
 References: [Cloudflare asset routing](https://developers.cloudflare.com/workers/static-assets/binding/), [Better Auth sign-in](https://better-auth.com/docs/basic-usage), [SSO](https://better-auth.com/docs/plugins/sso).
 
 ## Local hosted UI with a live account

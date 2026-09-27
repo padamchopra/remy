@@ -60,6 +60,7 @@ import { codeReferencePrompt } from "./chat-references.js";
 import { inProcessRemyMcpServer } from "./ticket-tools.js";
 import { remyToolToken } from "./ticket-tool-auth.js";
 import { remyProviderInstructions } from "./ticket-tool-contract.js";
+import { reviewInstructions, threadReview } from "./review-agent.js";
 import { readChatImage } from "./chat-attachments.js";
 import { uploadRoot } from "./uploads.js";
 import { nameDetachedWorktree } from "./workspaces.js";
@@ -384,10 +385,14 @@ export class Chat {
       this.record.title = titleFrom(safeText);
     }
     // A better name is worth having but not worth waiting for, so it runs
-    // alongside the turn and lands whenever it lands.
-    if (first) void this.rename(safeText);
+    // alongside the turn and lands whenever it lands. A review keeps the name
+    // it was given and its detached checkout: it never gets a branch.
+    if (first && !threadReview(this.record.id)) void this.rename(safeText);
     const referenceContext = codeReferencePrompt(safeReferences);
-    const agentText = [referenceContext, agentContext, safeText]
+    // "Send to thread" sends one comment as both the message and its
+    // reference; the review context already carries it, so it is not repeated.
+    const repeated = safeReferences.length > 0 && safeReferences.every((reference) => reference.comment === safeText);
+    const agentText = [referenceContext, agentContext, repeated ? "" : safeText]
       .filter(Boolean)
       .join("\n\n");
     const agentPrompt: ChatPrompt = { text: agentText, attachments, environment:await taskEnvironment(this.record.cwd,this.record.id) };
@@ -552,6 +557,9 @@ export class Chat {
       this.environmentSignature = signature;
       if (!this.providerSession) {
         const adapter = providerAdapter(this.record.provider);
+        // A review reviews by its pull request and its owner's rules as they
+        // were when this session began; later rules ride on the messages.
+        const review = threadReview(this.record.id);
         let session!: ProviderSession;
         session = adapter.createSession(
           {
@@ -564,7 +572,7 @@ export class Chat {
               ? { sessionId: providerSessionId(this.record, this.record.provider) }
               : {}),
             additionalDirectories: [uploadRoot],
-            developerInstructions: remyProviderInstructions(),
+            developerInstructions: remyProviderInstructions(review ? reviewInstructions(review) : undefined),
             inProcessMcp: inProcessRemyMcpServer(this.record.id, {
               currentCwd: this.record.cwd,
               list: listChats,
@@ -589,6 +597,7 @@ export class Chat {
               token: remyToolToken(this.record.id),
               chatId: this.record.id,
               deviceId,
+              review: !!review,
             }),
             env: { ...agentEnvironment(), ...environment },
             entries: this.record.entries,

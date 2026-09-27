@@ -171,3 +171,36 @@ export function computerModels(entries: ComputerProviderModels[]): Provider[] {
     return [{ ...runtime, models }];
   });
 }
+
+/// What a running thread's model picker offers and shows. A thread on a
+/// computer that runs the provider itself picks from that computer's own
+/// named models; a cloud thread picks from model access. `options` is what
+/// the thread's options action takes for a pick.
+export function threadModelPicker(
+  detail: { provider?: unknown; model?: unknown; effort?: unknown },
+  computer: { capabilities?: { providers?: ComputerProviderModels[] } } | undefined,
+  access: ModelAccessEntry[],
+) {
+  const runtimeProvider = String(detail.provider ?? "codex");
+  const runtimeModel = String(detail.model ?? "");
+  const gateway = /^remy:(openrouter|router|openai):(.+)$/.exec(runtimeModel);
+  const computerCatalogue = !gateway && computer ? computerModels(computer.capabilities?.providers ?? []).filter(p => p.id === runtimeProvider) : [];
+  const modelProvider = computerCatalogue.length ? runtimeProvider : gateway?.[1] ?? (runtimeProvider === "claude" ? "anthropic" : runtimeProvider);
+  const providers = computerCatalogue.length ? computerCatalogue : hostedModels(access, { provider: modelProvider, model: gateway?.[2] ?? runtimeModel }, modelProvider === "codex");
+  return {
+    runtimeProvider,
+    modelProvider,
+    providers,
+    value: { provider: modelProvider, model: gateway?.[2] ?? runtimeModel, effort: String(detail.effort ?? "") } as ModelChoice,
+    options: (choice: ModelChoice) => ({ model: gateway ? `remy:${gateway[1]}:${choice.model}` : choice.model, effort: choice.effort ?? null }),
+  };
+}
+
+/// The picker's choice for a stored execution pair: Claude on a cloud
+/// computer is Anthropic, and a `remy:` model names its gateway.
+export function executionToChoice(provider: string, model: string, cloud: boolean): ModelChoice {
+  const gateway = /^remy:(openrouter|router|openai):(.+)$/.exec(model);
+  if (gateway) return { provider: gateway[1]!, model: gateway[2]! };
+  if (cloud && provider === "claude") return { provider: "anthropic", model };
+  return { provider, model };
+}

@@ -25,7 +25,6 @@ import {
 import { Markdown } from "@/components/Markdown";
 import { PullRequestChecks } from "@/components/PullRequestChecks";
 import { ModelPickerButton } from "@/components/ModelPicker";
-import { PullRequestMonitoringButton } from "@/components/PullRequestMonitoring";
 import { PullRequestMergeDialog } from "@/components/PullRequestMergeDialog";
 import {
   Attachment,
@@ -474,14 +473,6 @@ export function PullRequestView({
           </span>
           <span className="flex shrink-0 items-center justify-end gap-1">
             {actions}
-            {chatId && (
-              <PullRequestMonitoringButton
-                serverId={serverId}
-                repository={pullRequest.repository}
-                number={pullRequest.number}
-                chatId={chatId}
-              />
-            )}
             {pullRequest.isDraft && (
               <Button size="sm" disabled={markingReady} onClick={() => void markReady()}>
                 Mark ready

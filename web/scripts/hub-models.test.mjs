@@ -14,7 +14,7 @@ const bundled = await build({
   format: "esm",
   alias: { "@": resolve(root, "src") },
 });
-const { cloudShareAllowsProvider, computerModels, hostedComposerChoice, hostedExecutionChoice, hostedModels } = await import(
+const { cloudShareAllowsProvider, computerModels, executionToChoice, hostedComposerChoice, hostedExecutionChoice, hostedModels, threadModelPicker } = await import(
   `data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString("base64")}`
 );
 
@@ -167,4 +167,24 @@ test("computer models from an older daemon take Remy's names, and keep unknown i
   assert.deepEqual(claude.models.map((model) => model.label), ["Opus 5", "Opus 5.5"]);
   assert.deepEqual(codex.models.map((model) => model.label), ["GPT-5.4 Mini"]);
   assert.deepEqual(cursor.models.map((model) => model.label), ["composer-2.5"]);
+});
+
+test("a stored execution pair reads back as the picker's choice", () => {
+  assert.deepEqual(executionToChoice("claude", "claude-opus-5.5", true), { provider: "anthropic", model: "claude-opus-5.5" });
+  assert.deepEqual(executionToChoice("claude", "claude-opus-5.5", false), { provider: "claude", model: "claude-opus-5.5" });
+  assert.deepEqual(executionToChoice("codex", "remy:openrouter:anthropic/claude-opus-5.5", true), { provider: "openrouter", model: "anthropic/claude-opus-5.5" });
+  for (const choice of [{ provider: "anthropic", model: "x" }, { provider: "openrouter", model: "a/b" }]) {
+    const pair = hostedExecutionChoice(choice);
+    assert.deepEqual(executionToChoice(pair.provider, pair.model, true), choice);
+  }
+});
+
+test("a running thread's picker offers its own provider's models and writes back its gateway", () => {
+  const picker = threadModelPicker({ provider: "codex", model: "remy:openrouter:openai/gpt-5" }, undefined, []);
+  assert.equal(picker.modelProvider, "openrouter");
+  assert.deepEqual(picker.value, { provider: "openrouter", model: "openai/gpt-5", effort: "" });
+  assert.deepEqual(picker.options({ provider: "openrouter", model: "openai/gpt-6" }), { model: "remy:openrouter:openai/gpt-6", effort: null });
+  const local = threadModelPicker({ provider: "claude", model: "claude-opus-5.5" }, { capabilities: { providers: [{ id: "claude", models: ["claude-opus-5.5"] }] } }, []);
+  assert.equal(local.modelProvider, "claude");
+  assert.deepEqual(local.providers.map((provider) => provider.id), ["claude"]);
 });

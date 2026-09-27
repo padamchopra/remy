@@ -6,6 +6,25 @@ import {
 import { D1OrganizationStore } from "./organization-store.js";
 import { OrganizationService } from "./organizations.js";
 import { repositoryOrigin } from "./organizations.js";
+import {
+  lineCommentTarget,
+  REVIEW_EVENTS,
+  REVIEW_FILES_MAX_PAGES,
+  REVIEW_FILES_PAGE,
+  REVIEW_THREADS_MAX_PAGES,
+  REVIEW_THREADS_PAGE,
+  reviewAuthor,
+  reviewBody,
+  reviewThreads,
+  viewedStates,
+} from "./github-review.js";
+import {
+  ACTIVITY_TIMELINE_ITEMS,
+  activityItems,
+  checkState,
+  markFromThread,
+  readThreadMarker,
+} from "./github-activity.js";
 
 type Repository = {
   id: number;
@@ -30,7 +49,10 @@ export type GitHubActivity = {
   computer_id: string | null;
   member_id: string | null;
   reply_id: number | null;
+  created_at: number;
 };
+/// A thread a member's action came from, when a thread posts through the hub.
+export type FromThread = { computerId: string; threadId: string };
 export class GitHubConnection {
   readonly store: D1OrganizationStore;
   readonly organizations: OrganizationService;
@@ -40,6 +62,11 @@ export class GitHubConnection {
     readonly appId: string,
     readonly changed: (org: string) => Promise<void>,
     readonly send: typeof fetch = (input, init) => fetch(input, init),
+    readonly options: {
+      /// Signs the marker on what a thread posts.
+      secret?: () => Promise<string>;
+      now?: () => number;
+    } = {},
   ) {
     this.store = new D1OrganizationStore(db);
     this.organizations = new OrganizationService(this.store);
@@ -56,6 +83,9 @@ export class GitHubConnection {
     path: string,
     method = "GET",
     input?: unknown,
+    /// What a refusal means for this call, when GitHub's status says more
+    /// than "it failed": a merge that is blocked, a reviewer who cannot review.
+    refusals: Record<number, [message: string, status: number]> = {},
   ): Promise<T> {
     await this.access(org, user);
     const token = await this.connections.token(org, "github", user);
@@ -72,6 +102,8 @@ export class GitHubConnection {
       redirect: "manual",
       signal: AbortSignal.timeout(20_000),
     });
+    const refusal = refusals[response.status];
+    if (!response.ok && refusal) throw new ConnectionError(refusal[0], refusal[1]);
     if (!response.ok)
       throw new ConnectionError(
         response.status === 401
@@ -265,17 +297,21 @@ export class GitHubConnection {
     ).results.filter((r) => ids.has(r.workspace_id));
     return { repositories, activity };
   }
+  /// The repository a workspace's pull request actions go to. A repository
+  /// selected through the GitHub App wins; otherwise the workspace's own
+  /// origin, which the member's own connection is what reaches.
   async repository(org: string, user: string, workspace: string) {
-    await this.organizations.workspace(org, user, workspace);
+    const found = await this.organizations.workspace(org, user, workspace);
     const row = await this.db
       .prepare(
         "SELECT full_name FROM github_repositories WHERE organization_id=? AND workspace_id=?",
       )
       .bind(org, workspace)
       .first<{ full_name: string }>();
-    if (!row)
+    const repository = row?.full_name ?? githubRepositoryFromOrigin(found.origin);
+    if (!repository)
       throw new ConnectionError("Connect this workspace to GitHub.", 404);
-    return row.full_name;
+    return repository;
   }
   async action(
     org: string,
@@ -283,12 +319,19 @@ export class GitHubConnection {
     workspace: string,
     action: string,
     input: Record<string, unknown>,
+    /// A thread posting through the hub: what it writes carries a signed
+    /// marker naming that thread, so the pull request's Activity can say so.
+    from?: FromThread,
   ) {
     const repo = await this.repository(org, user, workspace),
       prefix = `/repos/${repo}`;
-    const body = typeof input.body === "string" ? input.body : "";
-    if (body.length > 60000)
+    const raw = typeof input.body === "string" ? input.body : "";
+    if (raw.length > 60000)
       throw new ConnectionError("Write a shorter message.");
+    const secret = from && this.options.secret ? await this.options.secret() : "";
+    const mark = (text: string) => (from && secret ? markFromThread(text, secret, org, from) : Promise.resolve(text));
+    const body = await mark(raw);
+    if (from && secret) input = { ...input, ...(typeof input.body === "string" && input.body.trim() ? { body: await mark(input.body.trim()) } : {}) };
     if (action === "create") {
       if (
         typeof input.title !== "string" ||
@@ -307,7 +350,48 @@ export class GitHubConnection {
     const number = Number(input.number);
     if (!Number.isSafeInteger(number) || number <= 0)
       throw new ConnectionError("Choose a pull request.");
-    await this.api(org, user, `${prefix}/pulls/${number}`);
+    const pull = await this.api<{ node_id?: string; state?: string; draft?: boolean; head?: { sha?: string } }>(org, user, `${prefix}/pulls/${number}`);
+    if (REVIEW_ACTIONS.has(action)) return this.reviewAction(org, user, repo, number, pull, action, input);
+    if (action === "merge") {
+      const title = typeof input.title === "string" ? input.title.trim() : "";
+      if (!title || title.length > 256) throw new ConnectionError("Enter a commit title.");
+      if (typeof input.sha !== "undefined" && (typeof input.sha !== "string" || !/^[0-9a-f]{40}$/i.test(input.sha)))
+        throw new ConnectionError("Refresh the pull request and try again.");
+      const merged = await this.api<{ merged?: boolean; sha?: string }>(org, user, `${prefix}/pulls/${number}/merge`, "PUT", {
+        merge_method: "squash",
+        commit_title: title,
+        commit_message: body,
+        ...(typeof input.sha === "string" ? { sha: input.sha } : {}),
+      }, {
+        405: ["GitHub can't merge this pull request yet.", 409],
+        409: ["The pull request changed since you opened it. Refresh and try again.", 409],
+        403: ["You can't merge pull requests in this repository.", 403],
+      });
+      this.forget(org, user);
+      return { merged: merged?.merged === true, sha: merged?.sha ?? null };
+    }
+    if (action === "request-reviewers") {
+      const reviewers = Array.isArray(input.reviewers) ? input.reviewers.map(String) : [];
+      if (!reviewers.length || reviewers.length > 15 || reviewers.some((login) => !githubLogin(login)))
+        throw new ConnectionError("Choose who should review.");
+      await this.api(org, user, `${prefix}/pulls/${number}/requested_reviewers`, "POST", { reviewers }, {
+        422: ["Choose someone who can review this repository.", 400],
+        403: ["You can't request reviewers in this repository.", 403],
+      });
+      this.forget(org, user);
+      return { requested: reviewers };
+    }
+    if (action === "ready" || action === "draft") {
+      if (pull?.state !== "open" || !pull.node_id) throw new ConnectionError("This pull request is closed.", 409);
+      const mutation = action === "ready" ? "markPullRequestReadyForReview" : "convertPullRequestToDraft";
+      const data = await this.graphql(org, user, {
+        query: `mutation Change($id: ID!) { ${mutation}(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`,
+        variables: { id: pull.node_id },
+      });
+      if (data.errors?.length) throw new ConnectionError(action === "ready" ? "GitHub couldn't mark this ready for review." : "GitHub couldn't convert this to a draft.", 502);
+      this.forget(org, user);
+      return { isDraft: action === "draft" };
+    }
     if (action === "comment" && body.trim())
       return this.api(
         org,
@@ -343,9 +427,6 @@ export class GitHubConnection {
       ["deleted", "suspend"].includes(value.action)
     ) {
       await this.db.batch([
-        this.db
-          .prepare("DELETE FROM github_monitoring WHERE organization_id=?")
-          .bind(org),
         this.db
           .prepare("DELETE FROM github_repositories WHERE organization_id=?")
           .bind(org),
@@ -386,19 +467,17 @@ export class GitHubConnection {
         value.check_suite?.pull_requests?.[0]?.number,
     );
     if (!Number.isSafeInteger(pull) || pull < 1) return;
-    const workspace = repository.workspace_id,
-      text = String(value.comment?.body ?? value.review?.body ?? ""),
-      summary =
-        (
-          {
-            issue_comment: "Comment updated",
-            pull_request_review: "Review updated",
-            pull_request_review_comment: "Review comment updated",
-            check_run: "Check updated",
-            check_suite: "Checks updated",
-            pull_request: "Pull request updated",
-          } as Record<string, string>
-        )[delivery.event] ?? "GitHub updated";
+    const workspace = repository.workspace_id;
+    const summary = (
+      {
+        issue_comment: "Comment updated",
+        pull_request_review: "Review updated",
+        pull_request_review_comment: "Review comment updated",
+        check_run: "Check updated",
+        check_suite: "Checks updated",
+        pull_request: "Pull request updated",
+      } as Record<string, string>
+    )[delivery.event] ?? "GitHub updated";
     const inserted = await this.db
       .prepare(
         "INSERT OR IGNORE INTO github_activity(id,organization_id,workspace_id,event,pull_number,summary,created_at) VALUES(?,?,?,?,?,?,?)",
@@ -413,10 +492,146 @@ export class GitHubConnection {
         delivery.received_at,
       )
       .run();
-    if (!inserted.meta.changes) return;
-    await this.changed(org);
+    if (inserted.meta.changes) await this.changed(org);
   }
 
+  private now() {
+    return (this.options.now ?? Date.now)();
+  }
+
+  /// The pull request's timeline for its Activity tab, read with your own
+  /// connection: comments, reviews and each head commit's check result, which
+  /// thread wrote what Remy posted for one, and when you last opened
+  /// Activity. Opening a pull request
+  /// for the first time counts as having seen what came before.
+  async pullRequestActivity(org: string, user: string, repository: string, number: number) {
+    const { owner, name, workspaceId } = await this.workspacePullRequest(org, user, repository, number);
+    const data = await this.graphql(org, user, {
+      query: `query PullRequestActivity($owner: String!, $name: String!, $number: Int!) {
+        viewer { login name avatarUrl }
+        repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+          timelineItems(last: ${ACTIVITY_TIMELINE_ITEMS}, itemTypes: [ISSUE_COMMENT, PULL_REQUEST_REVIEW, PULL_REQUEST_COMMIT]) { nodes {
+            __typename
+            ... on IssueComment { id body createdAt url author { login avatarUrl ... on User { name } } }
+            ... on PullRequestReview { id state body submittedAt createdAt url comments { totalCount } author { login avatarUrl ... on User { name } } }
+            ... on PullRequestCommit { commit { oid committedDate statusCheckRollup { contexts(first: 40) { nodes {
+              __typename
+              ... on CheckRun { name conclusion status completedAt }
+              ... on StatusContext { context state createdAt }
+            } } } } }
+          } }
+        } }
+      }`,
+      variables: { owner, name, number },
+    });
+    const pr = (data.data?.repository as { pullRequest?: { timelineItems?: { nodes?: unknown[] } } | null } | undefined)?.pullRequest;
+    if (!pr) throw new ConnectionError(data.errors?.[0]?.message || "GitHub could not read this pull request's activity.", 404);
+    const secret = this.options.secret ? await this.options.secret().catch(() => "") : "";
+    const items = await activityItems(
+      nodesOf(pr.timelineItems),
+      (body) => readThreadMarker(body, secret || undefined, org),
+      async (computerId) => (await this.db
+        // The marker is signed for this account, so the id is one its thread ran on.
+        .prepare("SELECT name FROM organization_computers WHERE id=?")
+        .bind(computerId)
+        .first<{ name: string }>())?.name ?? null,
+    );
+    const seen = await this.db
+      .prepare("SELECT seen_at FROM pull_request_seen WHERE organization_id=? AND user_id=? AND workspace_id=? AND pull_number=?")
+      .bind(org, user, workspaceId, number)
+      .first<{ seen_at: number }>();
+    let seenAt = seen?.seen_at ?? null;
+    if (seenAt === null) seenAt = await this.markActivitySeen(org, user, repository, number, workspaceId);
+    return {
+      userId: user,
+      viewer: githubLogin(loginOf(data.data?.viewer)),
+      /// Who is writing in the composer, drawn as its avatar.
+      viewerAuthor: reviewAuthor(data.data?.viewer),
+      seenAt,
+      items,
+    };
+  }
+
+  /// You opened Activity: what is there now is no longer new to you.
+  async markActivitySeen(org: string, user: string, repository: string, number: number, known?: string) {
+    const workspaceId = known ?? (await this.workspacePullRequest(org, user, repository, number)).workspaceId;
+    const at = this.now();
+    await this.db
+      .prepare(
+        "INSERT INTO pull_request_seen(organization_id,user_id,workspace_id,pull_number,seen_at) VALUES(?,?,?,?,?) ON CONFLICT(organization_id,user_id,workspace_id,pull_number) DO UPDATE SET seen_at=MAX(seen_at,excluded.seen_at)",
+      )
+      .bind(org, user, workspaceId, number, at)
+      .run();
+    return at;
+  }
+
+  /// The branch, title and link a linked ticket is found by, read from GitHub
+  /// with your own connection rather than taken from the browser.
+  async pullRequestReference(org: string, user: string, repository: string, number: number) {
+    const { owner, name } = await this.workspacePullRequest(org, user, repository, number);
+    const pull = await this.api<{ html_url?: unknown; title?: unknown; head?: { ref?: unknown } }>(org, user, `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${number}`);
+    return {
+      url: typeof pull.html_url === "string" ? pull.html_url : `https://github.com/${owner}/${name}/pull/${number}`,
+      title: typeof pull.title === "string" ? pull.title.slice(0, 500) : "",
+      branch: typeof pull.head?.ref === "string" ? pull.head.ref.slice(0, 255) : "",
+    };
+  }
+
+  /// What a review of this pull request starts from, read with your own
+  /// connection: it must be open and belong to the workspace's repository.
+  /// The stack, when GitHub has one, is in merge order.
+  async reviewTarget(org: string, user: string, workspaceId: string, repository: string, number: number) {
+    const { owner, name } = await this.workspacePullRequest(org, user, repository, number);
+    const workspace = await this.organizations.workspace(org, user, workspaceId);
+    if (githubRepositoryFromOrigin(workspace.origin).toLowerCase() !== `${owner}/${name}`.toLowerCase())
+      throw new ConnectionError("Choose a pull request in this workspace's repository.", 404);
+    const pull = await this.api<{ state?: unknown; title?: unknown; head?: { ref?: unknown; sha?: unknown }; base?: { ref?: unknown } }>(org, user, `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${number}`);
+    const headSha = typeof pull.head?.sha === "string" ? pull.head.sha.toLowerCase() : "";
+    const headRef = typeof pull.head?.ref === "string" ? pull.head.ref.slice(0, 255) : "";
+    const baseRef = typeof pull.base?.ref === "string" ? pull.base.ref.slice(0, 255) : "";
+    if (!/^[0-9a-f]{40}$/.test(headSha) || !headRef || !baseRef) throw new ConnectionError("GitHub could not read this pull request.", 502);
+    if (pull.state !== "open") throw new ConnectionError("Choose an open pull request to review.", 409);
+    let stack: { number: number; title: string; headRef: string; baseRef: string }[] = [];
+    try {
+      const data = await this.graphql(org, user, {
+        query: `query ReviewStack($owner: String!, $name: String!, $number: Int!) {
+          repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+            stack { entries(first: 20) { nodes { pullRequest { number title headRefName baseRefName } } } }
+          } }
+        }`,
+        variables: { owner, name, number },
+      });
+      const entries = ((data.data?.repository as { pullRequest?: { stack?: { entries?: { nodes?: unknown[] } } } } | undefined)?.pullRequest?.stack?.entries?.nodes ?? []);
+      stack = entries.flatMap((entry) => {
+        const item = (entry as { pullRequest?: { number?: unknown; title?: unknown; headRefName?: unknown; baseRefName?: unknown } } | null)?.pullRequest;
+        return item && Number.isSafeInteger(item.number) && (item.number as number) > 0
+          ? [{ number: item.number as number, title: String(item.title ?? "").slice(0, 500), headRef: String(item.headRefName ?? "").slice(0, 255), baseRef: String(item.baseRefName ?? "").slice(0, 255) }]
+          : [];
+      });
+      if (!stack.some((item) => item.number === number)) stack = [];
+    } catch {
+      // A pull request without a stack, or a GitHub without stacks, reviews alone.
+      stack = [];
+    }
+    return {
+      repository: `${owner}/${name}`.toLowerCase(),
+      number,
+      title: typeof pull.title === "string" ? pull.title.slice(0, 500) : "",
+      baseRef,
+      headRef,
+      headSha,
+      stack,
+    };
+  }
+
+  /// The pull request's head commit now, to tell a review whether it moved on.
+  async pullRequestHead(org: string, user: string, repository: string, number: number) {
+    const { owner, name } = await this.workspacePullRequest(org, user, repository, number);
+    const pull = await this.api<{ head?: { sha?: unknown } }>(org, user, `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${number}`);
+    const sha = typeof pull.head?.sha === "string" ? pull.head.sha.toLowerCase() : "";
+    if (!/^[0-9a-f]{40}$/.test(sha)) throw new ConnectionError("GitHub could not read this pull request.", 502);
+    return sha;
+  }
 
   /// Open pull requests that belong to a workspace. The saved credential is
   /// the GitHub sign-in or a personal access token; a repo that token can read
@@ -503,6 +718,118 @@ export class GitHubConnection {
     return { viewer, pullRequests };
   }
 
+  /// A write changes what the list says, so the next read asks GitHub again.
+  private forget(org: string, user: string) {
+    hostedPullRequestCache.delete(`${org}:${user}`);
+  }
+
+  /// What the list leaves out because GitHub computes it per pull request:
+  /// whether it can merge, how long each check took and why it failed, who
+  /// the reviewers are by name, and which stack members conflict. Read when
+  /// one pull request opens.
+  async pullRequestDetail(org: string, user: string, repository: string, number: number) {
+    const { owner, name } = await this.workspacePullRequest(org, user, repository, number);
+    const data = await this.graphql(org, user, {
+      query: `query PullRequestDetail($owner: String!, $name: String!, $number: Int!) {
+        viewer { login }
+        repository(owner: $owner, name: $name) {
+          squashMergeAllowed
+          pullRequest(number: $number) {
+            number state isDraft createdAt mergeable mergeStateStatus headRefOid
+            author { login ... on User { name } }
+            latestReviews(first: 20) { nodes { author { login ... on User { name } } state } }
+            reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login name } } } }
+            stack { entries(first: 20) { nodes { pullRequest { number state mergeable } } } }
+            recentCommits: commits(last: 30) { nodes { commit { oid messageHeadline } } }
+            commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 50) { nodes {
+              ... on CheckRun { name conclusion status startedAt completedAt detailsUrl title summary }
+              ... on StatusContext { context state createdAt description targetUrl }
+            } } } } } }
+          }
+        }
+      }`,
+      variables: { owner, name, number },
+    });
+    const repo = data.data?.repository as { squashMergeAllowed?: unknown; pullRequest?: Record<string, unknown> | null } | undefined;
+    const pr = repo?.pullRequest;
+    if (!pr) throw new ConnectionError(data.errors?.[0]?.message || "GitHub could not read this pull request.", 404);
+    const names = new Map<string, string>();
+    const remember = (actor: unknown) => {
+      const login = githubLogin(loginOf(actor));
+      const display = (actor as { name?: unknown } | null)?.name;
+      if (login && typeof display === "string" && display.trim()) names.set(login.toLowerCase(), display.trim().slice(0, 120));
+    };
+    remember(pr.author);
+    for (const node of nodesOf(pr.latestReviews as { nodes?: unknown[] } | undefined)) remember((node as { author?: unknown } | null)?.author);
+    for (const node of nodesOf(pr.reviewRequests as { nodes?: unknown[] } | undefined)) remember((node as { requestedReviewer?: unknown } | null)?.requestedReviewer);
+    const stack = pr.stack as { entries?: { nodes?: unknown[] } } | null | undefined;
+    return {
+      viewer: githubLogin(loginOf(data.data?.viewer)),
+      number,
+      state: typeof pr.state === "string" ? pr.state : "OPEN",
+      isDraft: pr.isDraft === true,
+      createdAt: typeof pr.createdAt === "string" ? pr.createdAt : "",
+      mergeable: typeof pr.mergeable === "string" ? pr.mergeable : "UNKNOWN",
+      mergeStateStatus: typeof pr.mergeStateStatus === "string" ? pr.mergeStateStatus : "UNKNOWN",
+      headRefOid: typeof pr.headRefOid === "string" && /^[0-9a-f]{40}$/i.test(pr.headRefOid) ? pr.headRefOid : null,
+      squashMergeAllowed: repo?.squashMergeAllowed !== false,
+      authorName: names.get(loginOf(pr.author).toLowerCase()) ?? null,
+      reviewers: pullRequestReviewers(pr).map((reviewer) => ({ ...reviewer, name: names.get(reviewer.login.toLowerCase()) ?? null })),
+      checks: pullRequestCheckDetails(pr),
+      // The latest commits, oldest first, so the review agent can list what
+      // arrived after the commit it reviewed.
+      commits: nodesOf(pr.recentCommits as { nodes?: unknown[] } | undefined).flatMap((node) => {
+        const commit = (node as { commit?: { oid?: unknown; messageHeadline?: unknown } } | null)?.commit;
+        if (typeof commit?.oid !== "string" || !/^[0-9a-f]{40}$/i.test(commit.oid)) return [];
+        return [{ sha: commit.oid.toLowerCase(), title: typeof commit.messageHeadline === "string" ? commit.messageHeadline.slice(0, 300) : "" }];
+      }),
+      stack: nodesOf(stack?.entries).flatMap((node) => {
+        const member = (node as { pullRequest?: { number?: unknown; state?: unknown; mergeable?: unknown } } | null)?.pullRequest;
+        if (!member || !positive(member.number)) return [];
+        return [{
+          number: member.number,
+          state: typeof member.state === "string" ? member.state : "",
+          mergeable: typeof member.mergeable === "string" ? member.mergeable : "UNKNOWN",
+        }];
+      }),
+    };
+  }
+
+  /// People who can be asked to review: GitHub's own suggestions first, then
+  /// everyone who can be assigned in the repository, matching what was typed.
+  /// The author cannot review their own pull request, so they are left out.
+  async pullRequestReviewerCandidates(org: string, user: string, repository: string, number: number, query = "") {
+    const { owner, name } = await this.workspacePullRequest(org, user, repository, number);
+    const data = await this.graphql(org, user, {
+      query: `query PullRequestReviewers($owner: String!, $name: String!, $number: Int!, $query: String!) {
+        repository(owner: $owner, name: $name) {
+          assignableUsers(first: 30, query: $query) { nodes { login name } }
+          pullRequest(number: $number) { author { login } suggestedReviewers { reviewer { login name } } }
+        }
+      }`,
+      variables: { owner, name, number, query: query.trim().slice(0, 100) },
+    });
+    const repo = data.data?.repository as {
+      assignableUsers?: { nodes?: unknown[] };
+      pullRequest?: { author?: unknown; suggestedReviewers?: { reviewer?: unknown }[] } | null;
+    } | undefined;
+    if (!repo) throw new ConnectionError(data.errors?.[0]?.message || "GitHub could not list reviewers.", 502);
+    const author = loginOf(repo.pullRequest?.author).toLowerCase();
+    const needle = query.trim().toLowerCase();
+    const people = new Map<string, { login: string; name: string | null; suggested: boolean }>();
+    const add = (value: unknown, suggested: boolean) => {
+      const login = githubLogin(loginOf(value));
+      if (!login || login.toLowerCase() === author || people.has(login.toLowerCase())) return;
+      const display = (value as { name?: unknown } | null)?.name;
+      const named = typeof display === "string" && display.trim() ? display.trim().slice(0, 120) : null;
+      if (suggested && needle && !`${login} ${named ?? ""}`.toLowerCase().includes(needle)) return;
+      people.set(login.toLowerCase(), { login, name: named, suggested });
+    };
+    for (const entry of repo.pullRequest?.suggestedReviewers ?? []) add(entry?.reviewer, true);
+    for (const node of nodesOf(repo.assignableUsers)) add(node, false);
+    return { reviewers: [...people.values()] };
+  }
+
   /// A private repository's attachments load only from the signed addresses
   /// GitHub renders for a reader, and those expire within minutes, so they are
   /// read when a pull request opens rather than kept with the list.
@@ -576,24 +903,287 @@ export class GitHubConnection {
     };
   }
 
+  /// What the Files tab needs beside the diff, read with the member's own
+  /// connection: GitHub's viewed state for each file, every review
+  /// conversation with its comments, which of those comments are still in
+  /// your pending review, and who wrote the pull request, since GitHub does not
+  /// let its author approve or request changes.
+  async pullRequestReview(org: string, user: string, repository: string, number: number) {
+    const { owner, name } = await this.workspacePullRequest(org, user, repository, number);
+    const first = await this.graphql(org, user, {
+      query: `query PullRequestReview($owner: String!, $name: String!, $number: Int!) {
+        viewer { login name avatarUrl }
+        repository(owner: $owner, name: $name) {
+          pullRequest(number: $number) {
+            headRefOid
+            author { login }
+            files(first: ${REVIEW_FILES_PAGE}) { pageInfo { hasNextPage endCursor } nodes { path viewerViewedState } }
+            reviewThreads(first: ${REVIEW_THREADS_PAGE}) { pageInfo { hasNextPage endCursor } nodes { ...ReviewThread } }
+          }
+        }
+      }
+      ${REVIEW_THREAD_FRAGMENT}`,
+      variables: { owner, name, number },
+    });
+    const pr = (first.data?.repository as { pullRequest?: Record<string, unknown> | null } | undefined)?.pullRequest;
+    if (!pr) throw new ConnectionError(first.errors?.[0]?.message || "GitHub could not read this pull request's review.", 404);
+    type Page = { pageInfo?: { hasNextPage?: boolean; endCursor?: string | null }; nodes?: unknown[] };
+    const files = [...nodesOf(pr.files as Page)];
+    const threads = [...nodesOf(pr.reviewThreads as Page)];
+    // Later pages ask for one connection at a time, so a pull request with
+    // many files does not read its conversations again, or the other way round.
+    const more = async (connection: "files" | "reviewThreads", page: Page | undefined, into: unknown[], size: number, max: number, selection: string) => {
+      let cursor = page?.pageInfo?.hasNextPage ? page.pageInfo.endCursor : null;
+      for (let read = 1; cursor && read < max; read++) {
+        const next = await this.graphql(org, user, {
+          query: `query PullRequestReviewPage($owner: String!, $name: String!, $number: Int!, $after: String!) {
+            repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+              ${connection}(first: ${size}, after: $after) { pageInfo { hasNextPage endCursor } nodes { ${selection} } }
+            } }
+          }
+          ${connection === "reviewThreads" ? REVIEW_THREAD_FRAGMENT : ""}`,
+          variables: { owner, name, number, after: cursor },
+        });
+        const value = ((next.data?.repository as { pullRequest?: Record<string, unknown> } | undefined)?.pullRequest?.[connection]) as Page | undefined;
+        into.push(...nodesOf(value));
+        cursor = value?.pageInfo?.hasNextPage ? value.pageInfo.endCursor : null;
+      }
+    };
+    await Promise.all([
+      more("files", pr.files as Page, files, REVIEW_FILES_PAGE, REVIEW_FILES_MAX_PAGES, "path viewerViewedState"),
+      more("reviewThreads", pr.reviewThreads as Page, threads, REVIEW_THREADS_PAGE, REVIEW_THREADS_MAX_PAGES, "...ReviewThread"),
+    ]);
+    const viewer = reviewAuthor(first.data?.viewer);
+    return {
+      viewer,
+      author: loginOf(pr.author),
+      headRefOid: typeof pr.headRefOid === "string" && /^[0-9a-f]{40}$/i.test(pr.headRefOid) ? pr.headRefOid : null,
+      viewed: viewedStates(files),
+      threads: reviewThreads(threads),
+    };
+  }
+
+  /// Line comments, replies, the pending review and viewed marks. Each one
+  /// goes through the member's own token, and anything named by id is first
+  /// read back to prove it belongs to this pull request.
+  private async reviewAction(
+    org: string,
+    user: string,
+    repository: string,
+    number: number,
+    pull: { node_id?: string; state?: string; head?: { sha?: string } },
+    action: string,
+    input: Record<string, unknown>,
+  ) {
+    const prefix = `/repos/${repository}`;
+    const pullRequestId = pull.node_id;
+    const sha = pull.head?.sha && /^[0-9a-f]{40}$/i.test(pull.head.sha) ? pull.head.sha : "";
+    if (!pullRequestId || !sha) throw new ConnectionError("GitHub could not read this pull request.", 502);
+    const mutate = async (query: string, variables: Record<string, unknown>, failure: string) => {
+      const data = await this.graphql(org, user, { query, variables });
+      if (data.errors?.length || !data.data) throw new ConnectionError(failure, 502);
+      return data.data;
+    };
+    const done = <T>(value: T) => { this.forget(org, user); return value; };
+    // GitHub refuses a comment posted now while your review is pending, with
+    // the same 422 as a bad line. Say which one it was.
+    const postNow = async <T>(post: () => Promise<T>) => {
+      try {
+        return await post();
+      } catch (error) {
+        if (error instanceof ConnectionError && error.status === 400 && (await this.pendingReview(org, user, pullRequestId, sha, false)).id)
+          throw new ConnectionError("You have a pending review; add this to it or submit it first.", 409);
+        throw error;
+      }
+    };
+
+    if (action === "view-file") {
+      const path = typeof input.path === "string" ? input.path : "";
+      if (!path || path.length > 4_000) throw new ConnectionError("Choose a file.");
+      const viewed = input.viewed === true;
+      const mutation = viewed ? "markFileAsViewed" : "unmarkFileAsViewed";
+      await mutate(
+        `mutation ViewFile($id: ID!, $path: String!) { ${mutation}(input: { pullRequestId: $id, path: $path }) { clientMutationId } }`,
+        { id: pullRequestId, path },
+        viewed ? "GitHub couldn't mark that file read." : "GitHub couldn't mark that file unread.",
+      );
+      return { path, viewed };
+    }
+
+    if (action === "line-comment" || action === "pending-comment") {
+      const target = lineCommentTarget(input);
+      if (!target) throw new ConnectionError("Choose lines in this diff.");
+      const body = reviewBody(input);
+      if (body === undefined) throw new ConnectionError("Write a comment of up to 65,000 characters.");
+      if (action === "line-comment") {
+        const posted = await postNow(() => this.api<{ id?: number; node_id?: string }>(org, user, `${prefix}/pulls/${number}/comments`, "POST", {
+          body,
+          commit_id: sha,
+          path: target.path,
+          line: target.line,
+          side: target.side,
+          ...(target.startLine ? { start_line: target.startLine, start_side: target.side } : {}),
+        }, {
+          422: ["GitHub can't place a comment on those lines. Refresh the diff and try again.", 400],
+          403: ["You can't comment on pull requests in this repository.", 403],
+        }));
+        return done({ id: posted?.node_id ?? null });
+      }
+      const reviewId = await this.pendingReview(org, user, pullRequestId, sha);
+      const data = await mutate(
+        `mutation AddReviewThread($review: ID!, $path: String!, $body: String!, $line: Int!, $side: DiffSide!, $startLine: Int, $startSide: DiffSide) {
+          addPullRequestReviewThread(input: { pullRequestReviewId: $review, path: $path, body: $body, line: $line, side: $side, startLine: $startLine, startSide: $startSide }) { thread { id } }
+        }`,
+        { review: reviewId, path: target.path, body, line: target.line, side: target.side, startLine: target.startLine, startSide: target.startLine ? target.side : null },
+        "GitHub couldn't add that to your review.",
+      );
+      return done({ id: (data.addPullRequestReviewThread as { thread?: { id?: string } } | undefined)?.thread?.id ?? null });
+    }
+
+    if (action === "reply") {
+      const body = reviewBody(input);
+      if (body === undefined) throw new ConnectionError("Write a reply of up to 65,000 characters.");
+      const node = await this.reviewNode(org, user, repository, number, input.threadId);
+      if (node.__typename !== "PullRequestReviewThread") throw new ConnectionError("Choose a conversation on this pull request.", 404);
+      if (input.pending === true) {
+        const reviewId = await this.pendingReview(org, user, pullRequestId, sha);
+        await mutate(
+          `mutation AddReviewReply($thread: ID!, $review: ID!, $body: String!) {
+            addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $thread, pullRequestReviewId: $review, body: $body }) { comment { id } }
+          }`,
+          { thread: String(input.threadId), review: reviewId, body },
+          "GitHub couldn't add that reply to your review.",
+        );
+        return done({ pending: true });
+      }
+      const top = nodesOf(node.comments as { nodes?: unknown[] } | undefined)[0] as { databaseId?: unknown } | undefined;
+      if (!positive(top?.databaseId)) throw new ConnectionError("Choose a conversation on this pull request.", 404);
+      await postNow(() => this.api(org, user, `${prefix}/pulls/${number}/comments/${top!.databaseId}/replies`, "POST", { body }, {
+        422: ["GitHub couldn't post that reply. Refresh the diff and try again.", 400],
+        403: ["You can't comment on pull requests in this repository.", 403],
+      }));
+      return done({ pending: false });
+    }
+
+    if (action === "edit-comment" || action === "delete-comment") {
+      const node = await this.reviewNode(org, user, repository, number, input.commentId);
+      if (
+        node.__typename !== "PullRequestReviewComment"
+        || node.state !== "PENDING"
+        || loginOf(node.author).toLowerCase() !== loginOf(node.viewer).toLowerCase()
+      ) throw new ConnectionError("Choose a comment in your pending review.", 404);
+      if (action === "delete-comment") {
+        await mutate(
+          `mutation DeleteReviewComment($id: ID!) { deletePullRequestReviewComment(input: { id: $id }) { clientMutationId } }`,
+          { id: String(input.commentId) },
+          "GitHub couldn't delete that comment.",
+        );
+        return done({ deleted: true });
+      }
+      const body = reviewBody(input);
+      if (body === undefined) throw new ConnectionError("Write a comment of up to 65,000 characters.");
+      await mutate(
+        `mutation UpdateReviewComment($id: ID!, $body: String!) { updatePullRequestReviewComment(input: { pullRequestReviewCommentId: $id, body: $body }) { pullRequestReviewComment { id } } }`,
+        { id: String(input.commentId), body },
+        "GitHub couldn't save that comment.",
+      );
+      return done({ edited: true });
+    }
+
+    // submit-review
+    const event = String(input.event);
+    if (!REVIEW_EVENTS.has(event)) throw new ConnectionError("Choose Comment, Approve or Request changes.");
+    const body = reviewBody(input, false);
+    if (body === undefined) throw new ConnectionError("Write a note of up to 65,000 characters.");
+    const pending = await this.pendingReview(org, user, pullRequestId, sha, false);
+    if (event !== "COMMENT" && pending.author && pending.author === pending.viewer)
+      throw new ConnectionError("You can't approve or request changes on your own pull request.", 403);
+    if (pending.id) {
+      await mutate(
+        `mutation SubmitReview($review: ID!, $event: PullRequestReviewEvent!, $body: String) {
+          submitPullRequestReview(input: { pullRequestReviewId: $review, event: $event, body: $body }) { pullRequestReview { state } }
+        }`,
+        { review: pending.id, event, body: body || null },
+        "GitHub couldn't send your review.",
+      );
+      return done({ submitted: event });
+    }
+    if (event === "COMMENT" && !body) throw new ConnectionError("Write a note or add a comment first.");
+    await this.api(org, user, `${prefix}/pulls/${number}/reviews`, "POST", { event, body, commit_id: sha }, {
+      422: ["GitHub couldn't send your review. Refresh and try again.", 400],
+      403: ["You can't review pull requests in this repository.", 403],
+    });
+    return done({ submitted: event });
+  }
+
+  /// Your pending review on this pull request. GitHub keeps one per person;
+  /// `create` starts it at the head the reader saw when there is none.
+  private async pendingReview(org: string, user: string, pullRequestId: string, sha: string): Promise<string>;
+  private async pendingReview(org: string, user: string, pullRequestId: string, sha: string, create: false): Promise<{ id: string | null; viewer: string; author: string }>;
+  private async pendingReview(org: string, user: string, pullRequestId: string, sha: string, create = true) {
+    const data = await this.graphql(org, user, {
+      query: `query PendingReview($id: ID!) {
+        viewer { login }
+        node(id: $id) { ... on PullRequest { author { login } reviews(states: PENDING, first: 20) { nodes { id author { login } } } } }
+      }`,
+      variables: { id: pullRequestId },
+    });
+    const viewer = loginOf(data.data?.viewer).toLowerCase();
+    const pr = data.data?.node as { author?: unknown; reviews?: { nodes?: unknown[] } } | undefined;
+    if (!pr) throw new ConnectionError("GitHub could not read your review.", 502);
+    const mine = nodesOf(pr.reviews).find((node) => loginOf((node as { author?: unknown }).author).toLowerCase() === viewer) as { id?: unknown } | undefined;
+    const id = typeof mine?.id === "string" ? mine.id : null;
+    if (!create) return { id, viewer, author: loginOf(pr.author).toLowerCase() };
+    if (id) return id;
+    const made = await this.graphql(org, user, {
+      query: `mutation StartReview($id: ID!, $sha: GitObjectID!) { addPullRequestReview(input: { pullRequestId: $id, commitOID: $sha }) { pullRequestReview { id } } }`,
+      variables: { id: pullRequestId, sha },
+    });
+    const review = (made.data?.addPullRequestReview as { pullRequestReview?: { id?: unknown } } | undefined)?.pullRequestReview?.id;
+    if (made.errors?.length || typeof review !== "string") throw new ConnectionError("GitHub couldn't start your review.", 502);
+    return review;
+  }
+
+  /// A review conversation or comment named by the browser, read back so an
+  /// id from another pull request cannot be acted on through this one.
+  private async reviewNode(org: string, user: string, repository: string, number: number, id: unknown) {
+    if (typeof id !== "string" || !id || id.length > 200) throw new ConnectionError("Choose a conversation on this pull request.", 404);
+    const data = await this.graphql(org, user, {
+      query: `query ReviewNode($id: ID!) {
+        viewer { login }
+        node(id: $id) {
+          __typename
+          ... on PullRequestReviewThread { pullRequest { number repository { nameWithOwner } } comments(first: 1) { nodes { databaseId } } }
+          ... on PullRequestReviewComment { state author { login } pullRequest { number repository { nameWithOwner } } }
+        }
+      }`,
+      variables: { id },
+    });
+    const node = data.data?.node as { __typename?: string; pullRequest?: { number?: unknown; repository?: { nameWithOwner?: unknown } }; state?: unknown; author?: unknown; comments?: unknown } | null | undefined;
+    const owner = node?.pullRequest;
+    if (!node || owner?.number !== number || String(owner.repository?.nameWithOwner ?? "").toLowerCase() !== repository.toLowerCase())
+      throw new ConnectionError("Choose a conversation on this pull request.", 404);
+    return { ...node, viewer: data.data?.viewer };
+  }
+
   /// A pull request a member may read here: its repository is one of their
   /// workspaces, whatever else their GitHub credential can see.
   private async workspacePullRequest(org: string, user: string, repository: string, number: number) {
     await this.access(org, user);
     const workspaces = await this.organizations.workspaces(org, user);
-    const known = workspaces.some((workspace) =>
+    const known = workspaces.find((workspace) =>
       githubRepositoryFromOrigin(workspace.origin).toLowerCase() === repository.toLowerCase());
     const [owner, name, extra] = repository.split("/");
     if (!known || !owner || !name || extra || !Number.isSafeInteger(number) || number < 1) {
       throw new ConnectionError("Choose a pull request in one of your workspaces.", 404);
     }
-    return { owner, name };
+    return { owner, name, workspaceId: known.id };
   }
 
   private async graphql(
     org: string,
     user: string,
-    input: { query: string; variables?: Record<string, string | number> },
+    input: { query: string; variables?: Record<string, unknown> },
   ) {
     return this.api<{
       data?: Record<string, unknown>;
@@ -602,6 +1192,11 @@ export class GitHubConnection {
   }
 }
 
+const REVIEW_ACTIONS = new Set(["view-file", "line-comment", "pending-comment", "reply", "edit-comment", "delete-comment", "submit-review"]);
+const REVIEW_THREAD_FRAGMENT = `fragment ReviewThread on PullRequestReviewThread {
+  id path line startLine originalLine originalStartLine diffSide startDiffSide isResolved isOutdated subjectType
+  comments(first: 50) { nodes { id databaseId body createdAt url state author { login avatarUrl ... on User { name } } } }
+}`;
 const PULL_REQUEST_FILES_PAGE = 100;
 /// 30 pages of 100 is GitHub's 3000-file ceiling for this list.
 const PULL_REQUEST_FILES_MAX_PAGES = 30;
@@ -624,7 +1219,7 @@ export function clearHostedPullRequestCache() {
 // Mergeability is left out on purpose: GitHub computes it per pull request
 // while answering, which roughly doubled how long this list took to arrive.
 const HOSTED_PULL_REQUEST_FRAGMENT = `fragment HostedPullRequest on PullRequest {
-  number title url body isDraft reviewDecision updatedAt additions deletions changedFiles
+  number title url body isDraft reviewDecision createdAt updatedAt additions deletions changedFiles
   headRefName baseRefName
   stackEntry { position }
   stack { number size baseRefName entries(first: 20) { nodes { position pullRequest { number title state isDraft } } } }
@@ -683,6 +1278,7 @@ type HostedListedPullRequest = {
   isDraft: boolean;
   reviewDecision: string;
   authorLogin: string;
+  createdAt: string;
   updatedAt: string;
   additions: number;
   deletions: number;
@@ -740,6 +1336,7 @@ function hostedPullRequest(
     isDraft: pr.isDraft === true,
     reviewDecision: String(pr.reviewDecision ?? ""),
     authorLogin: author,
+    createdAt: typeof pr.createdAt === "string" ? pr.createdAt : "",
     updatedAt: String(pr.updatedAt ?? new Date(0).toISOString()),
     additions: Number(pr.additions ?? 0),
     deletions: Number(pr.deletions ?? 0),
@@ -848,19 +1445,39 @@ function pullRequestComments(pr: Record<string, unknown>) {
   });
 }
 
-function pullRequestChecks(pr: Record<string, unknown>) {
+function checkNodes(pr: Record<string, unknown>) {
   const commits = pr.commits as { nodes?: { commit?: { statusCheckRollup?: { contexts?: { nodes?: Record<string, unknown>[] } } } }[] } | undefined;
-  const nodes = commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts?.nodes ?? [];
-  return nodes.flatMap((node) => {
+  return commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts?.nodes ?? [];
+}
+
+function pullRequestChecks(pr: Record<string, unknown>) {
+  return checkNodes(pr).flatMap((node) => {
     const name = String(node.name ?? node.context ?? "");
     if (!name) return [];
-    const conclusion = String(node.conclusion ?? node.state ?? "").toUpperCase();
-    const status = String(node.status ?? "").toUpperCase();
-    let state: "pass" | "fail" | "pending" | "skipping" = "pending";
-    if (["SUCCESS", "NEUTRAL"].includes(conclusion)) state = "pass";
-    else if (["SKIPPED", "EXPECTED"].includes(conclusion)) state = "skipping";
-    else if (["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"].includes(conclusion)) state = "fail";
-    else if (status === "COMPLETED") state = "pass";
-    return [{ name, state }];
+    return [{ name, state: checkState(node) }];
+  });
+}
+
+function isoTime(value: unknown) {
+  return typeof value === "string" && Number.isFinite(Date.parse(value)) ? value : null;
+}
+
+/// A check as the detail draws it: when it ran, so its duration can be shown,
+/// where GitHub shows it, and the line it failed with.
+function pullRequestCheckDetails(pr: Record<string, unknown>) {
+  return checkNodes(pr).flatMap((node) => {
+    const name = String(node.name ?? node.context ?? "");
+    if (!name) return [];
+    const url = typeof node.detailsUrl === "string" ? node.detailsUrl : typeof node.targetUrl === "string" ? node.targetUrl : "";
+    const summary = [node.title, node.summary, node.description]
+      .find((value): value is string => typeof value === "string" && value.trim().length > 0);
+    return [{
+      name: name.slice(0, 200),
+      state: checkState(node),
+      startedAt: isoTime(node.startedAt ?? node.createdAt),
+      completedAt: isoTime(node.completedAt),
+      url: /^https:\/\//.test(url) ? url : null,
+      summary: summary ? summary.trim().slice(0, 500) : null,
+    }];
   });
 }
