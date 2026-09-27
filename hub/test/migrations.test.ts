@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -171,4 +171,18 @@ test("Wrangler records the migration and makes a second apply a no-op", (context
   assert.match(firstApply, /0004_workspaces\.sql/);
   assert.match(firstApply, /0005_computers\.sql/);
   assert.match(apply(), /No migrations to apply/);
+});
+
+test("removing Tasks drops the board and Linear sync tables and keeps each person's Linear sign-in", () => {
+  const database = new DatabaseSync(":memory:");
+  database.exec("PRAGMA foreign_keys = ON");
+  const directory = new URL("../migrations/", import.meta.url);
+  const files = readdirSync(directory).filter((file) => file.endsWith(".sql")).sort();
+  for (const file of files.filter((file) => file < "0032")) database.exec(readFileSync(new URL(file, directory), "utf8"));
+  database.exec(`INSERT INTO connection_deliveries(id,provider,delivery_id,event,payload,received_at) VALUES ('linear-one','linear','one','Issue','{}',1),('github-one','github','one','issue_comment','{}',1)`);
+  database.exec(readFileSync(new URL("0032_remove_tasks.sql", directory), "utf8"));
+  const tables = new Set(database.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all().map((row) => String(row.name)));
+  for (const removed of ["organization_board_computers", "linear_board_settings", "linear_catalog", "linear_workspace_mappings", "linear_member_mappings", "linear_updates"]) assert.equal(tables.has(removed), false, removed);
+  for (const kept of ["linear_accounts", "organization_linear_links", "connections", "connection_deliveries"]) assert.equal(tables.has(kept), true, kept);
+  assert.deepEqual(database.prepare("SELECT id FROM connection_deliveries").all().map((row) => row.id), ["github-one"]);
 });
