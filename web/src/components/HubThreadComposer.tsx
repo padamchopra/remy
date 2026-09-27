@@ -1,5 +1,5 @@
 import { startHubThread } from "@/lib/hub-thread-start";
-import { cloudShareAllowsProvider, hostedComposerChoice, hostedExecutionChoice, hostedModels } from "@/lib/hub-models";
+import { cloudShareAllowsProvider, computerModels, hostedComposerChoice, hostedExecutionChoice, hostedModels } from "@/lib/hub-models";
 import { resolveModelDefault } from "@/lib/model-defaults";
 import { useHubModelDefaults } from "./HubModelDefault";
 import { BranchPicker } from "./BranchPicker";
@@ -14,7 +14,7 @@ import { InputGroupButton, InputGroupText } from "./ui/input-group";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "./ui/dropdown-menu";
 import { EmptyState } from "@/components/EmptyState";
 import { ModelPickerButton } from "./ModelPicker";
-import { PROVIDERS, type ModelChoice } from "@/lib/providers";
+import { type ModelChoice } from "@/lib/providers";
 import type { ModelAccessResponse } from "./HubModelAccess";
 import { CLOUD_COMPUTERS, CURSOR_CLOUD_COMPUTER_ID, cloudComputerProvider } from "@remy/contract";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -209,10 +209,7 @@ export function HubThreadComposer({
   const resolvedChoice = hostedComposerChoice(modelAccess.value?.providers ?? [], inheritedModel);
   const modelChoice = pickedModel?.workspaceId === workspaceId ? pickedModel.choice : resolvedChoice;
   const cloudModels = hostedModels(modelAccess.value?.providers ?? [], modelChoice).filter(provider => cloudShareAllowsProvider(allowedCloudRuntimes, provider.id));
-  const localModels = (computers.find(c=>c.computerId===selected)?.capabilities.providers ?? []).flatMap(p=>{
-    const runtime=PROVIDERS.find(v=>v.id===p.id);
-    return runtime ? [{...runtime,models:p.models.map(value=>({value,label:value || "Default"}))}] : [];
-  });
+  const localModels = computerModels(computers.find(c=>c.computerId===selected)?.capabilities.providers ?? []);
   const modelCatalogue = usingCursorCloud ? [] : usingCloud || !selected ? cloudModels : localModels;
   const cataloguePending = usingCloud && !modelAccess.value && !modelAccess.error;
   const selectedChoice = modelCatalogue.some(p=>p.id===modelChoice.provider && p.models.some(m=>m.value===modelChoice.model))

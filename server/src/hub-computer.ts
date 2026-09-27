@@ -58,7 +58,18 @@ function privateKey(): { privateKey: string; publicKey: string } {
 export async function computerCapabilities(): Promise<ComputerCapabilities> {
   const [providers, status, workspaces] = await Promise.all([discoveredProviders(), tooling({ providerUpdates: false }), listWorkspaces()]);
   return {
-    providers: providers.filter((provider) => status[provider.id].available).map((provider) => ({ id: provider.id, models: provider.models.map((model) => model.value) })),
+    providers: providers.filter((provider) => status[provider.id].available).map((provider) => ({
+      id: provider.id,
+      models: provider.models.map((model) => model.value),
+      // The names the installed CLI gives its models, so every client reading
+      // this computer shows "Sonnet 5" rather than `sonnet`.
+      modelInfo: provider.models.map((model) => ({
+        value: model.value.slice(0, 200),
+        label: (model.label || model.value || "Default").slice(0, 120),
+        ...(model.context ? { context: model.context.slice(0, 16) } : {}),
+        ...(model.resolvedLabel ? { resolvedLabel: model.resolvedLabel.slice(0, 120) } : {}),
+      })).slice(0, 1000),
+    })),
     workspaces: workspaces.map(({ id, name, path, origin }) => ({ id, name, path, origin })),
     worktrees: status.git.available,
     terminals: true,

@@ -52,7 +52,9 @@ function useProviders(override?: Provider[]): Provider[] {
   return override ?? providers ?? PROVIDERS;
 }
 
+/// A model's row name. The provider's default says what it uses today.
 export function displayModel(model: ProviderModel): string {
+  if (!model.value && model.resolvedLabel) return `${model.label} · ${model.resolvedLabel}`;
   return model.context ? `${model.label} (${model.context})` : model.label;
 }
 

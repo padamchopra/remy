@@ -14,7 +14,7 @@ const bundled = await build({
   format: "esm",
   alias: { "@": resolve(root, "src") },
 });
-const { cloudShareAllowsProvider, hostedComposerChoice, hostedExecutionChoice, hostedModels } = await import(
+const { cloudShareAllowsProvider, computerModels, hostedComposerChoice, hostedExecutionChoice, hostedModels } = await import(
   `data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString("base64")}`
 );
 
@@ -119,4 +119,30 @@ test("hosted execution maps OpenRouter onto Codex without a double remy prefix",
     provider: "codex",
     model: "remy:openrouter:openrouter/auto",
   });
+});
+
+test("computer models take the names the computer reports", () => {
+  const [claude] = computerModels([{
+    id: "claude",
+    models: ["", "sonnet"],
+    modelInfo: [
+      { value: "", label: "Default", resolvedLabel: "Sonnet 5 (200K)" },
+      { value: "sonnet", label: "Sonnet 5", context: "200K" },
+    ],
+  }]);
+  assert.deepEqual(claude.models.map((model) => [model.value, model.label, model.context, model.resolvedLabel]), [
+    ["", "Default", undefined, "Sonnet 5 (200K)"],
+    ["sonnet", "Sonnet 5", "200K", undefined],
+  ]);
+});
+
+test("computer models from an older daemon take Remy's names, and keep unknown ids as ids", () => {
+  const [claude, codex, cursor] = computerModels([
+    { id: "claude", models: ["opus", "claude-opus-5-5"] },
+    { id: "codex", models: ["gpt-5.4-mini"] },
+    { id: "cursor", models: ["composer-2.5"] },
+  ]);
+  assert.deepEqual(claude.models.map((model) => model.label), ["Opus 5", "Opus 5.5"]);
+  assert.deepEqual(codex.models.map((model) => model.label), ["GPT-5.4 Mini"]);
+  assert.deepEqual(cursor.models.map((model) => model.label), ["composer-2.5"]);
 });

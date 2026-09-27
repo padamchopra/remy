@@ -79,9 +79,18 @@ export const computerProtocolRangeSchema = z.object({
 }).refine((range) => range.minimum <= range.maximum, "The protocol range is invalid");
 export type ComputerProtocolRange = z.infer<typeof computerProtocolRangeSchema>;
 
+/// A model's name as the provider itself reports it. `models` stays a list of
+/// ids so a hub or client that predates names still reads it.
+export const computerModelInfoSchema = z.object({
+  value: z.string().max(200),
+  label: z.string().min(1).max(120),
+  context: z.string().max(16).optional(),
+  resolvedLabel: z.string().max(120).optional(),
+});
 export const computerProviderCapabilitySchema = z.object({
   id: z.enum(["claude", "codex", "cursor"]),
   models: z.array(z.string()),
+  modelInfo: z.array(computerModelInfoSchema).max(1000).optional(),
 });
 export const computerWorkspaceCapabilitySchema = z.object({
   id: z.string().min(1),

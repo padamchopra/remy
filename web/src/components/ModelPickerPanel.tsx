@@ -37,6 +37,15 @@ function match(value: string, search: string, keywords?: string[]): number {
 /// a match at the front ranks first. The provider and the id follow, so a
 /// search for "OpenRouter" finds its models and two providers' Defaults stay
 /// apart.
+/// The id beside a name only where the name alone would mislead: an alias
+/// such as `sonnet`, which follows the newest release rather than naming one,
+/// and two models that share a name.
+function showsId(provider: Provider, model: ProviderModel): boolean {
+  if (!model.value || model.value.toLowerCase() === model.label.toLowerCase()) return false;
+  if (!/\d/.test(model.value)) return true;
+  return provider.models.some((other) => other !== model && displayModel(other) === displayModel(model));
+}
+
 function itemValue(provider: Provider, model: ProviderModel): string {
   return `${displayModel(model)} ${provider.label} ${provider.id}:${model.value}`;
 }
@@ -199,6 +208,7 @@ function ModelStep({
 
   const row = (provider: Provider, model: ProviderModel, detail?: string) => (
     <CommandItem
+      title={model.value || undefined}
       key={`${detail ? "favorite:" : ""}${provider.id}:${model.value}`}
       value={itemValue(provider, model)}
       keywords={[model.value, provider.id].filter(Boolean)}
@@ -207,6 +217,7 @@ function ModelStep({
     >
       <ProviderMark provider={provider.id} />
       <span className="min-w-0 truncate">{displayModel(model)}</span>
+      {showsId(provider, model) ? <span className="min-w-0 shrink truncate font-mono text-xs text-muted-foreground">{model.value}</span> : null}
       {detail ? <span className="shrink-0 text-xs text-muted-foreground">{detail}</span> : null}
       <span className="ml-auto flex shrink-0 items-center gap-1">
         {star(provider, model)}

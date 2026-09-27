@@ -10,7 +10,7 @@ import { InputGroupText } from "./ui/input-group";
 import { ModelPickerButton } from "./ModelPicker";
 import { ComposerMenu } from "./ComposerMenu";
 import { PERMISSIONS, permissionOf } from "@/lib/chat-options";
-import { hostedModels } from "@/lib/hub-models";
+import { computerModels, hostedModels } from "@/lib/hub-models";
 import { useHubResource } from "@/lib/hub-organization";
 import type { ModelAccessResponse } from "./HubModelAccess";
 import { AvatarFrom } from "./UserAvatar";
@@ -198,8 +198,11 @@ export default function HubThreads({
   const runtimeProvider = String(thread?.detail.provider ?? pending?.provider ?? "codex");
   const runtimeModel = String(thread?.detail.model ?? pending?.model ?? "");
   const gateway = /^remy:(openrouter|router|openai):(.+)$/.exec(runtimeModel);
-  const modelProvider = gateway?.[1] ?? (runtimeProvider === "claude" ? "anthropic" : runtimeProvider);
-  const providers = hostedModels(modelAccess.value?.providers ?? [], {provider: modelProvider, model: gateway?.[2] ?? runtimeModel});
+  // A thread on a computer that runs the provider itself picks from that
+  // computer's own named models; a cloud thread picks from model access.
+  const computerCatalogue = !gateway && computer ? computerModels(computer.capabilities?.providers ?? []).filter(p => p.id === runtimeProvider) : [];
+  const modelProvider = computerCatalogue.length ? runtimeProvider : gateway?.[1] ?? (runtimeProvider === "claude" ? "anthropic" : runtimeProvider);
+  const providers = computerCatalogue.length ? computerCatalogue : hostedModels(modelAccess.value?.providers ?? [], {provider: modelProvider, model: gateway?.[2] ?? runtimeModel});
   const permission = permissionOf(typeof thread?.detail.permissionMode === "string" ? thread.detail.permissionMode : undefined);
   const approval = thread?.detail.approval as Approval | undefined;
   const question = thread?.detail.question as Question | undefined;
