@@ -4,7 +4,8 @@ import { readFileSync, readdirSync } from "node:fs";
 import { sqliteD1 } from "../test/sqlite-d1.js";
 // @ts-expect-error The fake auth server is a plain module shared with the QA hub.
 import { startFakeOpenAIAuth } from "../scripts/fake-openai-auth.mjs";
-import { ChatGPTAccounts, RECONNECT_CODEX, setChatGPTEnabled } from "./chatgpt-account.js";
+import { ChatGPTAccounts, RECONNECT_CODEX, isChatGPTModel, setChatGPTEnabled } from "./chatgpt-account.js";
+import { createHash } from "node:crypto";
 import { HostedSettingsStore } from "./hosted-settings.js";
 import { personalSpace } from "./personal-space.js";
 import type { KeyValueStorage } from "./durable-storage.js";
@@ -108,6 +109,40 @@ test("refreshes run one at a time, so a rotated refresh token is never reused", 
   }
 });
 
+test("a rejected token forces a real refresh, once, even when two tasks report it", async () => {
+  const fake = await startFakeOpenAIAuth({ refreshDelayMs: 30 }) as Fake;
+  const { db, sqlite } = database();
+  const hash = (token: string) => createHash("sha256").update(token).digest("hex");
+  try {
+    const accounts = new ChatGPTAccounts(db, new HostedSettingsStore(db, async () => SECRET), memory(), fetch, fake.url);
+    await signIn(accounts, fake, "ada", { email: "ada@chatgpt.test", accountId: "acct-ada" });
+    const first = (await accounts.tokens("ada"))!;
+    assert.equal(fake.calls.refresh, 0, "a fresh token is served as it is");
+    const [a, b] = await Promise.all([accounts.tokens("ada", { rejected: hash(first.accessToken) }), accounts.tokens("ada", { rejected: hash(first.accessToken) })]);
+    assert.equal(fake.calls.refresh, 1, "the second caller gets the token the first one rotated in");
+    assert.notEqual(a!.accessToken, first.accessToken);
+    assert.equal(b!.accessToken, a!.accessToken);
+    const forced = await accounts.tokens("ada", { rejected: hash(a!.accessToken) });
+    assert.equal(fake.calls.refresh, 2);
+    assert.notEqual(forced!.accessToken, a!.accessToken);
+    const latest = await accounts.tokens("ada", {});
+    assert.equal(fake.calls.refresh, 3, "a refresh request without the rejected token still refreshes");
+    fake.revokeAll();
+    assert.equal(await accounts.tokens("ada", { rejected: hash(latest!.accessToken) }), undefined, "a revoked refresh token signs you out");
+    assert.deepEqual(await accounts.status("ada"), { phase: "error", error: RECONNECT_CODEX });
+  } finally {
+    sqlite.close();
+    await fake.close();
+  }
+});
+
+test("plain Codex is the ChatGPT model; a remy: gateway model is an API key", () => {
+  assert.equal(isChatGPTModel("codex", "gpt-5.6-sol"), true);
+  assert.equal(isChatGPTModel("codex", null), true);
+  assert.equal(isChatGPTModel("codex", "remy:openai:gpt-5.6-sol"), false);
+  assert.equal(isChatGPTModel("claude", "claude-opus-5-5"), false);
+});
+
 test("a cloud task gets only its starter's ChatGPT tokens, and none once they turn it off", async () => {
   const fake = await startFakeOpenAIAuth() as Fake;
   const { db, sqlite } = database();
@@ -137,12 +172,17 @@ test("a cloud task gets only its starter's ChatGPT tokens, and none once they tu
       if (chatgpt) await storage.put(`hosted-task-chatgpt:${taskId}`, true);
     }
     const organization = new HubCoordinator(objectState(storage), env as never);
-    const tokensFor = (computerId: string) => organization.fetch(new Request("https://internal/codex-tokens", { method: "POST", headers: { "x-organization-id": "org", "x-computer-id": computerId } }));
+    const tokensFor = (computerId: string, refresh?: unknown) => organization.fetch(new Request("https://internal/codex-tokens", { method: "POST", headers: { "x-organization-id": "org", "x-computer-id": computerId }, ...(refresh ? { body: JSON.stringify(refresh) } : {}) }));
     const ada = await tokensFor("c-ada");
     assert.equal(ada.status, 200);
     assert.equal(((await ada.json()) as { chatgptAccountId: string }).chatgptAccountId, "acct-ada");
     const grace = await tokensFor("c-grace");
     assert.equal(((await grace.json()) as { chatgptAccountId: string }).chatgptAccountId, "acct-grace", "a member's task gets their own tokens");
+    const served = await (await tokensFor("c-ada")).json() as { accessToken: string };
+    const refreshes = fake.calls.refresh;
+    const forced = await (await tokensFor("c-ada", { reason: "unauthorized", rejected: createHash("sha256").update(served.accessToken).digest("hex") })).json() as { accessToken: string };
+    assert.equal(fake.calls.refresh, refreshes + 1, "a rejected token reaches the person's object and forces a refresh");
+    assert.notEqual(forced.accessToken, served.accessToken);
     assert.equal((await tokensFor("c-key")).status, 204, "a thread started on an API key gets no ChatGPT tokens");
     assert.equal((await tokensFor("c-missing")).status, 403);
 

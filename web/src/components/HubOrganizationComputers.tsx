@@ -100,10 +100,6 @@ export function HubOrganizationComputers({ organizationId }: { organizationId: s
     {(error || resource.error) && <p role="alert" className="text-sm text-destructive">{error || resource.error}</p>}
     {resource.stale && <p role="status" className="text-sm text-muted-foreground">You’re reading the last saved computer sharing settings.</p>}
     {!value && !resource.error && <p role="status" className="text-sm text-muted-foreground">Reading computers…</p>}
-    {empty && <Field>
-      <FieldLabel>No computers available</FieldLabel>
-      <FieldDescription>Connect a computer or cloud provider in Personal first.</FieldDescription>
-    </Field>}
     {chatgpt.value && <Field>
       <FieldLabel>Your subscriptions</FieldLabel>
       <Item variant="outline">
@@ -116,6 +112,10 @@ export function HubOrganizationComputers({ organizationId }: { organizationId: s
           <Switch aria-label="Use my ChatGPT plan here" checked={chatgpt.value.connected && (chatgptEnabled ?? chatgpt.value.enabled)} disabled={!chatgpt.value.connected || !!saving} onCheckedChange={enabled => void updateChatGPT(enabled)} />
         </ItemActions>
       </Item>
+    </Field>}
+    {empty && <Field>
+      <FieldLabel>No computers available</FieldLabel>
+      <FieldDescription>Connect a computer or cloud provider in Personal first.</FieldDescription>
     </Field>}
     {value && value.computers.length > 0 && <Field>
       <FieldLabel>Connected computers</FieldLabel>

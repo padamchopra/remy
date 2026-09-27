@@ -16,7 +16,7 @@ import { ComputerAccountStore } from "./computer-accounts.js";
 import { cancelClaudeAccount, claudeAccountStatus, claudeComputerEnvironment, completeClaudeAccount, logoutClaudeAccount, startClaudeAccount } from "./claude-account.js";
 import { encodeComputerConnectionKey } from "@remy/contract";
 import { personalSpace } from "./personal-space.js";
-import { ChatGPTAccounts, RECONNECT_CODEX, chatgptConnected, chatgptEnabled, setChatGPTEnabled } from "./chatgpt-account.js";
+import { ChatGPTAccounts, RECONNECT_CODEX, chatgptConnected, chatgptEnabled, isChatGPTModel, setChatGPTEnabled } from "./chatgpt-account.js";
 import {linearAccountRoute, linearAccountsFor} from "./linear-routes.js";
 import { githubFor, githubRoute } from "./github-routes.js";
 import { connectionRoute, connectionWebhook, isGitHubConnectionCallback } from "./connection-routes.js";
@@ -174,12 +174,24 @@ async function cursorCloudApiKey(settings: HostedSettingsStore, org: string): Pr
   return connection?.provider === "cursor-cloud" && connection.enabled ? connection.token : undefined;
 }
 
+/// What a task sends when Codex asks again after a rejection: a reason, and a
+/// SHA-256 of the access token that was rejected. Anything else is ignored.
+function codexTokenRefresh(payload: ArrayBuffer | undefined): { reason: string; rejected?: string } | undefined {
+  if (!payload?.byteLength) return;
+  try {
+    const input = JSON.parse(new TextDecoder().decode(payload)) as { reason?: unknown; rejected?: unknown };
+    if (typeof input.reason !== "string" || input.reason.length > 64) return;
+    return { reason: input.reason, ...(typeof input.rejected === "string" && /^[0-9a-f]{64}$/.test(input.rejected) ? { rejected: input.rejected } : {}) };
+  } catch { return; }
+}
+
 /// Any member of an organization with a cloud computer can run the threads
 /// they start on their own ChatGPT sign-in, when they allow it there.
 async function chatgptReady(db: D1Database, org: string, userId: string) {
   return await chatgptConnected(db, userId) && await chatgptEnabled(db, org, userId);
 }
 const CHATGPT_SIGN_IN = "Sign in to ChatGPT in Personal model access, or turn it on for this organization.";
+const CHATGPT_THREAD = "This thread’s starter hasn’t turned on ChatGPT here. Choose a model with an API key.";
 
 async function canStartOnCloud(
   settings: HostedSettingsStore,
@@ -363,7 +375,8 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
   if(codexTokens && request.method==="POST") {
     const org=decodeURIComponent(codexTokens[1]),computer=await authenticateComputer(request,org,computerStore);
     if(!computer || computer.ownership!=="hosted")return jsonError("This computer cannot use Codex.",403);
-    return env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${org}`)).fetch(new Request("https://internal/codex-tokens",{method:"POST",headers:{"x-organization-id":org,"x-computer-id":computer.computerId}}));
+    const refresh=codexTokenRefresh(await limitedBody(request,1024));
+    return env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${org}`)).fetch(new Request("https://internal/codex-tokens",{method:"POST",headers:{"x-organization-id":org,"x-computer-id":computer.computerId,"content-type":"application/json"},body:JSON.stringify(refresh ?? {})}));
   }
   const gitRoute = /^\/api\/organizations\/([^/]+)\/git\/([^/]+)(?:\/(token|info\/refs|git-upload-pack|git-receive-pack))?$/.exec(url.pathname);
   if (gitRoute) {
@@ -1258,7 +1271,8 @@ export class HubCoordinator {
       const accounts = this.chatgpt ??= new ChatGPTAccounts(this.env.DB, new HostedSettingsStore(this.env.DB, () => this.env.AUTH_SECRET.get()), new DurableStorage(this.ctx.storage), undefined, this.env.CHATGPT_AUTH_ISSUER ?? undefined);
       try {
         if (chatgptPath[1] === "tokens") {
-          const tokens = await accounts.tokens(person);
+          const refresh = codexTokenRefresh(await request.arrayBuffer());
+          const tokens = await accounts.tokens(person, refresh ? { rejected: refresh.rejected } : undefined);
           return tokens ? Response.json(tokens, { headers: { "cache-control": "no-store" } }) : jsonError(RECONNECT_CODEX, 409);
         }
         const account = chatgptPath[1] === "start" ? await accounts.start(person)
@@ -1438,7 +1452,8 @@ export class HubCoordinator {
       if(!await this.ctx.storage.get<boolean>(`hosted-task-chatgpt:${task.taskId}`))return new Response(null,{status:204});
       const starter=await this.ctx.storage.get<string>(`hosted-task-owner:${task.taskId}`);
       if(!starter || !await new D1OrganizationStore(this.env.DB).membership(org,starter) || !await chatgptEnabled(this.env.DB,org,starter))return jsonError(RECONNECT_CODEX,409);
-      const response=await this.env.COORDINATOR.get(this.env.COORDINATOR.idFromName(`chatgpt:${starter}`)).fetch(new Request("https://internal/chatgpt-account/tokens",{method:"POST",headers:{"x-chatgpt-user":starter}}));
+      const refresh=codexTokenRefresh(await request.arrayBuffer());
+      const response=await this.env.COORDINATOR.get(this.env.COORDINATOR.idFromName(`chatgpt:${starter}`)).fetch(new Request("https://internal/chatgpt-account/tokens",{method:"POST",headers:{"x-chatgpt-user":starter,"content-type":"application/json"},body:JSON.stringify(refresh ?? {})}));
       return new Response(response.body,{status:response.status,headers:{"content-type":"application/json","cache-control":"no-store"}});
     }
     if(url.pathname==="/computer-model-keys/changed" && request.method==="POST") {
@@ -2163,7 +2178,22 @@ export class HubCoordinator {
     let input:Record<string,unknown>={};
     if(payload.byteLength){try{input=JSON.parse(new TextDecoder().decode(payload));}catch{return jsonError("Send a valid thread request.",400);}}
     if(input.hubEnvironment!==undefined || input.hubTaskId!==undefined || input.hubLinear!==undefined)return jsonError("This thread configuration is unavailable.",403);
+    // A cloud Codex thread switched to plain Codex runs on its starter's ChatGPT, never an API key.
+    let chatgptTask: string | undefined, chatgptModel = false;
+    if (id && action === "options" && "model" in input && target.ownership === "hosted" && snapshot?.detail.provider === "codex") {
+      chatgptTask = (await this.hostedService().list()).find(s => s.computerId === computerId && s.taskId)?.taskId;
+      chatgptModel = isChatGPTModel("codex", input.model);
+      if (chatgptTask && chatgptModel) {
+        const org = request.headers.get("x-organization-id")!;
+        const starter = await this.ctx.storage.get<string>(`hosted-task-owner:${chatgptTask}`);
+        if (!starter || !await new D1OrganizationStore(this.env.DB).membership(org, starter) || !await chatgptReady(this.env.DB, org, starter)) return jsonError(CHATGPT_THREAD, 409);
+      }
+    }
     const answer=await this.dispatchComputer(computerId,actor,request.method,`/hub/threads${id?`/${id}`:""}${action?`/${action}`:""}`,input);
+    if (answer.ok && chatgptTask) {
+      if (chatgptModel) await this.ctx.storage.put(`hosted-task-chatgpt:${chatgptTask}`, true);
+      else await this.ctx.storage.delete(`hosted-task-chatgpt:${chatgptTask}`);
+    }
     if (id && (request.method === "DELETE" || action === "archive")) {
       if (answer.ok) {
         await this.threads.removeGroup(computerId, id);

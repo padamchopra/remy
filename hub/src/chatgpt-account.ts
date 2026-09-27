@@ -50,6 +50,17 @@ function identity(idToken: string) {
   return { accountId: typeof auth?.chatgpt_account_id === "string" ? auth.chatgpt_account_id : "", ...(email ? { email } : {}) };
 }
 
+async function sha256(value: string) {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
+  return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/// Plain Codex on a cloud computer is the thread starter's ChatGPT; an API key
+/// runs through a `remy:` gateway model. `null` is Codex's default model.
+export function isChatGPTModel(provider: unknown, model: unknown) {
+  return provider === "codex" && (model === null || model === undefined || (typeof model === "string" && !model.startsWith("remy:")));
+}
+
 function expiry(accessToken: string, now: number) {
   const exp = claims(accessToken).exp;
   return typeof exp === "number" ? exp * 1000 : now + 55 * 60_000;
@@ -207,12 +218,18 @@ export class ChatGPTAccounts {
 
   /// A short-lived access token and account id, refreshed first when it is
   /// close to expiring. `undefined` means the person is signed out.
-  tokens(userId: string): Promise<{ accessToken: string; chatgptAccountId: string } | undefined> {
+  ///
+  /// `refresh` means Codex was refused. With the SHA-256 of the token it had,
+  /// a caller that another request already rotated past gets the newer token;
+  /// otherwise the hub really refreshes.
+  tokens(userId: string, refresh?: { rejected?: string | undefined }): Promise<{ accessToken: string; chatgptAccountId: string } | undefined> {
     return this.serial(async () => {
       const stored = await this.load(userId);
       if (!stored) return;
       const now = this.now();
-      if (stored.expiresAt - now > REFRESH_MARGIN_MS) return { accessToken: stored.accessToken, chatgptAccountId: stored.accountId };
+      const rotated = !!refresh?.rejected && refresh.rejected !== await sha256(stored.accessToken);
+      const fresh = stored.expiresAt - now > REFRESH_MARGIN_MS;
+      if (fresh && (!refresh || rotated)) return { accessToken: stored.accessToken, chatgptAccountId: stored.accountId };
       const response = await this.post("/oauth/token", JSON.stringify({ client_id: CHATGPT_CLIENT_ID, grant_type: "refresh_token", refresh_token: stored.refreshToken }), "application/json");
       if (response.status === 400 || response.status === 401) {
         // Codex treats these as permanent: expired, reused or revoked.

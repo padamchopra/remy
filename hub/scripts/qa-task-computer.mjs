@@ -77,7 +77,9 @@ setProviderAdapterForTest({
             try {
               const { hostedTaskCodexTokens } = await import("../../server/dist/hub-computer.js");
               const tokens = await hostedTaskCodexTokens();
-              text = tokens ? `ChatGPT account ${tokens.chatgptAccountId}.` : "No ChatGPT account.";
+              // Then act as if OpenAI refused that token: the hub must really refresh.
+              const refreshed = tokens && await hostedTaskCodexTokens({ reason: "unauthorized", rejectedAccessToken: tokens.accessToken });
+              text = !tokens ? "No ChatGPT account." : !refreshed || refreshed.accessToken === tokens.accessToken ? "The hub handed back the rejected token." : `ChatGPT account ${tokens.chatgptAccountId}.`;
             } catch (error) {
               text = error instanceof Error ? error.message : "Codex could not reconnect.";
             }

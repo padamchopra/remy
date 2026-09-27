@@ -28,6 +28,7 @@ assert.equal((await account('computer-owner','start')).status,403,'a computer ca
 assert.notEqual((await account('ada','tokens')).status,200,'no browser route serves tokens');
 assert.ok([401,403].includes((await call('ada','/computers/codex-tokens','POST')).status),'only a signed task computer asks for tokens');
 
+assert.equal((await call('ada','/hosted','PUT',{secret:{name:'OPENAI_API_KEY',value:'disposable-api-key'}})).status,200);
 assert.equal((await call('ada','/cloud-connection','PUT',provider==='modal'?{provider,enabled:true,tokenId:'disposable-token-id',tokenSecret:'disposable-token-secret'}:{provider,enabled:true,token:'disposable-token'})).status,200);
 assert.equal((await call('ada',`/hosted/${workspace.id}/settings`,'PUT',{settings:{enabled:true,provider}})).status,200);
 
@@ -42,12 +43,13 @@ await ctx.addInitScript(()=>{document.addEventListener('DOMContentLoaded',()=>{
 const p=await ctx.newPage();
 const click=async locator=>{await locator.scrollIntoViewIfNeeded();const box=await locator.boundingBox();await p.mouse.move(box.x+box.width/2,box.y+box.height/2,{steps:20});await p.waitForTimeout(400);await locator.click();await p.waitForTimeout(1000);};
 const threads=[];
-const startThread=async(user,title)=>{
+const startThread=async(user,title,choice={provider:'codex',model:'gpt-5.6-sol'})=>{
  const requestId=crypto.randomUUID();
- let response=await call(user,'/threads','POST',{workspaceId:workspace.id,title,requestId,provider:'codex',model:'gpt-5.6-sol',computerId:`cloud:${provider}`,visibility:'open'});
+ let response=await call(user,'/threads','POST',{workspaceId:workspace.id,title,requestId,...choice,computerId:`cloud:${provider}`,visibility:'open'});
  for(let n=0;n<600 && response.status<400 && !response.body?.id;n++){await new Promise(r=>setTimeout(r,100));response=await call(user,`/threads/starts/${requestId}`);}
  return response;
 };
+const setModel=(user,thread,model)=>call(user,`/computers/${thread.computerId}/threads/${thread.id}/options`,'POST',{model});
 const reply=async(user,thread,text)=>{
  const path=`/computers/${thread.computerId}/threads/${thread.id}`;
  const before=((await call(user,path)).body?.detail?.entries??[]).length;
@@ -106,17 +108,32 @@ try {
  assert.ok(joined.status<300,joined.text);
  assert.equal(await reply('grace',ada.body,'Replying in Ada’s thread.'),'ChatGPT account acct-ada.','a thread keeps its starter’s sign-in, whoever replies');
 
+ // Switching models mid-thread: plain Codex runs on the starter's ChatGPT, a gateway model on the key.
+ const keyed=await startThread('ada','Ada on a key',{provider:'openai',model:'gpt-5.6-sol'});
+ assert.ok(keyed.status<300 && keyed.body?.id,keyed.text);
+ assert.equal(await reply('ada',keyed.body,'Which account?'),'No ChatGPT account.');
+ assert.equal((await setModel('ada',keyed.body,'gpt-5.6-sol')).status,200);
+ assert.equal(await reply('ada',keyed.body,'Now?'),'ChatGPT account acct-ada.','switching to ChatGPT uses the starter’s sign-in, not the key');
+ assert.equal((await setModel('ada',keyed.body,'remy:openai:gpt-5.6-sol')).status,200);
+ assert.equal(await reply('ada',keyed.body,'And back?'),'No ChatGPT account.','switching back to a key model stops asking for ChatGPT');
+ const graceKeyed=await startThread('grace','Grace on a key',{provider:'openai',model:'gpt-5.6-sol'});
+ assert.ok(graceKeyed.status<300 && graceKeyed.body?.id,graceKeyed.text);
+
  // Grace turns hers off here: her running thread fails its next refresh, and her new ones cannot start on it.
  assert.equal((await call('grace','/chatgpt','DELETE')).body.enabled,false);
- assert.match(await reply('grace',grace.body,'Again?'),/reconnect/i);
+ assert.equal(await reply('grace',grace.body,'Again?'),'Reconnect Codex to continue.');
  assert.equal((await startThread('grace','After turning it off')).status,409);
+ const refused=await setModel('grace',graceKeyed.body,'gpt-5.6-sol');
+ assert.equal(refused.status,409,'a reply cannot switch a thread onto a ChatGPT sign-in that is off');
+ assert.equal(refused.body.error,'This thread’s starter hasn’t turned on ChatGPT here. Choose a model with an API key.');
+ assert.equal(await reply('grace',graceKeyed.body,'Still on the key?'),'No ChatGPT account.');
  assert.equal(await reply('ada',ada.body,'Still yours?'),'ChatGPT account acct-ada.','the toggle is per person');
 
  // Ada signs out: the stored tokens are removed and her thread asks her to reconnect.
  await p.goto(`${info.hubUrl}/app/#/settings/devices?organization=${personal}&device=cloud`);
  await click(p.getByRole('button',{name:'Disconnect Codex',exact:true}));
  await p.getByRole('button',{name:'Connect Codex',exact:true}).waitFor();
- assert.match(await reply('ada',ada.body,'After signing out?'),/reconnect/i);
+ assert.equal(await reply('ada',ada.body,'After signing out?'),'Reconnect Codex to continue.');
  await ctx.close();console.log(`VIDEO=${await p.video().path()}`);
 
  const narrow=await browser.newContext({viewport:{width:390,height:844},colorScheme:'dark'});
@@ -137,4 +154,5 @@ finally {
  await call('grace','/chatgpt','PUT');
  await call('ada',`/workspaces/${workspace.id}`,'DELETE');
  await call('ada','/cloud-connection','PATCH',{provider,enabled:false});
+ await call('ada','/hosted','PUT',{secret:{name:'OPENAI_API_KEY',value:null}});
 }
