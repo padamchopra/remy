@@ -25,10 +25,11 @@ export async function githubRoute(
   request: Request,
   env: Env,
   user: string,
+  clientKind?: string,
 ): Promise<Response | undefined> {
   const url = new URL(request.url),
     match =
-      /^\/api\/organizations\/([^/]+)\/github(?:\/(installations|repositories|selection|monitoring|actions|token|accessible-repositories|import|workspace-images|workspace-branches|pull-requests|pull-request-images|pull-request-files))?$/.exec(
+      /^\/api\/organizations\/([^/]+)\/github(?:\/(installations|repositories|selection|monitoring|actions|token|accessible-repositories|import|workspace-images|workspace-branches|pull-requests|pull-request|pull-request-reviewers|pull-request-images|pull-request-files))?$/.exec(
         url.pathname,
       );
   if (!match) return;
@@ -38,6 +39,8 @@ export async function githubRoute(
   try {
     if (request.method === "GET") {
       if (action === "pull-requests") return Response.json(await service.openPullRequests(org, user, url.searchParams.get("refresh") === "1"), { headers: { "cache-control": "no-store" } });
+      if (action === "pull-request") return Response.json(await service.pullRequestDetail(org, user, url.searchParams.get("repository") ?? "", Number(url.searchParams.get("number"))), { headers: { "cache-control": "no-store" } });
+      if (action === "pull-request-reviewers") return Response.json(await service.pullRequestReviewerCandidates(org, user, url.searchParams.get("repository") ?? "", Number(url.searchParams.get("number")), url.searchParams.get("q") ?? ""), { headers: { "cache-control": "no-store" } });
       if (action === "pull-request-files") return Response.json(await service.pullRequestFiles(org, user, url.searchParams.get("repository") ?? "", Number(url.searchParams.get("number")), Number(url.searchParams.get("changedFiles") ?? 0)), { headers: { "cache-control": "no-store" } });
       if (action === "pull-request-images") return Response.json(await service.pullRequestImages(org, user, url.searchParams.get("repository") ?? "", Number(url.searchParams.get("number"))), { headers: { "cache-control": "no-store" } });
       if (action === "workspace-branches") return Response.json(await service.workspaceBranches(org, user, url.searchParams.get("workspace") ?? ""), { headers: { "cache-control": "no-store" } });
@@ -79,6 +82,10 @@ export async function githubRoute(
             input.repositoryIds as number[],
           ),
         );
+      // A pull request write is the member acting in Remy. A computer holds a
+      // member identity too, but it never merges or asks for reviews for them.
+      if (action === "actions" && clientKind === "computer")
+        throw new ConnectionError("Change pull requests in Remy.", 403);
       if (action === "actions")
         return Response.json(
           await service.action(

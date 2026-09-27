@@ -433,7 +433,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
   if (!identity) return jsonError("Sign in again.", 401);
   const connectionResponse = await connectionRoute(request, env, identity.userId, identity.clientKind);
   if (connectionResponse) return connectionResponse;
-  const githubResponse=await githubRoute(request,env,identity.userId);if(githubResponse)return githubResponse;
+  const githubResponse=await githubRoute(request,env,identity.userId,identity.clientKind);if(githubResponse)return githubResponse;
   const linearAccountResponse=await linearAccountRoute(request,env,identity.userId,identity.clientKind);if(linearAccountResponse)return linearAccountResponse;
   try {
     if (url.pathname === "/api/personal" && request.method === "GET") return Response.json({ personal: await personalSpace(env.DB, identity.userId) }, { headers: { "cache-control": "no-store" } });

@@ -6,6 +6,16 @@ Configure the existing `GITHUB_APP_ID` and private-key secret, plus the GitHub c
 
 Each member authorizes their own GitHub account. PR creation, reviews and comments use that member's token in the hub. Tokens never reach a computer or the browser. Personal computers retain their own `gh` login; hosted Git continues through the scoped installation proxy and now also requires current repository selection.
 
+## Pull requests in the web app
+
+Every read and write below uses the member's own GitHub connection in the hub, and every one checks membership and that the repository is the origin of a workspace the member can open. A computer session is refused on writes: it holds a member identity but never changes a pull request for them.
+
+- `GET github/pull-requests` lists open pull requests on workspace origins, cached for a minute per member.
+- `GET github/pull-request?repository=&number=` is what the list leaves out because GitHub computes it per pull request: `mergeable` and `mergeStateStatus`, the head commit, when it was opened, each check's start and finish time, link and first line, reviewer names, and which stack members conflict.
+- `GET github/pull-request-reviewers?repository=&number=&q=` lists GitHub's suggested reviewers, then people who can be assigned in the repository, never the author.
+- `GET github/pull-request-files` and `github/pull-request-images` read the diff and the signed attachment copies.
+- `POST github/actions` with `workspaceId`, `number` and `action`: `merge` squash merges with `title`, `body` as the message and the `sha` the reader saw; `request-reviewers` with `reviewers` (logins); `ready` and `draft` change draft state; `comment` and `review` post. The repository is the workspace's selected GitHub App repository, or else its origin. A write drops the member's cached list.
+
 Monitoring is off by default and is chosen for one pull request at a time; its updates land in the thread that follows it. Only a verified GitHub sender mapped to a current Remy member with workspace access can start work. A mention opens a thread on a computer that holds the workspace, with that member's authority. External text is the request, never an authority claim. Final replies use that same member's account.
 
 Signed receipts are durable and deduplicated before processing. A durable start claim prevents duplicate threads after redelivery; an interrupted or uncertain start is shown as unavailable rather than silently starting a second thread. Replies have stable markers and reconcile against GitHub comments after uncertain network outcomes. Completed threads retry replies on the hub alarm. Revoking access prevents further actions.

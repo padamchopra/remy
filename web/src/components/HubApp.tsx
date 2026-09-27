@@ -418,6 +418,11 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               onOpenWorkspace={() => undefined}
               selected={route.repository && route.number ? { repository: route.repository, number: route.number, ...(route.view ? { view: route.view } : {}) } : undefined}
               onSelect={(address) => navigate({ name: "prs", organizationId: route.organizationId, ...address })}
+              hubThreads={threads}
+              onOpenHubThread={(thread) => navigate({ name: "threads", organizationId, threadId: thread.id })}
+              onOpenHostedWorkspace={(owner, workspaceId) => navigate(isAll
+                ? { name: "workspaces", workspaceId, organizationId: "all", ownerOrganizationId: owner }
+                : { name: "workspaces", workspaceId, organizationId })}
             /></Deferred></div>
           ) : isAll ? (
             <Deferred open><AllView organizations={contexts} route={route} navigate={navigate} threads={threads} threadsLoaded={threadsLoaded} /></Deferred>

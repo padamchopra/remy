@@ -94,7 +94,6 @@ export function PullRequestStackInfo({ serverId, repository, number, initialStac
                 key={entry.number}
                 repository={repository}
                 entry={entry}
-                size={stack.size}
                 current={entry.number === number}
                 canOpen={canOpen}
                 onOpen={onOpen}

@@ -53,6 +53,30 @@ function fixture() {
     if (path === "/graphql") {
       if (githubDelayMs) await new Promise((resolve) => setTimeout(resolve, githubDelayMs));
       const variables = (body?.variables ?? {}) as Record<string, string>;
+      if (String(body?.query ?? "").includes("PullRequestDetail")) {
+        return Response.json({ data: { viewer: { login: "ada" }, repository: { squashMergeAllowed: true, pullRequest: {
+          number: 7, state: "OPEN", isDraft: false, createdAt: "2026-09-23T08:00:00Z", mergeable: "MERGEABLE", mergeStateStatus: "CLEAN",
+          headRefOid: "a".repeat(40),
+          author: { login: "ada", name: "Ada Lovelace" },
+          latestReviews: { nodes: [{ author: { login: "linus", name: "Linus" }, state: "APPROVED" }] },
+          reviewRequests: { nodes: [{ requestedReviewer: { login: "grace", name: "Grace Hopper" } }] },
+          stack: { entries: { nodes: [{ pullRequest: { number: 5, state: "OPEN", mergeable: "CONFLICTING" } }, { pullRequest: { number: 7, state: "OPEN", mergeable: "MERGEABLE" } }] } },
+          commits: { nodes: [{ commit: { statusCheckRollup: { contexts: { nodes: [
+            { name: "typecheck", conclusion: "FAILURE", status: "COMPLETED", startedAt: "2026-09-23T09:00:00Z", completedAt: "2026-09-23T09:01:04Z", detailsUrl: "https://github.com/release/remy/actions/runs/1", title: "2 errors", summary: "src/a.ts: Type 'string' is not assignable" },
+            { name: "bundle", conclusion: "SUCCESS", status: "COMPLETED", startedAt: "2026-09-23T09:00:00Z", completedAt: "2026-09-23T09:00:48Z", detailsUrl: "javascript:alert(1)" },
+            { context: "deploy", state: "PENDING", createdAt: "2026-09-23T09:00:00Z", description: "Waiting", targetUrl: "https://ci.example.test/1" },
+          ] } } } }] },
+        } } } });
+      }
+      if (String(body?.query ?? "").includes("PullRequestReviewers")) {
+        return Response.json({ data: { repository: {
+          assignableUsers: { nodes: [{ login: "ada", name: "Ada Lovelace" }, { login: "grace", name: "Grace Hopper" }, { login: "linus", name: null }, { login: "bad login!", name: "x" }] },
+          pullRequest: { author: { login: "ada" }, suggestedReviewers: [{ reviewer: { login: "linus", name: "Linus" } }] },
+        } } });
+      }
+      if (String(body?.query ?? "").includes("markPullRequestReadyForReview") || String(body?.query ?? "").includes("convertPullRequestToDraft")) {
+        return Response.json({ data: { pr: { pullRequest: { isDraft: false } } } });
+      }
       if (String(body?.query ?? "").includes("PullRequestImages")) {
         return Response.json({ data: { repository: { pullRequest: { bodyHTML: '<table><tr><td><a href="x"><img width="190" alt="Buy sheet" src="https://private-user-images.githubusercontent.com/19776024/659476008-5C22357B-a164-4e88-9294-4c12eee8542d.png?jwt=signed&amp;v=1" style="max-width: 100%;"></a></td></tr></table><img src="https://camo.githubusercontent.com/abc" data-canonical-src="https://example.com/a.png">' } } } });
       }
@@ -198,6 +222,15 @@ function fixture() {
         ...(searchFails ? { errors: [{ message: "Search requires the repo scope.", path: ["search"] }] } : {}),
       });
     }
+    if (path === "/repos/release/remy/pulls/7/merge") {
+      if (body?.sha === "b".repeat(40)) return new Response("{}", { status: 409 });
+      return Response.json({ merged: true, sha: "c".repeat(40) });
+    }
+    if (path === "/repos/release/remy/pulls/7/requested_reviewers") {
+      if ((body?.reviewers ?? []).includes("stranger")) return new Response("{}", { status: 422 });
+      return Response.json({ number: 7 });
+    }
+    if (path === "/repos/release/remy/pulls/7") return Response.json({ number: 7, state: "open", draft: false, node_id: "PR_node7" });
     if (path === "/user/repos") return Response.json([{id:101,name:"Remy",full_name:"release/remy",description:"A remote for coding agents.",language:"TypeScript",private:true,pushed_at:"2026-09-18T10:00:00Z"}]);
     if (path === "/repos/jup-ag/mobile") return Response.json({id:202,name:"mobile",full_name:"jup-ag/mobile",default_branch:"main"});
     if (path === "/repos/release/remy") return Response.json({id:101,name:"Remy",full_name:"release/remy",default_branch:"main"});
@@ -561,4 +594,76 @@ test("pull request files page through GitHub with the member credential for a wo
   await assert.rejects(service.pullRequestFiles("other", "ada", "release/remy", 7));
   assert.equal(calls.length, count);
   sqlite.close();
+});
+
+test("pull request detail reads mergeability, check durations and reviewer names for a workspace repository", async () => {
+  const { service, calls } = fixture();
+  await service.organizations.createWorkspace("studio", "ada", { name: "Remy", origin: "git@github.com:release/remy.git" });
+  const detail = await service.pullRequestDetail("studio", "ada", "release/remy", 7);
+  assert.equal(calls.at(-1)?.actor, "Bearer member-ada");
+  assert.equal(detail.viewer, "ada");
+  assert.equal(detail.mergeable, "MERGEABLE");
+  assert.equal(detail.mergeStateStatus, "CLEAN");
+  assert.equal(detail.headRefOid, "a".repeat(40));
+  assert.equal(detail.createdAt, "2026-09-23T08:00:00Z");
+  assert.equal(detail.authorName, "Ada Lovelace");
+  assert.deepEqual(detail.reviewers, [
+    { login: "linus", state: "APPROVED", name: "Linus" },
+    { login: "grace", state: "REQUESTED", name: "Grace Hopper" },
+  ]);
+  assert.deepEqual(detail.checks.map((check) => [check.name, check.state, check.startedAt, check.completedAt, check.url]), [
+    ["typecheck", "fail", "2026-09-23T09:00:00Z", "2026-09-23T09:01:04Z", "https://github.com/release/remy/actions/runs/1"],
+    ["bundle", "pass", "2026-09-23T09:00:00Z", "2026-09-23T09:00:48Z", null],
+    ["deploy", "pending", "2026-09-23T09:00:00Z", null, "https://ci.example.test/1"],
+  ]);
+  assert.equal(detail.checks[0].summary, "2 errors");
+  assert.deepEqual(detail.stack, [
+    { number: 5, state: "OPEN", mergeable: "CONFLICTING" },
+    { number: 7, state: "OPEN", mergeable: "MERGEABLE" },
+  ]);
+  await assert.rejects(service.pullRequestDetail("studio", "ada", "someone/else", 7), /one of your workspaces/);
+  await assert.rejects(service.pullRequestDetail("studio", "stranger", "release/remy", 7), /unavailable/);
+});
+
+test("reviewer candidates list suggestions first and never the author", async () => {
+  const { service } = fixture();
+  await service.organizations.createWorkspace("studio", "ada", { name: "Remy", origin: "git@github.com:release/remy.git" });
+  const { reviewers } = await service.pullRequestReviewerCandidates("studio", "ada", "release/remy", 7);
+  assert.deepEqual(reviewers, [
+    { login: "linus", name: "Linus", suggested: true },
+    { login: "grace", name: "Grace Hopper", suggested: false },
+  ]);
+});
+
+test("squash merge, reviewer requests and draft changes go through the member's own connection on a workspace origin", async () => {
+  const { service, calls } = fixture();
+  const workspace = await service.organizations.createWorkspace("studio", "ada", { name: "Remy", origin: "git@github.com:release/remy.git" });
+  const merged = await service.action("studio", "grace", workspace.id, "merge", { number: 7, title: "Ready to review (#7)", body: "Ship it", sha: "a".repeat(40) });
+  assert.deepEqual(merged, { merged: true, sha: "c".repeat(40) });
+  const merge = calls.find((call) => call.path.endsWith("/merge"))!;
+  assert.equal(merge.method, "PUT");
+  assert.equal(merge.actor, "Bearer member-grace");
+  assert.deepEqual(merge.body, { merge_method: "squash", commit_title: "Ready to review (#7)", commit_message: "Ship it", sha: "a".repeat(40) });
+  await assert.rejects(service.action("studio", "grace", workspace.id, "merge", { number: 7, title: "  " }), /commit title/);
+  await assert.rejects(service.action("studio", "grace", workspace.id, "merge", { number: 7, title: "x", sha: "nope" }), /Refresh/);
+  await assert.rejects(
+    service.action("studio", "grace", workspace.id, "merge", { number: 7, title: "x", sha: "b".repeat(40) }),
+    (error: Error & { status?: number }) => /changed since you opened it/.test(error.message) && error.status === 409,
+  );
+
+  await service.action("studio", "ada", workspace.id, "request-reviewers", { number: 7, reviewers: ["grace"] });
+  const request = calls.find((call) => call.path.endsWith("/requested_reviewers"))!;
+  assert.deepEqual([request.method, request.body], ["POST", { reviewers: ["grace"] }]);
+  await assert.rejects(service.action("studio", "ada", workspace.id, "request-reviewers", { number: 7, reviewers: [] }), /who should review/);
+  await assert.rejects(service.action("studio", "ada", workspace.id, "request-reviewers", { number: 7, reviewers: ["bad login!"] }), /who should review/);
+  await assert.rejects(service.action("studio", "ada", workspace.id, "request-reviewers", { number: 7, reviewers: ["stranger"] }), /can review this repository/);
+
+  assert.deepEqual(await service.action("studio", "ada", workspace.id, "draft", { number: 7 }), { isDraft: true });
+  const mutation = calls.at(-1)!;
+  assert.equal(mutation.path, "/graphql");
+  assert.match(String((mutation.body as { query: string }).query), /convertPullRequestToDraft/);
+  assert.deepEqual((mutation.body as { variables: unknown }).variables, { id: "PR_node7" });
+
+  await service.organizations.updateWorkspace("studio", "ada", workspace.id, { access: { teamIds: [], userIds: ["ada"] } });
+  await assert.rejects(service.action("studio", "grace", workspace.id, "merge", { number: 7, title: "x" }));
 });

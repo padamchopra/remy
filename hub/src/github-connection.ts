@@ -56,6 +56,9 @@ export class GitHubConnection {
     path: string,
     method = "GET",
     input?: unknown,
+    /// What a refusal means for this call, when GitHub's status says more
+    /// than "it failed": a merge that is blocked, a reviewer who cannot review.
+    refusals: Record<number, [message: string, status: number]> = {},
   ): Promise<T> {
     await this.access(org, user);
     const token = await this.connections.token(org, "github", user);
@@ -72,6 +75,8 @@ export class GitHubConnection {
       redirect: "manual",
       signal: AbortSignal.timeout(20_000),
     });
+    const refusal = refusals[response.status];
+    if (!response.ok && refusal) throw new ConnectionError(refusal[0], refusal[1]);
     if (!response.ok)
       throw new ConnectionError(
         response.status === 401
@@ -265,17 +270,21 @@ export class GitHubConnection {
     ).results.filter((r) => ids.has(r.workspace_id));
     return { repositories, activity };
   }
+  /// The repository a workspace's pull request actions go to. A repository
+  /// selected through the GitHub App wins; otherwise the workspace's own
+  /// origin, which the member's own connection is what reaches.
   async repository(org: string, user: string, workspace: string) {
-    await this.organizations.workspace(org, user, workspace);
+    const found = await this.organizations.workspace(org, user, workspace);
     const row = await this.db
       .prepare(
         "SELECT full_name FROM github_repositories WHERE organization_id=? AND workspace_id=?",
       )
       .bind(org, workspace)
       .first<{ full_name: string }>();
-    if (!row)
+    const repository = row?.full_name ?? githubRepositoryFromOrigin(found.origin);
+    if (!repository)
       throw new ConnectionError("Connect this workspace to GitHub.", 404);
-    return row.full_name;
+    return repository;
   }
   async action(
     org: string,
@@ -307,7 +316,47 @@ export class GitHubConnection {
     const number = Number(input.number);
     if (!Number.isSafeInteger(number) || number <= 0)
       throw new ConnectionError("Choose a pull request.");
-    await this.api(org, user, `${prefix}/pulls/${number}`);
+    const pull = await this.api<{ node_id?: string; state?: string; draft?: boolean }>(org, user, `${prefix}/pulls/${number}`);
+    if (action === "merge") {
+      const title = typeof input.title === "string" ? input.title.trim() : "";
+      if (!title || title.length > 256) throw new ConnectionError("Enter a commit title.");
+      if (typeof input.sha !== "undefined" && (typeof input.sha !== "string" || !/^[0-9a-f]{40}$/i.test(input.sha)))
+        throw new ConnectionError("Refresh the pull request and try again.");
+      const merged = await this.api<{ merged?: boolean; sha?: string }>(org, user, `${prefix}/pulls/${number}/merge`, "PUT", {
+        merge_method: "squash",
+        commit_title: title,
+        commit_message: body,
+        ...(typeof input.sha === "string" ? { sha: input.sha } : {}),
+      }, {
+        405: ["GitHub can't merge this pull request yet.", 409],
+        409: ["The pull request changed since you opened it. Refresh and try again.", 409],
+        403: ["You can't merge pull requests in this repository.", 403],
+      });
+      this.forget(org, user);
+      return { merged: merged?.merged === true, sha: merged?.sha ?? null };
+    }
+    if (action === "request-reviewers") {
+      const reviewers = Array.isArray(input.reviewers) ? input.reviewers.map(String) : [];
+      if (!reviewers.length || reviewers.length > 15 || reviewers.some((login) => !githubLogin(login)))
+        throw new ConnectionError("Choose who should review.");
+      await this.api(org, user, `${prefix}/pulls/${number}/requested_reviewers`, "POST", { reviewers }, {
+        422: ["Choose someone who can review this repository.", 400],
+        403: ["You can't request reviewers in this repository.", 403],
+      });
+      this.forget(org, user);
+      return { requested: reviewers };
+    }
+    if (action === "ready" || action === "draft") {
+      if (pull?.state !== "open" || !pull.node_id) throw new ConnectionError("This pull request is closed.", 409);
+      const mutation = action === "ready" ? "markPullRequestReadyForReview" : "convertPullRequestToDraft";
+      const data = await this.graphql(org, user, {
+        query: `mutation Change($id: ID!) { ${mutation}(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`,
+        variables: { id: pull.node_id },
+      });
+      if (data.errors?.length) throw new ConnectionError(action === "ready" ? "GitHub couldn't mark this ready for review." : "GitHub couldn't convert this to a draft.", 502);
+      this.forget(org, user);
+      return { isDraft: action === "draft" };
+    }
     if (action === "comment" && body.trim())
       return this.api(
         org,
@@ -503,6 +552,110 @@ export class GitHubConnection {
     return { viewer, pullRequests };
   }
 
+  /// A write changes what the list says, so the next read asks GitHub again.
+  private forget(org: string, user: string) {
+    hostedPullRequestCache.delete(`${org}:${user}`);
+  }
+
+  /// What the list leaves out because GitHub computes it per pull request:
+  /// whether it can merge, how long each check took and why it failed, who
+  /// the reviewers are by name, and which stack members conflict. Read when
+  /// one pull request opens.
+  async pullRequestDetail(org: string, user: string, repository: string, number: number) {
+    const { owner, name } = await this.workspacePullRequest(org, user, repository, number);
+    const data = await this.graphql(org, user, {
+      query: `query PullRequestDetail($owner: String!, $name: String!, $number: Int!) {
+        viewer { login }
+        repository(owner: $owner, name: $name) {
+          squashMergeAllowed
+          pullRequest(number: $number) {
+            number state isDraft createdAt mergeable mergeStateStatus headRefOid
+            author { login ... on User { name } }
+            latestReviews(first: 20) { nodes { author { login ... on User { name } } state } }
+            reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login name } } } }
+            stack { entries(first: 20) { nodes { pullRequest { number state mergeable } } } }
+            commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 50) { nodes {
+              ... on CheckRun { name conclusion status startedAt completedAt detailsUrl title summary }
+              ... on StatusContext { context state createdAt description targetUrl }
+            } } } } } }
+          }
+        }
+      }`,
+      variables: { owner, name, number },
+    });
+    const repo = data.data?.repository as { squashMergeAllowed?: unknown; pullRequest?: Record<string, unknown> | null } | undefined;
+    const pr = repo?.pullRequest;
+    if (!pr) throw new ConnectionError(data.errors?.[0]?.message || "GitHub could not read this pull request.", 404);
+    const names = new Map<string, string>();
+    const remember = (actor: unknown) => {
+      const login = githubLogin(loginOf(actor));
+      const display = (actor as { name?: unknown } | null)?.name;
+      if (login && typeof display === "string" && display.trim()) names.set(login.toLowerCase(), display.trim().slice(0, 120));
+    };
+    remember(pr.author);
+    for (const node of nodesOf(pr.latestReviews as { nodes?: unknown[] } | undefined)) remember((node as { author?: unknown } | null)?.author);
+    for (const node of nodesOf(pr.reviewRequests as { nodes?: unknown[] } | undefined)) remember((node as { requestedReviewer?: unknown } | null)?.requestedReviewer);
+    const stack = pr.stack as { entries?: { nodes?: unknown[] } } | null | undefined;
+    return {
+      viewer: githubLogin(loginOf(data.data?.viewer)),
+      number,
+      state: typeof pr.state === "string" ? pr.state : "OPEN",
+      isDraft: pr.isDraft === true,
+      createdAt: typeof pr.createdAt === "string" ? pr.createdAt : "",
+      mergeable: typeof pr.mergeable === "string" ? pr.mergeable : "UNKNOWN",
+      mergeStateStatus: typeof pr.mergeStateStatus === "string" ? pr.mergeStateStatus : "UNKNOWN",
+      headRefOid: typeof pr.headRefOid === "string" && /^[0-9a-f]{40}$/i.test(pr.headRefOid) ? pr.headRefOid : null,
+      squashMergeAllowed: repo?.squashMergeAllowed !== false,
+      authorName: names.get(loginOf(pr.author).toLowerCase()) ?? null,
+      reviewers: pullRequestReviewers(pr).map((reviewer) => ({ ...reviewer, name: names.get(reviewer.login.toLowerCase()) ?? null })),
+      checks: pullRequestCheckDetails(pr),
+      stack: nodesOf(stack?.entries).flatMap((node) => {
+        const member = (node as { pullRequest?: { number?: unknown; state?: unknown; mergeable?: unknown } } | null)?.pullRequest;
+        if (!member || !positive(member.number)) return [];
+        return [{
+          number: member.number,
+          state: typeof member.state === "string" ? member.state : "",
+          mergeable: typeof member.mergeable === "string" ? member.mergeable : "UNKNOWN",
+        }];
+      }),
+    };
+  }
+
+  /// People who can be asked to review: GitHub's own suggestions first, then
+  /// everyone who can be assigned in the repository, matching what was typed.
+  /// The author cannot review their own pull request, so they are left out.
+  async pullRequestReviewerCandidates(org: string, user: string, repository: string, number: number, query = "") {
+    const { owner, name } = await this.workspacePullRequest(org, user, repository, number);
+    const data = await this.graphql(org, user, {
+      query: `query PullRequestReviewers($owner: String!, $name: String!, $number: Int!, $query: String!) {
+        repository(owner: $owner, name: $name) {
+          assignableUsers(first: 30, query: $query) { nodes { login name } }
+          pullRequest(number: $number) { author { login } suggestedReviewers { reviewer { login name } } }
+        }
+      }`,
+      variables: { owner, name, number, query: query.trim().slice(0, 100) },
+    });
+    const repo = data.data?.repository as {
+      assignableUsers?: { nodes?: unknown[] };
+      pullRequest?: { author?: unknown; suggestedReviewers?: { reviewer?: unknown }[] } | null;
+    } | undefined;
+    if (!repo) throw new ConnectionError(data.errors?.[0]?.message || "GitHub could not list reviewers.", 502);
+    const author = loginOf(repo.pullRequest?.author).toLowerCase();
+    const needle = query.trim().toLowerCase();
+    const people = new Map<string, { login: string; name: string | null; suggested: boolean }>();
+    const add = (value: unknown, suggested: boolean) => {
+      const login = githubLogin(loginOf(value));
+      if (!login || login.toLowerCase() === author || people.has(login.toLowerCase())) return;
+      const display = (value as { name?: unknown } | null)?.name;
+      const named = typeof display === "string" && display.trim() ? display.trim().slice(0, 120) : null;
+      if (suggested && needle && !`${login} ${named ?? ""}`.toLowerCase().includes(needle)) return;
+      people.set(login.toLowerCase(), { login, name: named, suggested });
+    };
+    for (const entry of repo.pullRequest?.suggestedReviewers ?? []) add(entry?.reviewer, true);
+    for (const node of nodesOf(repo.assignableUsers)) add(node, false);
+    return { reviewers: [...people.values()] };
+  }
+
   /// A private repository's attachments load only from the signed addresses
   /// GitHub renders for a reader, and those expire within minutes, so they are
   /// read when a pull request opens rather than kept with the list.
@@ -624,7 +777,7 @@ export function clearHostedPullRequestCache() {
 // Mergeability is left out on purpose: GitHub computes it per pull request
 // while answering, which roughly doubled how long this list took to arrive.
 const HOSTED_PULL_REQUEST_FRAGMENT = `fragment HostedPullRequest on PullRequest {
-  number title url body isDraft reviewDecision updatedAt additions deletions changedFiles
+  number title url body isDraft reviewDecision createdAt updatedAt additions deletions changedFiles
   headRefName baseRefName
   stackEntry { position }
   stack { number size baseRefName entries(first: 20) { nodes { position pullRequest { number title state isDraft } } } }
@@ -683,6 +836,7 @@ type HostedListedPullRequest = {
   isDraft: boolean;
   reviewDecision: string;
   authorLogin: string;
+  createdAt: string;
   updatedAt: string;
   additions: number;
   deletions: number;
@@ -740,6 +894,7 @@ function hostedPullRequest(
     isDraft: pr.isDraft === true,
     reviewDecision: String(pr.reviewDecision ?? ""),
     authorLogin: author,
+    createdAt: typeof pr.createdAt === "string" ? pr.createdAt : "",
     updatedAt: String(pr.updatedAt ?? new Date(0).toISOString()),
     additions: Number(pr.additions ?? 0),
     deletions: Number(pr.deletions ?? 0),
@@ -848,19 +1003,49 @@ function pullRequestComments(pr: Record<string, unknown>) {
   });
 }
 
-function pullRequestChecks(pr: Record<string, unknown>) {
+function checkNodes(pr: Record<string, unknown>) {
   const commits = pr.commits as { nodes?: { commit?: { statusCheckRollup?: { contexts?: { nodes?: Record<string, unknown>[] } } } }[] } | undefined;
-  const nodes = commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts?.nodes ?? [];
-  return nodes.flatMap((node) => {
+  return commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts?.nodes ?? [];
+}
+
+function checkState(node: Record<string, unknown>): "pass" | "fail" | "pending" | "skipping" {
+  const conclusion = String(node.conclusion ?? node.state ?? "").toUpperCase();
+  const status = String(node.status ?? "").toUpperCase();
+  if (["SUCCESS", "NEUTRAL"].includes(conclusion)) return "pass";
+  if (["SKIPPED", "EXPECTED"].includes(conclusion)) return "skipping";
+  if (["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"].includes(conclusion)) return "fail";
+  if (status === "COMPLETED") return "pass";
+  return "pending";
+}
+
+function pullRequestChecks(pr: Record<string, unknown>) {
+  return checkNodes(pr).flatMap((node) => {
     const name = String(node.name ?? node.context ?? "");
     if (!name) return [];
-    const conclusion = String(node.conclusion ?? node.state ?? "").toUpperCase();
-    const status = String(node.status ?? "").toUpperCase();
-    let state: "pass" | "fail" | "pending" | "skipping" = "pending";
-    if (["SUCCESS", "NEUTRAL"].includes(conclusion)) state = "pass";
-    else if (["SKIPPED", "EXPECTED"].includes(conclusion)) state = "skipping";
-    else if (["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"].includes(conclusion)) state = "fail";
-    else if (status === "COMPLETED") state = "pass";
-    return [{ name, state }];
+    return [{ name, state: checkState(node) }];
+  });
+}
+
+function isoTime(value: unknown) {
+  return typeof value === "string" && Number.isFinite(Date.parse(value)) ? value : null;
+}
+
+/// A check as the detail draws it: when it ran, so its duration can be shown,
+/// where GitHub shows it, and the line it failed with.
+function pullRequestCheckDetails(pr: Record<string, unknown>) {
+  return checkNodes(pr).flatMap((node) => {
+    const name = String(node.name ?? node.context ?? "");
+    if (!name) return [];
+    const url = typeof node.detailsUrl === "string" ? node.detailsUrl : typeof node.targetUrl === "string" ? node.targetUrl : "";
+    const summary = [node.title, node.summary, node.description]
+      .find((value): value is string => typeof value === "string" && value.trim().length > 0);
+    return [{
+      name: name.slice(0, 200),
+      state: checkState(node),
+      startedAt: isoTime(node.startedAt ?? node.createdAt),
+      completedAt: isoTime(node.completedAt),
+      url: /^https:\/\//.test(url) ? url : null,
+      summary: summary ? summary.trim().slice(0, 500) : null,
+    }];
   });
 }

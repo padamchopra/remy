@@ -22,6 +22,8 @@ import { transport } from "@/lib/transport";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/state/store";
 import type { Chat, PullRequestStack, Server, Workspace } from "@/state/types";
+import type { HubThread } from "@remy/contract";
+import type { PullRequestView } from "@/lib/route";
 
 // The list is what a person scans first, so the detail views — the local one
 // carries the whole diff and review — arrive only when a pull request opens.
@@ -35,7 +37,7 @@ export interface PullRequestAddress {
   repository: string;
   number: number;
   /// The tab in front, when it is not the summary.
-  view?: "files";
+  view?: PullRequestView;
 }
 
 interface PullRequestCheck {
@@ -54,6 +56,8 @@ export interface AuthoredPullRequest {
   isDraft: boolean;
   reviewDecision: string;
   authorLogin?: string;
+  /// Hosted only, and only from a hub that sends it.
+  createdAt?: string;
   updatedAt: string;
   additions: number;
   deletions: number;
@@ -237,11 +241,19 @@ export function PullRequests({
   hostedOrganizationIds,
   selected: selectedAddress,
   onSelect,
+  hubThreads = [],
+  onOpenHubThread,
+  onOpenHostedWorkspace,
 }: {
   servers: Server[];
   workspaces: Workspace[];
   onOpenThread: (id: string) => void;
   onOpenWorkspace: (id: string) => void;
+  /// Hosted only: the threads you can read, which the detail finds its
+  /// linked thread among.
+  hubThreads?: HubThread[];
+  onOpenHubThread?: (thread: HubThread) => void;
+  onOpenHostedWorkspace?: (organizationId: string, workspaceId: string) => void;
   hostedOrganizationId?: string;
   hostedOrganizationIds?: string[];
   /// The open pull request lives in the route, so Back returns to the list and
@@ -506,7 +518,7 @@ export function PullRequests({
     return (
       <Suspense fallback={(
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <PaneHeader sidebar crumbs={[{ label: "Pull requests", onClick: back }, { label: `${selected.repository} #${selected.number}` }]} />
+          <PaneHeader sidebar crumbs={[{ label: "Pull requests", onClick: back }, { label: `${selected.workspaceName} #${selected.number}` }]} />
           <PullRequestDetailLoading />
         </main>
       )}>
@@ -514,8 +526,13 @@ export function PullRequests({
           key={selected.url}
           pullRequest={selected}
           organizationId={hostedOrganizationOf(selected.serverId)}
+          workspace={pullRequestTileWorkspace(selected, [], hostedWorkspaces)}
+          threads={hubThreads}
           canOpen={(number) => Boolean(members(number))}
           onOpen={(number) => open({ repository: selected.repository, number })}
+          onOpenThread={(thread) => onOpenHubThread?.(thread)}
+          onOpenWorkspace={onOpenHostedWorkspace}
+          onChanged={() => void load({ refresh: true })}
           view={selectedAddress?.view}
           onViewChange={(view) => onSelect({ repository: selected.repository, number: selected.number, ...(view ? { view } : {}) })}
           onBack={back}

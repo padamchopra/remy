@@ -17,9 +17,13 @@ export type Route = (
   | { name: "workspaces"; workspaceId?: string }
   // A pull request is addressed by its repository and number, which is what
   // GitHub calls it and what someone pastes.
-  // `view` is the tab in front: the summary, or the files it changes.
-  | { name: "prs"; repository?: string; number?: number; view?: "files" }
+  // `view` is the tab in front: the summary when absent, the files it
+  // changes, or its activity.
+  | { name: "prs"; repository?: string; number?: number; view?: PullRequestView }
   | { name: "settings"; tab: SettingsTab; organizationTab?: "general" | "members" | "teams" | "computers"; deviceId?: string; organizationId?: string }) & { organizationId?: string; ownerOrganizationId?: string };
+
+/// A pull request tab other than the summary, which is the default and has no segment.
+export type PullRequestView = "files" | "activity";
 
 export interface AppLocation {
   route: Route;
@@ -51,8 +55,8 @@ function pullRequestRoute(path: string): Route {
   }
   const [, owner, name, number, view, extra] = parts;
   if (!owner || !name || extra !== undefined || !/^[1-9]\d{0,9}$/.test(number ?? "")) return { name: "prs" };
-  if (view !== undefined && view !== "files") return { name: "prs" };
-  return { name: "prs", repository: `${owner}/${name}`, number: Number(number), ...(view ? { view } : {}) };
+  if (view !== undefined && view !== "files" && view !== "activity") return { name: "prs" };
+  return { name: "prs", repository: `${owner}/${name}`, number: Number(number), ...(view ? { view: view as PullRequestView } : {}) };
 }
 
 function parseRoute(hash: string): AppLocation {

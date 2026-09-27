@@ -1,32 +1,47 @@
-import { lazy, useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import { lazy, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ArrowRight,
-  Check,
+  CircleCheck,
   CircleDashed,
   CircleX,
-  Copy,
-  FileDiff,
+  ExternalLink,
   GitMerge,
   GitPullRequest,
   GitPullRequestClosed,
   GitPullRequestDraft,
-  MessageSquare,
+  MessagesSquare,
+  MoreHorizontal,
 } from "lucide-react";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar-base";
-import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
+import type { HubThread } from "@remy/contract";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { Item, ItemContent, ItemMedia, ItemTitle } from "@/components/ui/item";
+import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@/components/ui/menu-base";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs-base";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip-base";
 import { Deferred } from "@/components/Deferred";
-import { GitHubMark } from "@/components/GitHubMark";
 import { Markdown } from "@/components/Markdown";
 import { PaneHeader } from "@/components/PaneHeader";
-import { PullRequestChecksDisclosure } from "@/components/PullRequestChecks";
-import { PullRequestStackEntry, PullRequestStackHeader, PullRequestStackRows, stackEntriesInOrder } from "@/components/PullRequestStack";
-import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
+import { pullRequestAction, RequestReviewers, ReviewerInitials, SquashAndMerge } from "@/components/PullRequestHostedActions";
+import { PullRequestStackEntry, PullRequestStackRows, stackEntriesInOrder } from "@/components/PullRequestStack";
+import { WorkspaceMark } from "@/components/WorkspaceIcon";
+import { apiError } from "@/lib/api-error";
+import { useAccountResources } from "@/lib/hub-account-resources";
+import { hubRequest, hubThreadBase, hubThreadPath } from "@/lib/hub-threads";
+import {
+  checkDuration,
+  failingChecksMessage,
+  mergeBlocker,
+  openedLine,
+  type PullRequestDetail,
+  type PullRequestDetailCheck,
+  type PullRequestDetailReviewer,
+} from "@/lib/pull-request-detail";
+import { linkedPullRequestThread, linkedThreadTone } from "@/lib/pull-request-linked-thread";
+import type { PullRequestTileWorkspace } from "@/lib/pull-request-workspace";
 import { relativeDate } from "@/lib/relative-date";
+import type { PullRequestView } from "@/lib/route";
 import { cn } from "@/lib/utils";
 import type { AuthoredPullRequest } from "@/components/PullRequests";
 
@@ -52,20 +67,22 @@ function useSignedImages(organizationId: string, repository: string, number: num
   return images;
 }
 
-const WIDE = "(min-width: 1024px)";
-
-/// The summary sits in its own column when there is room and under the title
-/// when there is not. Only one is mounted, so the page has one of each region.
-function useWide() {
-  return useSyncExternalStore(
-    (changed) => {
-      const query = window.matchMedia(WIDE);
-      query.addEventListener("change", changed);
-      return () => query.removeEventListener("change", changed);
-    },
-    () => window.matchMedia(WIDE).matches,
-    () => true,
-  );
+/// What the list leaves out — mergeability, check times, reviewer names —
+/// read when the pull request opens and again after anything changes it. A
+/// hub without the route leaves it undefined and the summary draws from the
+/// list alone.
+function usePullRequestDetail(organizationId: string, repository: string, number: number, revision: string) {
+  const [detail, setDetail] = useState<PullRequestDetail>();
+  useEffect(() => {
+    let current = true;
+    if (!organizationId) return;
+    const params = new URLSearchParams({ repository, number: String(number) });
+    hubRequest<PullRequestDetail>(`${hubThreadBase(organizationId)}/github/pull-request?${params}`)
+      .then((response) => { if (current) setDetail(response); })
+      .catch(() => undefined);
+    return () => { current = false; };
+  }, [organizationId, repository, number, revision]);
+  return detail;
 }
 
 function githubPullRequestNumber(href: string, repository: string): number | undefined {
@@ -74,340 +91,511 @@ function githubPullRequestNumber(href: string, repository: string): number | und
   return Number(match[2]);
 }
 
-function PullRequestState({ pullRequest }: { pullRequest: AuthoredPullRequest }) {
-  if (pullRequest.state === "MERGED") return <Badge className="bg-violet-500/15 text-violet-700 dark:text-violet-300"><GitMerge />Merged</Badge>;
-  if (pullRequest.state === "CLOSED") return <Badge variant="destructive"><GitPullRequestClosed />Closed</Badge>;
-  if (pullRequest.isDraft) return <Badge variant="secondary"><GitPullRequestDraft />Draft</Badge>;
-  return <Badge variant="success"><GitPullRequest />Open</Badge>;
+async function copy(text: string, done: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast.success(done);
+  } catch {
+    toast.error("Couldn't copy to the clipboard");
+  }
 }
 
-function GitHubAvatar({ login, className }: { login: string; className?: string }) {
+const STATE_PILL = "h-[22px] gap-1.5 rounded-[6px] px-[9px] text-[11px] leading-[14px] font-medium [&>svg]:size-3";
+
+function StatePill({ state, isDraft }: { state?: string; isDraft: boolean }) {
+  const [label, Icon, tone] = state === "MERGED"
+    ? ["Merged", GitMerge, "bg-violet-500/15 text-violet-700 dark:text-violet-300"] as const
+    : state === "CLOSED"
+      ? ["Closed", GitPullRequestClosed, "bg-error/14 text-error-foreground"] as const
+      : isDraft
+        ? ["Draft", GitPullRequestDraft, "bg-muted text-muted-foreground"] as const
+        : ["Open", GitPullRequest, "bg-success/14 text-success-foreground"] as const;
   return (
-    <Avatar className={className}>
-      <AvatarImage src={`https://github.com/${encodeURIComponent(login)}.png?size=64`} alt="" referrerPolicy="no-referrer" />
-      <AvatarFallback>{login.slice(0, 1)}</AvatarFallback>
-    </Avatar>
+    <span data-slot="pull-request-state" className={cn("inline-flex shrink-0 items-center", STATE_PILL, tone)}>
+      <Icon aria-hidden />
+      {label}
+    </span>
   );
 }
 
-function Person({ login, className }: { login: string; className?: string }) {
+function ThreadDot({ state, className }: { state: unknown; className?: string }) {
+  const tone = linkedThreadTone(state);
   return (
-    <a
-      href={`https://github.com/${encodeURIComponent(login)}`}
-      target="_blank"
-      rel="noreferrer"
+    <span
+      aria-hidden
+      className={cn(
+        "size-1.5 shrink-0 rounded-full",
+        tone === "working" ? "bg-info-foreground" : tone === "needs_input" ? "bg-warning-foreground" : "bg-muted-foreground/60",
+        className,
+      )}
+    />
+  );
+}
+
+const THREAD_STATE: Record<ReturnType<typeof linkedThreadTone>, string> = {
+  working: "working",
+  needs_input: "needs you",
+  done: "done",
+};
+
+/// A linked thread, drawn the same way everywhere: thread icon, title cut off
+/// with an ellipsis, and its state dot. It opens the thread.
+function LinkedThreadChip({ thread, onOpen, className }: { thread: HubThread; onOpen: () => void; className?: string }) {
+  const title = thread.detail.title || "Untitled thread";
+  return (
+    <button
+      type="button"
       data-link
-      className={cn("inline-flex min-w-0 items-center gap-1.5 font-medium text-foreground hover:underline", className)}
+      data-slot="linked-thread"
+      onClick={onOpen}
+      aria-label={`${title}, ${THREAD_STATE[linkedThreadTone(thread.detail.state)]}`}
+      className={cn(
+        "flex h-7 min-w-0 items-center gap-2 rounded-lg border border-border px-2.5 text-left text-xs outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50",
+        className,
+      )}
     >
-      <GitHubAvatar login={login} />
-      <span className="truncate">{login}</span>
-    </a>
+      <MessagesSquare aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1 truncate">{title}</span>
+      <ThreadDot state={thread.detail.state} />
+    </button>
   );
 }
 
-function CopyBranch({ branch }: { branch: string }) {
-  const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (!copied) return;
-    const timer = window.setTimeout(() => setCopied(false), 1500);
-    return () => window.clearTimeout(timer);
-  }, [copied]);
+function DiffTotals({ additions, deletions }: { additions: number; deletions: number }) {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={(
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={copied ? "Branch name copied" : "Copy branch name"}
-            onClick={() => void navigator.clipboard?.writeText(branch).then(() => setCopied(true), () => undefined)}
-          />
-        )}
-      >
-        {copied ? <Check className="text-success-foreground" /> : <Copy />}
-      </TooltipTrigger>
-      <TooltipContent>{copied ? "Copied" : "Copy branch name"}</TooltipContent>
-    </Tooltip>
-  );
-}
-
-function DiffStat({ additions, deletions, className }: { additions: number; deletions: number; className?: string }) {
-  return (
-    <span className={cn("font-mono tabular-nums", className)} aria-label={`${additions} additions, ${deletions} deletions`}>
-      <span className="text-success-foreground">+{additions.toLocaleString()}</span>{" "}
+    <span className="inline-flex items-center gap-2 font-mono text-[11px] leading-4 tabular-nums" aria-label={`${additions} additions, ${deletions} deletions`}>
+      <span className="text-success-foreground">+{additions.toLocaleString()}</span>
       <span className="text-destructive">−{deletions.toLocaleString()}</span>
     </span>
   );
 }
 
-function filesLabel(count: number) {
-  return `${count.toLocaleString()} ${count === 1 ? "file" : "files"}`;
+function BranchChip({ name }: { name: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={(
+          <button
+            type="button"
+            onClick={() => void copy(name, "Branch name copied.")}
+            aria-label={`${name}, copy branch name`}
+            className="flex h-5 min-w-0 items-center rounded-[5px] bg-muted px-[7px] font-mono text-[11px] leading-[14px] text-foreground/75 outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          />
+        )}
+      >
+        <span className="truncate">{name}</span>
+      </TooltipTrigger>
+      <TooltipContent>Copy branch name</TooltipContent>
+    </Tooltip>
+  );
 }
 
-function SideSection({ title, children, className }: { title: string; children: ReactNode; className?: string }) {
+function RailSection({ title, detail, children }: { title: string; detail?: ReactNode; children: ReactNode }) {
   return (
-    <section aria-label={title} className={className}>
-      <h2 className="text-xs font-medium text-muted-foreground">{title}</h2>
-      <div className="mt-2">{children}</div>
+    <section aria-label={title} className="flex shrink-0 flex-col gap-[9px] px-0.5">
+      <div className="flex items-center gap-2">
+        <h2 className="min-w-0 flex-1 text-[11px] leading-4 font-semibold tracking-[0.025em] text-muted-foreground uppercase">{title}</h2>
+        {detail}
+      </div>
+      {children}
     </section>
   );
 }
 
-const DECISION: Record<string, string> = {
-  APPROVED: "Approved",
-  CHANGES_REQUESTED: "Changes requested",
-  REVIEW_REQUIRED: "Review required",
+const REVIEWER_STATE: Record<PullRequestDetailReviewer["state"], { label: string; className: string }> = {
+  APPROVED: { label: "Approved", className: "text-success-foreground" },
+  CHANGES_REQUESTED: { label: "Changes requested", className: "text-destructive" },
+  COMMENTED: { label: "Commented", className: "text-muted-foreground" },
+  DISMISSED: { label: "Dismissed", className: "text-muted-foreground" },
+  REQUESTED: { label: "Waiting", className: "text-muted-foreground" },
 };
 
-const REVIEWER_STATE = {
-  APPROVED: { label: "Approved", Icon: Check, className: "text-success-foreground" },
-  CHANGES_REQUESTED: { label: "Changes requested", Icon: CircleX, className: "text-destructive" },
-  COMMENTED: { label: "Commented", Icon: MessageSquare, className: "text-muted-foreground" },
-  DISMISSED: { label: "Dismissed", Icon: CircleDashed, className: "text-muted-foreground" },
-  REQUESTED: { label: "Waiting", Icon: CircleDashed, className: "text-muted-foreground" },
-} as const;
-
-function Reviewers({ pullRequest }: { pullRequest: AuthoredPullRequest }) {
-  const reviewers = pullRequest.reviewers ?? [];
-  const decision = DECISION[pullRequest.reviewDecision];
-  if (!reviewers.length && !decision) return null;
+function Reviewers({ reviewers, request }: { reviewers: PullRequestDetailReviewer[]; request: ReactNode }) {
   return (
-    <SideSection title="Reviewers">
-      {decision && <p className="text-sm">{decision}</p>}
-      {reviewers.length > 0 && (
-        <ul className={cn("flex flex-col gap-2", decision && "mt-2")}>
+    <RailSection title="Reviewers" detail={request}>
+      {reviewers.length === 0 ? (
+        <p className="text-xs leading-[18px] text-muted-foreground">Nobody is asked to review yet.</p>
+      ) : (
+        <ul className="flex flex-col gap-[9px]">
           {reviewers.map((reviewer) => {
             const state = REVIEWER_STATE[reviewer.state] ?? REVIEWER_STATE.REQUESTED;
+            const name = reviewer.name || reviewer.login;
             return (
-              <li key={reviewer.login} className="flex min-w-0 items-center gap-2 text-sm">
-                <Person login={reviewer.login} className="flex-1 font-normal" />
-                <span className={cn("inline-flex shrink-0 items-center gap-1 text-xs", state.className)}>
-                  <state.Icon className="size-3.5" />
-                  {state.label}
-                </span>
+              <li key={reviewer.login} className="flex min-w-0 items-center gap-[9px]">
+                <ReviewerInitials name={name} />
+                <a
+                  href={`https://github.com/${encodeURIComponent(reviewer.login)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  data-link
+                  title={reviewer.name ? reviewer.login : undefined}
+                  className="min-w-0 flex-1 truncate text-xs leading-[18px] text-foreground hover:underline"
+                >
+                  {name}
+                </a>
+                <span className={cn("shrink-0 text-[11px] leading-4", state.className)}>{state.label}</span>
               </li>
             );
           })}
         </ul>
       )}
-    </SideSection>
+    </RailSection>
   );
 }
 
-function Labels({ labels }: { labels: NonNullable<AuthoredPullRequest["labels"]> }) {
-  if (!labels.length) return null;
+function CheckIcon({ state }: { state: PullRequestDetailCheck["state"] }) {
+  if (state === "fail") return <CircleX aria-label="Failed" className="size-3.5 shrink-0 text-destructive" />;
+  if (state === "pending") return <CircleDashed aria-label="Running" className="size-3.5 shrink-0 text-muted-foreground" />;
+  if (state === "skipping") return <CircleDashed aria-label="Skipped" className="size-3.5 shrink-0 text-muted-foreground/60" />;
+  return <CircleCheck aria-label="Passed" className="size-3.5 shrink-0 text-success-foreground" />;
+}
+
+/// Failing first, then running, passing and skipped, the way a person reads them.
+const CHECK_ORDER: Record<PullRequestDetailCheck["state"], number> = { fail: 0, pending: 1, pass: 2, skipping: 3 };
+
+function Checks({ checks }: { checks: PullRequestDetailCheck[] }) {
+  const passed = checks.filter((check) => check.state === "pass" || check.state === "skipping").length;
+  const ordered = [...checks].sort((left, right) => CHECK_ORDER[left.state] - CHECK_ORDER[right.state]);
   return (
-    <SideSection title="Labels">
-      <ul className="flex flex-wrap gap-1.5">
-        {labels.map((label) => (
-          <li key={label.name}>
-            <Badge variant="outline" className="max-w-full font-normal">
-              <span aria-hidden className="size-2 shrink-0 rounded-full bg-muted-foreground" style={label.color ? { backgroundColor: `#${label.color}` } : undefined} />
-              <span className="truncate">{label.name}</span>
-            </Badge>
-          </li>
-        ))}
-      </ul>
-    </SideSection>
+    <RailSection
+      title="Checks"
+      detail={checks.length ? <span className="font-mono text-[11px] leading-4 text-muted-foreground tabular-nums">{passed}/{checks.length}</span> : undefined}
+    >
+      {checks.length === 0 ? (
+        <p className="text-xs leading-[18px] text-muted-foreground">No checks yet.</p>
+      ) : (
+        <ul className="flex flex-col gap-[9px]">
+          {ordered.map((check, index) => {
+            const name = (
+              <span className={cn("min-w-0 flex-1 truncate text-xs leading-[18px]", check.state === "fail" ? "text-foreground" : "text-foreground/75")}>
+                {check.name}
+              </span>
+            );
+            return (
+              <li key={`${check.name}:${index}`} className="flex min-w-0 items-center gap-[9px]" title={check.summary ?? undefined}>
+                <CheckIcon state={check.state} />
+                {check.url ? (
+                  <a href={check.url} target="_blank" rel="noreferrer" data-link className="flex min-w-0 flex-1 hover:underline">{name}</a>
+                ) : name}
+                <span className="shrink-0 font-mono text-[11px] leading-4 text-muted-foreground tabular-nums">{checkDuration(check.startedAt, check.completedAt)}</span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </RailSection>
   );
 }
 
-function Stack({ pullRequest, canOpen, onOpen }: {
+/// Shown only when checks fail and a thread is working on the branch: the
+/// failures go to that thread in one message.
+function FailingChecks({
+  pullRequest,
+  checks,
+  thread,
+  onOpenThread,
+}: {
   pullRequest: AuthoredPullRequest;
-  canOpen: (number: number) => boolean;
-  onOpen: (number: number) => void;
+  checks: PullRequestDetailCheck[];
+  thread: HubThread;
+  onOpenThread: () => void;
 }) {
-  const stack = pullRequest.stack;
-  if (!stack?.entries || stack.entries.length < 2) return null;
+  const [sending, setSending] = useState(false);
+  const failing = checks.filter((check) => check.state === "fail").length;
+  const send = async () => {
+    setSending(true);
+    try {
+      await hubRequest(`${hubThreadPath(thread.access.organizationId, thread.computerId, thread.id)}/message`, "POST", {
+        text: failingChecksMessage(pullRequest, checks),
+        messageId: `u-${crypto.randomUUID()}`,
+        attachmentIds: [],
+      });
+      toast.success("Your thread has the failing checks.");
+    } catch (caught) {
+      toast.error("Couldn't send the failing checks", { description: apiError(caught) });
+    } finally {
+      setSending(false);
+    }
+  };
   return (
-    <section aria-label={`Stack #${stack.number}`} data-slot="pull-request-stack" className="flex flex-col gap-2.5">
-      <PullRequestStackHeader
-        number={stack.number}
-        detail={`${stack.position} of ${stack.size} · Merge from the bottom up into ${stack.baseRefName}`}
-      />
-      <PullRequestStackRows>
-        {stackEntriesInOrder(stack.entries).map((entry) => (
-          <PullRequestStackEntry
-            key={entry.number}
-            repository={pullRequest.repository}
-            entry={entry}
-            size={stack.size}
-            current={entry.number === pullRequest.number}
-            canOpen={canOpen}
-            onOpen={onOpen}
-          />
-        ))}
-      </PullRequestStackRows>
+    <section aria-label="Failing checks" data-slot="pull-request-failing-checks" className="flex shrink-0 flex-col gap-2.5 rounded-[10px] border border-border p-3">
+      <h2 className="text-xs leading-4 font-semibold text-foreground">
+        {failing === 1 ? "1 check is failing" : `${failing} checks are failing`}
+      </h2>
+      <LinkedThreadChip thread={thread} onOpen={onOpenThread} />
+      <Button type="button" disabled={sending} onClick={() => void send()} className="h-8 w-full rounded-[9px] text-xs font-semibold">
+        {sending && <Spinner data-icon="inline-start" />}
+        Ask the thread to fix them
+      </Button>
     </section>
   );
 }
 
-function FilesSummary({ pullRequest, onShow }: { pullRequest: AuthoredPullRequest; onShow: () => void }) {
-  if (!pullRequest.changedFiles && !pullRequest.additions && !pullRequest.deletions) return null;
-  return (
-    <SideSection title="Files changed">
-      <Item asChild size="sm" variant="outline" className="-mx-0 gap-2 px-3 py-2 hover:bg-accent/50">
-        <button type="button" data-link className="w-full text-left" onClick={onShow}>
-          <ItemMedia><FileDiff className="size-4 text-muted-foreground" /></ItemMedia>
-          <ItemContent className="min-w-0">
-            <ItemTitle className="font-normal">{pullRequest.changedFiles ? filesLabel(pullRequest.changedFiles) : "Changes"}</ItemTitle>
-          </ItemContent>
-          <DiffStat additions={pullRequest.additions} deletions={pullRequest.deletions} className="shrink-0 text-xs" />
-        </button>
-      </Item>
-    </SideSection>
-  );
-}
+/// The description reads as Paper draws it: muted body text, and a bullet list
+/// marked with em dashes rather than dots.
+const DESCRIPTION = cn(
+  "gap-2.5 text-[13px] leading-[21px] text-foreground/75",
+  "[&_:is(h1,h2,h3,h4,strong)]:text-foreground",
+  "[&_ul:not(.contains-task-list)]:list-none [&_ul:not(.contains-task-list)]:gap-[5px] [&_ul:not(.contains-task-list)]:pl-0",
+  "[&_ul:not(.contains-task-list)>li]:relative [&_ul:not(.contains-task-list)>li]:pl-[22px]",
+  "[&_ul:not(.contains-task-list)>li]:before:absolute [&_ul:not(.contains-task-list)>li]:before:left-0 [&_ul:not(.contains-task-list)>li]:before:text-muted-foreground/60 [&_ul:not(.contains-task-list)>li]:before:content-['—']",
+);
+
+const TAB = "h-[37px] gap-[7px] rounded-none border-b-2 border-transparent px-3 py-0 text-xs leading-4 text-muted-foreground data-active:border-foreground data-active:bg-transparent data-active:font-semibold data-active:text-foreground";
 
 export function PullRequestHostedDetail({
   pullRequest,
   organizationId,
+  workspace,
+  threads,
   canOpen,
   onOpen,
+  onOpenThread,
+  onOpenWorkspace,
+  onChanged,
   view,
   onViewChange,
   onBack,
+  reviewAgentAction,
 }: {
   pullRequest: AuthoredPullRequest;
   organizationId: string;
+  /// The workspace as the sidebar draws it, for the header chip.
+  workspace: { workspace: PullRequestTileWorkspace; name: string; organizationId?: string };
+  threads: HubThread[];
   canOpen: (number: number) => boolean;
   onOpen: (number: number) => void;
-  view?: "files";
-  onViewChange: (view?: "files") => void;
+  onOpenThread: (thread: HubThread) => void;
+  onOpenWorkspace?: (organizationId: string, workspaceId: string) => void;
+  /// Something here changed the pull request; the list reads GitHub again.
+  onChanged: () => void;
+  view?: PullRequestView;
+  onViewChange: (view?: PullRequestView) => void;
   onBack: () => void;
+  /// Slot for the review agent's header control ("Review with agent" or
+  /// "Review agent"), which a later change adds between Open thread and
+  /// Open on GitHub. Nothing renders here until then.
+  reviewAgentAction?: ReactNode;
 }) {
+  const [revision, setRevision] = useState(0);
   const images = useSignedImages(organizationId, pullRequest.repository, pullRequest.number);
-  const wide = useWide();
-  const showFiles = useCallback(() => onViewChange("files"), [onViewChange]);
+  const detail = usePullRequestDetail(organizationId, pullRequest.repository, pullRequest.number, `${pullRequest.updatedAt}:${revision}`);
+  const changed = useCallback(() => { setRevision((value) => value + 1); onChanged(); }, [onChanged]);
+
+  const candidates = useMemo(
+    () => threads.filter((thread) => thread.detail.branch === pullRequest.headRefName),
+    [threads, pullRequest.headRefName],
+  );
+  const accounts = useMemo(
+    () => [...new Set(candidates.map((thread) => thread.access.organizationId || organizationId))].sort(),
+    [candidates, organizationId],
+  );
+  const resources = useAccountResources(accounts);
+  const computers = useMemo(() => accounts.flatMap((id) => resources[id]?.computers ?? []), [accounts, resources]);
+  const thread = linkedPullRequestThread(pullRequest, candidates, computers);
+
+  const checks: PullRequestDetailCheck[] = detail?.checks ?? pullRequest.checks;
+  const reviewers: PullRequestDetailReviewer[] = detail?.reviewers ?? pullRequest.reviewers ?? [];
+  const state = detail?.state ?? pullRequest.state;
+  const isDraft = detail?.isDraft ?? pullRequest.isDraft;
+  const open = !state || state === "OPEN";
+  const failing = checks.some((check) => check.state === "fail");
+  const workspaceOrganization = workspace.organizationId ?? organizationId;
+  const label = `${workspace.name} #${pullRequest.number}`;
+
   // A reference to a pull request Remy has opens here; anything else is GitHub's.
   const openLink = useCallback((href: string) => {
     const number = githubPullRequestNumber(href, pullRequest.repository);
     if (number && number !== pullRequest.number && canOpen(number)) onOpen(number);
     else window.open(href, "_blank", "noopener,noreferrer");
   }, [canOpen, onOpen, pullRequest.number, pullRequest.repository]);
-  const summary = (
-    <div className="flex flex-col gap-6">
-      <PullRequestChecksDisclosure checks={pullRequest.checks} />
-      <Reviewers pullRequest={pullRequest} />
-      <Labels labels={pullRequest.labels ?? []} />
-      <Stack pullRequest={pullRequest} canOpen={canOpen} onOpen={onOpen} />
-      <FilesSummary pullRequest={pullRequest} onShow={showFiles} />
-    </div>
-  );
+
+  const changeDraft = async (next: "ready" | "draft") => {
+    try {
+      await pullRequestAction(organizationId, pullRequest.workspaceId, pullRequest.number, next);
+      toast.success(next === "ready" ? "It's ready for review." : "It's a draft again.");
+      changed();
+    } catch (caught) {
+      toast.error(next === "ready" ? "Couldn't mark it ready for review" : "Couldn't convert it to a draft", { description: apiError(caught) });
+    }
+  };
+
+  const stack = pullRequest.stack;
+  const conflicts = new Map((detail?.stack ?? []).map((entry) => [entry.number, entry.mergeable]));
   const comments = pullRequest.comments ?? [];
+
   return (
     <TooltipProvider>
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <PaneHeader
-          sidebar
-          crumbs={[
-            { label: "Pull requests", onClick: onBack },
-            { label: `${pullRequest.repository} #${pullRequest.number}` },
-          ]}
-        >
-          <Tooltip>
-            <TooltipTrigger
-              render={(
-                <a
-                  href={pullRequest.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  data-link
-                  aria-label="Open on GitHub"
-                  className={buttonVariants({ variant: "ghost", size: "icon-sm" })}
-                />
-              )}
+        <PaneHeader sidebar crumbs={[{ label: "Pull requests", onClick: onBack }, { label }]}>
+          <div className="flex shrink-0 items-center gap-2.5">
+            <Button
+              type="button"
+              variant="outline"
+              data-link
+              disabled={!onOpenWorkspace}
+              onClick={() => onOpenWorkspace?.(workspaceOrganization, pullRequest.workspaceId)}
+              className="h-7 max-w-44 gap-[7px] rounded-lg bg-transparent px-2.5 text-xs font-[450] shadow-none max-sm:hidden dark:bg-transparent"
             >
-              <GitHubMark />
-            </TooltipTrigger>
-            <TooltipContent side="bottom" align="end">Open on GitHub</TooltipContent>
-          </Tooltip>
+              <WorkspaceMark home={false} workspace={workspace.workspace} size="sm" organizationId={workspace.organizationId} />
+              <span className="truncate">{workspace.name}</span>
+            </Button>
+            {thread && (
+              <Button
+                type="button"
+                variant="secondary"
+                data-link
+                onClick={() => onOpenThread(thread)}
+                aria-label={`Open thread: ${thread.detail.title || "Untitled thread"}`}
+                className="h-7 gap-[7px] rounded-lg border border-input bg-accent px-2.5 text-xs font-[450]"
+              >
+                <ThreadDot state={thread.detail.state} />
+                Open thread
+              </Button>
+            )}
+            {reviewAgentAction}
+            <Tooltip>
+              <TooltipTrigger
+                render={(
+                  <a
+                    href={pullRequest.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    data-link
+                    aria-label="Open on GitHub"
+                    className={cn(buttonVariants({ variant: "ghost", size: "icon-sm" }), "size-7 rounded-lg text-muted-foreground")}
+                  />
+                )}
+              >
+                <ExternalLink className="size-[15px]" />
+              </TooltipTrigger>
+              <TooltipContent align="end">Open on GitHub</TooltipContent>
+            </Tooltip>
+            <Menu>
+              <MenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="More actions" className="size-7 rounded-lg text-muted-foreground" />}>
+                <MoreHorizontal className="size-[15px]" />
+              </MenuTrigger>
+              <MenuContent align="end" className="w-52">
+                <MenuItem onClick={() => void copy(window.location.href, "Link copied.")}>Copy link</MenuItem>
+                <MenuItem onClick={() => void copy(pullRequest.headRefName, "Branch name copied.")}>Copy branch name</MenuItem>
+                {open && (
+                  <>
+                    <MenuSeparator />
+                    {isDraft
+                      ? <MenuItem onClick={() => void changeDraft("ready")}>Mark ready for review</MenuItem>
+                      : <MenuItem onClick={() => void changeDraft("draft")}>Convert to draft</MenuItem>}
+                  </>
+                )}
+              </MenuContent>
+            </Menu>
+          </div>
         </PaneHeader>
         <Tabs
-          value={view ?? "overview"}
-          onValueChange={(value) => onViewChange(value === "files" ? "files" : undefined)}
+          value={view ?? "summary"}
+          onValueChange={(value) => onViewChange(value === "files" || value === "activity" ? value : undefined)}
           className="min-h-0 flex-1 gap-0"
         >
-          <div className="shrink-0 border-b border-border px-4 sm:px-6">
-            <TabsList aria-label="Pull request" className="-mb-px h-10 gap-1">
-              <TabsTrigger
-                value="overview"
-                className="h-10 rounded-none border-b-2 border-transparent px-2 data-active:border-foreground data-active:bg-transparent data-active:text-foreground"
+          <header data-slot="pull-request-header" className="flex shrink-0 flex-col gap-2.5 px-4 pt-[22px] sm:px-7">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 text-xs leading-4 text-muted-foreground">
+              <StatePill state={state} isDraft={isDraft} />
+              <span className="shrink-0 font-mono">{label}</span>
+              <span aria-hidden className="text-muted-foreground/50 max-sm:hidden">·</span>
+              <span className="min-w-0">{openedLine(pullRequest, detail)}</span>
+            </div>
+            <h1 className="text-[22px] leading-7 font-semibold tracking-[-0.02em] text-balance wrap-break-word text-foreground">{pullRequest.title}</h1>
+            <div className="flex min-w-0 flex-wrap items-center gap-2 pb-1">
+              <BranchChip name={pullRequest.headRefName} />
+              <ArrowRight aria-label="into" className="size-3.5 shrink-0 text-muted-foreground" />
+              <BranchChip name={pullRequest.baseRefName} />
+              <span aria-hidden className="text-xs text-muted-foreground/50 max-sm:hidden">·</span>
+              <button
+                type="button"
+                data-link
+                onClick={() => onViewChange("files")}
+                className="inline-flex items-center gap-2 rounded-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
               >
-                Overview
-              </TabsTrigger>
-              <TabsTrigger
-                value="files"
-                className="h-10 rounded-none border-b-2 border-transparent px-2 data-active:border-foreground data-active:bg-transparent data-active:text-foreground"
-              >
-                Files changed
+                <DiffTotals additions={pullRequest.additions} deletions={pullRequest.deletions} />
                 {pullRequest.changedFiles ? (
-                  <span className="rounded-full bg-muted px-1.5 text-[11px] leading-4 font-medium text-muted-foreground tabular-nums">{pullRequest.changedFiles.toLocaleString()}</span>
+                  <span className="text-[11px] leading-4 text-muted-foreground">
+                    across {pullRequest.changedFiles.toLocaleString()} {pullRequest.changedFiles === 1 ? "file" : "files"}
+                  </span>
                 ) : null}
+              </button>
+            </div>
+          </header>
+          <div className="shrink-0 border-b border-border px-4 sm:px-7">
+            <TabsList aria-label="Pull request" className="-mb-px h-[38px] items-end gap-0.5">
+              <TabsTrigger value="summary" className={TAB}>Summary</TabsTrigger>
+              <TabsTrigger value="files" className={TAB}>
+                Files
+                {pullRequest.changedFiles ? <span className="font-mono text-[11px] leading-4 text-muted-foreground tabular-nums">{pullRequest.changedFiles.toLocaleString()}</span> : null}
               </TabsTrigger>
+              <TabsTrigger value="activity" className={TAB}>Activity</TabsTrigger>
             </TabsList>
           </div>
-          <TabsContent value="overview" keepMounted className="flex min-h-0 flex-1 data-hidden:hidden">
+          <TabsContent value="summary" keepMounted className="flex min-h-0 flex-1 data-hidden:hidden">
             <ScrollArea data-slot="pull-request-detail-body" className="min-h-0 min-w-0 flex-1" viewportProps={{ tabIndex: 0, "aria-label": "Pull request summary" }}>
-              <article className="mx-auto w-full max-w-[46rem] px-4 pt-7 pb-16 sm:px-8">
-                <header>
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm text-muted-foreground">
-                    <PullRequestState pullRequest={pullRequest} />
-                    {pullRequest.authorLogin && <Person login={pullRequest.authorLogin} />}
-                    <span>updated {relativeDate(pullRequest.updatedAt)}</span>
-                  </div>
-                  <h1 className="mt-3 text-2xl leading-tight font-semibold tracking-tight text-balance wrap-break-word">{pullRequest.title}</h1>
-                  <div className="mt-3 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 text-xs text-muted-foreground">
-                    <span className="flex min-w-0 max-w-full items-center gap-1">
-                      <code className="min-w-0 truncate rounded bg-muted px-1.5 py-0.5 font-mono text-foreground" title={pullRequest.headRefName}>{pullRequest.headRefName}</code>
-                      <CopyBranch branch={pullRequest.headRefName} />
-                      <ArrowRight className="size-3.5 shrink-0" aria-label="into" />
-                      <code className="ml-1 min-w-0 truncate rounded bg-muted px-1.5 py-0.5 font-mono" title={pullRequest.baseRefName}>{pullRequest.baseRefName}</code>
-                    </span>
-                    <button
-                      type="button"
-                      data-link
-                      onClick={showFiles}
-                      className="inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                    >
-                      <DiffStat additions={pullRequest.additions} deletions={pullRequest.deletions} />
-                      {pullRequest.changedFiles ? <span>in {filesLabel(pullRequest.changedFiles)}</span> : null}
-                    </button>
-                  </div>
-                </header>
-                {!wide && <div className="mt-6 rounded-xl border border-border p-4">{summary}</div>}
-                <div data-slot="pull-request-description" className="mt-7 border-t border-border pt-7">
-                  {pullRequest.body?.trim()
-                    ? <Markdown text={pullRequest.body} images={images} repository={pullRequest.repository} onOpenLink={openLink} />
-                    : <p className="text-sm text-muted-foreground">No description.</p>}
-                </div>
-                {comments.length > 0 && (
-                  <section className="mt-10" aria-labelledby="pull-request-comments">
-                    <h2 id="pull-request-comments" className="flex items-center gap-2 text-sm font-medium">
-                      Comments <span className="text-muted-foreground tabular-nums">{comments.length}</span>
-                    </h2>
-                    <ol className="mt-3 flex flex-col gap-3">
-                      {comments.map((comment, index) => (
-                        <li key={comment.url || `${comment.author}:${index}`} className="min-w-0 rounded-xl border border-border px-4 py-3">
-                          <p className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                            {comment.author ? <Person login={comment.author} /> : <span>Someone</span>}
-                            {comment.createdAt && <span>{relativeDate(comment.createdAt)}</span>}
-                          </p>
-                          <Markdown text={comment.body} repository={pullRequest.repository} onOpenLink={openLink} className="mt-2" />
-                        </li>
-                      ))}
-                    </ol>
+              <div className="flex flex-col gap-8 px-4 pt-6 pb-16 sm:px-7 lg:flex-row">
+                <div className="flex min-w-0 flex-1 flex-col gap-6">
+                  <section aria-labelledby="pull-request-description" data-slot="pull-request-description" className="flex shrink-0 flex-col gap-2.5">
+                    <h2 id="pull-request-description" className="text-[13px] leading-[18px] font-semibold text-foreground">Description</h2>
+                    {pullRequest.body?.trim()
+                      ? <Markdown text={pullRequest.body} images={images} repository={pullRequest.repository} onOpenLink={openLink} className={DESCRIPTION} />
+                      : <p className="text-[13px] leading-[21px] text-muted-foreground">No description.</p>}
                   </section>
-                )}
-              </article>
+                  {stack?.entries && stack.entries.length > 1 && (
+                    <section aria-label={`Stack #${stack.number}`} data-slot="pull-request-stack" className="flex shrink-0 flex-col gap-2">
+                      <div className="flex items-center gap-2">
+                        <h2 className="min-w-0 flex-1 text-[13px] leading-[18px] font-semibold text-foreground">Stack</h2>
+                        <span className="shrink-0 text-[11px] leading-4 text-muted-foreground">{stack.position} of {stack.size} · merge in order</span>
+                      </div>
+                      <PullRequestStackRows>
+                        {stackEntriesInOrder(stack.entries).map((entry) => (
+                          <PullRequestStackEntry
+                            key={entry.number}
+                            repository={pullRequest.repository}
+                            entry={entry}
+                            current={entry.number === pullRequest.number}
+                            mergeable={conflicts.get(entry.number)}
+                            canOpen={canOpen}
+                            onOpen={onOpen}
+                          />
+                        ))}
+                      </PullRequestStackRows>
+                    </section>
+                  )}
+                </div>
+                <aside aria-label="Merge, reviewers and checks" className="flex shrink-0 flex-col gap-[18px] lg:w-[296px]">
+                  {failing && thread && (
+                    <FailingChecks pullRequest={pullRequest} checks={checks} thread={thread} onOpenThread={() => onOpenThread(thread)} />
+                  )}
+                  {open && (
+                    <SquashAndMerge
+                      organizationId={organizationId}
+                      workspaceId={pullRequest.workspaceId}
+                      pullRequest={pullRequest}
+                      headRefOid={detail?.headRefOid}
+                      blocker={mergeBlocker({ isDraft, state }, detail)}
+                      onMerged={() => { onChanged(); onBack(); }}
+                    />
+                  )}
+                  <Reviewers
+                    reviewers={reviewers}
+                    request={open ? (
+                      <RequestReviewers
+                        organizationId={organizationId}
+                        workspaceId={pullRequest.workspaceId}
+                        repository={pullRequest.repository}
+                        number={pullRequest.number}
+                        requested={reviewers.map((reviewer) => reviewer.login)}
+                        onRequested={changed}
+                      />
+                    ) : undefined}
+                  />
+                  <Checks checks={checks} />
+                </aside>
+              </div>
             </ScrollArea>
-            {wide && (
-              <aside aria-label="Summary" className="w-80 shrink-0 border-l border-border">
-                <ScrollArea data-slot="pull-request-detail-aside" className="h-full">
-                  <div className="px-5 py-7">{summary}</div>
-                </ScrollArea>
-              </aside>
-            )}
           </TabsContent>
           <TabsContent value="files" keepMounted className="flex min-h-0 flex-1 data-hidden:hidden">
             <Deferred open={view === "files"}>
@@ -417,6 +605,29 @@ export function PullRequestHostedDetail({
                 active={view === "files"}
               />
             </Deferred>
+          </TabsContent>
+          {/* Interim Activity: the pull request's comments. The timeline of
+              reviews, checks and thread events (Paper 513-0) replaces it. */}
+          <TabsContent value="activity" keepMounted className="flex min-h-0 flex-1 data-hidden:hidden">
+            <ScrollArea className="min-h-0 min-w-0 flex-1" viewportProps={{ tabIndex: 0, "aria-label": "Pull request activity" }}>
+              <div className="mx-auto w-full max-w-[46rem] px-4 pt-6 pb-16 sm:px-7">
+                {comments.length === 0 ? (
+                  <p className="text-[13px] leading-[21px] text-muted-foreground">No comments yet.</p>
+                ) : (
+                  <ol className="flex flex-col gap-3">
+                    {comments.map((comment, index) => (
+                      <li key={comment.url || `${comment.author}:${index}`} className="min-w-0 rounded-[10px] border border-border px-4 py-3">
+                        <p className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                          <a href={`https://github.com/${encodeURIComponent(comment.author)}`} target="_blank" rel="noreferrer" data-link className="truncate font-medium text-foreground hover:underline">{comment.author || "Someone"}</a>
+                          {comment.createdAt && <span>{relativeDate(comment.createdAt)}</span>}
+                        </p>
+                        <Markdown text={comment.body} repository={pullRequest.repository} onOpenLink={openLink} className="mt-2 text-[13px] leading-[21px]" />
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
+            </ScrollArea>
           </TabsContent>
         </Tabs>
       </main>
