@@ -24,7 +24,7 @@ Record every request's method, path, start, finish, and count. Separate network 
 
 The hosted preview on `127.0.0.1:5174` speaks HTTP/1.1, so the browser runs at most six requests to it at once and queues the rest. Read `requestStart - startTime` before blaming the hub: a read that waited two seconds in that queue is a request-count problem there, not server time, and production over HTTP/2 will not show it.
 
-Use `npm run perf` for the panes it covers. Extend the measurement or run a focused browser trace when the reported interaction is absent from that harness.
+Run a focused browser trace against `npm run dev:hosted`, or against the built app served as the Web job serves it. `npm run perf` drove the removed local window and is gone; `npm run bundle` still measures what the first load downloads.
 
 ## Do not put one read behind another
 

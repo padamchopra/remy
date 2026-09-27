@@ -8,9 +8,9 @@ Personal computers start with **Only me**. Shared computers start with **Everyon
 
 Organization → Computers lets a member share one of their Personal computers or cloud connections with the organization. The computer or connection remains owned by Personal; the organization stores a revocable use grant. The owner always sees that computer in the organization thread picker, including when the share is off. Other members can start organization threads only after a share, with the providers the owner leaves on, and can still reply on threads already running. The computer's signing key and cloud credentials remain on the source account, organization responses omit them, and administrators can remove the grant without gaining control of the Personal computer. Removing the computer or the member removes the grant. An account can keep multiple named Fly.io and model-access keys; sharing and new work use the active key.
 
-Settings → Computers carries the machine's name and icon into its registration. Names and icons can subsequently be edited on the organization computer. Device authorization keeps the device code and private key in the computer process; the window sees the comparison code. The signing key stays in Keychain on ordinary Macs. Existing local-only operation has no hub dependency.
+`remy login` carries the machine's name and icon into its registration. Names and icons can subsequently be edited on the organization computer. Device authorization keeps the device code and private key in the computer process. The signing key stays in Keychain on ordinary Macs.
 
-Removing a computer closes its hub connection and removes its hub thread catalogue and notifications. Its local threads, files, and running provider processes remain intact. Detaching from this Mac also clears its local registration and pending hub notifications. A disconnected organization cannot confirm a removal; the control reports that failure instead of claiming success.
+Removing a computer closes its hub connection and removes its hub thread catalogue and notifications. Its local threads, files, and running provider processes remain intact. `remy logout` also clears the computer's local registration and pending hub notifications. A disconnected organization cannot confirm a removal; the control reports that failure instead of claiming success.
 
 ## State paths
 
@@ -40,13 +40,10 @@ No native client ships from `main`, so nothing registers a push token today. The
 
 ```sh
 npm run build --prefix server
-QA_COMPUTER_POLICY=1 node hub/scripts/qa-threads.mjs
-# Use the printed hub URL in another terminal.
-VITE_REMY_HUB_URL=http://127.0.0.1:<hub-port> npm run qa:web
-# Use the printed session file and UI URL.
-QA_SESSION=<session-file> QA_WEB_URL=http://127.0.0.1:<ui-port> node web/scripts/qa-hub-computers.mjs
+npm run build --prefix web && npm run build:website --prefix web && node web/scripts/assemble-hub.mjs
+QA_HUB_WEB=1 QA_COMPUTER_POLICY=1 node hub/scripts/qa-threads.mjs
 ```
 
-The fixture uses current Workers/D1/R2 code, real member sessions, and current computer connections. Only the provider adapter is a fixture. It uses temporary databases and loopback ports. The browser check exercises personal denial/grant/revocation, organization registration, named running-thread links, notifications, narrow layout, and removal. Authorization codes are excluded from the reviewer recording. Unrelated tailnet names and addresses are replaced in evidence captures.
+The fixture uses current Workers/D1/R2 code, real member sessions, and current computer connections. Only the provider adapter is a fixture. It uses temporary databases and loopback ports, and the hub serves the web app at its printed address. Drive Settings → Computers there for personal denial, grant and revocation, named running-thread links, notifications, narrow layout and removal. The browser script that drove this through the removed local window, `qa-hub-computers.mjs`, is gone; there is no scripted replacement yet. Authorization codes are excluded from the reviewer recording.
 
 Automated tests cover policy and tenant boundaries, organization ownership after member deletion, persistent notification deduplication and retries, session revocation, and the Apple JWT signature/request. A real Apple device delivery requires the deployment's Apple signing key and an opted-in device; it is not simulated as a successful delivery by the UI fixture.

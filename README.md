@@ -1,16 +1,14 @@
 # Remy
 
-Remy is a remote for [Claude Code](https://claude.com/claude-code), [Codex](https://developers.openai.com/codex), and [Cursor](https://cursor.com/docs/cli/acp) on your own machines. Point it at a folder, say what you want done, and the work runs on the machine that actually holds the repo — while you watch from a browser tab anywhere.
+Remy runs [Claude Code](https://claude.com/claude-code), [Codex](https://developers.openai.com/codex), and [Cursor](https://cursor.com/docs/cli/acp) threads on your own machines or on a cloud computer, and you follow them all from [Remy on the web](https://app.tryremy.dev). Pick a workspace, say what you want done, and the work runs on the computer that holds the repo — while you watch from a browser tab anywhere.
 
 <img src="docs/images/threads.png" alt="Remy showing four threads across two machines, with a composer for a new one" width="100%" />
 
 ## Wait, where does my code go?
 
-Nowhere. That is the whole point.
+On a computer you connect, it stays there. The `remy` CLI runs a daemon on that machine; your repos are never uploaded or cloned to a server, and they reach no API but the provider you picked for the thread — the same call Claude Code, Codex, or Cursor already makes when you run it in a terminal. The daemon listens on `127.0.0.1` and nothing else, and connects out to your Remy account.
 
-Remy is a daemon on your machine plus a page onto it. Your repos are never uploaded, never cloned to a server, never sent through anybody's API but the one you picked the thread to run on — the same call Claude Code, Codex, or Cursor already makes when you run it in a terminal. The daemon listens on `127.0.0.1` and nothing else. When you want to reach it from another device, that goes over [Tailscale](https://tailscale.com), which is your own private network, not the public internet.
-
-There is no account, no sign-up, and no hosted anything. If this repo disappeared tomorrow your copy would keep working.
+Remy on the web keeps your account, your organizations, your Tasks board, and a bounded copy of each thread's recent turns so you can follow it live and read it while the computer is offline. A hosted computer is the other choice: it runs your repository in the cloud.
 
 ## Try it
 
@@ -24,7 +22,7 @@ remy login remy_…   # the command that page gives you
 remy start          # keeps this computer available
 ```
 
-`npx @padamchopra/remy` runs the same command without a global install. `remy update` (or `remy update --yes`) installs the latest published CLI. `remy status` says what it is connected to and `remy logout` disconnects it. Remy still listens on `127.0.0.1`, and another device reaches it over your tailnet.
+`npx @padamchopra/remy` runs the same command without a global install. `remy update` (or `remy update --yes`) installs the latest published CLI. `remy status` says what it is connected to and `remy logout` disconnects it. Remy still listens on `127.0.0.1`; you reach it from Remy on the web.
 
 **Or run the web app from source**, against your Remy account:
 
@@ -48,10 +46,6 @@ A thread runs on the computer you pick, or on the one you last used for that wor
 
 Settings → Environments lets you define reusable values and assign one environment to several workspaces. Tasks inherit the selected values on their execution computer, including local computers and optional hosted task computers. Values are encrypted at rest and management screens return names only. Providers and their commands can read assigned values. Remy redacts exact values from supported output paths, but encoded or transformed values are not recognised; this is not a boundary against a hostile command.
 
-`⌘K` gets you anywhere, and tells you which threads need you.
-
-<img src="docs/images/palette.png" alt="The command palette listing threads that need you and threads still working" width="100%" />
-
 **Tasks** is for planning rather than chatting: a board of tickets, each one a piece of work you can start a thread on. A ticket follows the thread working on it, so the board moves without you dragging cards.
 
 <img src="docs/images/tasks-board.png" alt="The Tasks board, tickets in columns" width="100%" />
@@ -60,28 +54,13 @@ Settings → Environments lets you define reusable values and assign one environ
 
 ## Add your other machines
 
-Remy is built for more than one machine. A desktop that holds the big repos, a laptop you carry, both on your tailnet.
-
-On each machine, open **Settings → Devices** and turn on **Reachable from your other machines**. That runs `tailscale serve`, which is what lets anything reach the daemon at all — it binds loopback on its own.
-
-Then, on either machine, look under **On your tailnet**. Remy already knows your devices and has checked which of them are running it, so you pick one and press **Pair**. Both machines show a six-digit code; if they match, press **Allow** on the other one. Nothing is shared until you do.
-
-From then on the two share a planning board — tickets converge on both without either being in charge. Threads stay put, on the machine holding the repo.
-
-If a machine is somewhere Tailscale is not, **Pair with a link instead** takes a `remy://configure?…` link you copy from the other side.
-
-## Where notifications go
-
-Every device card has a **Notifications** switch, and it means: when a thread on *this* machine needs you, tell *that* device. Turn on the ones you want. Turn off the machine you never sit at.
-
-When a window is open, notifications are banners. When none is, they go to the paired computers that asked for them.
+Run `remy login` and `remy start` on each one. They all appear under **Settings → Computers** in the same account, and each thread runs on the computer that holds its workspace. Share a computer with an organization there when other people should be able to start threads on it.
 
 ## Some notes
 
 This is early, and built for one person's setup first. Expect rough edges.
 
-- **The Mac app is off `main`.** Remy is the web app plus the CLI; the Electron window lives on the long-lived `padam/desktop-electron-9236` branch until that work comes back.
-- **The iOS app** in `mobile/` is a React Native remote. It cannot run threads on its own — pair it with a computer running Remy from Settings → Devices.
+- **Remy on the web is the only window.** The Mac app and the iPhone app are off `main`, and so is the browser window that talked straight to one computer's daemon. Open Remy in your phone's browser instead.
 - **Stay awake** prevents *idle* sleep. Closing a MacBook lid is a different thing and can still sleep the machine.
 - **Repos on an external drive** need Full Disk Access for Remy, in System Settings → Privacy & Security.
 - **Running a 1M context window?** Transcripts do not record the window size, so set `contextLimit` if the meter looks wrong.

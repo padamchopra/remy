@@ -13,13 +13,13 @@ A snapshot of the default paint is not a test.
 
 Agent-driven hosted QA against start, organizations, computers, or providers uses a real production account from environment secrets `REMY_QA_EMAIL` and `REMY_QA_PASSWORD`. Read those names exactly. Never commit values, log the password, or put them in fixtures, website sample state, or PR bodies.
 
-`npm run qa:web` and isolated hub sessions (`QA_SESSION`, `qa-hub-*.mjs`, `hosted-runtime-check.mjs`) are not a substitute for that account. If either secret is missing, fail with `set REMY_QA_EMAIL and REMY_QA_PASSWORD` instead of falling back to sample state.
+Isolated hub sessions (`QA_SESSION`, `qa-hub-*.mjs`, `hosted-runtime-check.mjs`) are not a substitute for that account. If either secret is missing, fail with `set REMY_QA_EMAIL and REMY_QA_PASSWORD` instead of falling back to sample state.
 
 Sign in through production’s email and password path. Create that account on `app.tryremy.dev` with **Create your account**; there is no password-reset form. For `npm run dev:hosted`, export the secrets in that Vite process, open `http://127.0.0.1:5174`, choose **Sign in**, and keep that session. For production `app.tryremy.dev`, fill the same email and password on the sign-in form. `npm run qa:hosted` does that check; set `QA_HOSTED_URL` when the preview is not on 5174. Isolated magic-link adapters remain for hub implementation checks that capture mail locally.
 
 BAD
 ```text
-Drive hosted thread start against qa:web sample workspaces, or paste a password into a fixture.
+Drive hosted thread start against a disposable hub’s sample workspaces, or paste a password into a fixture.
 ```
 
 GOOD
@@ -52,20 +52,18 @@ Start with an empty account, follow the computer setup handoff, add a workspace 
 Choose the preview by what changed:
 
 - **UI only:** `npm run dev:hosted` serves the edited UI at `http://127.0.0.1:5174` against your live hosted account. Open `127.0.0.1`, not `localhost`.
-- **Server behavior:** `npm run qa:web` builds the current checkout and starts an isolated daemon and Vite on unused loopback ports. Open the URL it prints. Its temporary database includes a disposable sample workspace and ticket; add `-- --empty` when testing an empty state.
-- **Hosted web:** for live start, organizations, computers, or providers, use `dev:hosted` or `app.tryremy.dev` with `REMY_QA_EMAIL` and `REMY_QA_PASSWORD` as in **Hosted live account**. Isolated hub setup in `hub/docs/web.md` is for captured-mail implementation checks. The `qa:web` daemon preview does not exercise hosted runtime selection, account permissions, or cloud availability.
+- **Daemon or hub behavior:** build the server and the web app in its deployed layout, then run `QA_HUB_WEB=1 QA_COMPUTER_POLICY=1 node hub/scripts/qa-threads.mjs` (the commands are in `AGENTS.md` under **Running it locally**). It attaches the current `server/dist` as a computer to a disposable hub that serves the current web app at the printed `QA_HUB` address, with a sample workspace and thread. Sign in through the printed session's tokens, as `web/scripts/qa-hub-threads.mjs` does, and drive that address.
+- **Hosted web:** for live start, organizations, computers, or providers, use `dev:hosted` or `app.tryremy.dev` with `REMY_QA_EMAIL` and `REMY_QA_PASSWORD` as in **Hosted live account**. The disposable hub is for captured-mail implementation checks; it does not prove your live account's permissions or cloud availability.
 
 Match the hosted fixture's asset routing and runtime configuration to the deployment configuration. Open its printed URL and confirm it reaches the authenticated app before running a journey; serving the public homepage or a development-only asset layout is not hosted app coverage.
 
-Probe `http://127.0.0.1:5174` before starting `dev:hosted`. If it already responds, reuse it rather than starting a second one; its port is strict. There is no local browser shell against this machine's daemon; use `npm run qa:web` for current server code.
+Probe `http://127.0.0.1:5174` before starting `dev:hosted`. If it already responds, reuse it rather than starting a second one; its port is strict. There is no browser shell against a daemon; the web app is the only client, so current server code is seen through the disposable hub.
 
 The page does not live-reload — `server.hmr` is `false` in `web/vite.config.ts`. Reload it after every edit, or the screenshot is of the code you had before.
 
-Never quit Remy.app, stop the process on port 8420, or replace its daemon for QA. A thread may be running through that exact process. The sidecar strips inherited `REMY_*` and `MC_*` credentials, uses temporary state, and owns only the processes it starts, so current server code can run beside production without reaching back into it.
+Never stop the process on port 8420 or replace its daemon for QA. A thread may be running through that exact process. `qa-threads.mjs` strips inherited `REMY_*` and `MC_*` credentials, keeps its computer's state in a temporary directory, and owns only the processes it starts, so current server code runs beside production without reaching back into it.
 
-Keep `npm run qa:web` running while clicking the app, then stop that command with Ctrl+C. It removes the temporary state. Never kill a process by port or stop another Vite instance. A pass against `npm run dev:hosted` verifies edited UI against the hosted backend; it does not verify a daemon change.
-
-`npm run qa:web -- --check` is the fast startup and proxy regression check. It is not interaction QA: for a UI or behavior change, use the ordinary command and drive the printed URL.
+Keep `qa-threads.mjs` running while clicking the app, then stop it with Ctrl+C to remove its temporary state. Never kill a process by port or stop another Vite instance. A pass against `npm run dev:hosted` verifies edited UI against the hosted backend; it does not verify a daemon change.
 
 Use Remy's browser tools when they are available. For an ad-hoc Playwright check, run from `web/`, where `playwright-core` is installed; `web/scripts/shoot.mjs` is the working example and `chromiumPath()` in `web/scripts/chromium.mjs` finds the binary.
 
@@ -127,17 +125,17 @@ Hold on the composer. Move to the workspace picker and show the click. Pause on 
 
 ## Remote live state
 
-Use this scenario after changing peer transport, subscriptions, caching, remote detail loading, reconnect behavior, or a view whose state can be owned by another device.
+Use this scenario after changing the hub thread relay, subscriptions, caching, remote detail loading, reconnect behavior, or a view whose state is owned by a computer.
 
-- Open a real thread owned by another available device and keep its hash route visible.
+- Open a real thread owned by an available computer and keep its route visible.
 - Record catalogue and detail request counts before judging the paint.
 - Observe a remote turn while it changes; the feed updates without switching threads, changing sections, or reloading.
-- In an isolated paired test, disconnect and reconnect the peer stream; missed entries arrive once, in order, without replacing useful cached content during the gap.
-- In an isolated paired test, restart or reset the remote stream; the open detail performs a full read when it cannot resume.
+- On a disposable hub, disconnect and reconnect the computer (the `qa-threads.mjs` control endpoint does this); missed entries arrive once, in order, without replacing useful cached content during the gap.
+- On a disposable hub, restart the coordinator or reset the stream; the open detail performs a full read when it cannot resume.
 - Reload the remote thread's deep link; it stays on that route while the remote catalogue answers and does not flash the composer for a different thread.
 - Hide and show the window; foregrounding does not create overlapping detail reads.
 
-Do not send, interrupt, restart, or otherwise mutate somebody's active production thread merely to create an update. Observe existing safe activity, use disposable paired instances, or report that live interaction proof is unavailable.
+Do not send, interrupt, restart, or otherwise mutate somebody's active production thread merely to create an update. Observe existing safe activity, use a disposable hub, or report that live interaction proof is unavailable.
 
 A UI preview against the packaged daemon does not prove current server relay code. Pair it with the relay integration test or an isolated current-server run, and state which boundary each result covers.
 
