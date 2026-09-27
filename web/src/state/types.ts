@@ -433,7 +433,6 @@ export interface ServerSettings {
   remyEffort: string;
   favoriteModels: string[];
   repoUpdate: "off" | "hourly" | "sixHourly" | "daily";
-  notifySelf?: boolean;
   preventSleepSupported?: boolean;
   worktreeBranchPrefix: string;
   /// Your face: empty for the default, `preset:<id>`, or a `data:` URL.
@@ -441,8 +440,6 @@ export interface ServerSettings {
   deviceName: string;
   deviceIcon: string;
   deviceTint: string;
-  /// Preferred devices for work that is not tied to a workspace.
-  devicePreferenceOrder: string[];
   /// The provider a new thread falls back to when neither its workspace nor
   /// the composer names one: the first provider turned on, at its own default
   /// model. Derived by the daemon, not a setting.

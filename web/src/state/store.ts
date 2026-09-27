@@ -650,7 +650,7 @@ export const useStore = create<State>((set, get) => ({
 
     if (useFixture) {
       const serverId = input.serverId
-        ?? preferredServer(get().servers, get().settings?.devicePreferenceOrder)?.id
+        ?? preferredServer(get().servers)?.id
         ?? get().servers[0]?.id
         ?? "studio";
       const chat: Chat = {
@@ -674,7 +674,7 @@ export const useStore = create<State>((set, get) => ({
     }
 
     const server = get().servers.find((entry) => entry.id === input.serverId)
-      ?? preferredServer(get().servers, get().settings?.devicePreferenceOrder)
+      ?? preferredServer(get().servers)
       ?? localServer(get().servers);
     if (!server) throw new Error("This machine isn't connected.");
     const created = await transport.request<{ chat?: RawChat }>(server.id, "/chats", {
@@ -1692,16 +1692,9 @@ function localServer(servers: Server[]): Server | undefined {
 /// Which machine owns a project's tickets. A project belongs to whichever
 /// server answered with it, so a write goes back to that one rather than to
 /// whichever machine happens to be local.
-/// The device a thread with no workspace starts on: the first available one in
-/// the person's own order.
-function preferredServer(servers: Server[], preferenceOrder: string[] = []): Server | undefined {
-  const available = servers.filter((server) => server.online && !server.cloud);
-  const ranked = [...available].sort((a, b) => {
-    const left = preferenceOrder.indexOf(a.id);
-    const right = preferenceOrder.indexOf(b.id);
-    return (left < 0 ? preferenceOrder.length : left) - (right < 0 ? preferenceOrder.length : right);
-  });
-  return ranked[0];
+/// The computer a thread with no workspace starts on: the first available one.
+function preferredServer(servers: Server[]): Server | undefined {
+  return servers.find((server) => server.online && !server.cloud);
 }
 
 function boardServer(servers: Server[], projects: Project[], projectId: string): string {

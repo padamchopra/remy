@@ -2,8 +2,7 @@
 /// that has stopped to ask them something, and a thread that has finished.
 ///
 /// The server already decides what is worth a banner and pushes it down the
-/// notify socket as a `notification` frame — the same frames that reach a phone
-/// through Apple Push when nothing is connected. This turns one into a real
+/// notify socket as a `notification` frame. This turns one into a real
 /// notification and routes the click back to the thread it came from.
 
 export interface NotifyFrame {
@@ -11,7 +10,7 @@ export interface NotifyFrame {
   session?: string;
   title?: string;
   message?: string;
-  /// A `remy://chat/<id>` deep link, the same one the phone gets.
+  /// A `remy://chat/<id>` deep link.
   click?: string;
   highPriority?: boolean;
 }

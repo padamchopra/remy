@@ -11,7 +11,6 @@ process.env.MC_CONFIG_DIR = stateDir;
 process.env.HOME = stateDir;
 
 const {
-  devicePreferenceOrder,
   patchSettings,
   publicSettings,
   setProviderEnabled,
@@ -45,7 +44,7 @@ test("starts on the defaults a fresh install should have", () => {
   assert.equal(settings.deviceName, "");
   assert.equal(settings.deviceIcon, "");
   assert.equal(settings.deviceTint, "");
-  assert.deepEqual(settings.devicePreferenceOrder, []);
+  assert.equal("devicePreferenceOrder" in settings, false);
   assert.equal("tailscaleServeEnabled" in settings, false);
   assert.deepEqual(settings.favoriteModels, []);
   assert.deepEqual(settings.enabledProviders, ["claude", "codex", "cursor"]);
@@ -97,14 +96,6 @@ test("stores only a usable device identity", () => {
   settings = patchSettings({ deviceIcon: "spaceship", deviceTint: "ultraviolet" });
   assert.equal(settings.deviceIcon, "");
   assert.equal(settings.deviceTint, "");
-});
-
-test("keeps a unique bounded device preference order", () => {
-  assert.deepEqual(devicePreferenceOrder([" mac ", "mini", "mac", "", 42]), ["mac", "mini"]);
-  assert.deepEqual(
-    patchSettings({ devicePreferenceOrder: ["peer-2", "local", "peer-2"] }).devicePreferenceOrder,
-    ["peer-2", "local"],
-  );
 });
 
 test("has no machine-wide default model or permission to save", () => {
