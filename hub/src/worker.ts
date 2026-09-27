@@ -28,6 +28,7 @@ import { advertisedCloudProvidersFor, advertisedProviderIds, canStartWithShareGr
 import { GitCapabilities, GithubInstallation, githubRepository, proxyGit } from "./hosted-git.js";
 import { HostedSettingsStore } from "./hosted-settings.js";
 import { HostedLifecycle } from "./hosted-lifecycle.js";
+import { hostedComputerName } from "./hosted-computer-name.js";
 import { threadStartProgress, type ManualThreadStart } from "./thread-start-progress.js";
 import { HttpRuntimeProvider } from "./computer-runtime.js";
 import { hostedSettingsSchema } from "@remy/contract";
@@ -40,6 +41,7 @@ import {
   COMPUTER_HEARTBEAT_TIMEOUT_MS,
   COMPUTER_PROTOCOL_VERSION,
   THREAD_REQUEST_MAX_BYTES,
+  computerRegistrationSchema,
   computerRegistrationInputSchema,
   computerAccessSchema,
   computerToHubFrameSchema,
@@ -1917,7 +1919,7 @@ export class HubCoordinator {
       let keys=await this.ctx.storage.get<{publicKey:string;privateKey:string}>(`hosted-key:${state.computerId}`);
       if(!keys){const pair=await crypto.subtle.generateKey("Ed25519",true,["sign","verify"]) as CryptoKeyPair;keys={publicKey:encoded(await crypto.subtle.exportKey("spki",pair.publicKey)),privateKey:encoded(await crypto.subtle.exportKey("pkcs8",pair.privateKey))};await this.ctx.storage.put(`hosted-key:${state.computerId}`,keys);}
       const now=Date.now();
-      const registration={computerId:state.computerId,organizationId:org,ownerUserId:null,ownership:"hosted" as const,name:state.taskId?`${state.taskTitle || workspace.name} · ${state.computerId.slice(0,6)}`:`Codex for ${workspace.name}`,icon:"cloud",platform:"linux" as const,daemonVersion:this.env.MINIMUM_DAEMON_VERSION??"0.1.0",protocol:{minimum:1,maximum:1},publicKey:keys.publicKey,capabilities:{providers:[],workspaces:[{id:workspace.id,name:workspace.name,path:"/workspace",origin:workspace.origin}],worktrees:true,terminals:true,emulator:false},access:{mode:"organization" as const,userIds:[],teamIds:[]},registeredAt:now,updatedAt:now};
+      const registration=computerRegistrationSchema.parse({computerId:state.computerId,organizationId:org,ownerUserId:null,ownership:"hosted" as const,name:hostedComputerName(workspace.name,state.computerId,state.taskId?{title:state.taskTitle}:undefined),icon:"cloud",platform:"linux" as const,daemonVersion:this.env.MINIMUM_DAEMON_VERSION??"0.1.0",protocol:{minimum:1,maximum:1},publicKey:keys.publicKey,capabilities:{providers:[],workspaces:[{id:workspace.id,name:workspace.name,path:"/workspace",origin:workspace.origin}],worktrees:true,terminals:true,emulator:false},access:{mode:"organization" as const,userIds:[],teamIds:[]},registeredAt:now,updatedAt:now});
       if(!await this.computers.computer(org,state.computerId)) await this.computers.register({...registration,lastSeenAt:null});
       await this.env.DB.prepare("INSERT INTO hosted_workspace_bindings(computer_id,organization_id,workspace_id) VALUES(?,?,?) ON CONFLICT(computer_id) DO NOTHING").bind(state.computerId,org,state.workspaceId).run();
       const taskOwner = state.taskId ? await this.ctx.storage.get<string>(`hosted-task-owner:${state.taskId}`) : undefined;

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { hostedSettingsSchema } from "@remy/contract";
 import { HostedLifecycle } from "./hosted-lifecycle.js";
+import { hostedComputerName } from "./hosted-computer-name.js";
 import type { KeyValueStorage } from "./durable-storage.js";
 import type { ComputerRuntimeProvider } from "./computer-runtime.js";
 function fixture() {
@@ -90,6 +91,14 @@ function fixture() {
 const settings = hostedSettingsSchema.parse({
   enabled: true,
   provider: "modal",
+});
+test("hosted computer names keep their suffix within the registration limit", () => {
+  const computerId = "b14a5df3-4a34-438f-9a32-d1828f474ba8";
+  const title = "A".repeat(120);
+  const name = hostedComputerName("Remy", computerId, { title });
+  assert.equal(name.length, 120);
+  assert.match(name, / · b14a5d$/);
+  assert.equal(hostedComputerName("W".repeat(120), computerId).length, 120);
 });
 test("concurrent triggers reuse one warm computer across lifecycle reconstruction", async () => {
   const f = fixture(),
