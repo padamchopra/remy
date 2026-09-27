@@ -17,11 +17,14 @@ because their computer connects to an organization.
 | Code references | A message may carry `codeReferences`: up to 20 file ranges, each with its path, lines and comment, such as lines sent from a pull request's diff. The hub refuses what could never be valid and forwards the rest; the computer validates each one (`server/src/chat-references.ts`), gives its provider a review-context block, and keeps them on the user entry so the thread shows them. Cursor Cloud, which takes text alone, receives the same block in the message text. |
 | Reviews | A review is a thread with a pull request attached: its computer checks the head out in its own worktree, and each message carries its owner's rules and the commit it is about. Findings, proposals and rules live on the hub (`review-agent.md`). |
 | Images | Browser uploads bytes over authenticated HTTP to R2. The computer downloads the named object using its own signed HTTP request, validates the image and stores a local copy for its provider. Only attachment references travel on the socket. |
+| New thread start | The organization coordinator stores the complete start command before provisioning. Its request UUID is the final thread UUID. Polling, browser reconnect, and the coordinator alarm resume the same idempotent checkpoints until the computer has created the thread and accepted its first message. |
 
 ## Access and defaults
 
-Manual starts use `POST /api/organizations/:organizationId/computers/:computerId/threads`
-with a computer-advertised `workspaceId`. They default to private. A trusted
+Manual starts use `POST /api/organizations/:organizationId/threads` with a
+computer-advertised `workspaceId`, a final thread UUID, and the first message.
+The hub forwards that UUID to the computer and uses it as the provider resource
+identity, so a retry cannot create another thread or cloud computer. They default to private. A trusted
 computer integration can call `shareHubThread` with `external` or `automatic` to
 default to open; clients cannot select their own trusted source or actor.
 
@@ -35,6 +38,13 @@ Prompt entries and successful approval/question responses retain the member's ID
 and display name on the computer. An expired request ID cannot answer another
 request. Message IDs make a retried prompt idempotent. Answering an approval never
 implicitly grants a different decision.
+
+The hub checkpoints computer selection, thread creation, and first-message
+delivery in Durable Object storage. Each stage can repeat. The computer creates
+the supplied thread UUID, and the first message uses `u-<thread UUID>`, which
+the computer deduplicates. A coordinator restart leaves the command pending;
+the next status read or alarm continues it. A caught provider failure remains
+visible and Retry clears that failure while keeping the same identities.
 
 The older arbitrary computer proxy and raw notification stream are closed to
 member requests: they bypass thread access checks and expose machine credentials

@@ -214,6 +214,7 @@ export class CursorCloudThreads {
   }
 
   async create(input: {
+    id: string;
     organizationId: string;
     actor: ThreadMember;
     workspaceId: string;
@@ -227,7 +228,9 @@ export class CursorCloudThreads {
     if (!input.apiKey) throw new Error("Connect Cursor Cloud in Computers settings.");
     const origin = cursorCloudRepoUrl(input.origin);
     if (!origin) throw new Error("Cursor Cloud needs a git remote it can clone.");
-    const id = crypto.randomUUID();
+    const id = input.id;
+    const existing = await this.get(id);
+    if (existing) return existing;
     const now = this.now();
     const title = clip(redact(input.title?.trim() || "New thread", input.apiKey), 200);
     const snapshot = threadSnapshotSchema.parse({
@@ -310,7 +313,10 @@ export class CursorCloudThreads {
       const text = [codeReferencesText(input.codeReferences), typeof input.text === "string" ? input.text.trim() : ""].filter(Boolean).join("\n\n");
       if (!text) return Response.json({ error: "Enter a message." }, { status: 400 });
       if (!apiKey) return Response.json({ error: "Connect Cursor Cloud in Computers settings." }, { status: 409 });
-      await this.send(id, text, apiKey, actor);
+      const messageId = typeof input.messageId === "string" && /^u-[0-9a-f-]{36}$/i.test(input.messageId)
+        ? input.messageId
+        : undefined;
+      await this.send(id, text, apiKey, actor, messageId);
       return Response.json({ ok: true }, { status: 202 });
     }
     if (method === "POST" && action === "interrupt") {
@@ -365,14 +371,15 @@ export class CursorCloudThreads {
     return Response.json({ error: "This action is not available." }, { status: 404 });
   }
 
-  private async send(id: string, text: string, apiKey: string, actor: ThreadMember): Promise<void> {
+  private async send(id: string, text: string, apiKey: string, actor: ThreadMember, messageId?: string): Promise<void> {
     const thread = await this.threads.get(CURSOR_CLOUD_COMPUTER_ID, id);
     const meta = await this.storage.get<CursorCloudMeta>(this.metaKey(id));
     if (!thread || !meta) throw new Error("This thread is no longer available.");
+    if (messageId && thread.detail.entries.some((entry) => entry.id === messageId)) return;
     if (thread.detail.state === "working" || this.draining.has(id)) throw new Error("Cursor Cloud is still working on that thread.");
     const safeText = clip(redact(text, apiKey), MAX_TEXT);
     const entries = [...(thread.detail.entries as Entry[]), {
-      id: typeof crypto.randomUUID === "function" ? `u-${crypto.randomUUID()}` : `u-${this.now()}`,
+      id: messageId ?? (typeof crypto.randomUUID === "function" ? `u-${crypto.randomUUID()}` : `u-${this.now()}`),
       kind: "user",
       text: safeText,
       member: actor,

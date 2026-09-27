@@ -185,7 +185,7 @@ test("starting on your own key needs the switch, a cloud computer, and bypasses 
     const { values, state } = memoryState();
     const coordinator = new HubCoordinator(state, env as never);
     const handle = (coordinator as unknown as { threadRequest: (r: Request) => Promise<Response | undefined> }).threadRequest.bind(coordinator);
-    const start = (payload: Record<string, unknown>, user = "ada") => handle(new Request("https://internal/threads", { method: "POST", headers: { "content-type": "application/json", "x-thread-member": encodeURIComponent(JSON.stringify({ id: user, label: user })), "x-organization-id": "org" }, body: JSON.stringify({ workspaceId: "org-release", requestId: crypto.randomUUID(), visibility: "private", ...payload }) }));
+    const start = (payload: Record<string, unknown>, user = "ada") => handle(new Request("https://internal/threads", { method: "POST", headers: { "content-type": "application/json", "x-thread-member": encodeURIComponent(JSON.stringify({ id: user, label: user })), "x-organization-id": "org" }, body: JSON.stringify({ workspaceId: "org-release", requestId: crypto.randomUUID(), message: "Test.", visibility: "private", ...payload }) }));
     const error = async (response: Response | undefined) => ((await response!.json()) as { error: string }).error;
 
     const denied = await start({ computerId: "cloud:modal", provider: "openrouter", model: "openrouter/auto" });

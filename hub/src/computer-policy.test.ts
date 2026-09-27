@@ -365,10 +365,10 @@ test("members share their own computers and start-provider grants block only new
     };
     const request = (user: string, path: string, method: string, payload: unknown) => new Request(`https://internal${path}`, { method, headers: { "content-type": "application/json", "x-thread-member": encodeURIComponent(JSON.stringify({ id: user, label: user })), "x-organization-id": "org" }, body: JSON.stringify(payload) });
     const handle = (coordinator as unknown as { threadRequest: (r: Request) => Promise<Response | undefined> }).threadRequest.bind(coordinator);
-    const denied = await handle(request("ada", "/threads", "POST", { workspaceId: "org-release", requestId: crypto.randomUUID(), computerId, provider: "cursor", visibility: "open" }));
+    const denied = await handle(request("ada", "/threads", "POST", { workspaceId: "org-release", requestId: crypto.randomUUID(), message: "Test.", computerId, provider: "cursor", visibility: "open" }));
     assert.equal(denied?.status, 403);
     assert.equal((await denied!.json() as { error: string }).error, START_PROVIDER_DENIED);
-    const ownerStart = await handle(request("grace", "/threads", "POST", { workspaceId: "org-release", requestId: crypto.randomUUID(), computerId, provider: "cursor", visibility: "open" }));
+    const ownerStart = await handle(request("grace", "/threads", "POST", { workspaceId: "org-release", requestId: crypto.randomUUID(), message: "Test.", computerId, provider: "cursor", visibility: "open" }));
     assert.equal(ownerStart?.status, 202);
     assert.equal((await ownerStart!.json() as { phase?: string }).phase, "creating");
     const threads = (coordinator as unknown as { threads: import("./thread-store.js").ThreadStore }).threads;
@@ -485,10 +485,10 @@ test("members share their own cloud connections and start-provider grants block 
     };
     const request = (user: string, path: string, method: string, payload: unknown) => new Request(`https://internal${path}`, { method, headers: { "content-type": "application/json", "x-thread-member": encodeURIComponent(JSON.stringify({ id: user, label: user })), "x-organization-id": "org" }, body: JSON.stringify(payload) });
     const handle = (coordinator as unknown as { threadRequest: (r: Request) => Promise<Response | undefined> }).threadRequest.bind(coordinator);
-    const denied = await handle(request("ada", "/threads", "POST", { workspaceId: "org-release", requestId: crypto.randomUUID(), computerId: "cloud:modal", provider: "openrouter", model: "openrouter/auto", visibility: "open" }));
+    const denied = await handle(request("ada", "/threads", "POST", { workspaceId: "org-release", requestId: crypto.randomUUID(), message: "Test.", computerId: "cloud:modal", provider: "openrouter", model: "openrouter/auto", visibility: "open" }));
     assert.equal(denied?.status, 403);
     assert.equal((await denied!.json() as { error: string }).error, START_PROVIDER_DENIED);
-    const ownerStart = await handle(request("grace", "/threads", "POST", { workspaceId: "org-release", requestId: crypto.randomUUID(), computerId: "cloud:modal", provider: "openrouter", model: "openrouter/auto", visibility: "open" }));
+    const ownerStart = await handle(request("grace", "/threads", "POST", { workspaceId: "org-release", requestId: crypto.randomUUID(), message: "Test.", computerId: "cloud:modal", provider: "openrouter", model: "openrouter/auto", visibility: "open" }));
     assert.notEqual(ownerStart?.status, 403);
     const threads = (coordinator as unknown as { threads: import("./thread-store.js").ThreadStore }).threads;
     await threads.snapshot(hostedId, { id: threadId, revision: 1, access: { organizationId: "org", owner: { id: "grace", label: "Grace" }, visibility: "open", participants: [{ id: "ada", label: "Ada" }] }, detail: { id: threadId, title: "Release", cwd: "/workspace", entries: [] } });
@@ -990,11 +990,11 @@ test("Cursor Cloud connects, stays encrypted, starts without a guest computer, a
     const values = new Map<string, unknown>([["organizationId", "org"]]);
     let ensured = 0;
     const coordinator = new HubCoordinator({ storage: { get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); }, delete: async (key: string) => values.delete(key), list: async () => new Map([...values]), getAlarm: async () => null, setAlarm: async () => {}, transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn({ get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); } }) }, blockConcurrencyWhile: async <T>(work: () => Promise<T>) => work(), getWebSockets: () => [], waitUntil: (work: Promise<unknown>) => { void work; } } as unknown as DurableObjectState, { DB: db, AUTH_SECRET: { get: async () => secret }, BETTER_AUTH_URL: "https://hub.example" } as never);
-    (coordinator as unknown as { hostedService: () => { ensure: () => Promise<unknown> } }).hostedService = () => ({ ensure: async () => { ensured += 1; throw new Error("guest computers must not start for Cursor Cloud"); } });
+    (coordinator as unknown as { hostedService: () => { ensure: () => Promise<unknown>; get: () => Promise<undefined> } }).hostedService = () => ({ ensure: async () => { ensured += 1; throw new Error("guest computers must not start for Cursor Cloud"); }, get: async () => undefined });
     const handle = (coordinator as unknown as { threadRequest: (r: Request) => Promise<Response | undefined> }).threadRequest.bind(coordinator);
     const request = (path: string, method: string, payload: unknown) => new Request(`https://internal${path}`, { method, headers: { "content-type": "application/json", "x-thread-member": encodeURIComponent(JSON.stringify({ id: "ada", label: "Ada" })), "x-organization-id": "org" }, body: JSON.stringify(payload) });
     const requestId = crypto.randomUUID();
-    const started = await handle(request("/threads", "POST", { workspaceId: "org-release", requestId, computerId: CURSOR_CLOUD_COMPUTER_ID, provider: "cursor", visibility: "private" }));
+    const started = await handle(request("/threads", "POST", { workspaceId: "org-release", requestId, message: "Test.", computerId: CURSOR_CLOUD_COMPUTER_ID, provider: "cursor", visibility: "private" }));
     assert.equal(started?.status, 202);
     const key = `manual-task:ada:${requestId}`;
     for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -1008,13 +1008,13 @@ test("Cursor Cloud connects, stays encrypted, starts without a guest computer, a
     assert.equal(ensured, 0);
     const thread = await (coordinator as unknown as { threads: import("./thread-store.js").ThreadStore }).threads.get(CURSOR_CLOUD_COMPUTER_ID, created.id!);
     assert.equal(thread?.detail.provider, "cursor");
-    const claude = await handle(request("/threads", "POST", { workspaceId: "org-release", requestId: crypto.randomUUID(), computerId: CURSOR_CLOUD_COMPUTER_ID, provider: "claude", visibility: "private" }));
+    const claude = await handle(request("/threads", "POST", { workspaceId: "org-release", requestId: crypto.randomUUID(), message: "Test.", computerId: CURSOR_CLOUD_COMPUTER_ID, provider: "claude", visibility: "private" }));
     assert.equal(claude?.status, 403);
 
     await store.setSecret("org", "cloud:cursor-cloud", null);
     await store.setSecret(personal.id, "cloud:cursor-cloud", null);
     const missingId = crypto.randomUUID();
-    const missing = await handle(request("/threads", "POST", { workspaceId: "org-release", requestId: missingId, computerId: CURSOR_CLOUD_COMPUTER_ID, provider: "cursor" }));
+    const missing = await handle(request("/threads", "POST", { workspaceId: "org-release", requestId: missingId, message: "Test.", computerId: CURSOR_CLOUD_COMPUTER_ID, provider: "cursor" }));
     assert.equal(missing?.status, 202);
     for (let attempt = 0; attempt < 40; attempt += 1) {
       const stored = values.get(`manual-task:ada:${missingId}`) as { error?: string } | undefined;

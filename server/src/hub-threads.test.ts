@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import assert from "node:assert/strict";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -200,11 +201,13 @@ test("thread creation checks out the requested branch before creating and dedupl
   git("init","-b","main");git("config","user.name","QA");git("config","user.email","qa@example.test");
   writeFileSync(join(cwd,"file"),"main");git("add",".");git("commit","-m","Initial");git("branch","feature/selected");
   const workspace=await addWorkspace("Branch QA",cwd);
-  const input={workspaceId:workspace.id,branch:"feature/selected",hubTaskId:"branch-qa",permissionMode:"plan",visibility:"open"};
+  const threadId = randomUUID();
+  const input={threadId,workspaceId:workspace.id,branch:"feature/selected",hubTaskId:"branch-qa",permissionMode:"plan",visibility:"open"};
   const response=await handleHubThreadRequest("org",owner,"POST","/hub/threads",input,noAttachment);
   assert.equal(response.status,201);
   assert.equal(git("branch","--show-current"),"feature/selected");
   const thread=await response.json() as {id:string;access:{visibility:string}};
+  assert.equal(thread.id, threadId);
   assert.equal(thread.access.visibility,"open");
   const {getChat}=await import("./chat.js");
   assert.equal(getChat(thread.id)?.permissionMode,"plan");

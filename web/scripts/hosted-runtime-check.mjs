@@ -14,7 +14,8 @@ try {
     for (const mobile of [false, true]) {
       const captureComposer = artifacts && process.env.QA_COMPOSER_ONLY === "1" && !returning && !mobile;
       const captureThreadRecovery = artifacts && process.env.QA_THREAD_RECOVERY_ONLY === "1" && !returning && !mobile;
-      const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1280, height: 850 }, isMobile: mobile, hasTouch: mobile, ...((captureComposer || captureThreadRecovery) ? { recordVideo: { dir: artifacts, size: { width: 1280, height: 850 } } } : {}) });
+      const captureStart = artifacts && process.env.QA_START_ONLY === "1" && !returning && !mobile;
+      const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1280, height: 850 }, isMobile: mobile, hasTouch: mobile, ...((captureComposer || captureThreadRecovery || captureStart) ? { recordVideo: { dir: artifacts, size: { width: 1280, height: 850 } } } : {}) });
       if (captureComposer) await context.addInitScript(() => {
         window.addEventListener("pointerdown", (event) => {
           const mark = document.createElement("div");
@@ -46,10 +47,17 @@ try {
       let lastMessage;
       let threadInput;
       let linearKeyInput;
-      let startCalls=0, messageCalls=0, startStatusCalls=0, startReleased=false;
-      const releaseStart=()=>{startReleased=true;};
+      let startCalls=0, messageCalls=0, startStatusCalls=0;
       const startIds=[], messageIds=[];
       let startedThread;
+      let completeStart=false;
+      const finishStart = org => {
+        if (startedThread) return startedThread;
+        const id=threadInput.requestId;
+        startedThread={id,computerId:"sprite",revision:1,stale:false,observedAt:Date.now(),access:{organizationId:org.id,owner:{id:"reader",label:"Reader"},participants:[],visibility:"private"},detail:{id,title:threadInput.message,branch:"feature/working",state:"idle",provider:"codex",model:"remy:openrouter:openrouter/auto",permissionMode:"default",entries:[{id:`u-${id}`,kind:"user",text:threadInput.message},{id:"answer",kind:"assistant",text:"A reply from the selected provider."}]}};
+        for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot",cursor:1,thread:startedThread}));}catch{}
+        return startedThread;
+      };
       let hasWorkspace=false;
       let preference=null;
       let failToggle=false;
@@ -156,7 +164,8 @@ try {
           if(process.env.QA_START_ONLY === "1") {
             startCalls++;startIds.push(threadInput.requestId);
             if(startCalls===1){return route.fulfill({status:202,json:{phase:"creating"}});}
-            return route.fulfill({status:201,json:{id:"12345678-1234-1234-1234-123456789012",computerId:"sprite"}});
+            const {id}=finishStart(org);
+            return route.fulfill({status:201,json:{id,computerId:"sprite",phase:"ready"}});
           }
           return route.fulfill({status:409,json:{error:"Preview request captured."}});
         }
@@ -166,9 +175,9 @@ try {
         }
         if(process.env.QA_START_ONLY === "1" && /\/threads\/starts\/[0-9a-f-]{36}$/.test(path) && route.request().method()==="GET") {
           startStatusCalls++;
-          if(startCalls===1 && !startReleased) return route.fulfill({json:{phase: startStatusCalls < 3 ? "creating" : "waking"}});
-          if(startCalls===1) return route.fulfill({status:409,json:{error:"Fly.io could not start. Retry to continue."}});
-          return route.fulfill({json:{phase:"ready",id:"12345678-1234-1234-1234-123456789012",computerId:"sprite"}});
+          if(!completeStart) return route.fulfill({json:{phase: startStatusCalls < 3 ? "creating" : "waking"}});
+          finishStart(org);
+          return route.fulfill({json:{phase:"ready",id:threadInput.requestId,computerId:"sprite"}});
         }
         if(process.env.QA_START_ONLY === "1" && path.endsWith("/attachments")) return route.fulfill({status:201,json:{id:"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}});
         if(process.env.QA_START_ONLY === "1" && path.endsWith("/options")) {
@@ -176,10 +185,9 @@ try {
           for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot",cursor:2,thread:startedThread}));}catch{}
           return route.fulfill({json:startedThread});
         }
-        if(process.env.QA_START_ONLY === "1" && path===`${base}/computers/sprite/threads/12345678-1234-1234-1234-123456789012/message`) {
+        if(process.env.QA_START_ONLY === "1" && /^\/api\/organizations\/[^/]+\/computers\/sprite\/threads\/[0-9a-f-]{36}\/message$/.test(path)) {
           messageCalls++;const input=route.request().postDataJSON();lastMessage=input;messageIds.push(input.messageId);
-          if(messageCalls===1)return route.fulfill({status:503,json:{error:"Connection interrupted. Retry to send."}});
-          startedThread={id:"12345678-1234-1234-1234-123456789012",computerId:"sprite",revision:1,stale:false,observedAt:Date.now(),access:{organizationId:org.id,owner:{id:"reader",label:"Reader"},participants:[],visibility:"private"},detail:{id:"12345678-1234-1234-1234-123456789012",title:input.text,branch:"feature/working",state:"idle",provider:"codex",model:"remy:openrouter:openrouter/auto",permissionMode:"default",entries:[{id:input.messageId,kind:"user",text:input.text},{id:"answer",kind:"assistant",text:"A reply from the selected provider."}]}};
+          startedThread={...startedThread,revision:startedThread.revision+1,detail:{...startedThread.detail,entries:[...startedThread.detail.entries,{id:input.messageId,kind:"user",text:input.text}]}};
           for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot",cursor:1,thread:startedThread}));}catch{}
           return route.fulfill({json:{ok:true}});
         }
@@ -769,25 +777,22 @@ try {
           await page.getByRole("button",{name:"Hello startup QA",exact:true}).waitFor();
           if(mobile) await page.locator('[data-slot="sheet-overlay"]').click({position:{x:380,y:400}});
           assert.equal(await page.getByText("Preparing your thread…",{exact:true}).count(),0);
-          releaseStart();await page.getByRole("alert").getByText("Fly.io could not start. Retry to continue.").waitFor();
           const pendingUrl=page.url();
           const pending=new URL(pendingUrl);
           assert.match(pending.pathname,/\/threads\/[0-9a-f-]{36}$/,"Pending start uses a thread path");
           assert.equal(pending.search,"","Pending start does not add computer or owner query");
           if(artifacts)await page.screenshot({path:`${artifacts}/start-pending-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
-          await page.goto(target.href);
-          await page.locator("#hub-thread-message").waitFor();
-          assert.equal(await page.getByLabel("Thread transcript",{exact:true}).count(),0);
-          await page.goto(pendingUrl);
-          await page.reload();await page.getByRole("button",{name:"Retry",exact:true}).click();
-          await page.getByText("Connection interrupted. Retry to send.",{exact:true}).waitFor();
-          await page.getByRole("button",{name:"Retry",exact:true}).click();
+          const recoveryRequests=startCalls+startStatusCalls;
+          completeStart=true;
+          await page.reload();
           await page.waitForURL((current) => {
             const url = new URL(current.href);
-            return url.pathname.endsWith("/threads/12345678-1234-1234-1234-123456789012") && url.search === "";
+            return url.href === pendingUrl;
           });
           await page.getByRole("button",{name:"Send",exact:true}).waitFor();
-          assert.equal(startCalls,2);assert.equal(new Set(startIds).size,1);assert.equal(messageCalls,2);assert.equal(new Set(messageIds).size,1);
+          assert.ok(startCalls+startStatusCalls>recoveryRequests,"Reload resumes the pending start");
+          assert.ok(startCalls===1||startCalls===2);assert.equal(new Set(startIds).size,1);assert.equal(messageCalls,0);
+          assert.equal(threadInput.message,"Hello startup QA");
           assert.equal(await page.getByRole("button",{name:"Retry",exact:true}).count(),0);
           const transcript = page.getByLabel("Thread transcript",{exact:true});
           await transcript.getByRole("img",{name:"Codex",exact:true}).waitFor();
@@ -829,10 +834,10 @@ try {
           assert.equal(await page.getByRole("button",{name:"Stop",exact:true}).count(),0);
           assert.equal(await page.locator('input[type="file"]:visible').count(),0);
           await reply.fill("Reply QA");await reply.press("Shift+Enter");
-          assert.equal(messageCalls,2);
+          assert.equal(messageCalls,0);
           await reply.press("Enter");
           await page.waitForFunction(()=>document.querySelector('textarea[aria-label="Message"]')?.value==='');
-          assert.equal(messageCalls,3);
+          assert.equal(messageCalls,1);
           await reply.evaluate((node,bytes)=>{
             const transfer=new DataTransfer();
             transfer.items.add(new File([new Uint8Array(bytes)],"avatar.png",{type:"image/png"}));

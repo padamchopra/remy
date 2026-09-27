@@ -16,8 +16,9 @@ test("hosted lifecycle phases map onto the start status the client shows", () =>
     threadStartProgress({ hostedPhase: "connecting", record: { phase: "preparing_branch" } }),
     "connecting",
   );
+  assert.equal(threadStartProgress({ record: { id: "thread", computerId: "computer", phase: "sending" } }), "sending");
   assert.equal(
-    threadStartProgress({ hostedPhase: "ready", record: { id: "thread", computerId: "computer" } }),
+    threadStartProgress({ hostedPhase: "ready", record: { id: "thread", computerId: "computer", phase: "ready", messageSent: true } }),
     "ready",
   );
   assert.equal(threadStartProgress({ record: { error: "Fly.io could not start." } }), "failed");

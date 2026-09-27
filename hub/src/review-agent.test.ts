@@ -237,7 +237,7 @@ test("a review start is checked before anything runs", async () => {
   const start = (input: Record<string, unknown>) => (hub as unknown as { threadRequest(request: Request): Promise<Response> }).threadRequest(new Request("https://internal/threads", {
     method: "POST",
     headers: { "content-type": "application/json", "x-thread-member": encodeURIComponent(JSON.stringify({ id: "ada", label: "Ada" })), "x-organization-id": "studio" },
-    body: JSON.stringify({ workspaceId: "ws", requestId: crypto.randomUUID(), ...input }),
+    body: JSON.stringify({ workspaceId: "ws", requestId: crypto.randomUUID(), message: "Review this pull request.", ...input }),
   }));
   assert.equal((await start({ review: { repository: "release", number: 7 } })).status, 400);
   assert.equal((await start({ review: { repository: "release/remy", number: 7 }, branch: "main" })).status, 400);
