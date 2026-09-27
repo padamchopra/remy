@@ -1,7 +1,6 @@
-// Proves the window is Remy's threads remote: it loads, reaches the daemon, and
+// Proves the window is Remy's threads remote: it loads, reaches the hub, and
 // shows somewhere you could start work — without anyone touching the UI.
-// It checks `npm run dev:hosted` by default, or the URL `npm run qa:web` prints
-// when that is set in MC_URL.
+// It checks `npm run dev:hosted` by default, or another URL set in MC_URL.
 import { chromium } from "playwright-core";
 import { chromiumPath } from "./chromium.mjs";
 

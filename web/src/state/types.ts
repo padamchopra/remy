@@ -2,7 +2,7 @@ import type { DeviceIconId } from "~/lib/devices";
 import type { TintId } from "~/lib/tints";
 
 /// Shapes mirroring what `server/src` already returns. Kept deliberately narrow:
-/// only the fields the desktop UI reads, so a server change that adds a field
+/// only the fields the shared thread components read, so a server change that adds a field
 /// doesn't ripple through here.
 
 export type ChatState = "idle" | "working" | "needs_input" | "error";
@@ -15,42 +15,13 @@ export interface Server {
   online: boolean;
   icon: DeviceIconId;
   tint?: TintId;
-  /// This machine's own daemon, started with the app. It cannot be unpaired.
+  /// The daemon this page's `/api` reaches.
   local?: boolean;
-  /// A machine paired with this one, reached through the daemon here.
-  peer?: boolean;
-  /// Whether notifications raised on this machine are shown on that one.
-  notify?: boolean;
-  /// When that machine last answered.
-  lastSeen?: number;
   /// A hosted runtime presented beside physical devices.
   cloud?: boolean;
   /// Cloud runtimes need a repository rather than a home directory.
   workspaceOnly?: boolean;
   cloudConnected?: boolean;
-}
-
-/// A machine asking to pair with this one. It is waiting on a person here, so
-/// the code is what they compare before allowing it.
-export interface PairRequest {
-  id: string;
-  code: string;
-  fromDeviceId: string;
-  fromName: string;
-  fromUrl: string;
-  at: number;
-}
-
-/// One of your machines on the tailnet, and whether Remy answered on it.
-export interface TailnetDevice {
-  host: string;
-  name: string;
-  os: string;
-  online: boolean;
-  /// Remy answered here, so it can be paired with.
-  remy: boolean;
-  url?: string;
-  paired: boolean;
 }
 
 export interface Chat {
@@ -472,7 +443,6 @@ export interface ServerSettings {
   deviceTint: string;
   /// Preferred devices for work that is not tied to a workspace.
   devicePreferenceOrder: string[];
-  tailscaleServeEnabled: boolean;
   /// The provider a new thread falls back to when neither its workspace nor
   /// the composer names one: the first provider turned on, at its own default
   /// model. Derived by the daemon, not a setting.

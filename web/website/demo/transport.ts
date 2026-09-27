@@ -1,7 +1,7 @@
 import type { Transport } from "../../src/lib/transport";
 import { PROVIDERS } from "@/lib/providers";
 
-const unavailable = () => Promise.reject(new Error("This action is available in the installed app."));
+const unavailable = () => Promise.reject(new Error("Open Remy on the web to do this."));
 
 /// This module replaces the live transport only in the website build.
 export const transport: Transport = {
@@ -17,9 +17,6 @@ export const transport: Transport = {
   upload: unavailable,
   subscribe: () => () => {},
   onStatus: () => () => {},
-  addServer: unavailable,
-  removeServer: unavailable,
-  updateServer: unavailable,
 };
 export const nativeBrowserSurface = { available: false, present: async () => false, openExternal: unavailable };
 export const hubTransport = { request: unavailable };

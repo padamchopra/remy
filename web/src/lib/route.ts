@@ -1,12 +1,13 @@
-import type { AnalyticsTab } from "@/components/AnalyticsSettings";
 import { isHostedRuntime } from "@/lib/hub-session";
 import type { SettingsTab } from "@/lib/settings-sections";
 
 /// Where the window is, written down so a reload lands back on it.
 ///
-/// The local window keeps routes in the hash, so a reload never needs a server rule.
-/// The hosted app uses normal paths and its server returns the app shell for a
-/// direct route, so browser URLs stay clean without weakening desktop reloads.
+/// The web app uses normal paths and its server returns the app shell for a
+/// direct route. An older `#/` link still parses and is rewritten to its path
+/// once the hosted runtime is known. Outside it — the website's product preview,
+/// or the moment before `/api/runtime` answers — routes stay in the hash, so the
+/// page never navigates somewhere its server cannot answer.
 
 export type Route = (
   // `focus` names the thread in front when the one the URL opens on has more
@@ -20,7 +21,7 @@ export type Route = (
   // GitHub calls it and what someone pastes.
   // `view` is the tab in front: the summary, or the files it changes.
   | { name: "prs"; repository?: string; number?: number; view?: "files" }
-  | { name: "settings"; tab: SettingsTab; organizationTab?: "general" | "members" | "teams" | "computers"; analyticsTab?: AnalyticsTab; deviceId?: string; organizationId?: string }) & { organizationId?: string; ownerOrganizationId?: string };
+  | { name: "settings"; tab: SettingsTab; organizationTab?: "general" | "members" | "teams" | "computers"; deviceId?: string; organizationId?: string }) & { organizationId?: string; ownerOrganizationId?: string };
 
 export interface AppLocation {
   route: Route;
@@ -32,7 +33,7 @@ const SETTINGS_TABS: SettingsTab[] = [
   "version-control",
   "providers",
   "devices",
-  "environments", "analytics", "members", "teams", "connections",
+  "environments", "members", "teams", "connections",
 ];
 
 /// The section a route belongs to, which is what the sidebar highlights.
@@ -78,8 +79,6 @@ function parseRoute(hash: string): AppLocation {
   if (head === "settings") {
     const tab = SETTINGS_TABS.includes(rest as SettingsTab) ? (rest as SettingsTab) : "general";
     const params = new URLSearchParams(query);
-    const askedAnalyticsTab = params.get("tab");
-    const analyticsTab: AnalyticsTab = askedAnalyticsTab === "usage" ? "usage" : "general";
     const deviceId = params.get("device") || undefined;
     return {
       route: {
@@ -87,7 +86,6 @@ function parseRoute(hash: string): AppLocation {
         tab,
         ...(tab === "devices" && params.get("organization") ? { organizationId: params.get("organization")! } : {}),
         ...(tab === "organization" ? {organizationTab: params.get("section") === "members" ? "members" as const : params.get("section") === "teams" ? "teams" as const : params.get("section") === "computers" ? "computers" as const : "general" as const} : {}),
-        ...(tab === "analytics" ? { analyticsTab } : {}),
         ...((tab === "providers" || tab === "devices") && deviceId ? { deviceId } : {}),
       },
     };
@@ -125,7 +123,6 @@ export function formatPathLocation({ route }: AppLocation): string {
   const params = new URLSearchParams();
   const threadId = route.name === "threads" ? route.threadId : undefined;
   if (route.name === "threads" && route.focus) params.set("focus", route.focus);
-  if (route.name === "settings" && route.tab === "analytics" && route.analyticsTab === "usage") params.set("tab", "usage");
   if (route.name === "settings" && (route.tab === "providers" || route.tab === "devices") && route.deviceId) params.set("device", route.deviceId);
   if (route.organizationId && route.organizationId !== "all" && !threadId) params.set("organization", route.organizationId);
   if (route.name === "settings" && route.tab === "organization" && route.organizationTab) params.set("section", route.organizationTab);

@@ -10,8 +10,6 @@ if (process.argv.includes('--help')) {
 }
 const env = { ...process.env };
 delete env.VITE_REMY_HUB_URL;
-delete env.MC_SERVER_URL;
-delete env.MC_TOKEN;
 env.REMY_HOSTED_PREVIEW_URL ||= 'https://app.tryremy.dev';
 console.log(`Hosted web shell — live data from ${env.REMY_HOSTED_PREVIEW_URL}.\nOpen ${url}`);
 const child = spawn('npm', ['--prefix', 'web', 'run', 'dev', '--', '--port', '5174'], { cwd:fileURLToPath(new URL('../',import.meta.url)), env, stdio:'inherit' });

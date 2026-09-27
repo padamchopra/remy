@@ -35,7 +35,7 @@ export function HubPreviewSignIn({ password }: { password?: boolean }) {
   return <main className="flex min-h-svh items-center justify-center p-6">
     <section className="flex w-full max-w-sm flex-col gap-5">
       <h1 className="text-2xl font-semibold">Sign in to your preview</h1>
-      <p className="text-sm text-muted-foreground">Use your live Remy account with the changes on this Mac.</p>
+      <p className="text-sm text-muted-foreground">Use your live Remy account with the changes on this computer.</p>
       {!password && approval && <>
         <p aria-label="Sign-in code" className="text-center font-mono text-2xl">{approval.userCode}</p>
         <Button asChild><a href={approval.approvalUrl} target="_blank" rel="noreferrer">Approve in Remy</a></Button>

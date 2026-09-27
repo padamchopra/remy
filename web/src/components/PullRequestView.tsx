@@ -91,10 +91,10 @@ async function findSavedGuide(repository: string, number: number, fallbackServer
   const servers = await transport.servers();
   const localServerId = servers.find((server) => server.local)?.id ?? fallbackServerId;
   const params = new URLSearchParams({ repository, number: String(number) });
-  const result = await transport.request<{ guide?: PullRequestGuide; peerId?: string }>(
+  const result = await transport.request<{ guide?: PullRequestGuide }>(
     localServerId, `/pull-requests/guide/discover?${params}`,
   );
-  return { guide: result.guide, serverId: result.peerId ?? localServerId, localServerId };
+  return { guide: result.guide, serverId: localServerId, localServerId };
 }
 
 export function PullRequestView({
@@ -312,15 +312,11 @@ export function PullRequestView({
     const offPush = transport.subscribe((source, payload) => {
       if (tab !== "guide" || !pullRequest || !payload || typeof payload !== "object") return;
       const frame = payload as { type?: unknown; repository?: unknown; number?: unknown };
-      if (frame.type === "peer-disconnected" && source === guideOwnerServerId && guide) {
-        setGuideUnavailable(true);
-        return;
-      }
-      const reconnect = (frame.type === "hello" || frame.type === "peer-reset")
+      const reconnect = frame.type === "hello"
         && (!guide || source === guideOwnerServerId || source === guideLookupServerId);
       const changed = frame.type === "pull-request-guide" && (!guide || source === guideOwnerServerId)
         && frame.repository === pullRequest.repository && frame.number === pullRequest.number;
-      if (reconnect || changed || (frame.type === "peers" && !guide)) setGuideLoaded(false);
+      if (reconnect || changed) setGuideLoaded(false);
     }, ["pull-requests", "sidebar"]);
     const offStatus = transport.onStatus((source, online) => {
       if (tab !== "guide" || (source !== guideLookupServerId && source !== guideOwnerServerId)) return;
