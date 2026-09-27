@@ -308,6 +308,8 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
   const workspacesListOpen = route.name === "workspaces" && !route.workspaceId;
   const showPaneHeader =
     route.name !== "prs" &&
+    // Computers draws its own header, with a crumb for the page it opens.
+    !(route.name === "settings" && route.tab === "devices") &&
     !(route.name === "threads" && route.threadId) &&
     !(route.name === "workspaces" && route.workspaceId);
   const paneCrumbs = route.name === "settings"
@@ -469,12 +471,9 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                   />
                 </Deferred>
               </div>
-              <div
-                hidden={section !== "devices"}
-                className="min-h-0 overflow-auto p-6"
-              >
+              <div hidden={section !== "devices"} className={section === "devices" ? "flex min-h-0 flex-1 flex-col" : undefined}>
                 <Deferred open={section === "devices"}>
-                  <Computers organizationId={organization.id} />
+                  <Computers accounts={[organization]} all={false} />
                 </Deferred>
               </div>
               <div

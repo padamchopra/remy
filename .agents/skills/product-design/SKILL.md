@@ -104,6 +104,8 @@ Connections is one account-wide list, like Computers. Show one block for each pr
 
 Availability is part of connecting an account. A Personal connection is available to every organization the person belongs to. An organization connection is available only there and overrides the Personal connection for that organization. Keep credentials on the person who connected them; availability never copies a secret into an organization.
 
+Linear is always personal, including inside an organization. Each person chooses which of their Linear workspaces they use there. Another member, including an administrator, cannot see, use, or change that choice. Personal may supply that same person's fallback, but there is no organization-wide Linear connection.
+
 BAD
 ```text
 Connections

@@ -100,13 +100,19 @@ export async function connectionRoute(
         headers: { "cache-control": "no-store" },
       });
     if (provider && ["POST", "DELETE"].includes(request.method)) {
-      const body = (await request.json()) as { scope?: string; accountId?: string };
+      const body = (await request.json()) as { scope?: string; accountId?: string; token?: unknown };
       if (body.scope !== "organization" && body.scope !== "member")
         throw new ConnectionError("Choose a connection owner.");
       if (provider === "linear") assertLinearPerson(clientKind);
       const subject = body.scope === "member" ? userId : "";
       if (request.method === "DELETE") {
         await service.disconnect(org, userId, provider, subject, body.accountId);
+        return Response.json({ ok: true });
+      }
+      if (provider === "linear" && body.token !== undefined) {
+        if (typeof body.token !== "string")
+          throw new ConnectionError("Enter a valid Linear API key.");
+        await service.linearToken(org, userId, body.token.trim());
         return Response.json({ ok: true });
       }
       return Response.json(

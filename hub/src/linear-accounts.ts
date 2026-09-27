@@ -71,9 +71,9 @@ export class LinearAccounts {
         updated_at: number;
       }>(), this.db
         .prepare(
-          "SELECT l.external_id,l.organization_id,o.personal_owner_id FROM organization_linear_links l JOIN organizations o ON o.id=l.organization_id WHERE o.personal_owner_id=? OR EXISTS(SELECT 1 FROM memberships m WHERE m.organization_id=l.organization_id AND m.user_id=?)",
+          "SELECT l.external_id,l.organization_id,o.personal_owner_id FROM member_linear_links l JOIN organizations o ON o.id=l.organization_id WHERE l.user_id=?",
         )
-        .bind(user, user)
+        .bind(user)
         .all<{ external_id: string; organization_id: string; personal_owner_id: string | null }>()]);
     return rows.results.map((row) => ({
       id: row.id,
@@ -116,14 +116,13 @@ export class LinearAccounts {
       .run();
     // A second Linear workspace can still be mid-consent. Disconnecting this
     // row must not burn that state or the shared OAuth epoch.
-    await this.clearOrphanLinks(row.external_id);
     await this.notifyAvailability(user);
   }
 
-  async link(org: string): Promise<LinearLinkView> {
+  async link(org: string, user: string): Promise<LinearLinkView> {
     const row = await this.db
-      .prepare("SELECT external_id,label FROM organization_linear_links WHERE organization_id=?")
-      .bind(org)
+      .prepare("SELECT external_id,label FROM member_linear_links WHERE organization_id=? AND user_id=?")
+      .bind(org, user)
       .first<{ external_id: string; label: string }>();
     return row ? { externalId: row.external_id, label: row.label } : null;
   }
@@ -139,8 +138,8 @@ export class LinearAccounts {
       throw new ConnectionError("This connection action is unavailable.", 403);
     if (!accountId) {
       await this.db
-        .prepare("DELETE FROM organization_linear_links WHERE organization_id=?")
-        .bind(org)
+        .prepare("DELETE FROM member_linear_links WHERE organization_id=? AND user_id=?")
+        .bind(org, user)
         .run();
       await this.notifyLink(org, user);
       return this.view(org, user);
@@ -152,27 +151,20 @@ export class LinearAccounts {
     if (!account) throw new ConnectionError("Choose one of your Linear accounts.");
     await this.db
       .prepare(
-        "INSERT INTO organization_linear_links(organization_id,external_id,label,updated_at) VALUES(?,?,?,?) ON CONFLICT(organization_id) DO UPDATE SET external_id=excluded.external_id,label=excluded.label,updated_at=excluded.updated_at",
+        "INSERT INTO member_linear_links(organization_id,user_id,external_id,label,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(organization_id,user_id) DO UPDATE SET external_id=excluded.external_id,label=excluded.label,updated_at=excluded.updated_at",
       )
-      .bind(org, account.external_id, account.label, this.now())
+      .bind(org, user, account.external_id, account.label, this.now())
       .run();
     await this.notifyLink(org, user);
     return this.view(org, user);
   }
 
-  /// Sync may use the acting member, or the latest remaining member who still
-  /// has this workspace. It never reads a token stored on the organization.
-  async accessToken(org: string, user?: string) {
-    const current = user ? await this.effectiveLink(org, user) : await this.link(org);
+  /// Linear always runs as the acting member. An organization never supplies
+  /// another person's workspace choice or token.
+  async accessToken(org: string, user: string) {
+    const current = await this.effectiveLink(org, user);
     if (!current) throw new ConnectionError("Choose a Linear account for this organization.");
-    const row = user
-      ? await this.memberAccount(org, user, current.externalId)
-      : await this.db
-          .prepare(
-            "SELECT a.* FROM linear_accounts a JOIN memberships m ON m.user_id=a.user_id WHERE m.organization_id=? AND a.external_id=? AND a.status='connected' ORDER BY a.updated_at DESC LIMIT 1",
-          )
-          .bind(org, current.externalId)
-          .first<AccountRow>();
+    const row = await this.memberAccount(org, user, current.externalId);
     if (!row || row.status !== "connected")
       throw new ConnectionError("Reconnect your account to continue.", 409);
     return this.openToken(row);
@@ -269,13 +261,13 @@ export class LinearAccounts {
   }
 
   private async effectiveLink(org: string, user: string) {
-    const direct = await this.link(org);
+    const direct = await this.link(org, user);
     if (direct) return direct;
     const personal = await this.db
       .prepare("SELECT id FROM organizations WHERE personal_owner_id=?")
       .bind(user)
       .first<{ id: string }>();
-    return personal ? this.link(personal.id) : null;
+    return personal ? this.link(personal.id, user) : null;
   }
 
   private async notifyLink(org: string, user: string) {
@@ -303,23 +295,6 @@ export class LinearAccounts {
     } catch {
       return false;
     }
-  }
-
-  private async clearOrphanLinks(externalId: string) {
-    const orgs = await this.db
-      .prepare(
-        "SELECT organization_id FROM organization_linear_links WHERE external_id=? AND NOT EXISTS (SELECT 1 FROM memberships m JOIN linear_accounts a ON a.user_id=m.user_id AND a.external_id=organization_linear_links.external_id WHERE m.organization_id=organization_linear_links.organization_id)",
-      )
-      .bind(externalId)
-      .all<{ organization_id: string }>();
-    if (!orgs.results.length) return;
-    await this.db
-      .prepare(
-        "DELETE FROM organization_linear_links WHERE external_id=? AND NOT EXISTS (SELECT 1 FROM memberships m JOIN linear_accounts a ON a.user_id=m.user_id AND a.external_id=organization_linear_links.external_id WHERE m.organization_id=organization_linear_links.organization_id)",
-      )
-      .bind(externalId)
-      .run();
-    for (const row of orgs.results) await this.changed(row.organization_id);
   }
 
   private async openToken(row: AccountRow) {

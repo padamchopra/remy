@@ -4,7 +4,6 @@ import { readFileSync, readdirSync } from "node:fs";
 import { sqliteD1 } from "../test/sqlite-d1.js";
 import { ConnectionVault, type ConnectionTokens } from "./connections.js";
 import {
-  LINEAR_MISSING_NOTICE,
   LINEAR_MCP_URL,
   LINEAR_REAUTH_NOTICE,
   LinearAccounts,
@@ -99,7 +98,7 @@ test("a Personal Linear choice is the organization fallback", async () => {
   assert.deepEqual(listed[0].organizationIds, []);
 });
 
-test("leaving drops that person's sign-in and clears the workspace when nobody else has it", async () => {
+test("leaving removes only that person's organization choice", async () => {
   const { accounts, save, sqlite } = fixture();
   await save("ada", "linear-studio", "secret-ada");
   await save("grace", "linear-grace", "secret-grace");
@@ -109,23 +108,22 @@ test("leaving drops that person's sign-in and clears the workspace when nobody e
   assert.equal(sqlite.prepare("SELECT count(*) n FROM linear_accounts WHERE user_id='ada'").get()?.n, 1);
   assert.equal(sqlite.prepare("SELECT count(*) n FROM linear_accounts WHERE user_id='grace'").get()?.n, 1);
   assert.equal(
-    sqlite.prepare("SELECT count(*) n FROM organization_linear_links WHERE organization_id='studio'").get()?.n,
+    sqlite.prepare("SELECT count(*) n FROM member_linear_links WHERE organization_id='studio'").get()?.n,
     0,
   );
-  assert.equal((await accounts.link("personal")), null);
+  assert.equal((await accounts.link("personal", "ada")), null);
 });
 
-test("the organization keeps its workspace when another member still has that sign-in", async () => {
-  const { accounts, save, sqlite } = fixture();
+test("each member chooses their own Linear workspace for an organization", async () => {
+  const { accounts, save } = fixture();
   await save("ada", "linear-studio", "secret-ada");
-  await save("grace", "linear-studio", "secret-grace");
+  await save("grace", "linear-grace", "secret-grace");
   await accounts.setLink("studio", "ada", (await accounts.list("ada"))[0].id);
-  sqlite.prepare("DELETE FROM memberships WHERE organization_id='studio' AND user_id='ada'").run();
-  assert.equal((await accounts.link("studio"))?.externalId, "linear-studio");
-  assert.equal(
-    JSON.stringify(sqlite.prepare("SELECT * FROM organization_linear_links").get()).includes("secret"),
-    false,
-  );
+  await accounts.setLink("studio", "grace", (await accounts.list("grace"))[0].id);
+  assert.equal((await accounts.view("studio", "ada")).link?.externalId, "linear-studio");
+  assert.equal((await accounts.view("studio", "grace")).link?.externalId, "linear-grace");
+  assert.equal((await accounts.forThread("studio", "ada")).kind, "ready");
+  assert.equal((await accounts.forThread("studio", "grace")).kind, "ready");
 });
 
 test("a thread gets Linear only when the organization link and that person's sign-in both exist", async () => {
@@ -140,11 +138,11 @@ test("a thread gets Linear only when the organization link and that person's sig
   if (ready.kind !== "ready") return;
   assert.equal(ready.token, "secret-ada");
   assert.equal(ready.url, LINEAR_MCP_URL);
-  assert.equal(await accounts.forThread("studio", "grace").then((row) => row.kind === "notice" && row.notice), LINEAR_MISSING_NOTICE);
+  assert.deepEqual(await accounts.forThread("studio", "grace"), { kind: "off" });
   assert.equal(await accounts.accessNotice("studio", "ada"), null);
   assert.equal(JSON.stringify({ notice: await accounts.accessNotice("studio", "grace") }).includes("secret-ada"), false);
   await accounts.disconnect("ada", account.id);
-  assert.equal((await accounts.link("studio")), null);
+  assert.equal((await accounts.link("studio", "ada")), null);
   assert.deepEqual(await accounts.forThread("studio", "ada"), { kind: "off" });
 });
 
@@ -156,7 +154,7 @@ test("a sign-in that needs reconnect keeps the link and withholds the token", as
   sqlite.prepare("UPDATE linear_accounts SET status='reauth' WHERE id=?").run(account.id);
   const access = await accounts.forThread("studio", "ada");
   assert.deepEqual(access, { kind: "notice", notice: LINEAR_REAUTH_NOTICE });
-  assert.equal((await accounts.link("studio"))?.externalId, "linear-studio");
+  assert.equal((await accounts.link("studio", "ada"))?.externalId, "linear-studio");
   assert.equal(await accounts.accessNotice("studio", "ada"), LINEAR_REAUTH_NOTICE);
 });
 

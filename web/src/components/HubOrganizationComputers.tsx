@@ -1,183 +1,76 @@
 import { useState } from "react";
 import { Cloud } from "lucide-react";
+import { toast } from "sonner";
 import { apiError } from "@/lib/api-error";
 import { deviceIcon, type DeviceIconId } from "@/lib/devices";
 import { useHubResource } from "@/lib/hub-organization";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
-import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
-import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle, ItemActions } from "@/components/ui/item";
-import { Switch } from "@/components/ui/switch";
-import { AccessMark } from "./AccessMark";
+import { cloudProvider } from "@/lib/cloud-providers";
+import { HubOwnModelAccess } from "./HubOwnModelAccess";
+import { RowMark, SettingsList, SettingsRow, SettingsSection } from "./SettingsList";
+import { Button } from "./ui/button";
+import { Switch } from "./ui/switch-base";
+import { ToggleChip } from "./ui/toggle-chip-base";
 
-type SharedStartProvider = {
-  id: string;
-  label: string;
-  allowed: boolean;
-};
+type SharedStartProvider = { id: string; label: string; allowed: boolean };
+type Shared = { shared: boolean; available: boolean; sharedBy: string | null; canShare: boolean; canRevoke: boolean; providers: SharedStartProvider[] };
+type SharedComputer = Shared & { id: string; name: string; icon: string; platform: string };
+type SharedCloud = Shared & { provider: string };
+type ComputeShares = { canManage: boolean; computers: SharedComputer[]; cloudConnections: SharedCloud[] };
 
-type SharedComputer = {
-  id: string;
-  name: string;
-  icon: string;
-  platform: string;
-  shared: boolean;
-  available: boolean;
-  sharedBy: string | null;
-  canShare: boolean;
-  canRevoke: boolean;
-  providers: SharedStartProvider[];
-};
-
-type SharedCloud = {
-  provider: string;
-  shared: boolean;
-  available: boolean;
-  sharedBy: string | null;
-  canShare: boolean;
-  canRevoke: boolean;
-  providers: SharedStartProvider[];
-};
-
-type ComputeShares = {
-  canManage: boolean;
-  computers: SharedComputer[];
-  cloudConnections: SharedCloud[];
-};
-
-const cloudLabel = (provider: string) => provider === "fly-sprites" ? "Fly.io Sprites" : provider === "modal" ? "Modal" : provider === "cursor-cloud" ? "Cursor Cloud" : provider;
-
-export function HubOrganizationComputers({ organizationId }: { organizationId: string }) {
+/// Organization → Computers: your own model access here, then everything
+/// shared into this organization. A share is its owner's to make and to scope;
+/// an admin can only stop someone else's.
+export function HubOrganizationComputers({ organizationId, organizationName }: { organizationId: string; organizationName: string }) {
   const resource = useHubResource<ComputeShares>(organizationId, "/compute-shares", "/computers/live");
-  const chatgpt = useHubResource<{ connected: boolean; enabled: boolean }>(organizationId, "/chatgpt", "/computers/live");
-  const [chatgptEnabled, setChatGPTEnabled] = useState<boolean>();
   const [saving, setSaving] = useState("");
-  const [error, setError] = useState("");
-  const updateShare = async (kind: "computers" | "cloud", id: string, shared: boolean) => {
-    const key = `${kind}:${id}`;
+  const run = async (key: string, work: () => Promise<unknown>, failed: string) => {
     setSaving(key);
-    setError("");
-    try {
-      await hubRequest(`${hubThreadBase(organizationId)}/compute-shares/${kind}/${encodeURIComponent(id)}`, shared ? "DELETE" : "PUT");
-    } catch (cause) {
-      setError(apiError(cause));
-    } finally {
-      setSaving("");
-    }
+    try { await work(); }
+    catch (cause) { toast.error(failed, { description: apiError(cause) }); }
+    finally { setSaving(""); }
   };
-  const updateProviders = async (kind: "computers" | "cloud", id: string, providers: SharedStartProvider[], providerId: string, allowed: boolean) => {
-    const key = `provider:${kind}:${id}:${providerId}`;
-    setSaving(key);
-    setError("");
-    try {
-      const startProviders = providers.filter(provider => provider.id === providerId ? allowed : provider.allowed).map(provider => provider.id);
-      await hubRequest(`${hubThreadBase(organizationId)}/compute-shares/${kind}/${encodeURIComponent(id)}`, "PATCH", { startProviders });
-    } catch (cause) {
-      setError(apiError(cause));
-    } finally {
-      setSaving("");
-    }
-  };
-  const updateChatGPT = async (enabled: boolean) => {
-    setSaving("chatgpt");
-    setError("");
-    setChatGPTEnabled(enabled);
-    try {
-      const next = await hubRequest<{ enabled: boolean }>(`${hubThreadBase(organizationId)}/chatgpt`, enabled ? "PUT" : "DELETE");
-      setChatGPTEnabled(next.enabled);
-    } catch (cause) {
-      setChatGPTEnabled(undefined);
-      setError(apiError(cause));
-    } finally {
-      setSaving("");
-    }
-  };
+  const base = `${hubThreadBase(organizationId)}/compute-shares`;
+  const share = (kind: "computers" | "cloud", id: string, shared: boolean, name: string) =>
+    run(`${kind}:${id}`, () => hubRequest(`${base}/${kind}/${encodeURIComponent(id)}`, shared ? "DELETE" : "PUT"), shared ? `Couldn't stop sharing ${name}` : `Couldn't share ${name}`);
+  const scope = (kind: "computers" | "cloud", id: string, providers: SharedStartProvider[], providerId: string, allowed: boolean) =>
+    run(`provider:${kind}:${id}:${providerId}`, () => hubRequest(`${base}/${kind}/${encodeURIComponent(id)}`, "PATCH", {
+      startProviders: providers.filter(provider => provider.id === providerId ? allowed : provider.allowed).map(provider => provider.id),
+    }), "Couldn't change what members can start with");
   const value = resource.value;
-  const empty = value && value.computers.length === 0 && value.cloudConnections.length === 0;
-  return <section className="flex min-w-0 flex-col gap-6 p-6" aria-label="Organization computers">
-    <Field>
-      <FieldDescription>Others start with the providers you turn on, and can still reply on work already running.</FieldDescription>
-    </Field>
-    {(error || resource.error) && <p role="alert" className="text-sm text-destructive">{error || resource.error}</p>}
-    {resource.stale && <p role="status" className="text-sm text-muted-foreground">You’re reading the last saved computer sharing settings.</p>}
-    {!value && !resource.error && <p role="status" className="text-sm text-muted-foreground">Reading computers…</p>}
-    {chatgpt.value && <Field>
-      <FieldLabel>Your subscriptions</FieldLabel>
-      <Item variant="outline">
-        <ItemMedia variant="icon"><AccessMark id="codex" /></ItemMedia>
-        <ItemContent className="min-w-0">
-          <ItemTitle className="whitespace-normal break-words">ChatGPT</ItemTitle>
-          <ItemDescription>{chatgpt.value.connected ? "Only cloud Codex threads you start here use your plan." : "Sign in to Codex in Personal model access first."}</ItemDescription>
-        </ItemContent>
-        <ItemActions>
-          <Switch aria-label="Use my ChatGPT plan here" checked={chatgpt.value.connected && (chatgptEnabled ?? chatgpt.value.enabled)} disabled={!chatgpt.value.connected || !!saving} onCheckedChange={enabled => void updateChatGPT(enabled)} />
-        </ItemActions>
-      </Item>
-    </Field>}
-    {empty && <Field>
-      <FieldLabel>No computers available</FieldLabel>
-      <FieldDescription>Connect a computer or cloud provider in Personal first.</FieldDescription>
-    </Field>}
-    {value && value.computers.length > 0 && <Field>
-      <FieldLabel>Connected computers</FieldLabel>
-      <ItemGroup className="gap-3">
-        {value.computers.map(computer => {
-          const Icon = deviceIcon(computer.icon as DeviceIconId);
-          const canToggleShare = computer.shared ? computer.canShare || computer.canRevoke : computer.canShare;
-          return <Item key={computer.id} variant="outline" className="flex-col items-stretch">
-            <div className="flex min-w-0 items-center gap-4">
-              <ItemMedia variant="icon"><Icon /></ItemMedia>
-              <ItemContent className="min-w-0">
-                <ItemTitle className="whitespace-normal break-words">{computer.name}</ItemTitle>
-                <ItemDescription>{computer.available ? "Online" : "Offline"}{computer.sharedBy ? ` · Shared by ${computer.sharedBy}` : ""}</ItemDescription>
-              </ItemContent>
-              <ItemActions>
-                <Switch aria-label={`Share ${computer.name}`} checked={computer.shared} disabled={!canToggleShare || !!saving} onCheckedChange={() => void updateShare("computers", computer.id, computer.shared)} />
-              </ItemActions>
-            </div>
-            {computer.shared && computer.providers.length > 0 && <StartProviderSwitches id={computer.id} name={computer.name} providers={computer.providers} canShare={computer.canShare} saving={!!saving} onToggle={(providerId, allowed) => void updateProviders("computers", computer.id, computer.providers, providerId, allowed)} />}
-          </Item>;
+  const rows = value ? [
+    ...value.cloudConnections.map(connection => ({ kind: "cloud" as const, id: connection.provider, name: cloudProvider(connection.provider)?.name ?? connection.provider, icon: <Cloud />, entry: connection, detail: connection.canShare ? `${connection.shared ? "Shared by you" : "Only you"} · Your keys stay in Personal` : `Shared by ${connection.sharedBy ?? "a member"}` })),
+    ...value.computers.map(computer => {
+      const Icon = deviceIcon(computer.icon as DeviceIconId);
+      return { kind: "computers" as const, id: computer.id, name: computer.name, icon: <Icon />, entry: computer, detail: `${computer.available ? "Online" : "Offline"} · ${computer.canShare ? computer.shared ? "Shared by you" : `Only you · You still see it in ${organizationName}'s computer picker` : `Shared by ${computer.sharedBy ?? "a member"}`}` };
+    }),
+  ] : [];
+  return <div className="flex min-w-0 max-w-[760px] flex-col gap-9 p-6">
+    <HubOwnModelAccess organizationId={organizationId} organizationName={organizationName} />
+    <SettingsSection id={`shared-${organizationId}`} title={`Shared with ${organizationName}`} description="Members start new threads with the providers you turn on. They can always reply on threads already running.">
+      {resource.error && <p role="alert" className="text-[13px] text-destructive">{resource.error}</p>}
+      {resource.stale && <p role="status" className="text-[13px] text-muted-foreground">You're reading the last saved sharing settings.</p>}
+      {!value && !resource.error && <p role="status" className="text-[13px] text-muted-foreground">Reading computers…</p>}
+      {value && rows.length === 0 && <p className="text-[13px] text-muted-foreground">Nothing to share yet. Connect a computer or a cloud provider in Personal first.</p>}
+      {rows.length > 0 && <SettingsList label={`Shared with ${organizationName}`}>
+        {rows.map(({ kind, id, name, icon, entry, detail }) => {
+          const canToggle = entry.shared ? entry.canShare || entry.canRevoke : entry.canShare;
+          return <SettingsRow
+            key={`${kind}:${id}:${entry.sharedBy ?? "mine"}`}
+            media={<RowMark>{icon}</RowMark>}
+            title={name}
+            description={detail}
+            below={entry.shared && entry.providers.length > 0 && <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <span className="mr-1 text-xs text-muted-foreground">Members can start with</span>
+              {entry.providers.map(provider => <ToggleChip key={provider.id} pressed={provider.allowed} disabled={!entry.canShare || !!saving} aria-label={`Members can start ${provider.label} on ${name}`} onPressedChange={allowed => void scope(kind, id, entry.providers, provider.id, allowed)}>{provider.label}</ToggleChip>)}
+            </div>}
+          >
+            {entry.canShare
+              ? <Switch aria-label={`Share ${name} with ${organizationName}`} checked={entry.shared} disabled={!canToggle || !!saving} onCheckedChange={() => void share(kind, id, entry.shared, name)} />
+              : entry.canRevoke && <Button size="sm" variant="outline" className="h-7 rounded-lg px-2.5 text-xs" disabled={!!saving} onClick={() => void share(kind, id, true, name)}>Stop sharing</Button>}
+          </SettingsRow>;
         })}
-      </ItemGroup>
-    </Field>}
-    {value && value.cloudConnections.length > 0 && <Field>
-      <FieldLabel>Cloud connections</FieldLabel>
-      <ItemGroup className="gap-3">
-        {value.cloudConnections.map(connection => {
-          const label = cloudLabel(connection.provider);
-          const canToggleShare = connection.shared ? connection.canShare || connection.canRevoke : connection.canShare;
-          return <Item key={`${connection.provider}:${connection.sharedBy ?? "personal"}`} variant="outline" className="flex-col items-stretch">
-            <div className="flex min-w-0 items-center gap-4">
-              <ItemMedia variant="icon"><Cloud /></ItemMedia>
-              <ItemContent className="min-w-0">
-                <ItemTitle className="whitespace-normal break-words">{label}</ItemTitle>
-                <ItemDescription>{connection.available ? "Available" : "Unavailable"}{connection.sharedBy ? ` · Shared by ${connection.sharedBy}` : " · Credentials stay in Personal."}</ItemDescription>
-              </ItemContent>
-              <ItemActions>
-                <Switch aria-label={`Share ${label}`} checked={connection.shared} disabled={!canToggleShare || !!saving} onCheckedChange={() => void updateShare("cloud", connection.provider, connection.shared)} />
-              </ItemActions>
-            </div>
-            {connection.shared && connection.providers.length > 0 && <StartProviderSwitches id={connection.provider} name={label} providers={connection.providers} canShare={connection.canShare} saving={!!saving} onToggle={(providerId, allowed) => void updateProviders("cloud", connection.provider, connection.providers, providerId, allowed)} />}
-          </Item>;
-        })}
-      </ItemGroup>
-    </Field>}
-  </section>;
-}
-
-function StartProviderSwitches({ id, name, providers, canShare, saving, onToggle }: {
-  id: string;
-  name: string;
-  providers: SharedStartProvider[];
-  canShare: boolean;
-  saving: boolean;
-  onToggle: (providerId: string, allowed: boolean) => void;
-}) {
-  return <ItemGroup className="gap-2 border-t pt-3">
-    {providers.map(provider => (
-      <Field key={provider.id} orientation="horizontal" className="min-w-0">
-        <FieldLabel htmlFor={`start-${id}-${provider.id}`} className="min-w-0">{provider.label}</FieldLabel>
-        <Switch id={`start-${id}-${provider.id}`} aria-label={`Start ${provider.label} on ${name}`} checked={provider.allowed} disabled={!canShare || saving} onCheckedChange={allowed => onToggle(provider.id, allowed)} />
-      </Field>
-    ))}
-  </ItemGroup>;
+      </SettingsList>}
+    </SettingsSection>
+  </div>;
 }

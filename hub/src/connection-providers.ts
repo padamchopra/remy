@@ -77,7 +77,7 @@ export function connectionProviders(env: Env): ConnectionProvider[] {
       authorizeUrl: "https://linear.app/oauth/authorize",
       tokenUrl: "https://api.linear.app/oauth/token",
       scope: "read,write",
-      authorizeParameters: { actor: "app", prompt: "consent" },
+      authorizeParameters: { actor: "user", prompt: "consent" },
       identity: async (token, send) => {
         const response = await send("https://api.linear.app/graphql", {
           method: "POST",

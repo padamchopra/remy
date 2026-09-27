@@ -223,11 +223,13 @@ export class Connections {
   ) {
     await this.authorize(org, user, subject);
     const provider = this.provider(providerId);
+    if (providerId === "linear" && subject !== user)
+      throw new ConnectionError("Linear connections belong to you.", 403);
     if (!provider.subjects.includes(subject ? "member" : "organization"))
       throw new ConnectionError("Choose a supported connection.");
     if (!provider.clientId || !provider.clientSecret)
       throw new ConnectionError(
-        "Ask your administrator to configure this connection.",
+        "This connection is unavailable right now; try again later.",
         409,
       );
     const state = `${provider.callbackPath ? "remy-connection." : ""}${encode(crypto.getRandomValues(new Uint8Array(32)))}`,
@@ -305,8 +307,21 @@ export class Connections {
     const epoch = await this.epoch(org, "github", user);
     return this.saveTokens(user, "github", { organization_id: org, subject: user, epoch }, { access_token: token });
   }
+  async linearToken(org: string, user: string, token: string) {
+    await this.authorize(org, user, user);
+    if (!token || token.length > 4096 || /\s/.test(token))
+      throw new ConnectionError("Enter a valid Linear API key.");
+    return this.saveTokens(
+      user,
+      "linear",
+      { organization_id: org, subject: user, epoch: 0 },
+      { access_token: token },
+    );
+  }
   private async saveTokens(user: string, providerId: string, saved: { organization_id: string; subject: string; epoch: number }, tokens: ConnectionTokens) {
     const provider = this.provider(providerId);
+    if (providerId === "linear" && saved.subject !== user)
+      throw new ConnectionError("Linear connections belong to you.", 403);
     const identity = await provider.identity(tokens.access_token, this.send);
     await this.authorize(saved.organization_id, user, saved.subject);
     if (providerId === "linear") {
@@ -484,6 +499,8 @@ export class Connections {
     accountId?: string,
   ) {
     if (provider === "linear") {
+      if (subject !== user)
+        throw new ConnectionError("Linear connections belong to you.", 403);
       await this.authorize(org, user, user);
       if (!accountId) throw new ConnectionError("Choose a Linear account.");
       await (await this.linearAccounts()).disconnect(user, accountId);

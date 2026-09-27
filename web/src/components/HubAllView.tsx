@@ -53,6 +53,7 @@ import {
 import { Field, FieldLabel } from "./ui/field";
 import { toast } from "sonner";
 import { apiError } from "@/lib/api-error";
+import { LinearKeyDialog } from "./LinearConnection";
 
 const Threads = hubThreads.Surface;
 const Computers = lazy(() =>
@@ -246,6 +247,7 @@ function ConnectionsSummary({ organizations, navigate }: { organizations: Organi
   const [adding, setAdding] = useState<"github" | "linear">();
   const [availability, setAvailability] = useState("all");
   const [busy, setBusy] = useState(false);
+  const [linearKeyOrganization, setLinearKeyOrganization] = useState<string>();
   const names = new Map(organizations.map((organization) => [organization.id, organization.personal ? "Personal" : organization.name]));
   const rows = new Map<string, ProviderConnection>();
   for (const resource of resources) {
@@ -293,9 +295,17 @@ function ConnectionsSummary({ organizations, navigate }: { organizations: Organi
     ].filter((scope) => !used.has(scope.id));
   };
   const scopes = adding ? availableScopes(adding) : [];
+  const linearConfigured = resources.some((resource) =>
+    resource.value?.providers.some((provider) => provider.id === "linear" && provider.configured),
+  );
   const connect = async () => {
     if (!adding || !personal) return;
     const owner = availability === "all" ? personal.id : availability;
+    if (adding === "linear" && !linearConfigured) {
+      setAdding(undefined);
+      setLinearKeyOrganization(owner);
+      return;
+    }
     setBusy(true);
     try {
       const result = await hubRequest<{ url: string }>(`${hubThreadBase(owner)}/connections/${adding}`, "POST", { scope: "member" });
@@ -377,6 +387,28 @@ function ConnectionsSummary({ organizations, navigate }: { organizations: Organi
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <LinearKeyDialog
+        open={!!linearKeyOrganization}
+        busy={busy}
+        onOpenChange={(open) => { if (!open && !busy) setLinearKeyOrganization(undefined); }}
+        onSubmit={async (token) => {
+          if (!linearKeyOrganization) return;
+          setBusy(true);
+          try {
+            await hubRequest(
+              `${hubThreadBase(linearKeyOrganization)}/connections/linear`,
+              "POST",
+              { scope: "member", token },
+            );
+            setLinearKeyOrganization(undefined);
+            toast.success("Your Linear account is connected.");
+          } catch (cause) {
+            toast.error("Couldn't connect Linear", { description: apiError(cause) });
+          } finally {
+            setBusy(false);
+          }
+        }}
+      />
     </section>
   );
 }
@@ -415,6 +447,18 @@ export default function HubAllView({
     });
   if (route.name === "threads" && route.threadId && !threadsLoaded && !pendingStart && !route.ownerOrganizationId)
     return <div className="flex min-h-0 flex-1 items-center justify-center"><Spinner aria-label="Loading threads" /></div>;
+  // Computers is one list across every account, and names the owner of the
+  // page it opens itself, so it never narrows to that owner here.
+  if (route.name === "settings" && route.tab === "devices") {
+    const personal = organizations.find((organization) => organization.personal) ?? organizations[0];
+    return (
+      <HubModelFavorites organizationId={personal?.id}>
+        <Deferred open>
+          <Computers accounts={organizations} all />
+        </Deferred>
+      </HubModelFavorites>
+    );
+  }
   if (threadOwnerId && !selectedOwner)
     return <EmptyState title="This account is unavailable" />;
   if (route.name === "threads" && route.threadId && !selectedOwner)
@@ -472,11 +516,6 @@ export default function HubAllView({
                   />
                 </>
               )}
-              {section === "devices" && (
-                <div className="p-6">
-                  <Computers organizationId={selectedOwner.id} />
-                </div>
-              )}
               {section === "connections" && (
                 <Connections organizationId={selectedOwner.id} />
               )}
@@ -509,24 +548,16 @@ export default function HubAllView({
         navigate={navigate}
       />
     );
-  if (route.name === "settings" && (route.tab === "general" || route.tab === "devices")) {
+  if (route.name === "settings" && route.tab === "general") {
     const personal =
       organizations.find((organization) => organization.personal) ??
       organizations[0];
     return personal ? (
       <HubPersonalContext value={personal.personal === true}>
         <HubModelFavorites organizationId={personal.id}>
-          {route.tab === "devices" ? (
-            <div className="min-h-0 overflow-auto p-6">
-              <Deferred open>
-                <Computers organizationId={personal.id} />
-              </Deferred>
-            </div>
-          ) : (
-            <div className="min-h-0 overflow-auto px-5 py-6">
-              <General organizationId={personal.id} />
-            </div>
-          )}
+          <div className="min-h-0 overflow-auto px-5 py-6">
+            <General organizationId={personal.id} />
+          </div>
         </HubModelFavorites>
       </HubPersonalContext>
     ) : (
