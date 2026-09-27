@@ -21,23 +21,7 @@ export function githubFor(env: Env) {
     env.GITHUB_APP_ID ?? "",
     (org) => githubChanged(env, org),
     undefined,
-    {
-      // A watching thread is reached through its account's coordinator with
-      // the member's identity, exactly as the member's own request would be.
-      threads: (org, member, method, path, body) =>
-        env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${org}`)).fetch(
-          new Request(`https://internal${path}`, {
-            method,
-            headers: {
-              "x-organization-id": org,
-              "x-thread-member": encodeURIComponent(JSON.stringify(member)),
-              ...(body === undefined ? {} : { "content-type": "application/json" }),
-            },
-            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-          }),
-        ),
-      secret: () => env.AUTH_SECRET.get(),
-    },
+    { secret: () => env.AUTH_SECRET.get() },
   );
 }
 export async function githubRoute(
@@ -48,7 +32,7 @@ export async function githubRoute(
 ): Promise<Response | undefined> {
   const url = new URL(request.url),
     match =
-      /^\/api\/organizations\/([^/]+)\/github(?:\/(installations|repositories|selection|actions|token|accessible-repositories|import|workspace-images|workspace-branches|pull-requests|pull-request|pull-request-reviewers|pull-request-images|pull-request-files|pull-request-review|pull-request-activity|pull-request-seen|pull-request-follow|pull-request-ticket))?$/.exec(
+      /^\/api\/organizations\/([^/]+)\/github(?:\/(installations|repositories|selection|actions|token|accessible-repositories|import|workspace-images|workspace-branches|pull-requests|pull-request|pull-request-reviewers|pull-request-images|pull-request-files|pull-request-review|pull-request-activity|pull-request-seen|pull-request-ticket))?$/.exec(
         url.pathname,
       );
   if (!match) return;
@@ -63,7 +47,6 @@ export async function githubRoute(
       if (action === "pull-request-files") return Response.json(await service.pullRequestFiles(org, user, url.searchParams.get("repository") ?? "", Number(url.searchParams.get("number")), Number(url.searchParams.get("changedFiles") ?? 0)), { headers: { "cache-control": "no-store" } });
       if (action === "pull-request-review") return Response.json(await service.pullRequestReview(org, user, url.searchParams.get("repository") ?? "", Number(url.searchParams.get("number"))), { headers: { "cache-control": "no-store" } });
       if (action === "pull-request-activity") return Response.json(await service.pullRequestActivity(org, user, url.searchParams.get("repository") ?? "", Number(url.searchParams.get("number"))), { headers: { "cache-control": "no-store" } });
-      if (action === "pull-request-follow") return Response.json(await service.pullRequestFollow(org, user, url.searchParams.get("repository") ?? "", Number(url.searchParams.get("number"))), { headers: { "cache-control": "no-store" } });
       if (action === "pull-request-ticket") return Response.json(await pullRequestTicket(env, service, org, user, url.searchParams.get("repository") ?? "", Number(url.searchParams.get("number"))), { headers: { "cache-control": "no-store" } });
       if (action === "pull-request-images") return Response.json(await service.pullRequestImages(org, user, url.searchParams.get("repository") ?? "", Number(url.searchParams.get("number"))), { headers: { "cache-control": "no-store" } });
       if (action === "workspace-branches") return Response.json(await service.workspaceBranches(org, user, url.searchParams.get("workspace") ?? ""), { headers: { "cache-control": "no-store" } });
@@ -120,18 +103,11 @@ export async function githubRoute(
           ),
         );
     }
-    // Watching and read marks are the member acting in Remy, never a computer.
-    if ((request.method === "PUT" || request.method === "DELETE") && (action === "pull-request-seen" || action === "pull-request-follow")) {
+    // A read mark is the member acting in Remy, never a computer.
+    if (request.method === "PUT" && action === "pull-request-seen") {
       if (clientKind === "computer") throw new ConnectionError("Change pull requests in Remy.", 403);
-      const input = request.method === "PUT" ? (await request.json()) as Record<string, unknown> : {};
-      const repository = String(input.repository ?? url.searchParams.get("repository") ?? "");
-      const number = Number(input.number ?? url.searchParams.get("number"));
-      if (action === "pull-request-seen" && request.method === "PUT")
-        return Response.json({ seenAt: await service.markActivitySeen(org, user, repository, number) }, { headers: { "cache-control": "no-store" } });
-      if (action === "pull-request-follow" && request.method === "PUT")
-        return Response.json(await service.followPullRequest(org, user, repository, number, input), { headers: { "cache-control": "no-store" } });
-      if (action === "pull-request-follow")
-        return Response.json(await service.unfollowPullRequest(org, user, repository, number), { headers: { "cache-control": "no-store" } });
+      const input = (await request.json()) as Record<string, unknown>;
+      return Response.json({ seenAt: await service.markActivitySeen(org, user, String(input.repository ?? ""), Number(input.number)) }, { headers: { "cache-control": "no-store" } });
     }
     return Response.json({ error: "Choose a GitHub action." }, { status: 400 });
   } catch (e) {

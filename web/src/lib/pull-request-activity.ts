@@ -30,21 +30,12 @@ export type ActivityItem =
   }
   | { kind: "checks"; id: string; at: string; commit: string; state: "pass" | "fail"; failed: string[]; total: number };
 
-export interface ActivityDelivery {
-  id: string;
-  at: string;
-  summary: string;
-  threadId: string;
-  computerId: string;
-}
-
 export interface PullRequestActivity {
   userId: string;
   viewer: string;
   viewerAuthor?: ActivityAuthor;
   seenAt: number | null;
   items: ActivityItem[];
-  deliveries: ActivityDelivery[];
 }
 
 /// The parts of a hub thread a thread event reads.
@@ -64,20 +55,14 @@ function whose(thread: ActivityThread, userId: string) {
   return thread.access.owner.id === userId ? "Your thread" : `${thread.access.owner.label}'s thread`;
 }
 
-/// A thread event says what a Remy thread did about this pull request, from
-/// what Remy actually knows: what the hub sent to the thread watching it,
-/// and what the linked thread is doing now. Nothing is inferred beyond that.
+/// A thread event says what a Remy thread is doing about this pull request,
+/// from what Remy actually knows: the linked thread's state now. Nothing is
+/// inferred beyond that.
 export function threadEvents<T extends ActivityThread>(
-  activity: Pick<PullRequestActivity, "deliveries" | "userId">,
-  threads: readonly T[],
+  activity: Pick<PullRequestActivity, "userId">,
   linked: T | undefined,
 ): ActivityEntry<T>[] {
   const events: ActivityEntry<T>[] = [];
-  for (const delivery of activity.deliveries) {
-    const thread = threads.find((entry) => entry.id === delivery.threadId && entry.computerId === delivery.computerId);
-    if (!thread) continue;
-    events.push({ kind: "thread", id: `delivery:${delivery.id}`, at: delivery.at, text: `Sent ${delivery.summary} to ${whose(thread, activity.userId).replace(/^Your/, "your")}`, thread });
-  }
   if (linked) {
     const tone = linkedThreadTone(linked.detail.state);
     const at = typeof linked.detail.updatedAt === "number" ? linked.detail.updatedAt : linked.observedAt;
@@ -97,17 +82,16 @@ export function threadEvents<T extends ActivityThread>(
 /// One timeline, oldest first, as Paper draws it: newest last, beside the composer.
 export function activityTimeline<T extends ActivityThread>(
   activity: PullRequestActivity | undefined,
-  threads: readonly T[],
   linked: T | undefined,
 ): ActivityEntry<T>[] {
   if (!activity) return [];
-  return [...activity.items, ...threadEvents(activity, threads, linked)]
+  return [...activity.items, ...threadEvents(activity, linked)]
     .sort((left, right) => Date.parse(left.at) - Date.parse(right.at));
 }
 
 /// The Activity tab's badge: reviews, comments and check results that arrived
-/// since you last opened it, leaving out your own. A thread event mirrors one
-/// of those or is live status, so it never adds to the count. Before the first
+/// since you last opened it, leaving out your own. A thread event is live status,
+/// so it never adds to the count. Before the first
 /// read of a pull request there is no mark, and nothing is new.
 export function unseenActivity(activity: PullRequestActivity | undefined): number {
   if (!activity || activity.seenAt === null) return 0;

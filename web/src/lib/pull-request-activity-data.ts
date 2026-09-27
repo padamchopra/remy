@@ -38,37 +38,6 @@ export function usePullRequestActivity(organizationId: string, repository: strin
   return { activity, failed, reload, markSeen };
 }
 
-export interface PullRequestFollowState {
-  follow: { computerId: string; threadId: string; memberId: string; createdAt: number } | null;
-  /// Whether GitHub's webhooks for this repository reach Remy at all.
-  receives: boolean;
-}
-
-/// Which thread watches this pull request. `failed` means this hub cannot say.
-export function usePullRequestFollow(organizationId: string, repository: string, number: number) {
-  const [state, setState] = useState<PullRequestFollowState>();
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    let current = true;
-    setState(undefined);
-    setFailed(false);
-    if (!organizationId) return;
-    hubRequest<PullRequestFollowState>(`${hubThreadBase(organizationId)}/github/pull-request-follow?${query(repository, number)}`)
-      .then((response) => { if (current) setState(response); })
-      .catch(() => { if (current) setFailed(true); });
-    return () => { current = false; };
-  }, [organizationId, repository, number]);
-  const change = useCallback(async (thread: { id: string; computerId: string } | null) => {
-    const path = `${hubThreadBase(organizationId)}/github/pull-request-follow`;
-    const next = thread
-      ? await hubRequest<PullRequestFollowState>(path, "PUT", { repository, number, computerId: thread.computerId, threadId: thread.id })
-      : await hubRequest<PullRequestFollowState>(`${path}?${query(repository, number)}`, "DELETE");
-    setState(next);
-    return next;
-  }, [organizationId, repository, number]);
-  return { state, failed, change };
-}
-
 export interface LinkedTicket {
   identifier: string;
   title: string;

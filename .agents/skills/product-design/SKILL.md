@@ -208,36 +208,23 @@ When a capability needs an agent, store an explicit agent id and let any eligibl
 
 Automation that starts work without a direct action is off by default. Enabling the automation and choosing who performs it remain explicit, inspectable choices.
 
-## Pull request monitoring
+## Pull request monitoring was removed
+
+Remy does not watch pull requests. There is no Watched by, no follow table, no webhook that becomes a thread message, and no poller on a computer. A pull request's Activity tab reads GitHub when you open it, and anything a thread should act on reaches it because a person sent it: Send to thread, Ask the thread to fix them, or a message in the thread.
+
+Do not bring monitoring back as a setting, a switch on the pull request, or an agent preset. If it returns, it is a product decision made again from here, not a restoration of the old model.
 
 BAD
 ```text
-Settings → Agents → GitHub agent
-Monitor pull requests  [on/off]
+Summary → Watched by  [on]
+New reviews and failing checks reach the linked thread on their own.
 ```
-
-This makes a machine integration look intrinsic to one deletable preset, prevents an arbitrary agent from taking over, and makes deletion or duplication ambiguous. Code shaped as `agent.preset === "github"` or `agentByHandle("github")` is the same product mistake below the UI.
 
 GOOD
 ```text
-Settings → Version control
-Monitor pull requests  [off]          Remy-wide default
-Handled by             [Agent picker]
-
-Workspace settings
-Monitor pull requests  [default]      Workspace override
-Handled by             [default]
-
-Thread → Pull request tool → Monitor
-Use workspace default
-Off
-In this thread
-With an agent
-  Builder
-  QA
+Summary → Checks · 2 failing  [Ask the thread to fix them]
+The person decides what reaches the thread.
 ```
-
-The machine setting owns the default. A workspace can override every pull request it contains, and one pull request can override its workspace from the tool already showing it. The pull request override may target its current thread or an explicit agent id. Deleting the target thread or agent turns that policy off until another destination is chosen. The GitHub preset remains an optional starting point with no privileged runtime behavior.
 
 ## Review the lifecycle
 

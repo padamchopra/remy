@@ -200,7 +200,6 @@ export function PullRequestHostedActivity({
   pullRequest,
   activity,
   failed,
-  threads,
   thread,
   active,
   onOpenThread,
@@ -212,7 +211,6 @@ export function PullRequestHostedActivity({
   activity?: PullRequestActivity;
   /// The hub cannot read the timeline; the comments the list carries stand in.
   failed: boolean;
-  threads: HubThread[];
   thread?: HubThread;
   active: boolean;
   onOpenThread: (thread: HubThread) => void;
@@ -220,7 +218,7 @@ export function PullRequestHostedActivity({
   onCommented: () => void;
 }) {
   const entries = useMemo<ActivityEntry<HubThread>[]>(() => {
-    if (activity) return activityTimeline(activity, threads, thread);
+    if (activity) return activityTimeline(activity, thread);
     if (!failed) return [];
     return (pullRequest.comments ?? []).map((comment, index) => ({
       kind: "comment" as const,
@@ -231,7 +229,7 @@ export function PullRequestHostedActivity({
       url: comment.url || null,
       thread: null,
     })).sort((left, right) => Date.parse(left.at) - Date.parse(right.at));
-  }, [activity, failed, pullRequest.comments, threads, thread]);
+  }, [activity, failed, pullRequest.comments, thread]);
 
   // Newest is last, beside the composer, so the view starts at the bottom.
   const end = useRef<HTMLDivElement>(null);

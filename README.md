@@ -48,7 +48,7 @@ Settings → Environments lets you define reusable values and assign one environ
 
 Connect Linear in Settings → Connections and a thread can read and update your issues through Linear's own tools, signed in as you.
 
-**Pull requests** sit beside your threads. Open one from the thread that wrote it, read its checks and comments beside the conversation, and have Remy follow it in that thread — or in no thread at all.
+**Pull requests** sit beside your threads. Open one from the thread that wrote it, read its checks, files and activity, comment on GitHub, and send what needs work to the thread on its branch.
 
 ## Add your other machines
 

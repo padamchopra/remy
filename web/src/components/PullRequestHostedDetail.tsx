@@ -25,7 +25,7 @@ import { PaneHeader } from "@/components/PaneHeader";
 import { pullRequestAction, RequestReviewers, ReviewerInitials, SquashAndMerge } from "@/components/PullRequestHostedActions";
 import { LinkedThreadChip, ThreadDot } from "@/components/PullRequestLinkedThread";
 import { PullRequestStackEntry, PullRequestStackRows, stackEntriesInOrder } from "@/components/PullRequestStack";
-import { LinkedTicketChip, WatchedBy } from "@/components/PullRequestWatchedBy";
+import { LinkedTicketChip } from "@/components/PullRequestLinkedTicket";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { apiError } from "@/lib/api-error";
 import { useAccountResources } from "@/lib/hub-account-resources";
@@ -41,7 +41,7 @@ import {
 } from "@/lib/pull-request-detail";
 import { linkedPullRequestThread } from "@/lib/pull-request-linked-thread";
 import { unseenActivity } from "@/lib/pull-request-activity";
-import { usePullRequestActivity, usePullRequestFollow, usePullRequestTicket } from "@/lib/pull-request-activity-data";
+import { usePullRequestActivity, usePullRequestTicket } from "@/lib/pull-request-activity-data";
 import type { PullRequestTileWorkspace } from "@/lib/pull-request-workspace";
 import type { PullRequestView } from "@/lib/route";
 import { cn } from "@/lib/utils";
@@ -344,7 +344,6 @@ export function PullRequestHostedDetail({
   const detail = usePullRequestDetail(organizationId, pullRequest.repository, pullRequest.number, `${pullRequest.updatedAt}:${revision}`);
   const changed = useCallback(() => { setRevision((value) => value + 1); onChanged(); }, [onChanged]);
   const timeline = usePullRequestActivity(organizationId, pullRequest.repository, pullRequest.number, `${pullRequest.updatedAt}:${revision}`);
-  const follow = usePullRequestFollow(organizationId, pullRequest.repository, pullRequest.number);
   const ticket = usePullRequestTicket(organizationId, pullRequest.repository, pullRequest.number);
   const unseen = unseenActivity(timeline.activity);
   const { markSeen } = timeline;
@@ -577,15 +576,6 @@ export function PullRequestHostedDetail({
                     ) : undefined}
                   />
                   <Checks checks={checks} />
-                  {thread && (thread.access.organizationId || organizationId) === organizationId && (
-                    <WatchedBy
-                      thread={thread}
-                      state={follow.state}
-                      failed={follow.failed}
-                      onChange={follow.change}
-                      onOpenThread={() => onOpenThread(thread)}
-                    />
-                  )}
                 </aside>
               </div>
             </ScrollArea>
@@ -610,7 +600,6 @@ export function PullRequestHostedDetail({
                 pullRequest={pullRequest}
                 activity={timeline.activity}
                 failed={timeline.failed}
-                threads={threads}
                 thread={thread}
                 active={view === "activity"}
                 onOpenThread={onOpenThread}

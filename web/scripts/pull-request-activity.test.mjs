@@ -25,7 +25,6 @@ const base = {
     { kind: "checks", id: "checks:x", at: at(-11), commit: "3e91f2a", state: "fail", failed: ["typecheck", "server tests"], total: 5 },
     { kind: "review", id: "R2", at: at(-10), author: author("linus"), state: "COMMENTED", body: "", comments: 3, url: null, thread: null },
   ],
-  deliveries: [{ id: "d1", at: at(-9), summary: "linus's review", threadId: "t1", computerId: "mac" }, { id: "d2", at: at(-8), summary: "x", threadId: "gone", computerId: "mac" }],
 };
 
 test("the badge counts what arrived since you last opened Activity, never your own or thread events", () => {
@@ -36,23 +35,23 @@ test("the badge counts what arrived since you last opened Activity, never your o
   assert.equal(activity.unseenActivity(undefined), 0);
 });
 
-test("thread events come from what was sent to the watching thread and what the linked thread is doing", () => {
+test("thread events come from what the linked thread is doing", () => {
   const linked = thread("t1", "working");
-  const events = activity.threadEvents(base, [linked], linked);
-  assert.deepEqual(events.map((event) => event.text), ["Sent linus's review to your thread", "Your thread is working on this branch"]);
+  const events = activity.threadEvents(base, linked);
+  assert.deepEqual(events.map((event) => event.text), ["Your thread is working on this branch"]);
   assert.equal(events[0].thread, linked);
-  // A thread you cannot read draws nothing; a done thread has no live event.
-  assert.deepEqual(activity.threadEvents(base, [], undefined), []);
-  assert.deepEqual(activity.threadEvents({ ...base, deliveries: [] }, [], thread("t1", "done")), []);
+  // No linked thread draws nothing; a done thread has no live event.
+  assert.deepEqual(activity.threadEvents(base, undefined), []);
+  assert.deepEqual(activity.threadEvents(base, thread("t1", "done")), []);
   const theirs = thread("t1", "needs_input", "ada");
-  assert.deepEqual(activity.threadEvents(base, [theirs], theirs).map((event) => event.text), ["Sent linus's review to Ada's thread", "Ada's thread needs you"]);
+  assert.deepEqual(activity.threadEvents(base, theirs).map((event) => event.text), ["Ada's thread needs you"]);
 });
 
 test("the timeline is one list, oldest first, newest beside the composer", () => {
   const linked = thread("t1", "working");
-  const entries = activity.activityTimeline(base, [linked], linked);
-  assert.deepEqual(entries.map((entry) => entry.id), ["R1", "C1", "C2", "C3", "checks:x", "R2", "delivery:d1", "thread:t1"]);
-  assert.deepEqual(activity.activityTimeline(undefined, [], undefined), []);
+  const entries = activity.activityTimeline(base, linked);
+  assert.deepEqual(entries.map((entry) => entry.id), ["R1", "C1", "C2", "C3", "checks:x", "R2", "thread:t1"]);
+  assert.deepEqual(activity.activityTimeline(undefined, undefined), []);
 });
 
 test("reviews and checks read as sentences", () => {
