@@ -2,7 +2,7 @@
 
 Remy runs [Claude Code](https://claude.com/claude-code), Codex, and Cursor threads on your computers or on hosted cloud computers, and you follow them from one place:
 
-- **The web app** at `app.tryremy.dev` is the only client. It is `web/`, served with its API by the hub under `hub/`, which holds accounts, organizations, Tasks, and computer registrations. Organizations are optional.
+- **The web app** at `app.tryremy.dev` is the only client. It is `web/`, served with its API by the hub under `hub/`, which holds accounts, organizations, and computer registrations. Organizations are optional.
 - **The daemon and the `remy` CLI** (`server/`) are how a computer joins it. `remy login` signs a Mac or Linux machine into an account and `remy start` keeps its daemon connected to the hub (`server/src/hub-computer.ts`); the daemon runs threads in the repositories on that machine.
 
 On a computer you connect, repositories and provider sessions stay on that computer. The daemon binds `127.0.0.1` and connects out to the hub, which keeps a bounded mirror of thread snapshots for live delivery and offline reading (`hub/docs/threads.md`). A hosted computer runs its repository in the cloud.
@@ -44,7 +44,7 @@ Skip `VITE_MC_FIXTURE=1`; that is fake data, not your real state.
 | Path | What it is |
 |---|---|
 | `web/` | The web app. React 19, Tailwind v4, [shadcn/ui](https://ui.shadcn.com) in `web/src/components/ui` (still largely New York / Radix; **new work and redesigns use Base UI**), Zustand store in `web/src/state`. |
-| `hub/` | The hosted backend on Cloudflare Workers: accounts, organizations, Tasks, computer registrations and the thread relay. `hub/docs/` describes each path. |
+| `hub/` | The hosted backend on Cloudflare Workers: accounts, organizations, computer registrations and the thread relay. `hub/docs/` describes each path. |
 | `server/` | The daemon and the `remy` CLI, which connect a computer to the hub. Node and TypeScript, binds `127.0.0.1` only, SQLite at `~/.remy/remy.db` through `node:sqlite`. Threads run on the Claude Agent SDK, Codex app-server, or Cursor ACP — see **Providers**. |
 | `deploy/` | Optional launchd login item and provider hooks. |
 | `.agents/skills/` | House rules. Read the one that covers what you are about to change. |
@@ -75,7 +75,7 @@ Skip `VITE_MC_FIXTURE=1`; that is fake data, not your real state.
 The code and the person do not always use the same word. Where they differ, the
 code's word is the one in types, tables and routes; the person's word is the one
 in **every string anybody reads** — a label, a menu item, an empty state, an
-error, a toast, a comment on a ticket. Getting this wrong is the most repeated
+error, a toast, a pull request comment. Getting this wrong is the most repeated
 mistake in this repo, so check the table before naming anything.
 
 | The code says | A person reads | Because |
@@ -83,12 +83,12 @@ mistake in this repo, so check the table before naming anything.
 | `project` | **workspace** | A project is the repository, keyed on its origin remote so two machines land on the same one. A workspace is one machine's folder holding it. Nobody adds a project — they add a folder, so that is the only word the UI uses. |
 | `chat` | **thread** | A conversation you have in a workspace. The API, the database and the code all still say chat. |
 | `server`, `device`, `runner` | **computer** | A machine running Remy or a hosted computer that can run threads. |
-| `keyPrefix` | **ticket slug** | The letters in front of a ticket key. |
 
 Nothing a person reads says project, job, workflow, cron, daemon, projection,
-runner, fold, board log, lamport or event. Agents, routines and routing were
-removed from the product, so nothing anybody reads mentions those either.
-**Tasks** is the board section and a **ticket** is its unit of work. Machine is
+runner, fold, board log, lamport or event. Agents, routines, routing and Tasks (the
+board and its tickets) were removed from the product, so nothing anybody reads
+mentions those either. Linear stays: a thread reaches it through each person's
+own Linear account. Machine is
 fine — the app says "this machine" — and so is worktree, which is a git word
 anyone using worktrees already has.
 
@@ -164,28 +164,18 @@ A server module opens its database at import time, so a test that touches state 
   Do not reintroduce Agents, Routines, Routing or an Inbox as product surfaces.
 - **A Remy tool says what it made.** `ok(text, artifact)` appends a
   `<remy-artifact>` marker that `takeArtifacts` lifts back off in
-  `applyToolOutput`, so the feed draws a ticket, a thread or a workspace as a
-  card that opens it. The marker rides inside the tool's own text because a
+  `applyToolOutput`, so the feed draws a thread or a workspace as a card that
+  opens it. The marker rides inside the tool's own text because a
   transcript is the one thing all three providers write down the same way; add
   it on both `ticket-tools.ts` and `ticket-mcp.ts`, never on one.
 - **A control that goes somewhere gets the hand.** `data-link` (with `a[href]`
   and `role="link"`) is what `index.css` gives `cursor: pointer`; a button that
   acts on what is already in front of you keeps the arrow. Mark navigation with
   the attribute rather than a `cursor-pointer` class.
-- **The `remy` MCP is a thread's control surface.** Claude gets the in-process server in `server/src/ticket-tools.ts`; Codex and Cursor get the STDIO server in `server/src/ticket-mcp.ts`. Every tool exists on both paths. A thread may orchestrate only the operations allowlisted by `isRemyToolRoute`; add each new capability to the smallest explicit route and method set, derive its thread, device and actor from the capability where relevant, and test both an allowed route and a neighbouring forbidden one. STDIO providers receive the HMAC capability from `remyToolToken` through inherited environment variable names, never `config.token` or another daemon-wide credential. "Work on REMY-1" is resolved and linked before the model sees the prompt; a key that does not exist in Remy's board is not invented.
+- **The `remy` MCP is a thread's control surface.** Claude gets the in-process server in `server/src/ticket-tools.ts`; Codex and Cursor get the STDIO server in `server/src/ticket-mcp.ts`. Every tool exists on both paths. A thread may orchestrate only the operations allowlisted by `isRemyToolRoute`; add each new capability to the smallest explicit route and method set, derive its thread, device and actor from the capability where relevant, and test both an allowed route and a neighbouring forbidden one. STDIO providers receive the HMAC capability from `remyToolToken` through inherited environment variable names, never `config.token` or another daemon-wide credential. The files keep their `ticket-` names because installed provider configs point at `dist/ticket-mcp.js`; Remy has no ticket tools. Linear issues are Linear's: a thread reads them through Linear's hosted MCP with the person's own token (`linear-session.ts`), not through a Remy tool.
 - **Every provider keeps a live conversation.** A Claude thread holds one SDK query process across turns; a Codex thread holds one `codex app-server` JSON-RPC connection; a Cursor thread holds one `agent acp` connection through the official Agent Client Protocol SDK. Hosted Cursor Cloud threads use the Cursor SDK cloud VM instead of ACP. They can stop mid-turn for approvals and questions, stream tool progress, interrupt the active turn, and resume their own provider transcript after a restart. Cursor models come from `agent --list-models`, and its current default comes from `agent about`; do not replace ACP with the older headless JSON stream. Never quietly grant what a person would have been asked about.
 - **Reusable environments are assigned to repositories.** Settings owns shared definitions and workspace assignments. Cloud and model-access keys on Computers follow the same rule: values are encrypted at rest and management APIs return names and configured state, never values; the `remy` MCP cannot manage them. An account can keep multiple named Fly.io, OpenRouter, and other integration keys; execution uses the active key. Authenticated computer channels deliver assigned environment values, and providers inherit them automatically for each task. Restart a provider session when its environment changes. Keep values out of arguments, prompts, logs and snapshots. Exact output redaction cannot recognise encoded or transformed values and cannot prevent a provider or command from reading its inherited environment; keep that limitation visible anywhere the guarantee is described.
-- **A computer talks only to the hub.** Daemons do not pair, sync with or proxy to each other, and nothing serves a daemon on the tailnet; the daemon has no `/peers`, `/pair/*`, `/server/identity`, `/tailnet` or `/push/*` routes and no Apple Push. `board_log` is this computer's own ticket and project store: `hub-board.ts` imports it into an organization's board once and follows the imported entities from there. Shape multi-computer work on hub computers, organizations and grants.
-- **A ticket's status is derived, and yours to overrule.** `tickets.ts` holds
-  every rule: a working thread moves a card between In progress and Needs input,
-  a pull request opened for review moves it to PR review, a merged one closes it,
-  and a parent follows its sub-tickets — started by the first, closed once they
-  all are. The machine holding the repository is the one that asks GitHub
-  (`ticket-pull-requests.ts`) and the parent's own machine is the one that rolls
-  it up. Every derived
-  move is actor `remy` and carries what derived it, because the rule reads the
-  ticket's own story to see what it has already done: one pull request moves a
-  card once, and a card you moved by hand stays where you put it.
+- **A computer talks only to the hub.** Daemons do not pair, sync with or proxy to each other, and nothing serves a daemon on the tailnet; the daemon has no `/peers`, `/pair/*`, `/server/identity`, `/tailnet` or `/push/*` routes and no Apple Push. `board_log` holds only this computer's project events, which workspaces and environments fold from, and its `deviceId` is the computer id on the hub. Shape multi-computer work on hub computers, organizations and grants.
 - **Which computer a thread runs on is a choice, not a rule.** The person picks it in the composer, or Remy takes the one they last used for that workspace; `chooseComputer` in `hub/src/computer-choice.ts` is that decision. There is nothing to configure, so do not add a rules table, a resolver endpoint, or a settings section for it.
 - **Notifications are addressed, not broadcast.** A computer sends a thread's notification to the hub, which derives its recipients from the thread's owner and participants and checks their access again before delivery (`hub/docs/computers.md`).
 - **Commit subjects** are a sentence in the imperative with no prefix or scope tag: "Store chats in SQLite instead of a file each". PRs land squashed with the `(#n)` suffix.

@@ -39,7 +39,7 @@ Distinguish observed behavior from code-based hypotheses and subjective alternat
 
 BAD
 ```text
-The sign-in buttons render, a seeded account creates a ticket, and the build passes. Onboarding passes.
+The sign-in buttons render, a seeded account starts a thread, and the build passes. Onboarding passes.
 ```
 
 GOOD
@@ -141,15 +141,15 @@ A UI preview against the packaged daemon does not prove current server relay cod
 
 ## Named things lead somewhere
 
-Wherever a surface names something that lives elsewhere in Remy — a workspace, a device, an agent, a thread, a ticket, a branch's checkout — it carries that thing's own mark and it opens it. A bare word is a dead end, and the person reading it came to that pane precisely because they wanted the thing behind the word.
+Wherever a surface names something that lives elsewhere in Remy — a workspace, a computer, a thread, a pull request, a branch's checkout — it carries that thing's own mark and it opens it. A bare word is a dead end, and the person reading it came to that pane precisely because they wanted the thing behind the word.
 
 So for every entity a feature mentions:
 
-- **Its mark.** A workspace shows its `WorkspaceMark`, a device its `deviceIcon`, an agent its `AgentAvatar`, a ticket its status glyph. The same mark it wears on its own pane, so it is recognised rather than read.
-- **Its route.** Clicking it goes there — `#/workspaces/<id>`, `#/tickets/<key>`, a thread by id — and the keyboard reaches it the same way.
+- **Its mark.** A workspace shows its `WorkspaceMark`, a computer its icon, a thread its status. The same mark it wears on its own pane, so it is recognised rather than read.
+- **Its route.** Clicking it goes there — `/workspaces/<id>`, `/threads/<id>`, a pull request by number — and the keyboard reaches it the same way.
 - **Its absence.** When the thing is not on this machine, say so in place of the link rather than offering one that goes nowhere. A project with no local clone still has a name; it just has nothing to open.
 
-Walk them: from the ticket pane reach its workspace, its device, its threads and its sub-tickets; from a thread row reach its ticket. A hop that lands on the wrong pane, or a name with no mark beside it, is the finding.
+Walk them: from a thread reach its workspace, its computer and its pull request; from a workspace reach its threads. A hop that lands on the wrong pane, or a name with no mark beside it, is the finding.
 
 ## Alignment
 

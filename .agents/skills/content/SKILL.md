@@ -11,7 +11,7 @@ Remy is a remote for coding agents on your own machines. Copy speaks to the pers
 
 A conversation is a **thread**. The API, the database, and the code still say chat; nothing a person reads does.
 
-The same goes for **workspace**: the code has a `project` — the repository, keyed on its origin so two machines share one board — but nobody adds a project, they add a folder. No label, menu, empty state or error says project. `AGENTS.md` has the rest of the table.
+The same goes for **workspace**: the code has a `project` — the repository, keyed on its origin so two machines share one — but nobody adds a project, they add a folder. No label, menu, empty state or error says project. `AGENTS.md` has the rest of the table.
 
 Do not explain how the UI works, and do not mention servers or daemons unless someone has to connect a computer.
 

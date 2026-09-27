@@ -183,7 +183,7 @@ GOOD
   </Button>
 </PaneHeader>
 
-// Agents, Tasks, Workspaces, Threads: the shell's PaneHeader is the title.
+// Workspaces, Threads, Settings: the shell's PaneHeader is the title.
 <PaneHeader crumbs={[{ label: "Settings" }, { label: "Agents" }]} />
 <section aria-label="Agents">{/* list, not another Agents heading */}</section>
 ```

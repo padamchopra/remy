@@ -8,7 +8,7 @@ Remy runs [Claude Code](https://claude.com/claude-code), [Codex](https://develop
 
 On a computer you connect, it stays there. The `remy` CLI runs a daemon on that machine; your repos are never uploaded or cloned to a server, and they reach no API but the provider you picked for the thread — the same call Claude Code, Codex, or Cursor already makes when you run it in a terminal. The daemon listens on `127.0.0.1` and nothing else, and connects out to your Remy account.
 
-Remy on the web keeps your account, your organizations, your Tasks board, and a bounded copy of each thread's recent turns so you can follow it live and read it while the computer is offline. A hosted computer is the other choice: it runs your repository in the cloud.
+Remy on the web keeps your account, your organizations, and a bounded copy of each thread's recent turns so you can follow it live and read it while the computer is offline. A hosted computer is the other choice: it runs your repository in the cloud.
 
 ## Try it
 
@@ -44,13 +44,11 @@ Start a thread in a workspace, pick a model and how much it may do unasked, and 
 
 A thread runs on the computer you pick, or on the one you last used for that workspace — there is nothing to configure.
 
-Settings → Environments lets you define reusable values and assign one environment to several workspaces. Tasks inherit the selected values on their execution computer, including local computers and optional hosted task computers. Values are encrypted at rest and management screens return names only. Providers and their commands can read assigned values. Remy redacts exact values from supported output paths, but encoded or transformed values are not recognised; this is not a boundary against a hostile command.
+Settings → Environments lets you define reusable values and assign one environment to several workspaces. Threads inherit the selected values on the computer that runs them, including local computers and optional hosted computers. Values are encrypted at rest and management screens return names only. Providers and their commands can read assigned values. Remy redacts exact values from supported output paths, but encoded or transformed values are not recognised; this is not a boundary against a hostile command.
 
-**Tasks** is for planning rather than chatting: a board of tickets, each one a piece of work you can start a thread on. A ticket follows the thread working on it, so the board moves without you dragging cards.
+Connect Linear in Settings → Connections and a thread can read and update your issues through Linear's own tools, signed in as you.
 
-<img src="docs/images/tasks-board.png" alt="The Tasks board, tickets in columns" width="100%" />
-
-**Pull requests** are the other side of that. Open one from the thread that wrote it, read its checks and comments beside the conversation, and have Remy follow it in that thread — or in no thread at all.
+**Pull requests** sit beside your threads. Open one from the thread that wrote it, read its checks and comments beside the conversation, and have Remy follow it in that thread — or in no thread at all.
 
 ## Add your other machines
 
