@@ -98,3 +98,17 @@ test("computer capabilities carry model names and still accept ids alone", () =>
   const bare = computerCapabilitiesSchema.parse({ ...base, providers: [{ id: "claude", models: ["sonnet"] }] });
   assert.equal(bare.providers[0]?.modelInfo, undefined);
 });
+
+test("review agent inputs keep findings anchored and rules short", async () => {
+  const { hubReviewSchema, reviewFindingsReportSchema, reviewRuleInputSchema, reviewRuleProposalInputSchema, reviewStartSchema } = await import("./index.js");
+  assert.deepEqual(reviewStartSchema.parse({ repository: "Release/Remy", number: 7 }), { repository: "release/remy", number: 7 });
+  assert.equal(reviewStartSchema.safeParse({ repository: "release", number: 7 }).success, false);
+  const report = reviewFindingsReportSchema.parse({ commit: "A4F91C2", findings: [{ path: "web/a.ts", startLine: 3, endLine: 4, severity: "must", title: "Searches on every keystroke", body: "Debounce it." }] });
+  assert.equal(report.commit, "a4f91c2");
+  assert.equal(report.findings[0]!.side, "RIGHT");
+  assert.equal(reviewFindingsReportSchema.safeParse({ commit: "a4f91c2", findings: [{ path: "a", startLine: 5, endLine: 4, severity: "note", title: "t", body: "b" }] }).success, false);
+  assert.equal(reviewFindingsReportSchema.safeParse({ commit: "not-a-sha", findings: [] }).success, false);
+  assert.equal(reviewRuleInputSchema.safeParse({ text: "x".repeat(501), repository: null }).success, false);
+  assert.equal(reviewRuleProposalInputSchema.safeParse({ text: "Rule", scope: "everywhere", reason: "r" }).success, false);
+  assert.deepEqual(hubReviewSchema.parse({ repository: "release/remy", number: 7, title: "t", baseRef: "main", headRef: "b", headSha: "a".repeat(40), rules: [] }).stack, []);
+});

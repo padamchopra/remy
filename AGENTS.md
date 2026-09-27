@@ -87,7 +87,12 @@ mistake in this repo, so check the table before naming anything.
 Nothing a person reads says project, job, workflow, cron, daemon, projection,
 runner, fold, board log, lamport or event. Agents, routines, routing and Tasks (the
 board and its tickets) were removed from the product, so nothing anybody reads
-mentions those either. Linear stays: a thread reaches it through each person's
+mentions those either. The one exception is **review agent**: the thread
+that reviews a pull request is called the review agent in everything a person
+reads about it (Review with agent, Review agent, Send to review agent), because
+that is the name the person asked for. It is a thread with a pull request
+attached, not a return of Agents: no roster, no persona, no settings of its own
+beyond your review rules. Linear stays: a thread reaches it through each person's
 own Linear account. Machine is
 fine — the app says "this machine" — and so is worktree, which is a git word
 anyone using worktrees already has.

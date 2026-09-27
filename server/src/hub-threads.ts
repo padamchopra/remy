@@ -34,9 +34,19 @@ import { closeBrowser } from "./browser.js";
 import { closeTerminal } from "./terminal.js";
 import { getKv, setKv } from "./db.js";
 import { broadcast } from "./notify.js";
-import { checkoutWorkspaceBranch, listWorkspaces } from "./workspaces.js";
+import { checkoutReviewWorktree, checkoutWorkspaceBranch, listWorkspaces } from "./workspaces.js";
 import type { ChatCodeReference, ChatImageAttachment } from "./transcript.js";
 import { validateChatCodeReferences } from "./chat-references.js";
+import { removeWorktree } from "./git.js";
+import { forgetThreadReview, movedHeadContext, parseHubReview, setThreadReview, threadReview, updatedRulesContext } from "./review-agent.js";
+import type { HubReview } from "@remy/contract";
+
+/// A cloud computer fetches through the hub's read-only Git capability.
+function reviewGitOptions() {
+  return process.env.REMY_HOSTED_TASK === "1"
+    ? { env: { ...process.env, REMY_GIT_READ_ONLY: "1", GIT_TERMINAL_PROMPT: "0" } }
+    : {};
+}
 
 const KEY = "hubThreadAccess";
 const branchStates = new Map<string, string>();
@@ -88,8 +98,11 @@ export function hubThreadSnapshot(
   const branchState = `${detail.cwd}:${detail.state}`;
   const refreshBranch = branchStates.get(id) !== branchState;
   branchStates.set(id, branchState);
-  const branch = hubThreadBranch(detail.cwd, () => broadcast({type: "hub-thread", chatId: id}), refreshBranch);
-  return threadSnapshotSchema.parse({ id, revision, access, detail: {...detail, ...(branch ? {branch} : {})} });
+  const review = threadReview(id);
+  // A review's checkout is detached at the pull request's head; its branch is
+  // the pull request's, not one of its own.
+  const branch = review ? undefined : hubThreadBranch(detail.cwd, () => broadcast({type: "hub-thread", chatId: id}), refreshBranch);
+  return threadSnapshotSchema.parse({ id, revision, access, detail: {...detail, ...(branch ? {branch} : {}), ...(review ? { review: { repository: review.repository, number: review.number, baseRef: review.baseRef, headRef: review.headRef, headSha: review.headSha } } : {})} });
 }
 
 export function hubThreadIds(organizationId: string): string[] {
@@ -137,15 +150,25 @@ export async function handleHubThreadRequest(
       if(typeof input.model === "string" && input.model.startsWith("remy:")) {
         if(input.provider !== "codex" || !hostedGatewayAvailable(input.model)) return fail(400,"This model provider is unavailable on this computer.");
       }
+      let review: HubReview | undefined;
+      if (input.hubReview !== undefined) {
+        review = parseHubReview(input.hubReview);
+        if (input.branch !== undefined) return fail(400, "A review starts at the pull request's head; leave the branch out.");
+      }
       if (input.branch !== undefined) {
         if (typeof input.branch !== "string" || !input.branch || input.branch.length > 255) return fail(400, "Choose a branch.");
         if (process.env.REMY_HOSTED_TASK === "1") await prepareHostedBranch(workspace.path, input.branch);
         else await checkoutWorkspaceBranch(workspace.id, input.branch, "main");
       }
       if (input.permissionMode !== undefined && !["default", "auto", "acceptEdits", "plan", "bypassPermissions"].includes(String(input.permissionMode))) return fail(400, "Choose a permission level.");
+      let cwd = workspace.path;
+      if (review) {
+        try { cwd = await checkoutReviewWorktree(workspace.path, review, reviewGitOptions()); }
+        catch { return fail(409, `This computer could not check out pull request #${review.number}. Check that ${workspace.name} can fetch from origin, then try again.`); }
+      }
       const chat = createChat({
         permissionMode: input.permissionMode,
-        cwd: workspace.path,
+        cwd,
         title: typeof input.title === "string" ? input.title : undefined,
         provider: input.provider,
         model: typeof input.model === "string" ? input.model : undefined,
@@ -155,6 +178,7 @@ export async function handleHubThreadRequest(
           effort: workspace.effort,
         },
       });
+      if(review)setThreadReview(chat.id,{...review,worktree:cwd});
       if(taskKey)setKv(taskKey,chat.id);
       if(input.hubEnvironment!==undefined)setTaskEnvironment(chat.id,input.hubEnvironment);
       if(input.hubLinear!==undefined){setHubLinear(chat.id,input.hubLinear);publishLinearNotice(chat.id);}
@@ -231,6 +255,23 @@ export async function handleHubThreadRequest(
       let codeReferences: ChatCodeReference[];
       try { codeReferences = validateChatCodeReferences(input.codeReferences); }
       catch { return fail(400, "Choose up to 200 lines for each code reference."); }
+      // A review's message carries its owner's rules and the commit it is
+      // about. What changed since the provider last saw them rides along.
+      let reviewContext: string | undefined;
+      const stored = input.hubReview !== undefined ? threadReview(id) : undefined;
+      if (stored) {
+        const next = parseHubReview(input.hubReview);
+        const context: string[] = [];
+        if (next.headSha !== stored.headSha) {
+          try { await checkoutReviewWorktree(stored.worktree, next, { ...reviewGitOptions(), existing: stored.worktree }); }
+          catch { return fail(409, "This computer could not fetch the pull request's new commits; try again."); }
+          context.push(movedHeadContext(stored.headSha, next.headSha));
+        }
+        const rules = updatedRulesContext(stored.rules, next.rules);
+        if (rules) context.push(rules);
+        setThreadReview(id, { ...stored, headSha: next.headSha, rules: next.rules });
+        reviewContext = context.join("\n\n") || undefined;
+      }
       const attachments = await Promise.all(
         ((input.attachmentIds ?? []) as string[]).map((attachment) =>
           importAttachment(id, attachment),
@@ -241,7 +282,7 @@ export async function handleHubThreadRequest(
         input.text,
         attachments,
         codeReferences,
-        undefined,
+        reviewContext,
         input.messageId,
         actor,
       );
@@ -350,6 +391,13 @@ async function retireHubThread(id: string, mode: "archive" | "delete"): Promise<
       deleteChatGroup(id);
     }
     forgetHubThreads(ids);
+    // A review's checkout is Remy's own and goes with its thread.
+    for (const member of ids) {
+      const review = threadReview(member);
+      if (!review) continue;
+      await removeWorktree(review.worktree, true).catch(() => undefined);
+      forgetThreadReview(member);
+    }
     broadcast({ type: "hub-thread", chatId: id });
     return Response.json({ ok: true });
   } catch (error) {

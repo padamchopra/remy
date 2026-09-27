@@ -226,6 +226,27 @@ Summary → Checks · 2 failing  [Ask the thread to fix them]
 The person decides what reaches the thread.
 ```
 
+## Review agent
+
+A review is a thread with a pull request attached, started by a person from that pull request. Nothing starts one on push, on a schedule, or because a webhook arrived. It runs where any thread in that workspace could, chosen the same way, and shows in the sidebar like any thread.
+
+The review agent never posts to GitHub. It reports findings to Remy; the person turns a finding into a draft in their own pending review and submits that review themselves.
+
+Review rules are personal. They belong to the person who saved them, never to an organization, and no other member reads them, even in an organization workspace. A rule applies to one repository or to all their workspaces. The agent only proposes rules; nothing is saved until the person saves it, and a saved rule applies from the agent's next turn.
+
+BAD
+```text
+Organization settings → Review rules, shared by everyone.
+The agent saves "Don't flag fixtures" after you correct it, and posts its findings as a review.
+```
+
+GOOD
+```text
+Review agent → Rules: yours, per repository or all workspaces, with where each was learned.
+The agent proposes "Don't flag fixtures"; you edit it and press Save rule.
+Its findings stay in Remy until you choose Add to GitHub review.
+```
+
 ## Review the lifecycle
 
 Before implementation, check the proposal against creation, rename, duplication, deletion, synchronization across devices, unavailable actors, and a fresh install. A design is incomplete when one of those states changes who owns the behavior or leaves work running without a visible controlling setting.

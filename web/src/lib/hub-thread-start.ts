@@ -15,6 +15,9 @@ export type ThreadStart = {
   branch?: string;
   provider?: string;
   model?: string;
+  /// A review: the hub reads this pull request with your GitHub connection,
+  /// names the thread "Review #n: title" and checks its head out on the computer.
+  review?: { repository: string; number: number };
   created?: StartedThread;
   phase: "starting" | "failed" | "ready";
   progress?: ThreadStartProgress;
@@ -61,6 +64,7 @@ async function waitForCreated(start: ThreadStart): Promise<StartedThread | undef
     title: start.message.slice(0, 200), requestId: start.requestId,
     branch: start.branch, provider: start.provider, model: start.model,
     visibility: start.visibility,
+    ...(start.review ? { review: start.review } : {}),
   });
   if (created.id && created.computerId) return created;
   current = applyProgress(current, created.phase ?? "creating");

@@ -399,3 +399,163 @@ export const CLOUD_COMPUTERS = [
 export const CURSOR_CLOUD_COMPUTER_ID = "cloud:cursor-cloud";
 export const cloudComputerProvider = (id: string | undefined | null) => CLOUD_COMPUTERS.find(c => c.id === id)?.provider;
 export const cloudComputerName = (id: string | undefined | null) => CLOUD_COMPUTERS.find(c => c.id === id)?.name;
+
+// ---- Review agent -----------------------------------------------------------
+// A review is an ordinary thread with a pull request attached. Rules are
+// personal: one person's, never shared, the same in every organization.
+
+export const REVIEW_RULE_TEXT_MAX = 500;
+export const REVIEW_RULES_ENABLED_MAX = 100;
+export const REVIEW_FINDINGS_PER_REPORT = 50;
+export const REVIEW_FINDINGS_PER_REVIEW = 200;
+export const REVIEW_PROPOSALS_PENDING_MAX = 20;
+
+/// owner/name, compared and stored in lower case.
+export const reviewRepositorySchema = z.string().max(200).regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/).transform((value) => value.toLowerCase());
+export const reviewCommitSchema = z.string().regex(/^[0-9a-f]{7,40}$/i).transform((value) => value.toLowerCase());
+export const reviewSeveritySchema = z.enum(["must", "should", "note"]);
+export type ReviewSeverity = z.infer<typeof reviewSeveritySchema>;
+export const reviewSideSchema = z.enum(["RIGHT", "LEFT"]);
+/// `resolved` is the agent saying a later commit fixed it; the others are yours.
+export const reviewFindingStatusSchema = z.enum(["open", "dismissed", "added-to-github", "resolved"]);
+export type ReviewFindingStatus = z.infer<typeof reviewFindingStatusSchema>;
+export const reviewRuleScopeSchema = z.enum(["repository", "all"]);
+export type ReviewRuleScope = z.infer<typeof reviewRuleScopeSchema>;
+
+export const reviewRuleSourceSchema = z.object({
+  repository: z.string(),
+  number: z.number().int().positive(),
+  findingId: z.string().nullable(),
+});
+export const reviewRuleSchema = z.object({
+  id: z.string(),
+  /// null applies to all your workspaces.
+  repository: z.string().nullable(),
+  text: z.string(),
+  enabled: z.boolean(),
+  /// Where it was learned; null when you wrote it with Add rule.
+  source: reviewRuleSourceSchema.nullable(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type ReviewRule = z.infer<typeof reviewRuleSchema>;
+export const reviewRuleInputSchema = z.object({
+  text: z.string().trim().min(1).max(REVIEW_RULE_TEXT_MAX),
+  repository: reviewRepositorySchema.nullable(),
+  enabled: z.boolean().optional(),
+});
+export const reviewRulePatchSchema = z.object({
+  text: z.string().trim().min(1).max(REVIEW_RULE_TEXT_MAX).optional(),
+  repository: reviewRepositorySchema.nullable().optional(),
+  enabled: z.boolean().optional(),
+}).refine((value) => value.text !== undefined || value.repository !== undefined || value.enabled !== undefined, "Choose what to change.");
+
+export const reviewFindingInputSchema = z.object({
+  /// An earlier finding's id updates it in place; without one it is new.
+  id: z.string().max(64).optional(),
+  path: z.string().min(1).max(1000),
+  startLine: z.number().int().positive(),
+  endLine: z.number().int().positive(),
+  side: reviewSideSchema.default("RIGHT"),
+  severity: reviewSeveritySchema,
+  title: z.string().trim().min(1).max(200),
+  body: z.string().trim().min(1).max(8000),
+  suggestion: z.string().max(8000).optional(),
+  ruleIds: z.array(z.string().max(64)).max(10).optional(),
+  /// A lower pull request in the stack this finding depends on.
+  dependsOn: z.number().int().positive().optional(),
+}).refine((value) => value.startLine <= value.endLine, "A finding's startLine comes before its endLine.");
+export type ReviewFindingInput = z.infer<typeof reviewFindingInputSchema>;
+export const reviewFindingsReportSchema = z.object({
+  /// The commit that was reviewed.
+  commit: reviewCommitSchema,
+  summary: z.string().trim().max(4000).optional(),
+  findings: z.array(reviewFindingInputSchema).max(REVIEW_FINDINGS_PER_REPORT),
+  /// Earlier findings a later commit fixed.
+  resolvedIds: z.array(z.string().max(64)).max(REVIEW_FINDINGS_PER_REVIEW).optional(),
+});
+export const reviewRuleProposalInputSchema = z.object({
+  text: z.string().trim().min(1).max(REVIEW_RULE_TEXT_MAX),
+  scope: reviewRuleScopeSchema,
+  reason: z.string().trim().min(1).max(1000),
+  findingId: z.string().max(64).optional(),
+});
+
+export const reviewFindingSchema = z.object({
+  id: z.string(),
+  path: z.string(),
+  startLine: z.number().int(),
+  endLine: z.number().int(),
+  side: reviewSideSchema,
+  severity: reviewSeveritySchema,
+  title: z.string(),
+  body: z.string(),
+  suggestion: z.string().nullable(),
+  /// The rules it follows that still exist, for "Follows your rule: …".
+  rules: z.array(z.object({ id: z.string(), text: z.string() })),
+  dependsOn: z.number().int().nullable(),
+  commit: z.string(),
+  status: reviewFindingStatusSchema,
+  /// The pending GitHub review comment it became.
+  githubCommentId: z.string().nullable(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type ReviewFinding = z.infer<typeof reviewFindingSchema>;
+export const reviewRuleProposalSchema = z.object({
+  id: z.string(),
+  text: z.string(),
+  scope: reviewRuleScopeSchema,
+  reason: z.string(),
+  findingId: z.string().nullable(),
+  status: z.enum(["pending", "accepted", "discarded"]),
+  ruleId: z.string().nullable(),
+  createdAt: z.number().int(),
+});
+export type ReviewRuleProposal = z.infer<typeof reviewRuleProposalSchema>;
+export const reviewStateSchema = z.object({
+  computerId: z.string(),
+  threadId: z.string(),
+  workspaceId: z.string(),
+  repository: z.string(),
+  number: z.number().int(),
+  title: z.string(),
+  baseRef: z.string(),
+  headRef: z.string(),
+  /// The head when the review started, the commit the latest turn is about,
+  /// and the last commit findings were reported for.
+  startedSha: z.string(),
+  headSha: z.string(),
+  reviewedSha: z.string().nullable(),
+  provider: z.string().nullable(),
+  model: z.string().nullable(),
+  rulesApplied: z.number().int(),
+  summary: z.string().nullable(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+  findings: z.array(reviewFindingSchema),
+  /// Pending proposals only; accepted and discarded ones are history.
+  proposals: z.array(reviewRuleProposalSchema),
+});
+export type ReviewState = z.infer<typeof reviewStateSchema>;
+
+/// A pull request to review, sent with a hosted thread start.
+export const reviewStartSchema = z.object({
+  repository: reviewRepositorySchema,
+  number: z.number().int().positive(),
+});
+/// What a computer receives about a review thread: at start, and with every
+/// message so a saved rule or new commits reach the next turn.
+export const hubReviewRuleSchema = z.object({ id: z.string().max(64), text: z.string().max(REVIEW_RULE_TEXT_MAX), scope: reviewRuleScopeSchema });
+export const hubReviewSchema = z.object({
+  repository: z.string().max(200),
+  number: z.number().int().positive(),
+  title: z.string().max(500),
+  baseRef: z.string().min(1).max(255),
+  headRef: z.string().min(1).max(255),
+  headSha: z.string().regex(/^[0-9a-f]{40}$/),
+  /// The stack in merge order; the members before this one are below it.
+  stack: z.array(z.object({ number: z.number().int().positive(), title: z.string().max(500), headRef: z.string().max(255), baseRef: z.string().max(255) })).max(20).default([]),
+  rules: z.array(hubReviewRuleSchema).max(REVIEW_RULES_ENABLED_MAX),
+});
+export type HubReview = z.infer<typeof hubReviewSchema>;

@@ -1,5 +1,7 @@
 import {hubGitHubInput} from "./hub-github-input.js";
 import {hubOrganizationTool} from "./hub-organization-tools.js";
+import { threadReview } from "./review-agent.js";
+import { PROPOSE_REVIEW_RULE, proposeReviewRuleInput, REPORT_REVIEW_FINDINGS, reportReviewFindingsInput, reviewToolText, type ReviewTool } from "./review-tools.js";
 import { createSdkMcpServer, tool } from "./provider-adapters/claude.js";
 import { basename } from "node:path";
 import { homedir } from "node:os";
@@ -110,12 +112,23 @@ export function inProcessRemyMcpServer(
   chatId: string,
   threads: RemyThreadControl,
 ) {
+  const review = !!threadReview(chatId);
+  const reviewResult = async (action: ReviewTool, input: unknown) => {
+    const result = await hubOrganizationTool(chatId, action, input) as Record<string, unknown> & { artifact?: ConvArtifact };
+    return ok(reviewToolText(action, result), result.artifact);
+  };
   return createSdkMcpServer({
     name: "remy",
     version: "1",
     instructions: REMY_TOOL_INSTRUCTIONS,
     tools: [
-      tool("github_action","Create a pull request, comment or review using the linked member account.",hubGitHubInput,async input=>ok(JSON.stringify(await hubOrganizationTool(chatId,"github_action",input)))),
+      // A review thread reports to the person and never posts to GitHub.
+      ...(review ? [
+        tool("report_review_findings",REPORT_REVIEW_FINDINGS,reportReviewFindingsInput,async input=>reviewResult("report_review_findings",input)),
+        tool("propose_review_rule",PROPOSE_REVIEW_RULE,proposeReviewRuleInput,async input=>reviewResult("propose_review_rule",input)),
+      ] : [
+        tool("github_action","Create a pull request, comment or review using the linked member account.",hubGitHubInput,async input=>ok(JSON.stringify(await hubOrganizationTool(chatId,"github_action",input)))),
+      ]),
       ...["list_organization_computers","list_organization_workspaces"].map(action=>tool(action,"List organization resources visible to the person.",{},async()=>ok(JSON.stringify(await hubOrganizationTool(chatId,action))))),
       ...["start_organization_thread","move_organization_thread"].map(action=>tool(action,"Act within the person's visible organization workspaces.",{workspaceId:z.string(),prompt:z.string().optional(),title:z.string().optional(),threadId:z.string().optional(),computerId:z.string().optional()},async input=>{const result=await hubOrganizationTool(chatId,action,input) as {artifact?:ConvArtifact};return ok(JSON.stringify(result),result.artifact);})),
       tool(

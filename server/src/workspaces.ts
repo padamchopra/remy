@@ -800,6 +800,44 @@ export async function checkoutPullRequestWorktree(
   return { workspace, path };
 }
 
+/// A review's checkout: the pull request's exact head, detached, in a
+/// worktree of its own under `.remy`, with the base branch fetched beside it
+/// so the agent compares against what the pull request merges into — for a
+/// stacked pull request, the branch below it. Detached, so it never claims a
+/// branch someone has checked out elsewhere. Every git call is an argument
+/// array; the pull request number, base and commit are validated first.
+export async function checkoutReviewWorktree(
+  workspacePath: string,
+  review: { number: number; baseRef: string; headSha: string },
+  options: { existing?: string; env?: NodeJS.ProcessEnv } = {},
+): Promise<string> {
+  const { number, baseRef, headSha } = review;
+  if (!Number.isSafeInteger(number) || number <= 0) throw new Error("invalid pull request number");
+  if (!/^[0-9a-f]{40}$/.test(headSha)) throw new Error("invalid pull request head");
+  await exec("git", ["check-ref-format", "--branch", baseRef], { cwd: homedir() });
+  const run = (args: string[]) => exec("git", args, { cwd: homedir(), timeout: 120_000, ...(options.env ? { env: options.env } : {}) });
+  const { stdout: shallow } = await run(["-C", workspacePath, "rev-parse", "--is-shallow-repository"]);
+  await run([
+    "-C", workspacePath, "fetch",
+    // A shallow clone (a cloud computer's) needs enough history to find where
+    // the pull request left its base.
+    ...(shallow.trim() === "true" ? ["--depth=500"] : []),
+    "origin",
+    `+refs/pull/${number}/head:refs/remotes/remy/pr-${number}`,
+    `+refs/heads/${baseRef}:refs/remotes/origin/${baseRef}`,
+  ]);
+  await run(["-C", workspacePath, "cat-file", "-e", `${headSha}^{commit}`]);
+  let path = options.existing;
+  if (path && existsSync(path)) {
+    await run(["-C", path, "checkout", "--detach", headSha]);
+  } else {
+    path = await managedWorktreePath(workspacePath, `review-${number}-${randomUUID().slice(0, 6)}`);
+    await run(["-C", workspacePath, "worktree", "add", "--detach", path, headSha]);
+  }
+  invalidateWorkspacesCache();
+  return path;
+}
+
 // Opens a PR-aware shell at the same checkout an agent thread would use.
 export async function openPullRequestSession(id: string, branchValue: string, pullRequestNumber: number): Promise<string> {
   const { path } = await checkoutPullRequestWorktree(id, branchValue, pullRequestNumber);

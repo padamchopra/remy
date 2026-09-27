@@ -11,7 +11,9 @@
 export interface ConvArtifact {
   organizationId?: string;
   computerId?: string;
-  kind: "thread" | "workspace";
+  /// A review's findings card is addressed by its thread's id, and a rule it
+  /// proposed by the proposal's id.
+  kind: "thread" | "workspace" | "review-findings" | "review-rule";
   /// A thread and a workspace are addressed by id; `key` is kept for older
   /// markers and opens nothing.
   key?: string;
@@ -36,7 +38,7 @@ function parse(json: string): ConvArtifact | undefined {
   try {
     const value = JSON.parse(json) as Record<string, unknown>;
     const kind = value.kind;
-    if (kind !== "thread" && kind !== "workspace") return undefined;
+    if (kind !== "thread" && kind !== "workspace" && kind !== "review-findings" && kind !== "review-rule") return undefined;
     const title = typeof value.title === "string" ? value.title.slice(0, 200) : "";
     if (!title) return undefined;
     return {

@@ -22,6 +22,8 @@ Every read and write below uses the member's own GitHub connection in the hub, a
 
 What a thread posts through the hub with `github_action` (a comment, a review, a line comment or reply) ends with `<!-- remy-thread:<computer>:<thread>:<signature> -->`, an HMAC of the account, computer and thread under the hub's secret. Activity lifts it off the body and shows the comment's real author with "From a thread on <computer>"; a marker that does not verify names no thread. A person's own comments carry no marker.
 
+The review agent reads a pull request with the same connection when a review starts and when it checks findings against the diff or looks for new commits; it never writes to GitHub. See `review-agent.md`.
+
 The isolated QA provider replaces only vendor endpoints. The production OAuth broker, signature verification, queue, organization access, computer choice, computer connection and thread execution remain active. A live private-repository acceptance run still requires an installed app and a disposable repository authorized by its owner.
 
 API references: [GitHub App installations](https://docs.github.com/en/rest/apps/installations), [webhook payloads](https://docs.github.com/en/webhooks/webhook-events-and-payloads), [pull requests](https://docs.github.com/en/rest/pulls/pulls), [reviews](https://docs.github.com/en/rest/pulls/reviews), [issue comments](https://docs.github.com/en/rest/issues/comments).

@@ -14,6 +14,19 @@ test("a Remy capability names only the thread it was minted for", () => {
   assert.equal(remyToolChatId("Bearer not-a-remy-token"), undefined);
 });
 
+test("a review thread's capability reaches its two review tools and nothing beside them", () => {
+  assert.equal(isRemyToolRoute("POST", "/organization-tools/report_review_findings"), true);
+  assert.equal(isRemyToolRoute("POST", "/organization-tools/propose_review_rule"), true);
+  // Deciding on findings and rules is the person's, in Remy.
+  assert.equal(isRemyToolRoute("GET", "/organization-tools/report_review_findings"), false);
+  assert.equal(isRemyToolRoute("POST", "/organization-tools/accept_review_rule"), false);
+  assert.equal(isRemyToolRoute("POST", "/organization-tools/save_review_rule"), false);
+  assert.equal(isRemyToolRoute("POST", "/organization-tools/dismiss_review_finding"), false);
+  assert.equal(isRemyToolRoute("POST", "/organization-tools/report_review_findings/extra"), false);
+  assert.equal(isRemyToolRoute("PATCH", "/organization-tools/propose_review_rule"), false);
+  assert.equal(isRemyToolRoute("POST", "/review-rules"), false);
+});
+
 test("a Remy capability reaches orchestration without reaching administration", () => {
   assert.equal(isRemyToolRoute("POST", "/organization-tools/github_action"), true);
   // Tasks are gone, so neither Remy's own tickets nor Linear's ticket mirror

@@ -577,6 +577,62 @@ export class GitHubConnection {
     };
   }
 
+  /// What a review of this pull request starts from, read with your own
+  /// connection: it must be open and belong to the workspace's repository.
+  /// The stack, when GitHub has one, is in merge order.
+  async reviewTarget(org: string, user: string, workspaceId: string, repository: string, number: number) {
+    const { owner, name } = await this.workspacePullRequest(org, user, repository, number);
+    const workspace = await this.organizations.workspace(org, user, workspaceId);
+    if (githubRepositoryFromOrigin(workspace.origin).toLowerCase() !== `${owner}/${name}`.toLowerCase())
+      throw new ConnectionError("Choose a pull request in this workspace's repository.", 404);
+    const pull = await this.api<{ state?: unknown; title?: unknown; head?: { ref?: unknown; sha?: unknown }; base?: { ref?: unknown } }>(org, user, `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${number}`);
+    const headSha = typeof pull.head?.sha === "string" ? pull.head.sha.toLowerCase() : "";
+    const headRef = typeof pull.head?.ref === "string" ? pull.head.ref.slice(0, 255) : "";
+    const baseRef = typeof pull.base?.ref === "string" ? pull.base.ref.slice(0, 255) : "";
+    if (!/^[0-9a-f]{40}$/.test(headSha) || !headRef || !baseRef) throw new ConnectionError("GitHub could not read this pull request.", 502);
+    if (pull.state !== "open") throw new ConnectionError("Choose an open pull request to review.", 409);
+    let stack: { number: number; title: string; headRef: string; baseRef: string }[] = [];
+    try {
+      const data = await this.graphql(org, user, {
+        query: `query ReviewStack($owner: String!, $name: String!, $number: Int!) {
+          repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+            stack { entries(first: 20) { nodes { pullRequest { number title headRefName baseRefName } } } }
+          } }
+        }`,
+        variables: { owner, name, number },
+      });
+      const entries = ((data.data?.repository as { pullRequest?: { stack?: { entries?: { nodes?: unknown[] } } } } | undefined)?.pullRequest?.stack?.entries?.nodes ?? []);
+      stack = entries.flatMap((entry) => {
+        const item = (entry as { pullRequest?: { number?: unknown; title?: unknown; headRefName?: unknown; baseRefName?: unknown } } | null)?.pullRequest;
+        return item && Number.isSafeInteger(item.number) && (item.number as number) > 0
+          ? [{ number: item.number as number, title: String(item.title ?? "").slice(0, 500), headRef: String(item.headRefName ?? "").slice(0, 255), baseRef: String(item.baseRefName ?? "").slice(0, 255) }]
+          : [];
+      });
+      if (!stack.some((item) => item.number === number)) stack = [];
+    } catch {
+      // A pull request without a stack, or a GitHub without stacks, reviews alone.
+      stack = [];
+    }
+    return {
+      repository: `${owner}/${name}`.toLowerCase(),
+      number,
+      title: typeof pull.title === "string" ? pull.title.slice(0, 500) : "",
+      baseRef,
+      headRef,
+      headSha,
+      stack,
+    };
+  }
+
+  /// The pull request's head commit now, to tell a review whether it moved on.
+  async pullRequestHead(org: string, user: string, repository: string, number: number) {
+    const { owner, name } = await this.workspacePullRequest(org, user, repository, number);
+    const pull = await this.api<{ head?: { sha?: unknown } }>(org, user, `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${number}`);
+    const sha = typeof pull.head?.sha === "string" ? pull.head.sha.toLowerCase() : "";
+    if (!/^[0-9a-f]{40}$/.test(sha)) throw new ConnectionError("GitHub could not read this pull request.", 502);
+    return sha;
+  }
+
   /// Open pull requests that belong to a workspace. The saved credential is
   /// the GitHub sign-in or a personal access token; a repo that token can read
   /// still has to be a workspace.

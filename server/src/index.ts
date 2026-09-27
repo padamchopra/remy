@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import {hubOrganizationTool} from "./hub-organization-tools.js";
+import { threadReview } from "./review-agent.js";
+import { isReviewTool } from "./review-tools.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { WebSocketServer } from "ws";
@@ -302,7 +304,14 @@ const server = createServer(async (req, res) => {
     }
     if(req.method==="POST" && /^\/organization-tools\/[a-z_]+$/.test(url.pathname)) {
       if(!scopedChatId)return json(res,403,{error:"Open a thread on this computer first."});
-      return json(res,200,await hubOrganizationTool(scopedChatId,url.pathname.split("/")[2],await readJson(req)));
+      const action=url.pathname.split("/")[2]!;
+      // Review tools belong to a review thread, and a review never posts to
+      // GitHub. The hub checks both again against its own record.
+      const review=threadReview(scopedChatId);
+      if(isReviewTool(action) && !review)return json(res,403,{error:"This thread is not reviewing a pull request."});
+      if(action==="github_action" && review)return json(res,403,{error:"A review agent does not post to GitHub."});
+      try { return json(res,200,await hubOrganizationTool(scopedChatId,action,await readJson(req))); }
+      catch(error){ return json(res,409,{error:(error as Error).message}); }
     }
     if (req.method === "GET" && url.pathname === "/health") {
       return json(res, 200, { ok: true, release: serviceRelease, instance: serviceInstance });
