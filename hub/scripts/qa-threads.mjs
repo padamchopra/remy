@@ -1,4 +1,5 @@
 import { startHostedCodexFixture } from "./qa-codex-account.mjs";
+import { startFakeOpenAIAuth } from "./fake-openai-auth.mjs";
 import { startConnectionProvider } from "./qa-connection-provider.mjs";
 import { createServer } from "node:http";
 import { builtinModules } from "node:module";
@@ -23,7 +24,9 @@ const temp = mkdtempSync(join(tmpdir(), "remy-thread-qa-"));
 for (const key of Object.keys(process.env))
   if (/^(MC_|REMY_)/.test(key)) delete process.env[key];
 process.env.MC_CONFIG_DIR = join(temp, "computer");
-const codexFixture = process.env.QA_CODEX_ACCOUNT ? await startHostedCodexFixture(temp, root) : undefined;
+const codexFixture = process.env.QA_CODEX_ACCOUNT || process.env.QA_CHATGPT ? await startHostedCodexFixture(temp, root) : undefined;
+// The hub's own ChatGPT device-code sign-in talks to a fake OpenAI auth server, never OpenAI.
+const chatgptAuth = process.env.QA_CHATGPT ? await startFakeOpenAIAuth() : undefined;
 if (codexFixture) { process.env.QA_HOSTED = "1"; process.env.QA_HOSTED_CONTROL = codexFixture.url; }
 const workspacePath = join(temp, "release-workspace");
 mkdirSync(workspacePath);
@@ -106,6 +109,7 @@ const mf = new Miniflare(
           PREVIEW_ORIGINS: process.env.QA_PREVIEW_ORIGINS ?? "",
           RELEASE: "qa",
           BETTER_AUTH_URL: process.env.QA_PUBLIC_HUB_URL ?? "http://localhost",
+          ...(chatgptAuth ? { CHATGPT_AUTH_ISSUER: chatgptAuth.url } : {}),
           ...(process.env.QA_HOSTED ? { HOSTED_CONTROL_URL: process.env.QA_HOSTED_CONTROL ?? "http://127.0.0.1:9", HOSTED_IMAGE: process.env.QA_HOSTED_IMAGE ?? "qa-image", QA_HOSTED_TOKEN: process.env.QA_HOSTED_TOKEN ?? "" } : {}),
         },
       },
@@ -328,6 +332,12 @@ const control = createServer(async (req, res) => {
   }
   const controlPath = new URL(req.url, "http://127.0.0.1");
   const askedThread = controlPath.searchParams.get("threadId") ?? thread.id;
+  if (chatgptAuth && controlPath.pathname === "/chatgpt-approve") {
+    chatgptAuth.approve({ email: controlPath.searchParams.get("email") ?? "reviewer@example.test", accountId: controlPath.searchParams.get("account") ?? "acct-reviewer" });
+    res.writeHead(204).end(); return;
+  }
+  if (chatgptAuth && controlPath.pathname === "/chatgpt-revoke") { chatgptAuth.revokeAll(); res.writeHead(204).end(); return; }
+  if (chatgptAuth && controlPath.pathname === "/chatgpt-calls") { res.setHeader("content-type", "application/json"); res.end(JSON.stringify(chatgptAuth.calls)); return; }
   if (codexFixture && controlPath.pathname.startsWith("/codex-")) {
     if (controlPath.pathname === "/codex-approve") codexFixture.approve();
     else if (controlPath.pathname === "/codex-fail") codexFixture.approve(false);
@@ -400,6 +410,7 @@ console.log(
 const cleanup = async () => {
   connection.stop();
   codexFixture?.close();
+  await chatgptAuth?.close();
   if(codexFixture) await codexFixture.restartAccount();
   control.close();
   oauth?.close();

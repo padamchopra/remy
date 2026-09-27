@@ -201,7 +201,7 @@ export default function HubThreads({
   // computer's own named models; a cloud thread picks from model access.
   const computerCatalogue = !gateway && computer ? computerModels(computer.capabilities?.providers ?? []).filter(p => p.id === runtimeProvider) : [];
   const modelProvider = computerCatalogue.length ? runtimeProvider : gateway?.[1] ?? (runtimeProvider === "claude" ? "anthropic" : runtimeProvider);
-  const providers = computerCatalogue.length ? computerCatalogue : hostedModels(modelAccess.value?.providers ?? [], {provider: modelProvider, model: gateway?.[2] ?? runtimeModel});
+  const providers = computerCatalogue.length ? computerCatalogue : hostedModels(modelAccess.value?.providers ?? [], {provider: modelProvider, model: gateway?.[2] ?? runtimeModel}, modelProvider === "codex");
   const permission = permissionOf(typeof thread?.detail.permissionMode === "string" ? thread.detail.permissionMode : undefined);
   const approval = thread?.detail.approval as Approval | undefined;
   const question = thread?.detail.question as Question | undefined;

@@ -91,7 +91,14 @@ export interface CodexSessionOptions {
   };
   httpMcp?: { name: string; url: string; token: string }[];
   env?: NodeJS.ProcessEnv;
-  authTokens?: () => Promise<{accessToken:string;chatgptAccountId:string}|null>;
+  /// `refresh` is set when Codex asks again because the token it had was rejected.
+  authTokens?: (refresh?: CodexTokenRefresh) => Promise<{accessToken:string;chatgptAccountId:string}|null>;
+}
+
+/// Why Codex asked for new ChatGPT tokens, and which access token it had.
+export interface CodexTokenRefresh {
+  reason: string;
+  rejectedAccessToken?: string;
 }
 
 export interface CodexApprovalRequest {
@@ -523,10 +530,16 @@ class AppServerSession implements CodexSession {
     else if(this.externalAccount){await this.request("account/logout",{});this.externalAccount=false;this.hostedModelProvider=process.env.REMY_HOSTED_CODEX_PROVIDER;}
     if(this.threadId && previous!==this.hostedModelProvider)await this.request("thread/resume",{threadId:this.threadId,modelProvider:this.hostedModelProvider ?? "openai"});
   }
-  private async authTokens() {
-    if(this.options.authTokens)return this.options.authTokens();
-    const {hostedTaskCodexTokens}=await import("../hub-computer.js");
-    return hostedTaskCodexTokens();
+  private lastAccessToken?: string;
+  private async authTokens(refresh?: CodexTokenRefresh) {
+    let tokens;
+    if(this.options.authTokens)tokens=await this.options.authTokens(refresh);
+    else {
+      const {hostedTaskCodexTokens}=await import("../hub-computer.js");
+      tokens=await hostedTaskCodexTokens(refresh);
+    }
+    this.lastAccessToken=tokens?.accessToken;
+    return tokens;
   }
   private async initialize(): Promise<void> {
     await this.request("initialize", {
@@ -607,7 +620,7 @@ class AppServerSession implements CodexSession {
     const params = message.params ?? {};
     try {
       if(message.method === "account/chatgptAuthTokens/refresh" && (process.env.REMY_HOSTED_TASK || this.options.authTokens)) {
-        const tokens=await this.authTokens();
+        const tokens=await this.authTokens({reason:typeof params.reason === "string" ? params.reason : "unauthorized",...(this.lastAccessToken?{rejectedAccessToken:this.lastAccessToken}:{})});
         if(!tokens)throw Error("Reconnect Codex to continue.");
         this.write({id,result:tokens});return;
       }

@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AccessMark } from "./AccessMark";
+import { HubChatGPTAccount } from "./HubChatGPTAccount";
 import { HubNamedKeys, type NamedKey } from "./HubNamedKeys";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { useHubResource } from "@/lib/hub-organization";
+import { usePersonalHub } from "@/lib/hub-scope";
 import { toast } from "sonner";
 
 export interface ModelAccessEntry {id:string;enabled:boolean;configured:boolean;models:string[];keys?:NamedKey[]}
@@ -12,15 +14,17 @@ export interface ModelAccessResponse { providers: ModelAccessEntry[] }
 const labels:Record<string,string>={anthropic:"Anthropic",openai:"OpenAI",router:"Router.com",openrouter:"OpenRouter"};
 export function HubModelAccess({organizationId}:{organizationId:string}) {
   const resource=useHubResource<ModelAccessResponse>(organizationId,"/model-access");
+  const personal=usePersonalHub();
   const [entries,setEntries]=useState<ModelAccessEntry[]>([]);
   useEffect(()=>{if(resource.value)setEntries(resource.value.providers);},[resource.value]);
   return <section aria-label="Model access" className="min-w-0 space-y-4 border-t pt-6">
     <div className="space-y-1">
       <h2 className="text-sm font-medium">Model access</h2>
-      <p className="text-sm text-muted-foreground">Cloud threads use these API keys, with OpenAI for Codex and Anthropic for Claude.</p>
+      <p className="text-sm text-muted-foreground">{personal ? "Cloud threads run Codex with your ChatGPT plan or an OpenAI key, and Claude with an Anthropic key." : "Cloud threads use these API keys, with OpenAI for Codex and Anthropic for Claude. Each member signs in to ChatGPT in Personal."}</p>
       {resource.error && <p role="alert" className="text-sm text-muted-foreground">{resource.error === "Not found" ? "Update your hosted service to configure model access." : resource.error}</p>}
     </div>
-    {!resource.value && !resource.error && <div aria-label="Loading model access" role="status" className="space-y-4">{Object.keys(labels).map(id=><Skeleton key={id} className="h-[54px] w-full rounded-xl" />)}</div>}
+    {!resource.value && !resource.error && <div aria-label="Loading model access" role="status" className="space-y-4">{[...(personal ? ["codex"] : []),...Object.keys(labels)].map(id=><Skeleton key={id} className="h-[54px] w-full rounded-xl" />)}</div>}
+    {resource.value && personal && <CodexAccess />}
     {resource.value && Object.entries(labels).map(([id,label])=><ModelAccessSection key={`${organizationId}:${id}`} id={id} label={label} value={entries.find(e=>e.id===id) ?? resource.value!.providers.find(e=>e.id===id) ?? {id,enabled:false,configured:false,models:[],keys:[]}} available={!!resource.value} save={async (patch, keyId, remove)=>{
       const path = keyId
         ? `${hubThreadBase(organizationId)}/model-access/${id}/keys/${encodeURIComponent(keyId)}`
@@ -31,6 +35,17 @@ export function HubModelAccess({organizationId}:{organizationId:string}) {
       setEntries(result.providers);
       return result.providers.find(e=>e.id===id)!;
     }}/>)}
+  </section>;
+}
+/// Your ChatGPT sign-in is yours, like any Personal connection. Each
+/// organization you belong to can turn it off in Organization → Computers.
+function CodexAccess() {
+  return <section aria-label="Codex model access" className="min-w-0 rounded-xl border p-4">
+    <div className="flex min-w-0 items-center gap-3">
+      <AccessMark id="codex" />
+      <h3 className="min-w-0 flex-1 text-sm leading-snug font-medium">Codex</h3>
+    </div>
+    <div className="mt-4 min-w-0"><HubChatGPTAccount /></div>
   </section>;
 }
 function ModelAccessSection({id,label,value,available,save}:{id:string;label:string;value:ModelAccessEntry;available:boolean;save:(patch:{enabled?:boolean;apiKey?:string;name?:string;active?:boolean}, keyId?:string, remove?:boolean)=>Promise<ModelAccessEntry>}) {

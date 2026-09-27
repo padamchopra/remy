@@ -2,61 +2,157 @@ import assert from 'node:assert/strict';
 import {readFileSync,mkdirSync} from 'node:fs';
 import {chromium} from 'playwright-core';
 import {chromiumPath} from './chromium.mjs';
+// Run against `QA_CHATGPT=1 QA_HUB_WEB=1 QA_COMPUTER_POLICY=1 node hub/scripts/qa-threads.mjs`.
+// The hub signs in against a fake OpenAI auth server (hub/scripts/fake-openai-auth.mjs), and task
+// computers run a Codex stand-in that reports which ChatGPT account the hub served. No real
+// ChatGPT account or OpenAI endpoint is involved.
 const info=JSON.parse(readFileSync(process.env.QA_SESSION,'utf8'));
 const out=process.env.QA_ARTIFACTS;mkdirSync(out,{recursive:true});
 const base=`${info.hubUrl}/api/organizations/${info.organizationId}`;
-const call=async(user,path,method='GET',body)=>{const r=await fetch(base+path,{method,headers:{authorization:`Bearer ${info.tokens[user]}`,'content-type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})});return{status:r.status,body:r.status===204?null:await r.json()};};
+const request=async(user,url,method='GET',body)=>{const r=await fetch(url,{method,headers:{authorization:`Bearer ${info.tokens[user]}`,'content-type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})});const text=await r.text();return{status:r.status,text,body:text?JSON.parse(text):null};};
+const call=(user,path,method,body)=>request(user,base+path,method,body);
+const account=(user,action='',method=action?'POST':'GET')=>request(user,`${info.hubUrl}/api/chatgpt-account${action?'/'+action:''}`,method);
+const control=async(path)=>{const response=await fetch(info.controlUrl+path,{method:'POST',headers:{authorization:`Bearer ${info.controlToken}`}});assert.ok(response.ok,path);return response;};
+const until=async(condition,label)=>{for(let i=0;i<300;i++){if(await condition())return;await new Promise(r=>setTimeout(r,100));}throw Error(`${label} did not happen`);};
+const personal=(await request('ada',`${info.hubUrl}/api/personal`)).body.personal.id;
 const workspace=(await call('ada','/workspaces','POST',{name:'Website',origin:'https://example.test/studio/website.git'})).body;
-const path=`/hosted/${workspace.id}`;
-for (const name of ['ANTHROPIC_API_KEY','OPENAI_API_KEY']) assert.equal((await call('ada','/hosted','PUT',{secret:{name,value:'disposable-api-key'}})).status,200);
-assert.ok(!JSON.stringify(await call('ada','/hosted')).includes('disposable-api-key'));
-assert.equal((await call('ada',path+'/codex')).status,403);
-assert.equal((await call('ada',path+'/codex/start','POST')).status,403);
-assert.match((await call('ada',path+'/codex/start','POST')).body.error,/computer you own/);
+const provider=process.env.QA_PROVIDER??'modal';
+
+// Claude Code account login never runs on a cloud computer.
 assert.equal((await call('ada','/claude-account/start','POST')).status,403);
 assert.match((await call('ada','/claude-account/start','POST')).body.error,/computer you own/);
-assert.equal((await call('ada','/claude-account')).status,403);
-assert.equal((await call('grace','/claude-account/start','POST')).status,403);
-const listed=await call('ada','/model-access');
-assert.equal(listed.status,200);
-assert.equal(listed.body.accounts,undefined);
-assert.deepEqual(listed.body.providers.map(entry=>entry.id),['anthropic','openai','router','openrouter']);
-assert.ok(!JSON.stringify(listed.body).includes('codeVerifier'));
+// ChatGPT belongs to each person, never to a workspace's computer.
+assert.notEqual((await call('ada',`/hosted/${workspace.id}/codex/start`,'POST')).status,200);
+assert.deepEqual((await account('ada')).body,{phase:'signedOut'});
+assert.equal((await account('computer-owner','start')).status,403,'a computer cannot start anyone’s ChatGPT sign-in');
+assert.notEqual((await account('ada','tokens')).status,200,'no browser route serves tokens');
+assert.ok([401,403].includes((await call('ada','/computers/codex-tokens','POST')).status),'only a signed task computer asks for tokens');
+
+assert.equal((await call('ada','/hosted','PUT',{secret:{name:'OPENAI_API_KEY',value:'disposable-api-key'}})).status,200);
+assert.equal((await call('ada','/cloud-connection','PUT',provider==='modal'?{provider,enabled:true,tokenId:'disposable-token-id',tokenSecret:'disposable-token-secret'}:{provider,enabled:true,token:'disposable-token'})).status,200);
+assert.equal((await call('ada',`/hosted/${workspace.id}/settings`,'PUT',{settings:{enabled:true,provider}})).status,200);
+
 const browser=await chromium.launch({executablePath:chromiumPath()});
 const ctx=await browser.newContext({viewport:{width:1280,height:1000},colorScheme:'dark',recordVideo:{dir:out,size:{width:1280,height:1000}}});
 await ctx.addCookies([{name:'remy_session',value:info.tokens.ada,url:info.hubUrl,httpOnly:true,sameSite:'Lax'}]);
+await ctx.addInitScript(()=>{document.addEventListener('DOMContentLoaded',()=>{
+ const pointer=document.createElement('div');pointer.style.cssText='position:fixed;width:14px;height:14px;border:2px solid white;border-radius:50%;background:#222;pointer-events:none;z-index:2147483647;left:20px;top:20px';document.body.append(pointer);
+ document.addEventListener('pointermove',e=>{pointer.style.left=`${e.clientX-7}px`;pointer.style.top=`${e.clientY-7}px`;});
+ document.addEventListener('pointerdown',()=>{pointer.animate([{boxShadow:'0 0 0 0 #f5c451',background:'#f5c451'},{boxShadow:'0 0 0 18px transparent',background:'#222'}],{duration:650});},true);
+});});
 const p=await ctx.newPage();
+const click=async locator=>{await locator.scrollIntoViewIfNeeded();const box=await locator.boundingBox();await p.mouse.move(box.x+box.width/2,box.y+box.height/2,{steps:20});await p.waitForTimeout(400);await locator.click();await p.waitForTimeout(1000);};
+const threads=[];
+const startThread=async(user,title,choice={provider:'codex',model:'gpt-5.6-sol'})=>{
+ const requestId=crypto.randomUUID();
+ let response=await call(user,'/threads','POST',{workspaceId:workspace.id,title,requestId,...choice,computerId:`cloud:${provider}`,visibility:'open'});
+ for(let n=0;n<600 && response.status<400 && !response.body?.id;n++){await new Promise(r=>setTimeout(r,100));response=await call(user,`/threads/starts/${requestId}`);}
+ return response;
+};
+const setModel=(user,thread,model)=>call(user,`/computers/${thread.computerId}/threads/${thread.id}/options`,'POST',{model});
+const reply=async(user,thread,text)=>{
+ const path=`/computers/${thread.computerId}/threads/${thread.id}`;
+ const before=((await call(user,path)).body?.detail?.entries??[]).length;
+ const sent=await call(user,path+'/message','POST',{text,messageId:'u-'+crypto.randomUUID()});
+ assert.equal(sent.status,200,sent.text);
+ let answer;
+ await until(async()=>{const entries=(await call(user,path)).body?.detail?.entries??[];answer=entries.slice(before).filter(e=>e.kind==='assistant').at(-1)?.text;return !!answer;},`${user}'s reply`);
+ return answer;
+};
 try {
- await p.goto(`${info.hubUrl}/app/#/settings/devices?organization=${info.organizationId}`);
- const modelAccess=p.getByRole('region',{name:'Model access',exact:true});
- await modelAccess.waitFor();
- await modelAccess.getByText('Cloud threads use these API keys, with OpenAI for Codex and Anthropic for Claude.',{exact:true}).waitFor();
- assert.equal(await p.getByRole('button',{name:'Connect Claude Code',exact:true}).count(),0);
- assert.equal(await p.getByRole('button',{name:'Connect Codex',exact:true}).count(),0);
- assert.equal(await p.getByRole('button',{name:'Connect ChatGPT',exact:true}).count(),0);
- assert.equal(await p.getByRole('region',{name:'Claude Code model access',exact:true}).count(),0);
+ // Sign in once, in Personal → Computers → Cloud → Model access: no workspace, no computer to start.
+ await p.goto(`${info.hubUrl}/app/#/settings/devices?organization=${personal}&device=cloud`);
+ const codex=p.getByRole('region',{name:'Codex model access',exact:true});
+ await codex.waitFor();
+ assert.equal(await codex.getByRole('combobox').count(),0);
+ assert.equal(await codex.getByRole('button',{name:'Start computer',exact:true}).count(),0);
+ await click(codex.getByRole('button',{name:'Connect Codex',exact:true}));
+ assert.equal(await p.getByLabel('Codex sign-in code',{exact:true}).inputValue(),'DEMO-0000');
+ assert.match(await p.getByRole('link',{name:'Open sign-in page'}).getAttribute('href'),/\/codex\/device$/);
+ await p.waitForTimeout(1200);await p.screenshot({path:out+'/device-code.png'});
+ await click(p.getByRole('button',{name:'Cancel sign-in',exact:true}));
+ await codex.getByRole('button',{name:'Connect Codex',exact:true}).waitFor();
+ await click(codex.getByRole('button',{name:'Connect Codex',exact:true}));
+ await control('/chatgpt-approve?email=ada%40chatgpt.test&account=acct-ada');
+ await p.getByText('Connected as ada@chatgpt.test.',{exact:true}).waitFor({timeout:15000});
+ await p.waitForTimeout(1200);await p.screenshot({path:out+'/connected.png'});
+ const status=await account('ada');
+ assert.deepEqual(status.body,{phase:'connected',email:'ada@chatgpt.test'});
+ assert.ok(!status.text.includes('fake-refresh') && !status.text.includes('acct-ada'),'the browser never sees tokens');
+ // An organization's Model access has no ChatGPT sign-in of its own.
+ await p.goto(`${info.hubUrl}/app/#/settings/devices?organization=${info.organizationId}&device=cloud`);
+ await p.getByRole('region',{name:'Model access',exact:true}).waitFor();
  assert.equal(await p.getByRole('region',{name:'Codex model access',exact:true}).count(),0);
- assert.equal(await modelAccess.getByText('Add a workspace',{exact:false}).count(),0);
- assert.equal(await modelAccess.getByText('Start your computer',{exact:false}).count(),0);
- await modelAccess.getByRole('region',{name:'OpenAI model access',exact:true}).getByRole('switch',{name:'OpenAI',exact:true}).click();
- await modelAccess.getByRole('textbox',{name:'OpenAI API key',exact:true}).waitFor();
- await modelAccess.evaluate(el=>el.scrollIntoView({behavior:'smooth',block:'center'}));
- await p.waitForTimeout(1500);
- await p.screenshot({path:out+'/model-access.png'});
- const foreign=await fetch(base+'/claude-account/start',{method:'POST',headers:{authorization:`Bearer ${info.tokens.ada}`,origin:'https://unrelated.example'}});
- assert.equal(foreign.status,403);
+
+ // Grace, a member, signs in with her own ChatGPT.
+ assert.deepEqual((await call('grace','/chatgpt')).body,{connected:false,enabled:true,personal:false,available:false});
+ assert.equal((await startThread('grace','Before signing in')).status,409,'nobody else’s sign-in runs a member’s thread');
+ assert.equal((await account('grace','start')).body.phase,'pending');
+ await control('/chatgpt-approve?email=grace%40chatgpt.test&account=acct-grace');
+ await until(async()=>(await account('grace')).body.phase==='connected','Grace’s sign-in');
+
+ // The org toggle lives with the person, in Organization → Computers.
+ await p.goto(`${info.hubUrl}/app/#/settings/organization?section=computers&organization=${info.organizationId}`);
+ const toggle=p.getByRole('switch',{name:'Use my ChatGPT plan here',exact:true});
+ await toggle.waitFor();
+ assert.equal(await toggle.getAttribute('aria-checked'),'true','a Personal sign-in is available in each organization until you turn it off');
+ await p.waitForTimeout(800);await p.screenshot({path:out+'/organization-toggle.png'});
+
+ const ada=await startThread('ada','Ada on ChatGPT');
+ assert.ok(ada.status<300 && ada.body?.id,ada.text);threads.push(ada.body);
+ const grace=await startThread('grace','Grace on ChatGPT');
+ assert.ok(grace.status<300 && grace.body?.id,grace.text);threads.push(grace.body);
+ assert.equal(await reply('ada',ada.body,'Which account?'),'ChatGPT account acct-ada.');
+ assert.equal(await reply('grace',grace.body,'Which account?'),'ChatGPT account acct-grace.','a member’s task gets only their own tokens');
+ const joined=await call('grace',`/computers/${ada.body.computerId}/threads/${ada.body.id}/join`,'POST');
+ assert.ok(joined.status<300,joined.text);
+ assert.equal(await reply('grace',ada.body,'Replying in Ada’s thread.'),'ChatGPT account acct-ada.','a thread keeps its starter’s sign-in, whoever replies');
+
+ // Switching models mid-thread: plain Codex runs on the starter's ChatGPT, a gateway model on the key.
+ const keyed=await startThread('ada','Ada on a key',{provider:'openai',model:'gpt-5.6-sol'});
+ assert.ok(keyed.status<300 && keyed.body?.id,keyed.text);
+ assert.equal(await reply('ada',keyed.body,'Which account?'),'No ChatGPT account.');
+ assert.equal((await setModel('ada',keyed.body,'gpt-5.6-sol')).status,200);
+ assert.equal(await reply('ada',keyed.body,'Now?'),'ChatGPT account acct-ada.','switching to ChatGPT uses the starter’s sign-in, not the key');
+ assert.equal((await setModel('ada',keyed.body,'remy:openai:gpt-5.6-sol')).status,200);
+ assert.equal(await reply('ada',keyed.body,'And back?'),'No ChatGPT account.','switching back to a key model stops asking for ChatGPT');
+ const graceKeyed=await startThread('grace','Grace on a key',{provider:'openai',model:'gpt-5.6-sol'});
+ assert.ok(graceKeyed.status<300 && graceKeyed.body?.id,graceKeyed.text);
+
+ // Grace turns hers off here: her running thread fails its next refresh, and her new ones cannot start on it.
+ assert.equal((await call('grace','/chatgpt','DELETE')).body.enabled,false);
+ assert.equal(await reply('grace',grace.body,'Again?'),'Reconnect Codex to continue.');
+ assert.equal((await startThread('grace','After turning it off')).status,409);
+ const refused=await setModel('grace',graceKeyed.body,'gpt-5.6-sol');
+ assert.equal(refused.status,409,'a reply cannot switch a thread onto a ChatGPT sign-in that is off');
+ assert.equal(refused.body.error,'This thread’s starter hasn’t turned on ChatGPT here. Choose a model with an API key.');
+ assert.equal(await reply('grace',graceKeyed.body,'Still on the key?'),'No ChatGPT account.');
+ assert.equal(await reply('ada',ada.body,'Still yours?'),'ChatGPT account acct-ada.','the toggle is per person');
+
+ // Ada signs out: the stored tokens are removed and her thread asks her to reconnect.
+ await p.goto(`${info.hubUrl}/app/#/settings/devices?organization=${personal}&device=cloud`);
+ await click(p.getByRole('button',{name:'Disconnect Codex',exact:true}));
+ await p.getByRole('button',{name:'Connect Codex',exact:true}).waitFor();
+ assert.equal(await reply('ada',ada.body,'After signing out?'),'Reconnect Codex to continue.');
+ await ctx.close();console.log(`VIDEO=${await p.video().path()}`);
+
  const narrow=await browser.newContext({viewport:{width:390,height:844},colorScheme:'dark'});
- await narrow.addCookies([{name:'remy_session',value:info.tokens.ada,url:info.hubUrl,httpOnly:true,sameSite:'Lax'}]);
+ await narrow.addCookies([{name:'remy_session',value:info.tokens.grace,url:info.hubUrl,httpOnly:true,sameSite:'Lax'}]);
  const mobile=await narrow.newPage();
- await mobile.goto(`${info.hubUrl}/app/#/settings/devices?organization=${info.organizationId}`);
- await mobile.getByRole('region',{name:'Model access',exact:true}).waitFor();
- assert.equal(await mobile.getByRole('button',{name:'Connect Codex',exact:true}).count(),0);
+ const gracePersonal=(await request('grace',`${info.hubUrl}/api/personal`)).body.personal.id;
+ await mobile.goto(`${info.hubUrl}/app/#/settings/devices?organization=${gracePersonal}&device=cloud`);
+ await mobile.getByText('Connected as grace@chatgpt.test.',{exact:true}).waitFor();
  assert.ok(await mobile.locator('main').first().evaluate(e=>e.scrollWidth<=e.clientWidth));
- await mobile.getByRole('region',{name:'Model access',exact:true}).scrollIntoViewIfNeeded();
- await mobile.screenshot({path:out+'/mobile-model-access.png'});
+ await mobile.getByRole('region',{name:'Codex model access',exact:true}).scrollIntoViewIfNeeded();
+ await mobile.screenshot({path:out+'/mobile-codex.png'});
  await narrow.close();
- await ctx.close();
- console.log(`VIDEO=${await p.video().path()}`);
- console.log('PASS: Model access stays API keys; Claude Code and Codex account login are refused on cloud computers');
+ console.log('PASS: ChatGPT sign-in held by the hub against a fake OpenAI auth server; own-account tokens per starter, starter kept on replies, per-organization toggle, sign-out, Claude Code refused, and mobile layout');
 } catch(error){if(!p.isClosed())await p.screenshot({path:out+'/failure.png'});throw error;}
-finally {await browser.close();await call('ada',`/workspaces/${workspace.id}`,'DELETE');for(const name of ['ANTHROPIC_API_KEY','OPENAI_API_KEY'])await call('ada','/hosted','PUT',{secret:{name,value:null}});}
+finally {
+ await browser.close();
+ for(const user of ['ada','grace'])await account(user,'logout');
+ await call('grace','/chatgpt','PUT');
+ await call('ada',`/workspaces/${workspace.id}`,'DELETE');
+ await call('ada','/cloud-connection','PATCH',{provider,enabled:false});
+ await call('ada','/hosted','PUT',{secret:{name:'OPENAI_API_KEY',value:null}});
+}

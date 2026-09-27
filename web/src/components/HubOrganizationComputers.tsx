@@ -7,6 +7,7 @@ import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle, ItemActions } from "@/components/ui/item";
 import { Switch } from "@/components/ui/switch";
+import { AccessMark } from "./AccessMark";
 
 type SharedStartProvider = {
   id: string;
@@ -47,6 +48,8 @@ const cloudLabel = (provider: string) => provider === "fly-sprites" ? "Fly.io Sp
 
 export function HubOrganizationComputers({ organizationId }: { organizationId: string }) {
   const resource = useHubResource<ComputeShares>(organizationId, "/compute-shares", "/computers/live");
+  const chatgpt = useHubResource<{ connected: boolean; enabled: boolean }>(organizationId, "/chatgpt", "/computers/live");
+  const [chatgptEnabled, setChatGPTEnabled] = useState<boolean>();
   const [saving, setSaving] = useState("");
   const [error, setError] = useState("");
   const updateShare = async (kind: "computers" | "cloud", id: string, shared: boolean) => {
@@ -74,6 +77,20 @@ export function HubOrganizationComputers({ organizationId }: { organizationId: s
       setSaving("");
     }
   };
+  const updateChatGPT = async (enabled: boolean) => {
+    setSaving("chatgpt");
+    setError("");
+    setChatGPTEnabled(enabled);
+    try {
+      const next = await hubRequest<{ enabled: boolean }>(`${hubThreadBase(organizationId)}/chatgpt`, enabled ? "PUT" : "DELETE");
+      setChatGPTEnabled(next.enabled);
+    } catch (cause) {
+      setChatGPTEnabled(undefined);
+      setError(apiError(cause));
+    } finally {
+      setSaving("");
+    }
+  };
   const value = resource.value;
   const empty = value && value.computers.length === 0 && value.cloudConnections.length === 0;
   return <section className="flex min-w-0 flex-col gap-6 p-6" aria-label="Organization computers">
@@ -83,6 +100,19 @@ export function HubOrganizationComputers({ organizationId }: { organizationId: s
     {(error || resource.error) && <p role="alert" className="text-sm text-destructive">{error || resource.error}</p>}
     {resource.stale && <p role="status" className="text-sm text-muted-foreground">You’re reading the last saved computer sharing settings.</p>}
     {!value && !resource.error && <p role="status" className="text-sm text-muted-foreground">Reading computers…</p>}
+    {chatgpt.value && <Field>
+      <FieldLabel>Your subscriptions</FieldLabel>
+      <Item variant="outline">
+        <ItemMedia variant="icon"><AccessMark id="codex" /></ItemMedia>
+        <ItemContent className="min-w-0">
+          <ItemTitle className="whitespace-normal break-words">ChatGPT</ItemTitle>
+          <ItemDescription>{chatgpt.value.connected ? "Only cloud Codex threads you start here use your plan." : "Sign in to Codex in Personal model access first."}</ItemDescription>
+        </ItemContent>
+        <ItemActions>
+          <Switch aria-label="Use my ChatGPT plan here" checked={chatgpt.value.connected && (chatgptEnabled ?? chatgpt.value.enabled)} disabled={!chatgpt.value.connected || !!saving} onCheckedChange={enabled => void updateChatGPT(enabled)} />
+        </ItemActions>
+      </Item>
+    </Field>}
     {empty && <Field>
       <FieldLabel>No computers available</FieldLabel>
       <FieldDescription>Connect a computer or cloud provider in Personal first.</FieldDescription>

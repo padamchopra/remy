@@ -403,10 +403,13 @@ test("a resumed hosted thread uses the current account provider", async t => {
 test("hosted Codex receives external account tokens and answers refresh requests", async()=>{
   let calls=0;
   const events:CodexEvent[]=[];
-  const session=createCodexSession({...base,command:fakeAppServer(),cwd:process.cwd(),authTokens:async()=>{calls++;return {accessToken:"disposable-token",chatgptAccountId:"account-test"};}},e=>events.push(e));
+  const refreshes:unknown[]=[];
+  const session=createCodexSession({...base,command:fakeAppServer(),cwd:process.cwd(),authTokens:async(refresh)=>{calls++;if(refresh)refreshes.push(refresh);return {accessToken:"disposable-token",chatgptAccountId:"account-test"};}},e=>events.push(e));
   try{
     await session.run("refresh").done;
     assert.equal(calls,3);
+    // A refresh request says why and which token was rejected, so the hub really refreshes.
+    assert.deepEqual(refreshes,[{reason:"unauthorized",rejectedAccessToken:"disposable-token"}]);
     assert.ok(JSON.stringify(events).includes("refreshed"));
     assert.ok(!JSON.stringify(events).includes("disposable-token"));
   }finally{session.close();}
