@@ -208,6 +208,25 @@ test("Linear organization choices migrate to one private row per member", () => 
   assert.deepEqual(database.prepare("SELECT user_id FROM member_linear_links").all().map((row) => ({ ...row })), [{ user_id: "grace" }]);
 });
 
+test("computer names are bounded without losing a hosted task suffix", () => {
+  const database = new DatabaseSync(":memory:");
+  database.exec("PRAGMA foreign_keys = ON");
+  const directory = new URL("../migrations/", import.meta.url);
+  const files = readdirSync(directory).filter((file) => file.endsWith(".sql")).sort();
+  const migration = files.indexOf("0039_bound_computer_names.sql");
+  for (const file of files.slice(0, migration)) database.exec(readFileSync(new URL(file, directory), "utf8"));
+  database.exec("INSERT INTO organizations(id,name,createdAt,updatedAt) VALUES('org','Org',1,1)");
+  const insert = database.prepare("INSERT INTO organization_computers(id,organization_id,owner_user_id,name,icon,ownership,access,platform,daemon_version,protocol_minimum,protocol_maximum,public_key,capabilities,last_seen_at,registered_at,updated_at) VALUES(?,?,NULL,?,'cloud',?,'{\"mode\":\"organization\",\"userIds\":[],\"teamIds\":[]}','linux','0.1.0',1,1,?,'{\"providers\":[],\"workspaces\":[],\"worktrees\":true,\"terminals\":true,\"emulator\":false}',NULL,1,1)");
+  insert.run("task", "org", `${"A".repeat(120)} · abcdef`, "hosted", "k".repeat(32));
+  insert.run("shared", "org", "B".repeat(129), "organization", "k".repeat(32));
+  database.exec(readFileSync(new URL(files[migration]!, directory), "utf8"));
+  const rows = database.prepare("SELECT id,name,length(name) AS length FROM organization_computers ORDER BY id").all();
+  assert.deepEqual(rows.map((row) => ({ ...row })), [
+    { id: "shared", name: "B".repeat(120), length: 120 },
+    { id: "task", name: `${"A".repeat(111)} · abcdef`, length: 120 },
+  ]);
+});
+
 test("monitoring is dropped, Activity gets read marks, and recorded GitHub activity stays", () => {
   const database = new DatabaseSync(":memory:");
   database.exec("PRAGMA foreign_keys = ON");
