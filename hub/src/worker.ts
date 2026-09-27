@@ -60,6 +60,7 @@ import { ComputerService, versionBefore } from "./computers.js";
 import { D1OrganizationStore, type OrganizationStore } from "./organization-store.js";
 import { clearRetiredTasks, DurableStorage } from "./durable-storage.js";
 import { repositoryOrigin, OrganizationError, OrganizationService } from "./organizations.js";
+import { codeReferencesError } from "./code-references.js";
 
 export interface Env extends ApplePushConfig {
   ASSETS?: Fetcher;
@@ -2100,6 +2101,8 @@ export class HubCoordinator {
     let input:Record<string,unknown>={};
     if(payload.byteLength){try{input=JSON.parse(new TextDecoder().decode(payload));}catch{return jsonError("Send a valid thread request.",400);}}
     if(input.hubEnvironment!==undefined || input.hubTaskId!==undefined || input.hubLinear!==undefined)return jsonError("This thread configuration is unavailable.",403);
+    const referencesError=action==="message"?codeReferencesError(input.codeReferences):undefined;
+    if(referencesError)return jsonError(referencesError,400);
     const answer=await this.dispatchComputer(computerId,actor,request.method,`/hub/threads${id?`/${id}`:""}${action?`/${action}`:""}`,input);
     if (id && (request.method === "DELETE" || action === "archive")) {
       if (answer.ok) {

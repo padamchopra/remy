@@ -21,7 +21,9 @@ export function pullRequestAction<T>(
   organizationId: string,
   workspaceId: string,
   number: number,
-  action: "merge" | "request-reviewers" | "ready" | "draft",
+  action:
+    | "merge" | "request-reviewers" | "ready" | "draft"
+    | "view-file" | "line-comment" | "pending-comment" | "reply" | "edit-comment" | "delete-comment" | "submit-review",
   input: Record<string, unknown> = {},
 ) {
   return hubRequest<T>(`${hubThreadBase(organizationId)}/github/actions`, "POST", { workspaceId, number, action, ...input });

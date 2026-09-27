@@ -36,7 +36,8 @@ import { closeTerminal } from "./terminal.js";
 import { getKv, setKv } from "./db.js";
 import { broadcast } from "./notify.js";
 import { checkoutWorkspaceBranch, listWorkspaces } from "./workspaces.js";
-import type { ChatImageAttachment } from "./transcript.js";
+import type { ChatCodeReference, ChatImageAttachment } from "./transcript.js";
+import { validateChatCodeReferences } from "./chat-references.js";
 
 const KEY = "hubThreadAccess";
 const branchStates = new Map<string, string>();
@@ -226,6 +227,11 @@ export async function handleHubThreadRequest(
           ))
       )
         return fail(400, "Choose up to eight images.");
+      // Lines chosen in a pull request's diff: the provider reads them as
+      // review context, and the thread shows them on the message.
+      let codeReferences: ChatCodeReference[];
+      try { codeReferences = validateChatCodeReferences(input.codeReferences); }
+      catch { return fail(400, "Choose up to 200 lines for each code reference."); }
       const attachments = await Promise.all(
         ((input.attachmentIds ?? []) as string[]).map((attachment) =>
           importAttachment(id, attachment),
@@ -235,7 +241,7 @@ export async function handleHubThreadRequest(
         id,
         input.text,
         attachments,
-        [],
+        codeReferences,
         undefined,
         input.messageId,
         actor,

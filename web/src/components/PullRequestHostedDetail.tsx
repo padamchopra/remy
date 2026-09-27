@@ -9,7 +9,6 @@ import {
   GitPullRequest,
   GitPullRequestClosed,
   GitPullRequestDraft,
-  MessagesSquare,
   MoreHorizontal,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -24,6 +23,7 @@ import { Deferred } from "@/components/Deferred";
 import { Markdown } from "@/components/Markdown";
 import { PaneHeader } from "@/components/PaneHeader";
 import { pullRequestAction, RequestReviewers, ReviewerInitials, SquashAndMerge } from "@/components/PullRequestHostedActions";
+import { LinkedThreadChip, ThreadDot } from "@/components/PullRequestLinkedThread";
 import { PullRequestStackEntry, PullRequestStackRows, stackEntriesInOrder } from "@/components/PullRequestStack";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { apiError } from "@/lib/api-error";
@@ -38,7 +38,7 @@ import {
   type PullRequestDetailCheck,
   type PullRequestDetailReviewer,
 } from "@/lib/pull-request-detail";
-import { linkedPullRequestThread, linkedThreadTone } from "@/lib/pull-request-linked-thread";
+import { linkedPullRequestThread } from "@/lib/pull-request-linked-thread";
 import type { PullRequestTileWorkspace } from "@/lib/pull-request-workspace";
 import { relativeDate } from "@/lib/relative-date";
 import type { PullRequestView } from "@/lib/route";
@@ -115,49 +115,6 @@ function StatePill({ state, isDraft }: { state?: string; isDraft: boolean }) {
       <Icon aria-hidden />
       {label}
     </span>
-  );
-}
-
-function ThreadDot({ state, className }: { state: unknown; className?: string }) {
-  const tone = linkedThreadTone(state);
-  return (
-    <span
-      aria-hidden
-      className={cn(
-        "size-1.5 shrink-0 rounded-full",
-        tone === "working" ? "bg-info-foreground" : tone === "needs_input" ? "bg-warning-foreground" : "bg-muted-foreground/60",
-        className,
-      )}
-    />
-  );
-}
-
-const THREAD_STATE: Record<ReturnType<typeof linkedThreadTone>, string> = {
-  working: "working",
-  needs_input: "needs you",
-  done: "done",
-};
-
-/// A linked thread, drawn the same way everywhere: thread icon, title cut off
-/// with an ellipsis, and its state dot. It opens the thread.
-function LinkedThreadChip({ thread, onOpen, className }: { thread: HubThread; onOpen: () => void; className?: string }) {
-  const title = thread.detail.title || "Untitled thread";
-  return (
-    <button
-      type="button"
-      data-link
-      data-slot="linked-thread"
-      onClick={onOpen}
-      aria-label={`${title}, ${THREAD_STATE[linkedThreadTone(thread.detail.state)]}`}
-      className={cn(
-        "flex h-7 min-w-0 items-center gap-2 rounded-lg border border-border px-2.5 text-left text-xs outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50",
-        className,
-      )}
-    >
-      <MessagesSquare aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-      <span className="min-w-0 flex-1 truncate">{title}</span>
-      <ThreadDot state={thread.detail.state} />
-    </button>
   );
 }
 
@@ -378,6 +335,7 @@ export function PullRequestHostedDetail({
   reviewAgentAction?: ReactNode;
 }) {
   const [revision, setRevision] = useState(0);
+  const [filesToolbar, setFilesToolbar] = useState<HTMLDivElement | null>(null);
   const images = useSignedImages(organizationId, pullRequest.repository, pullRequest.number);
   const detail = usePullRequestDetail(organizationId, pullRequest.repository, pullRequest.number, `${pullRequest.updatedAt}:${revision}`);
   const changed = useCallback(() => { setRevision((value) => value + 1); onChanged(); }, [onChanged]);
@@ -523,7 +481,7 @@ export function PullRequestHostedDetail({
               </button>
             </div>
           </header>
-          <div className="shrink-0 border-b border-border px-4 sm:px-7">
+          <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 sm:px-7">
             <TabsList aria-label="Pull request" className="-mb-px h-[38px] items-end gap-0.5">
               <TabsTrigger value="summary" className={TAB}>Summary</TabsTrigger>
               <TabsTrigger value="files" className={TAB}>
@@ -532,6 +490,8 @@ export function PullRequestHostedDetail({
               </TabsTrigger>
               <TabsTrigger value="activity" className={TAB}>Activity</TabsTrigger>
             </TabsList>
+            {/* The Files tab puts Finish review here, beside the tab it belongs to. */}
+            <div ref={setFilesToolbar} data-slot="pull-request-files-toolbar" className={cn("ml-auto flex shrink-0 items-center", view !== "files" && "hidden")} />
           </div>
           <TabsContent value="summary" keepMounted className="flex min-h-0 flex-1 data-hidden:hidden">
             <ScrollArea data-slot="pull-request-detail-body" className="min-h-0 min-w-0 flex-1" viewportProps={{ tabIndex: 0, "aria-label": "Pull request summary" }}>
@@ -603,6 +563,10 @@ export function PullRequestHostedDetail({
                 organizationId={organizationId}
                 pullRequest={pullRequest}
                 active={view === "files"}
+                thread={thread}
+                onOpenThread={onOpenThread}
+                onOpenLink={openLink}
+                toolbar={filesToolbar}
               />
             </Deferred>
           </TabsContent>

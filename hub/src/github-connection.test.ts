@@ -27,6 +27,7 @@ function fixture() {
   let searchFails = false;
   let omitViewer = false;
   let githubDelayMs = 0;
+  const reviewState = { pending: false, viewer: "grace" };
   const send = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input)).pathname,
       method = init?.method ?? "GET",
@@ -67,6 +68,47 @@ function fixture() {
             { context: "deploy", state: "PENDING", createdAt: "2026-09-23T09:00:00Z", description: "Waiting", targetUrl: "https://ci.example.test/1" },
           ] } } } }] },
         } } } });
+      }
+      const query = String(body?.query ?? "");
+      if (query.includes("query PullRequestReview(")) {
+        return Response.json({ data: { viewer: { login: "grace", name: "Grace Hopper", avatarUrl: "https://avatars.githubusercontent.com/u/2" }, repository: { pullRequest: {
+          headRefOid: "a".repeat(40),
+          author: { login: "ada" },
+          files: { pageInfo: { hasNextPage: true, endCursor: "files-1" }, nodes: [
+            { path: "src/a.ts", viewerViewedState: "VIEWED" },
+            { path: "src/b.ts", viewerViewedState: "DISMISSED" },
+          ] },
+          reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [
+            { id: "PRRT_1", path: "src/a.ts", line: 12, startLine: 10, originalLine: 12, originalStartLine: 10, diffSide: "RIGHT", startDiffSide: "RIGHT", isResolved: false, isOutdated: false, subjectType: "LINE",
+              comments: { nodes: [
+                { id: "PRRC_1", databaseId: 501, body: "Can this collapse?", createdAt: "2026-09-27T08:00:00Z", url: "https://github.com/release/remy/pull/7#discussion_r501", state: "SUBMITTED", author: { login: "linus", name: "Linus", avatarUrl: "javascript:alert(1)" } },
+                { id: "PRRC_2", databaseId: 502, body: "Draft reply", createdAt: "2026-09-27T09:00:00Z", url: null, state: "PENDING", author: { login: "grace", name: "Grace Hopper", avatarUrl: "https://avatars.githubusercontent.com/u/2" } },
+              ] } },
+            { id: "PRRT_2", path: "src/b.ts", line: null, originalLine: 4, diffSide: "LEFT", isResolved: true, isOutdated: true, subjectType: "LINE",
+              comments: { nodes: [{ id: "PRRC_3", databaseId: 503, body: "Old", createdAt: "2026-09-26T08:00:00Z", state: "SUBMITTED", author: { login: "github-actions[bot]" } }] } },
+            { id: "PRRT_empty", path: "src/c.ts", comments: { nodes: [] } },
+          ] },
+        } } } });
+      }
+      if (query.includes("PullRequestReviewPage")) {
+        return Response.json({ data: { repository: { pullRequest: { files: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ path: "src/c.ts", viewerViewedState: "UNVIEWED" }] } } } } });
+      }
+      if (query.includes("query PendingReview")) {
+        return Response.json({ data: { viewer: { login: reviewState.viewer }, node: { author: { login: "ada" }, reviews: { nodes: reviewState.pending ? [{ id: "PRR_pending", author: { login: reviewState.viewer } }] : [] } } } });
+      }
+      if (query.includes("mutation StartReview")) { reviewState.pending = true; return Response.json({ data: { addPullRequestReview: { pullRequestReview: { id: "PRR_pending" } } } }); }
+      if (query.includes("query ReviewNode")) {
+        const nodes: Record<string, unknown> = {
+          PRRT_1: { __typename: "PullRequestReviewThread", pullRequest: { number: 7, repository: { nameWithOwner: "Release/Remy" } }, comments: { nodes: [{ databaseId: 501 }] } },
+          PRRT_elsewhere: { __typename: "PullRequestReviewThread", pullRequest: { number: 7, repository: { nameWithOwner: "someone/else" } }, comments: { nodes: [{ databaseId: 900 }] } },
+          PRRC_2: { __typename: "PullRequestReviewComment", state: "PENDING", author: { login: "grace" }, pullRequest: { number: 7, repository: { nameWithOwner: "release/remy" } } },
+          PRRC_1: { __typename: "PullRequestReviewComment", state: "SUBMITTED", author: { login: "linus" }, pullRequest: { number: 7, repository: { nameWithOwner: "release/remy" } } },
+        };
+        return Response.json({ data: { viewer: { login: "grace" }, node: nodes[variables.id] ?? null } });
+      }
+      if (/mutation (ViewFile|AddReviewThread|AddReviewReply|UpdateReviewComment|DeleteReviewComment|SubmitReview)/.test(query)) {
+        if (query.includes("SubmitReview")) reviewState.pending = false;
+        return Response.json({ data: { ok: {} } });
       }
       if (String(body?.query ?? "").includes("PullRequestReviewers")) {
         return Response.json({ data: { repository: {
@@ -230,7 +272,7 @@ function fixture() {
       if ((body?.reviewers ?? []).includes("stranger")) return new Response("{}", { status: 422 });
       return Response.json({ number: 7 });
     }
-    if (path === "/repos/release/remy/pulls/7") return Response.json({ number: 7, state: "open", draft: false, node_id: "PR_node7" });
+    if (path === "/repos/release/remy/pulls/7") return Response.json({ number: 7, state: "open", draft: false, node_id: "PR_node7", head: { sha: "a".repeat(40) } });
     if (path === "/user/repos") return Response.json([{id:101,name:"Remy",full_name:"release/remy",description:"A remote for coding agents.",language:"TypeScript",private:true,pushed_at:"2026-09-18T10:00:00Z"}]);
     if (path === "/repos/jup-ag/mobile") return Response.json({id:202,name:"mobile",full_name:"jup-ag/mobile",default_branch:"main"});
     if (path === "/repos/release/remy") return Response.json({id:101,name:"Remy",full_name:"release/remy",default_branch:"main"});
@@ -294,6 +336,7 @@ function fixture() {
     delayGithub: (ms: number) => {
       githubDelayMs = ms;
     },
+    reviewState,
   };
 }
 test("repository selection verifies the app and member access and reuses the canonical workspace", async () => {
@@ -666,4 +709,93 @@ test("squash merge, reviewer requests and draft changes go through the member's 
 
   await service.organizations.updateWorkspace("studio", "ada", workspace.id, { access: { teamIds: [], userIds: ["ada"] } });
   await assert.rejects(service.action("studio", "grace", workspace.id, "merge", { number: 7, title: "x" }));
+});
+
+test("the review read carries viewed state, conversations and pending comments for a workspace repository", async () => {
+  const { service, calls } = fixture();
+  await service.organizations.createWorkspace("studio", "ada", { name: "Remy", origin: "git@github.com:release/remy.git" });
+  const review = await service.pullRequestReview("studio", "grace", "release/remy", 7);
+  const reads = calls.filter((call) => call.path === "/graphql");
+  assert.ok(reads.every((call) => call.actor === "Bearer member-grace"));
+  // The second page of files is its own read; conversations are not read twice.
+  assert.equal(reads.filter((call) => String((call.body as { query: string }).query).includes("PullRequestReviewPage")).length, 1);
+  assert.deepEqual(review.viewer, { login: "grace", name: "Grace Hopper", avatarUrl: "https://avatars.githubusercontent.com/u/2" });
+  assert.equal(review.author, "ada");
+  assert.equal(review.headRefOid, "a".repeat(40));
+  assert.deepEqual(review.viewed, { "src/a.ts": "VIEWED", "src/b.ts": "DISMISSED", "src/c.ts": "UNVIEWED" });
+  assert.equal(review.threads.length, 2);
+  const [open, outdated] = review.threads;
+  assert.deepEqual([open.line, open.startLine, open.side, open.isResolved, open.isOutdated, open.file], [12, 10, "RIGHT", false, false, false]);
+  assert.deepEqual(open.comments.map((comment) => [comment.id, comment.databaseId, comment.pending, comment.author.login, comment.author.avatarUrl]), [
+    ["PRRC_1", 501, false, "linus", null],
+    ["PRRC_2", 502, true, "grace", "https://avatars.githubusercontent.com/u/2"],
+  ]);
+  assert.deepEqual([outdated.line, outdated.originalLine, outdated.side, outdated.isOutdated, outdated.comments[0].author.login], [null, 4, "LEFT", true, "github-actions[bot]"]);
+  await assert.rejects(service.pullRequestReview("studio", "grace", "someone/else", 7), /one of your workspaces/);
+  await assert.rejects(service.pullRequestReview("studio", "stranger", "release/remy", 7), /unavailable/);
+});
+
+test("line comments, replies, the pending review and viewed marks go through the member's own connection", async () => {
+  const { service, calls, reviewState } = fixture();
+  const workspace = await service.organizations.createWorkspace("studio", "ada", { name: "Remy", origin: "git@github.com:release/remy.git" });
+  const graphql = (name: string) => calls.filter((call) => call.path === "/graphql" && String((call.body as { query: string }).query).includes(name));
+
+  assert.deepEqual(await service.action("studio", "grace", workspace.id, "view-file", { number: 7, path: "src/a.ts", viewed: true }), { path: "src/a.ts", viewed: true });
+  assert.match(String((graphql("ViewFile").at(-1)!.body as { query: string }).query), /markFileAsViewed/);
+  assert.deepEqual((graphql("ViewFile").at(-1)!.body as { variables: unknown }).variables, { id: "PR_node7", path: "src/a.ts" });
+  await service.action("studio", "grace", workspace.id, "view-file", { number: 7, path: "src/a.ts", viewed: false });
+  assert.match(String((graphql("ViewFile").at(-1)!.body as { query: string }).query), /unmarkFileAsViewed/);
+
+  // Comment posts one inline comment now, at the head the pull request is on.
+  await service.action("studio", "grace", workspace.id, "line-comment", { number: 7, path: "src/a.ts", line: 12, side: "RIGHT", startLine: 10, body: "Collapse past ten." });
+  const posted = calls.find((call) => call.path === "/repos/release/remy/pulls/7/comments" && call.method === "POST")!;
+  assert.equal(posted.actor, "Bearer member-grace");
+  assert.deepEqual(posted.body, { body: "Collapse past ten.", commit_id: "a".repeat(40), path: "src/a.ts", line: 12, side: "RIGHT", start_line: 10, start_side: "RIGHT" });
+  await assert.rejects(service.action("studio", "grace", workspace.id, "line-comment", { number: 7, path: "src/a.ts", line: 12, side: "RIGHT", body: "  " }), /Write a comment/);
+  await assert.rejects(service.action("studio", "grace", workspace.id, "line-comment", { number: 7, path: "../x", line: 12, side: "RIGHT", body: "x" }), /Choose lines/);
+  await assert.rejects(service.action("studio", "grace", workspace.id, "line-comment", { number: 7, path: "src/a.ts", line: 12, side: "RIGHT", startLine: 14, body: "x" }), /Choose lines/);
+  await assert.rejects(service.action("studio", "grace", workspace.id, "line-comment", { number: 7, path: "src/a.ts", line: 12, side: "RIGHT", startLine: 10, startSide: "LEFT", body: "x" }), /Choose lines/);
+
+  // Add to review starts the pending review once, then adds threads to it.
+  await service.action("studio", "grace", workspace.id, "pending-comment", { number: 7, path: "src/a.ts", line: 3, side: "LEFT", body: "Why?" });
+  assert.equal(graphql("mutation StartReview").length, 1);
+  assert.deepEqual((graphql("mutation StartReview")[0].body as { variables: unknown }).variables, { id: "PR_node7", sha: "a".repeat(40) });
+  assert.deepEqual((graphql("AddReviewThread").at(-1)!.body as { variables: unknown }).variables, { review: "PRR_pending", path: "src/a.ts", body: "Why?", line: 3, side: "LEFT", startLine: null, startSide: null });
+  await service.action("studio", "grace", workspace.id, "pending-comment", { number: 7, path: "src/a.ts", line: 5, side: "RIGHT", body: "And this." });
+  assert.equal(graphql("mutation StartReview").length, 1);
+
+  // Replies post now by the thread's first comment, or join the pending review.
+  await service.action("studio", "grace", workspace.id, "reply", { number: 7, threadId: "PRRT_1", body: "Done." });
+  const reply = calls.find((call) => call.path === "/repos/release/remy/pulls/7/comments/501/replies")!;
+  assert.deepEqual([reply.method, reply.actor, reply.body], ["POST", "Bearer member-grace", { body: "Done." }]);
+  await service.action("studio", "grace", workspace.id, "reply", { number: 7, threadId: "PRRT_1", body: "Later.", pending: true });
+  assert.deepEqual((graphql("AddReviewReply").at(-1)!.body as { variables: unknown }).variables, { thread: "PRRT_1", review: "PRR_pending", body: "Later." });
+  const before = calls.length;
+  await assert.rejects(service.action("studio", "grace", workspace.id, "reply", { number: 7, threadId: "PRRT_elsewhere", body: "x" }), /conversation on this pull request/);
+  assert.ok(!calls.slice(before).some((call) => call.path.includes("/replies")));
+
+  // Only your own pending comments can be edited or deleted.
+  await service.action("studio", "grace", workspace.id, "edit-comment", { number: 7, commentId: "PRRC_2", body: "Reworded" });
+  assert.deepEqual((graphql("UpdateReviewComment").at(-1)!.body as { variables: unknown }).variables, { id: "PRRC_2", body: "Reworded" });
+  await service.action("studio", "grace", workspace.id, "delete-comment", { number: 7, commentId: "PRRC_2" });
+  assert.equal(graphql("DeleteReviewComment").length, 1);
+  await assert.rejects(service.action("studio", "grace", workspace.id, "delete-comment", { number: 7, commentId: "PRRC_1" }), /pending review/);
+
+  // Send review submits the pending review with its verdict and note.
+  await service.action("studio", "grace", workspace.id, "submit-review", { number: 7, event: "APPROVE", body: "Looks good." });
+  assert.deepEqual((graphql("SubmitReview").at(-1)!.body as { variables: unknown }).variables, { review: "PRR_pending", event: "APPROVE", body: "Looks good." });
+  // Without one, a verdict is a new review at the head; a bare Comment needs words.
+  await assert.rejects(service.action("studio", "grace", workspace.id, "submit-review", { number: 7, event: "COMMENT", body: "" }), /Write a note/);
+  await service.action("studio", "grace", workspace.id, "submit-review", { number: 7, event: "REQUEST_CHANGES", body: "Not yet." });
+  const review = calls.find((call) => call.path === "/repos/release/remy/pulls/7/reviews")!;
+  assert.deepEqual(review.body, { event: "REQUEST_CHANGES", body: "Not yet.", commit_id: "a".repeat(40) });
+  await assert.rejects(service.action("studio", "grace", workspace.id, "submit-review", { number: 7, event: "MERGE" }), /Choose Comment/);
+  reviewState.viewer = "ada";
+  await assert.rejects(
+    service.action("studio", "ada", workspace.id, "submit-review", { number: 7, event: "APPROVE" }),
+    (error: Error & { status?: number }) => /your own pull request/.test(error.message) && error.status === 403,
+  );
+
+  await service.organizations.updateWorkspace("studio", "ada", workspace.id, { access: { teamIds: [], userIds: ["ada"] } });
+  await assert.rejects(service.action("studio", "grace", workspace.id, "view-file", { number: 7, path: "src/a.ts", viewed: true }));
 });

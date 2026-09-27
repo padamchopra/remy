@@ -377,6 +377,15 @@ test("members share their own computers and start-provider grants block only new
     assert.equal(replied?.status, 200);
     assert.equal((await replied!.json() as { error?: string }).error, undefined);
     assert.ok(forwarded.some(entry => String(entry[3]).includes("/message")));
+    // Lines sent from a pull request's diff reach the computer with the message.
+    const reference = { id: "r1", path: "web/src/a.tsx", startLine: 170, endLine: 172, comment: "Collapse past ten.", lines: [{ kind: "add", oldLine: null, newLine: 170, text: "{rows.map(" }] };
+    const referenced = await handle(request("ada", `/computers/${computerId}/threads/${threadId}/message`, "POST", { text: "Collapse past ten.", messageId: `u-${crypto.randomUUID()}`, codeReferences: [reference] }));
+    assert.equal(referenced?.status, 200);
+    assert.deepEqual((forwarded.at(-1)![4] as { codeReferences?: unknown }).codeReferences, [reference]);
+    const sentBefore = forwarded.length;
+    const refused = await handle(request("ada", `/computers/${computerId}/threads/${threadId}/message`, "POST", { text: "x", messageId: `u-${crypto.randomUUID()}`, codeReferences: [{ ...reference, lines: [] }] }));
+    assert.equal(refused?.status, 400);
+    assert.equal(forwarded.length, sentBefore);
 
     userId = "ada";
     assert.equal((await call(`compute-shares/computers/${computerId}`, "DELETE")).status, 200);

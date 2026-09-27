@@ -17,7 +17,10 @@ import { AvatarFrom } from "./UserAvatar";
 import { useHubProfile } from "@/lib/hub-profile";
 import { useThreadStarts, retryHubThread, forgetThreadStart } from "@/lib/hub-thread-start";
 import { ThreadStartMarker } from "./ThreadStartMarker";
-import { MessagesSquare, MoreHorizontal } from "lucide-react";
+import { FileCode2, MessagesSquare, MoreHorizontal } from "lucide-react";
+import { Attachment, AttachmentContent, AttachmentDescription, AttachmentGroup, AttachmentMedia, AttachmentTitle } from "@/components/ui/attachment";
+import { referenceLabel } from "@/lib/pull-request-review";
+import type { ChatCodeReference } from "@/state/types";
 import { TabStrip, WorkbenchTabTrigger, tabListClass } from "@/components/WorkbenchTabs";
 import { Tabs, TabsList } from "@/components/ui/tabs";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuLabel, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
@@ -328,6 +331,20 @@ export default function HubThreads({
                         {String(entry.text ?? entry.output ?? entry.arg ?? "")}
                       </BubbleContent>
                     </Bubble>
+                    {entry.kind === "user" && Array.isArray(entry.codeReferences) && entry.codeReferences.length > 0 && (
+                      // Lines sent from a pull request's diff, named the way the diff names them.
+                      <AttachmentGroup data-slot="code-references" className="max-w-full justify-end py-0">
+                        {(entry.codeReferences as ChatCodeReference[]).map((reference) => (
+                          <Attachment key={reference.id} size="sm" className="max-w-80">
+                            <AttachmentMedia><FileCode2 /></AttachmentMedia>
+                            <AttachmentContent>
+                              <AttachmentTitle title={reference.path}>{referenceLabel(reference)}</AttachmentTitle>
+                              {reference.comment !== entry.text && <AttachmentDescription>{reference.comment}</AttachmentDescription>}
+                            </AttachmentContent>
+                          </Attachment>
+                        ))}
+                      </AttachmentGroup>
+                    )}
                     {shownArtifacts(entry.artifacts).map((artifact, index) => {
                       const route = organizationArtifactRoute(artifact);
                       return <Button key={index} data-link variant="outline" className="h-auto justify-start whitespace-normal text-left" disabled={!route} onClick={() => route && navigate(route)}>

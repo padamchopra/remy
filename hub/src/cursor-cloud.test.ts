@@ -94,6 +94,8 @@ test("cursor cloud creates a thread, streams a run, and refuses a missing key", 
   assert.equal(stored?.computerId, CURSOR_CLOUD_COMPUTER_ID);
   const sent = await threads.handle(snapshot.id, actor, "POST", "message", { text: "Ship the fix." }, "cursor-secret");
   assert.equal(sent.status, 202);
+  const refused = await threads.handle(snapshot.id, actor, "POST", "message", { text: "x", codeReferences: "all of it" }, "cursor-secret");
+  assert.equal(refused.status, 400);
   await Promise.all(pending);
   const finished = await threads.get(snapshot.id);
   assert.equal(finished?.detail.state, "idle");

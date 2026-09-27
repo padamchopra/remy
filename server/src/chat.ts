@@ -387,7 +387,10 @@ export class Chat {
     // alongside the turn and lands whenever it lands.
     if (first) void this.rename(safeText);
     const referenceContext = codeReferencePrompt(safeReferences);
-    const agentText = [referenceContext, agentContext, safeText]
+    // "Send to thread" sends one comment as both the message and its
+    // reference; the review context already carries it, so it is not repeated.
+    const repeated = safeReferences.length > 0 && safeReferences.every((reference) => reference.comment === safeText);
+    const agentText = [referenceContext, agentContext, repeated ? "" : safeText]
       .filter(Boolean)
       .join("\n\n");
     const agentPrompt: ChatPrompt = { text: agentText, attachments, environment:await taskEnvironment(this.record.cwd,this.record.id) };
