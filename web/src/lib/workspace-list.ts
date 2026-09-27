@@ -1,7 +1,9 @@
 import type { ComputerSummary, HubThread } from "@remy/contract";
-import { normalizeRepositoryOrigin } from "./hub-workspace-computers";
 
 type WorkspaceRef = { id: string; origin?: string | null };
+
+/// One spelling of a remote, so ssh, https and host/owner/repo forms compare equal.
+export const normalizeRepositoryOrigin = (value: string) => value.trim().replace(/^\w+:\/\//, "").replace(/^git@/, "").replace(/:([^/])/, "/$1").replace(/\.git\/?$/, "").replace(/\/$/, "").toLowerCase();
 
 /// The workspace a hub thread runs in. A thread that names its workspace is
 /// taken at its word; otherwise its folder on the computer running it is

@@ -951,9 +951,6 @@ const server = createServer(async (req, res) => {
           model: typeof body.model === "string" ? body.model : undefined,
           effort: typeof body.effort === "string" ? body.effort : undefined,
           permissionMode: scopedChatId || externalProvider ? undefined : body.permissionMode,
-          ...(holder?.provider
-            ? { workspaceDefault: { provider: holder.provider, model: holder.model, effort: holder.effort } }
-            : {}),
         }) });
       } catch (error) {
         return json(res, 400, { error: (error as Error).message || "could not create the chat" });
@@ -1442,10 +1439,6 @@ const server = createServer(async (req, res) => {
             name: body.name === undefined ? undefined : String(body.name),
             icon: body.icon === undefined ? undefined : body.icon === null ? null : String(body.icon),
             tint: body.tint === undefined ? undefined : body.tint === null ? null : String(body.tint),
-            // Null is how a workspace goes back to following the machine.
-            provider: body.provider === undefined ? undefined : body.provider === null ? null : String(body.provider),
-            model: body.model === undefined ? undefined : body.model === null ? null : String(body.model),
-            effort: body.effort === undefined ? undefined : body.effort === null ? null : String(body.effort),
           });
           let identity = projectForWorkspace(id);
           if (body.icon !== undefined || body.tint !== undefined) {

@@ -493,7 +493,17 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               <div hidden={section !== "workspaces"} className="min-h-0 overflow-auto">
                 <Deferred open={section === "workspaces"}>
                   {route.name === "workspaces" && route.workspaceId && (
-                    <WorkspaceDetails key={`${organization.id}:${route.workspaceId}`} organizationId={organization.id} workspaceId={route.workspaceId} role={organization.role} onBack={() => navigate({ name: "workspaces", organizationId: organization.id })} />
+                    <WorkspaceDetails
+                      key={`${organization.id}:${route.workspaceId}`}
+                      organizationId={organization.id}
+                      workspaceId={route.workspaceId}
+                      owner={organization}
+                      onBack={() => navigate({ name: "workspaces", organizationId: organization.id })}
+                      onNewThread={() => {
+                        requestComposerWorkspace({ organizationId: organization.id, workspaceId: route.workspaceId! });
+                        navigate({ name: "threads", organizationId: organization.id });
+                      }}
+                    />
                   )}
                 </Deferred>
               </div>

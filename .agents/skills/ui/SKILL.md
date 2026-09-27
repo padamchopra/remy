@@ -79,7 +79,7 @@ When a Paper file already holds the design for a surface, a change to that surfa
 
 A choice made from a button on the page opens as a Base UI popover next to that button. It flips and shifts to stay on screen and fills the width on a phone. A centred `CommandDialog` is for ⌘K, which has no trigger to sit beside. Escape closes the popover and returns focus to the button.
 
-Choosing a model is one component everywhere: `ModelPickerButton` in `web/src/components/ModelPicker.tsx`. A composer, a thread, a settings row, and a workspace default all render it with props, such as `onlyProvider`, `allowDefault`, or `catalogue`. Do not build a second model list, provider select, or picker dialog.
+Choosing a model is one component everywhere: `ModelPickerButton` in `web/src/components/ModelPicker.tsx`. A composer, a thread, and a computer's default model row all render it with props, such as `onlyProvider`, `allowDefault`, or `catalogue`. Do not build a second model list, provider select, or picker dialog.
 
 BAD
 ```tsx

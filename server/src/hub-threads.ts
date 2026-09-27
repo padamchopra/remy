@@ -172,11 +172,6 @@ export async function handleHubThreadRequest(
         title: typeof input.title === "string" ? input.title : undefined,
         provider: input.provider,
         model: typeof input.model === "string" ? input.model : undefined,
-        workspaceDefault: {
-          provider: workspace.provider,
-          model: workspace.model,
-          effort: workspace.effort,
-        },
       });
       if(review)setThreadReview(chat.id,{...review,worktree:cwd});
       if(taskKey)setKv(taskKey,chat.id);

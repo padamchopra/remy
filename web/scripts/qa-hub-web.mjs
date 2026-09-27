@@ -32,16 +32,11 @@ const a = await browser.newContext({ viewport: { width: 1280, height: 900 }, col
 const p = await a.newPage(); p.on("pageerror", (e) => errors.push(e.message)); await p.goto(`${info.hubUrl}/#/threads?organization=${org}`);
 try {
   await grace.p.getByRole("button", { name: "Prepare the studio release", exact: true }).waitFor();
-  await nav(p, "Workspaces"); await nav(p, "Add workspace"); await p.getByLabel("Name", { exact: true }).fill("Android"); await p.getByLabel("Repository origin", { exact: true }).fill("https://example.test/studio/android.git");
-  await p.getByRole("checkbox", { name: "Restrict to selected members and teams" }).check(); await nav(p, "Save changes"); await p.getByRole("dialog").waitFor({ state: "hidden" });
-  const workspace = (await request(p, `${base}/workspaces`)).body.workspaces[0]; assert.ok(workspace.restricted);
-  assert.equal((await request(grace.p, `${base}/workspaces`)).body.workspaces.length, 0);
+  // Every member reaches every workspace in the organization; there is no per-workspace restriction.
+  const workspace = (await request(p, `${base}/workspaces`, "POST", { name: "Android", origin: "https://example.test/studio/android.git" })).body; assert.equal("restricted" in workspace, false);
+  await until(async () => (await request(grace.p, `${base}/workspaces`)).body.workspaces.length === 1, "A member did not see the organization's workspace");
   await nav(p, "Teams"); await nav(p, "Create team"); await p.getByLabel("Name", { exact: true }).fill("Release reviewers"); await p.getByRole("checkbox", { name: "Grace", exact: true }).check(); await nav(p, "Save changes"); await p.getByRole("dialog").waitFor({ state: "hidden" });
   const team = (await request(p, `${base}/teams`)).body.teams[0]; assert.deepEqual((await request(p, `${base}/teams/${team.id}/members`)).body.userIds, ["grace"]);
-  await nav(p, "Workspaces"); await nav(p, "Edit"); await p.getByRole("checkbox", { name: "Release reviewers", exact: true }).check(); await p.screenshot({ path: `${out}/workspace-access.png` }); await nav(p, "Save changes"); await p.getByRole("dialog").waitFor({ state: "hidden" });
-  await until(async () => (await request(grace.p, `${base}/workspaces`)).body.workspaces.length === 1, "The team did not grant the workspace");
-  await nav(p, "Teams"); await nav(p, "Edit"); await p.getByRole("checkbox", { name: "Grace", exact: true }).uncheck(); await nav(p, "Save changes"); await p.getByRole("dialog").waitFor({ state: "hidden" });
-  await until(async () => (await request(grace.p, `${base}/workspaces`)).body.workspaces.length === 0, "Revocation left a workspace visible");
   await nav(p, "Members"); await p.getByLabel("Role for Grace").click(); await p.getByRole("option", { name: "Admin", exact: true }).click();
   await until(async () => (await request(p, `${base}/members`)).body.members.find((m) => m.userId === "grace").role === "admin", "Role did not persist");
   await p.getByLabel("Role for Grace").click(); await p.getByRole("option", { name: "Member", exact: true }).click();
@@ -59,11 +54,11 @@ try {
   assert.equal((await request(p, `${base}/teams`)).body.teams.length, 1);
   await nav(p, "Remove"); await p.getByRole("alertdialog").getByRole("button", { name: "Remove", exact: true }).click(); await p.getByRole("alertdialog").waitFor({ state: "hidden" });
   assert.equal((await request(p, `${base}/teams`)).body.teams.length, 0);
-  await nav(p, "Workspaces"); await nav(p, "Remove"); await p.getByRole("alertdialog").getByRole("button", { name: "Remove", exact: true }).click(); await p.getByRole("alertdialog").waitFor({ state: "hidden" });
+  await p.goto(`${info.hubUrl}/workspaces/${workspace.id}?organization=${org}`); await nav(p, "Remove workspace"); await p.getByRole("alertdialog").getByRole("button", { name: "Remove workspace", exact: true }).click(); await p.getByRole("alertdialog").waitFor({ state: "hidden" });
   assert.equal((await request(p, `${base}/workspaces`)).body.workspaces.length, 0);
   await nav(p, "Members"); await nav(p, "Remove"); await p.getByRole("alertdialog").getByRole("button", { name: "Remove", exact: true }).click(); await p.getByRole("alertdialog").waitFor({ state: "hidden" });
   assert.equal((await request(grace.p, `${base}/workspaces`)).status, 404);
   await nav(p, "Sign out"); await p.getByRole("button", { name: "Email sign-in link", exact: true }).waitFor();
-  assert.deepEqual(errors, []); console.log("PASS: real magic-link sessions, create organization, invite acceptance, workspace/team restrictions, live revocation, roles, org switching, persistent sidebar and mobile layout");
+  assert.deepEqual(errors, []); console.log("PASS: real magic-link sessions, create organization, invite acceptance, shared workspaces, teams, roles, org switching, persistent sidebar and mobile layout");
 } finally { await a.close(); await ada.c.close(); await grace.c.close(); await browser.close(); }
 console.log(`VIDEO=${await p.video().path()}`);

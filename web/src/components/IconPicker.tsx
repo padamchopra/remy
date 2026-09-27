@@ -62,13 +62,13 @@ export function IconPicker<Id extends string>({
           variant="ghost"
           size="icon"
           className={cn(
-            "relative size-10 rounded-lg p-0 hover:bg-transparent dark:hover:bg-transparent",
+            "relative size-11 rounded-[10px] p-0 hover:bg-transparent dark:hover:bg-transparent",
             preview && "overflow-hidden [&_img]:block [&_img]:size-full [&_img]:object-cover",
           )}
           aria-label={label}
         >
           <WorkspaceMarkFrame size="md" tint={tint}>
-            {preview ?? <Icon className="size-4" />}
+            {preview ?? <Icon className="size-5" />}
           </WorkspaceMarkFrame>
           {badge}
         </Button>

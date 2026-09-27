@@ -74,10 +74,10 @@ test("validates organization membership and deletion contracts", () => {
   assert.equal(organizationDeletionImpactSchema.parse({ organizationId: "org-1", name: "Acme", members: 2, teams: 1, invites: 1, workspaces: 3, deletes: ["memberships"] }).workspaces, 3);
 });
 
-test("validates organization workspaces and optional administrative access", () => {
-  const workspace = { id: "workspace-1", organizationId: "org-1", name: "Remy", origin: "github.com/padam/remy", restricted: true, createdAt: 1, updatedAt: 1 };
-  assert.equal(organizationWorkspaceSchema.parse(workspace).restricted, true);
-  assert.deepEqual(organizationWorkspaceSchema.parse({ ...workspace, access: { teamIds: ["team-1"], userIds: [] } }).access?.teamIds, ["team-1"]);
+test("validates organization workspaces, which carry no per-workspace access", () => {
+  const workspace = { id: "workspace-1", organizationId: "org-1", name: "Remy", origin: "github.com/padam/remy", createdAt: 1, updatedAt: 1 };
+  assert.equal(organizationWorkspaceSchema.parse(workspace).origin, "github.com/padam/remy");
+  assert.equal("restricted" in organizationWorkspaceSchema.parse({ ...workspace, restricted: true }), false);
 });
 
 test("carries one connection key from the web to a computer's terminal", () => {

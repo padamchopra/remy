@@ -39,35 +39,12 @@ test("a new thread with no pick starts on the first provider's own default", () 
   assert.equal(chat.effort, undefined);
 });
 
-test("a workspace with a provider of its own stands in for the machine's", () => {
-  const chat = createChat({
-    cwd,
-    workspaceDefault: { provider: "codex", model: "gpt-5.6-terra", effort: "xhigh" },
-  });
-  assert.equal(chat.provider, "codex");
-  assert.equal(chat.model, "gpt-5.6-terra");
-  assert.equal(chat.effort, "xhigh");
-});
-
-test("Cursor can be the workspace provider", () => {
-  const chat = createChat({ cwd, workspaceDefault: { provider: "cursor", model: "auto" } });
-  assert.equal(chat.provider, "cursor");
-  assert.equal(chat.model, "auto");
-});
-
-test("a workspace that follows the computer changes nothing", () => {
-  const chat = createChat({ cwd, workspaceDefault: { provider: null, model: null } });
-  assert.equal(chat.provider, "claude");
-  assert.equal(chat.model, undefined);
-});
-
-test("what the caller asked for outranks both", () => {
+test("what the caller asked for outranks the machine's default", () => {
   const chat = createChat({
     cwd,
     provider: "codex",
     model: "gpt-5.6-luna",
     effort: "low",
-    workspaceDefault: { provider: "claude", model: "sonnet" },
   });
   assert.equal(chat.provider, "codex");
   assert.equal(chat.model, "gpt-5.6-luna");

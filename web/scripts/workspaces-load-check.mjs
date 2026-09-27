@@ -13,7 +13,7 @@ const browser = await chromium.launch({
 });
 
 function workspace(id, name, origin) {
-  return { id, organizationId: "team", name, origin, restricted: false, icon: "folder", tint: "zinc", createdAt: 1, updatedAt: 1 };
+  return { id, organizationId: "team", name, origin, icon: "folder", tint: "zinc", createdAt: 1, updatedAt: 1 };
 }
 
 try {

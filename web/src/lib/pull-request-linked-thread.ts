@@ -1,4 +1,4 @@
-import { normalizeRepositoryOrigin } from "./hub-workspace-computers";
+import { normalizeRepositoryOrigin } from "./workspace-list";
 
 /// The parts of a hub thread this decision reads.
 export interface LinkedThreadCandidate {

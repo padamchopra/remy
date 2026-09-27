@@ -1226,10 +1226,6 @@ export function createChat(input: {
   /// Makes this a parallel session in an existing thread's exact checkout.
   /// The parent owns every execution choice; callers cannot override them.
   parentChatId?: string;
-  /// What the workspace this thread opens in runs on, when it does not follow
-  /// the machine. The caller resolves it: which workspace holds a directory
-  /// takes the worktree list, and this does not wait on git.
-  workspaceDefault?: { provider?: string | null; model?: string | null; effort?: string | null };
 }): ChatSummary {
   // Refuse loudly rather than running a conversation this server cannot keep.
   assertChatStorage();
@@ -1237,15 +1233,9 @@ export function createChat(input: {
   if (parent?.parentChatId) throw new Error("a subthread cannot start another subthread");
   const cwd = parent?.cwd ?? expandChatCwd(input.cwd ?? "~");
   if (!existsSync(cwd)) throw new Error("that directory does not exist on this machine");
-  // A workspace that runs on something of its own says so; otherwise the
-  // first provider turned on answers with its own default model.
-  const inherited = input.workspaceDefault?.provider
-    ? {
-        provider: input.workspaceDefault.provider,
-        model: input.workspaceDefault.model ?? "",
-        effort: input.workspaceDefault.effort ?? "",
-      }
-    : { provider: config.defaultProvider, model: "", effort: "" };
+  // With nothing asked, the first provider turned on answers with its own
+  // default model.
+  const inherited = { provider: config.defaultProvider, model: "", effort: "" };
   const askedProvider = providerId(parent?.provider ?? input.provider ?? inherited.provider);
   if (input.provider !== undefined && !config.enabledProviders.includes(askedProvider)) {
     throw new Error("that provider is turned off");

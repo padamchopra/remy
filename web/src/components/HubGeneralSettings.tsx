@@ -4,7 +4,7 @@ import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { Button } from "./ui/button";
 
 /// Who you are and how Remy reaches you. A new thread's model and permission are
-/// not set here: a workspace or a computer can carry a default model, and a new
+/// not set here: a computer can carry a default model, and a new
 /// thread always starts by asking.
 export default function HubGeneralSettings({organizationId}:{organizationId:string}) {
   const { profile, error } = useHubProfile(organizationId);
