@@ -1,7 +1,0 @@
-{
-  "keyId": "YOURKEYID1",
-  "teamId": "YOURTEAMID",
-  "bundleId": "me.padamchopra.remy",
-  "key": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----",
-  "production": false
-}
