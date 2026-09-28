@@ -801,6 +801,7 @@ try {
 
           if(mobile) await page.getByRole("button",{name:"Toggle Sidebar",exact:true}).click();
           await page.getByRole("button",{name:"Hello startup QA",exact:true}).waitFor();
+          assert.equal(await page.getByRole("button",{name:"Hello startup QA",exact:true}).locator('[data-slot="workspace-icon"]').count(), 1, "A pending thread keeps its selected workspace mark");
           if(mobile) await page.locator('[data-slot="sheet-overlay"]').click({position:{x:380,y:400}});
           assert.equal(await page.getByText("Preparing your thread…",{exact:true}).count(),0);
           const pendingUrl=page.url();

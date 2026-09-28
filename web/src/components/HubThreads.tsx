@@ -160,7 +160,7 @@ export default function HubThreads({
   const thread: HubThread | undefined = savedThread ?? (pending ? {
     id: pending.requestId, computerId: pending.created?.computerId ?? "pending", stale: false, revision: 0, observedAt: pending.at,
     access: {organizationId, owner: member ?? {id: "pending", label: "You"}, participants: [], visibility: pending.visibility},
-    detail: {id: pending.requestId, title: pending.message.slice(0, 200), state: "working", entries: [{id: `u-${pending.requestId}`, kind: "user", text: pending.message}]},
+    detail: {id: pending.requestId, workspaceId: pending.workspaceId, title: pending.message.slice(0, 200), state: "working", entries: [{id: `u-${pending.requestId}`, kind: "user", text: pending.message}]},
   } : undefined);
   const [liveNotice, setLiveNotice] = useState<string | null>();
   useEffect(() => {

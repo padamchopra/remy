@@ -31,6 +31,7 @@ function fixture() {
           .map(([k, v]) => [k, structuredClone(v)]),
       ),
   } as unknown as KeyValueStorage;
+  storage.transaction = async action => action(storage);
   const provider: ComputerRuntimeProvider = {
     id: "modal",
     capabilities: { checkpoints: true, persistentFilesystem: true },
@@ -91,6 +92,49 @@ function fixture() {
 const settings = hostedSettingsSchema.parse({
   enabled: true,
   provider: "modal",
+});
+test("a prepared spare is claimed once and starts without allocating another computer", async () => {
+  const f = fixture(), life = f.create();
+  await life.prepareSpare("w", settings, "spare:owner-and-image");
+  const spare = await life.get("w", "spare:owner-and-image");
+  const results = await Promise.all(["one", "two"].map(task => life.claimSpare("w", settings, "spare:owner-and-image", task)));
+  assert.deepEqual(results, [true, false]);
+  const claimed = await life.ensure("w", settings, "one");
+  assert.equal(claimed.computerId, spare!.computerId);
+  assert.equal(claimed.taskId, "one");
+  assert.equal(await life.get("w", "spare:owner-and-image"), undefined);
+  assert.deepEqual(f.counts(), {allocations: 1, restores: 1, checkpoints: 0});
+});
+test("spares are bounded and cannot cross workspace, settings, owner or expiry", async () => {
+  const f = fixture(), life = f.create();
+  await life.prepareSpare("w", settings, "spare:owner");
+  await life.prepareSpare("other", settings, "spare:other");
+  assert.equal(f.counts().allocations, 1);
+  assert.equal(await life.claimSpare("other", settings, "spare:owner", "one"), false);
+  assert.equal(await life.claimSpare("w", settings, "spare:other", "one"), false);
+  assert.equal(await life.claimSpare("w", {...settings, cpu: settings.cpu + 1}, "spare:owner", "one"), false);
+  f.tick(15 * 60_000);
+  assert.equal(await life.claimSpare("w", settings, "spare:owner", "one"), false);
+  await life.idle();
+  assert.equal((await life.list()).length, 0);
+});
+test("preparing a spare does not hold up a foreground allocation", {timeout: 1000}, async () => {
+  const f = fixture(), life = f.create();
+  let release!: () => void, started!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  const entered = new Promise<void>(resolve => { started = resolve; });
+  const provision = f.provider.provision;
+  let calls = 0;
+  f.provider.provision = async input => {
+    if (++calls === 1) { started(); await waiting; }
+    return provision(input);
+  };
+  const warming = life.prepareSpare("w", settings, "spare:owner");
+  await entered;
+  try {
+    const foreground = await life.ensure("other", settings, "foreground");
+    assert.equal(foreground.phase, "ready");
+  } finally { release(); await warming; }
 });
 test("hosted computer names keep their suffix within the registration limit", () => {
   const computerId = "b14a5df3-4a34-438f-9a32-d1828f474ba8";

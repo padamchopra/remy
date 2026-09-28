@@ -7,6 +7,7 @@ import type {
   ProvisionComputerInput,
 } from "./computer-runtime.js";
 type State = HostedComputerState & {
+  spareExpiresAt?: number;
   taskTitle?:string;
   runtime?: ComputerRuntime;
   settings: HostedSettings;
@@ -31,6 +32,7 @@ export class HostedLifecycle {
     private readonly ready: (computerId: string) => Promise<void>,
     private readonly now: () => number = Date.now,
     private readonly connected: (id: string) => boolean = () => true,
+    private readonly discardSpare: (id: string) => Promise<void> = async () => {},
   ) {}
   private key(workspace: string, taskId?: string) {
     return taskId ? `hosted:task:${taskId}` : `hosted:${workspace}`;
@@ -97,6 +99,49 @@ export class HostedLifecycle {
       return this.wake(workspaceId, settings, taskId, taskTitle);
     });
   }
+  async prepareSpare(workspaceId: string, settings: HostedSettings, taskId: string, initialize: () => Promise<void> = async () => {}): Promise<void> {
+    await this.serial("spare", async () => {
+      const reserved = await this.serial("allocation", async () => {
+        const states = await this.list();
+        if (states.some(state => state.taskId?.startsWith("spare:")) || states.filter(state => ["ready", "allocating", "restoring", "starting_runtime", "connecting", "checkpointing"].includes(state.phase)).length >= settings.maxComputers) return false;
+        const state = this.initialState(workspaceId, settings, taskId);
+        state.spareExpiresAt = this.now() + 15 * 60_000;
+        await this.save(state);
+        return true;
+      });
+      if (!reserved) return;
+      await initialize();
+      const state = await this.wake(workspaceId, settings, taskId);
+      try { await this.provider(state.provider, state).stop(state.runtime!); }
+      catch (error) { state.phase = "failed"; await this.save(state); throw error; }
+      await this.meter(state);
+      state.phase = "asleep";
+      state.spareExpiresAt = this.now() + 15 * 60_000;
+      await this.save(state);
+    });
+  }
+  private initialState(workspaceId: string, settings: HostedSettings, taskId?: string, taskTitle?: string): State {
+    const started = this.now();
+    return {
+      workspaceId,
+      ...(taskId ? {taskId, ...(taskTitle ? {taskTitle: taskTitle.slice(0, 120)} : {})} : {}),
+      computerId: crypto.randomUUID(), provider: settings.provider, phase: "allocating",
+      lastUsedAt: started, meteredAt: started, active: false, settings,
+      usage: {activeMs: 0, warmIdleMs: 0, snapshotByteMs: 0}, timing: {}, sources: [],
+    };
+  }
+  async claimSpare(workspaceId: string, settings: HostedSettings, spareId: string, taskId: string, title?: string): Promise<boolean> {
+    return this.serial("allocation", async () => {
+      return this.storage.transaction(async storage => {
+        if (await storage.get(this.key(workspaceId, taskId))) return false;
+        const spare = await storage.get<State>(this.key(workspaceId, spareId));
+        if (!spare || spare.workspaceId !== workspaceId || spare.phase !== "asleep" || !spare.spareExpiresAt || spare.spareExpiresAt <= this.now() || JSON.stringify(spare.settings) !== JSON.stringify(settings)) return false;
+        await storage.put(this.key(workspaceId, taskId), {...spare, taskId, taskTitle: title?.slice(0, 120), spareExpiresAt: undefined});
+        await storage.delete(this.key(workspaceId, spareId));
+        return true;
+      });
+    });
+  }
   private async wake(
     workspaceId: string,
     settings: HostedSettings,
@@ -108,20 +153,7 @@ export class HostedLifecycle {
     const started = this.now();
     const state: State =
       (await this.get(workspaceId, taskId)) ??
-      ({
-        workspaceId,
-        ...(taskId ? { taskId,...(taskTitle?{taskTitle:taskTitle.slice(0,120)}:{}) } : {}),
-        computerId: crypto.randomUUID(),
-        provider: settings.provider,
-        phase: "allocating",
-        lastUsedAt: started,
-        meteredAt: started,
-        active: false,
-        settings,
-        usage: { activeMs: 0, warmIdleMs: 0, snapshotByteMs: 0 },
-        timing: {},
-        sources: [],
-      } satisfies State);
+      this.initialState(workspaceId, settings, taskId, taskTitle);
     await this.meter(state);
     state.lastUsedAt = started;
     if (state.provider !== settings.provider)
@@ -186,22 +218,33 @@ export class HostedLifecycle {
   async remove(computerId: string) {
     let state = (await this.list()).find((s) => s.computerId === computerId);
     if (!state) return;
+    if (state.taskId?.startsWith("spare:")) await this.running.get("spare")?.catch(() => undefined);
     return this.serial("allocation", async () => {
       state = await this.get(state!.workspaceId, state!.taskId);
       if (!state) return;
-      await this.provider(state.provider).destroy(
+      await this.provider(state.provider, state).destroy(
         state.runtime ?? {
           id: computerId,
           provider: state.provider,
           providerReference: "",
         },
       );
+      if (state.taskId?.startsWith("spare:")) await this.discardSpare(computerId);
       await this.storage.delete(this.key(state.workspaceId, state.taskId));
       await this.storage.delete(`hosted-key:${computerId}`);
+      await this.storage.delete(`hosted-git-owner:${computerId}`);
+      if (state.taskId?.startsWith("spare:")) {
+        await this.storage.delete(`hosted-task-owner:${state.taskId}`);
+        await this.storage.delete(`hosted-task-cloud:${state.taskId}`);
+      }
     });
   }
   async idle() {
     for (const entry of await this.list()) {
+      if (entry.taskId?.startsWith("spare:") && (entry.phase === "failed" || (entry.spareExpiresAt ?? entry.lastUsedAt + 15 * 60_000) <= this.now())) {
+        await this.remove(entry.computerId);
+        continue;
+      }
       await this.serial("allocation", async () => {
         const state = await this.get(entry.workspaceId, entry.taskId);
         if (!state) return;
@@ -225,7 +268,7 @@ export class HostedLifecycle {
           state.phase = "checkpointing";
           await this.save(state);
           try {
-            const provider = this.provider(state.provider);
+            const provider = this.provider(state.provider, state);
             const previous = state.runtime!.snapshot;
             state.runtime = await provider.checkpoint(state.runtime!);
             await this.save(state);

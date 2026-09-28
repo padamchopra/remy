@@ -1939,6 +1939,11 @@ export class HubCoordinator {
       if (ownChatGPT) await this.ctx.storage.put(`hosted-task-chatgpt:${taskId}`, true);
       if (ownModel) await this.ctx.storage.put(`hosted-task-own-model:${taskId}`, ownModel);
       else await this.ctx.storage.delete(`hosted-task-own-model:${taskId}`);
+      const spareId = await this.spareTaskId(userId, workspaceId, settings, cloudTask);
+      if (await this.hostedService().claimSpare(workspaceId, settings, spareId, taskId, title)) {
+        await this.ctx.storage.delete(`hosted-task-owner:${spareId}`);
+        await this.ctx.storage.delete(`hosted-task-cloud:${spareId}`);
+      }
       const state = await this.hostedService().ensure(workspaceId,settings,taskId,title);
       const computer = await this.computers.computer(org,state.computerId);
       choice = {computerId:state.computerId,workspaceId:computer?.capabilities.workspaces[0]?.id ?? workspaceId,reason:"A separate computer for your task."};
@@ -1951,6 +1956,25 @@ export class HubCoordinator {
     const settings=await new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).executionSettings(org,workspaceId);
     if(!settings.enabled || isCursorCloudProvider(settings.provider))return;
     try{await this.hostedService().ensure(workspaceId,settings);}catch{}finally{this.invalidateComputers();await this.scheduleAlarm(Date.now()+60_000);}
+  }
+
+  private async spareTaskId(userId: string, workspaceId: string, settings: HostedSettings, cloudTask?: CloudConnectionTask) {
+    const org = (await this.ctx.storage.get<string>("organizationId"))!;
+    const workspace = await new D1OrganizationStore(this.env.DB).workspace(org, workspaceId);
+    const fingerprint = JSON.stringify([userId, workspaceId, workspace?.origin, settings, cloudTask, this.env.HOSTED_IMAGE, this.env.HOSTED_ARCHIVE]);
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(fingerprint));
+    return `spare:${Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("")}`;
+  }
+
+  private async prepareNextComputer(userId: string, workspaceId: string, taskId: string, cloudTask?: CloudConnectionTask) {
+    const state = await this.hostedService().get(workspaceId, taskId);
+    if (!state || state.provider !== "fly-sprites") return;
+    const spareId = await this.spareTaskId(userId, workspaceId, state.settings, cloudTask);
+    try { await this.hostedService().prepareSpare(workspaceId, state.settings, spareId, async () => {
+      await this.ctx.storage.put(`hosted-task-owner:${spareId}`, userId);
+      if (cloudTask) await this.ctx.storage.put(`hosted-task-cloud:${spareId}`, cloudTask);
+    }); }
+    finally { await this.scheduleAlarm(Date.now() + 60_000); }
   }
 
   private cursorCloudThreads(): CursorCloudThreads {
@@ -2050,14 +2074,19 @@ export class HubCoordinator {
       // while the starter is still a member and still allows it here.
       const ownModel = state.taskId ? await this.ctx.storage.get<OwnModelTask>(`hosted-task-own-model:${state.taskId}`) : undefined;
       if (ownModel && await ownModelError(this.env.DB,settings,org,ownModel.userId,ownModel.provider,ownModel.keyId,ownModel.enrolled)) throw new HostedStartupError(OWN_MODEL_THREAD);
-      const models = ownModel ? await ownModelEnvironment(this.env.DB,settings,org,modelSecrets(secrets),ownModel) : modelSecrets(secrets);
+      const models = state.taskId?.startsWith("spare:") ? {} : ownModel ? await ownModelEnvironment(this.env.DB,settings,org,modelSecrets(secrets),ownModel) : modelSecrets(secrets);
       const environment={...models,MC_CONFIG_DIR:"/data/remy",REMY_HOSTED_BOOTSTRAP:JSON.stringify({registration:{...actual,hubUrl:this.env.BETTER_AUTH_URL},privateKey:keys.privateKey,...(state.taskId?{taskId:state.taskId}:{}),workspace:{id:workspace.id,name:workspace.name,origin:workspace.origin}})};
       const domains=[new URL(this.env.BETTER_AUTH_URL).hostname,"api.anthropic.com","console.anthropic.com","claude.ai","api.openai.com","api.router.com","openrouter.ai","api.openrouter.ai","auth.openai.com","chatgpt.com","ab.chatgpt.com","github.com","api.github.com","codeload.github.com","objects.githubusercontent.com","release-assets.githubusercontent.com","github-releases.githubusercontent.com","ghcr.io","pkg-containers.githubusercontent.com","registry.npmjs.org"];
       return {organizationId:org,computerId:state.computerId,settings:state.settings,image:this.env.HOSTED_IMAGE,archive:this.env.HOSTED_ARCHIVE??"",environment,allowedDomains:domains};
     }, async id=>{
       for(let attempt=0;attempt<900;attempt++){if(this.computerSocket(id))return;await new Promise(resolve=>setTimeout(resolve,100));}
       throw new HostedStartupError("Your cloud computer started but did not connect to Remy. Retry to reconnect.");
-    }, Date.now, id => !!this.computerSocket(id));return this.hosted;
+    }, Date.now, id => !!this.computerSocket(id), async id => {
+      const org = (await this.ctx.storage.get<string>("organizationId"))!;
+      await this.computers.remove(org, id);
+      await this.env.DB.prepare("DELETE FROM hosted_workspace_bindings WHERE computer_id=? AND organization_id=?").bind(id, org).run();
+      this.invalidateComputers();
+    });return this.hosted;
   }
 
   private computerService(): ComputerService {
@@ -2245,6 +2274,7 @@ export class HubCoordinator {
       }
       await this.saveManualThreadStart(key, { phase: "ready", id: threadId, computerId: choice.computerId, messageSent: true });
       await this.ctx.storage.put(`thread-run:${threadId}`, { computerId: choice.computerId, userId: actor.id });
+      this.ctx.waitUntil(this.prepareNextComputer(actor.id, input.workspaceId, `${actor.id}:${input.requestId}`, input.cloudTask).catch(() => undefined));
       this.invalidateComputers();
       await this.scheduleAlarm(Date.now()+60_000);
     } catch (error) {

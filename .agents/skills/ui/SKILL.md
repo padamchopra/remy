@@ -194,6 +194,8 @@ Thread rows in the app sidebar use `ThreadMenu`: right-click is a `ContextMenu`,
 
 ## First paint
 
+Pending threads retain the workspace selected in the composer and show its mark immediately, before a computer connects or a server snapshot arrives.
+
 Composer, model, computer, and branch controls keep their size and label from first paint. They do not shimmer, jump layout, or swap a placeholder for a different-width string once they are on screen.
 
 The `shimmer` class is for text that has no settled value yet, not for a control whose choice is already known.
