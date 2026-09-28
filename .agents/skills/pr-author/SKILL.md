@@ -134,6 +134,8 @@ Do not turn terminal output, test results, configuration diffs, or API responses
 
 ## Publish
 
+After creating or updating a PR, monitor checks on the latest pushed commit until they finish. Fix failures caused by the change and follow the replacement run through to completion before handing it back. Report unrelated failures or checks that require outside action with the failing check and concrete blocker. Pending CI is not a completed handoff; this is an agent convention, not an automated gate.
+
 Use GitHub CLI's native `--attach` flag on `gh pr create`, `gh pr edit`, or `gh pr comment`. Check `gh --version` and `gh pr edit --help`; attachment support requires gh 2.99.0 or later. If the installed version lacks the flag, upgrade through its package manager and check again. An outdated installation is not evidence that GitHub CLI lacks uploads. Use the CLI for attachments; do not open Chrome or invoke a separate `github` uploader.
 
 Create the draft PR, then upload the inspected files with repeatable `--attach` flags. Use the actual PR URL and original media files; keep media out of git.

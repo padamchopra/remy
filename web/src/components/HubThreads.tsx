@@ -9,8 +9,10 @@ import { ReplyComposer, replyComposerFrame, replyComposerForm } from "./ReplyCom
 import { InlineImageComposer, type InlineImageComposerHandle, type InlineImageComposerValue } from "./InlineImageComposer";
 import { InputGroupText } from "./ui/input-group";
 import { ModelPickerButton } from "./ModelPicker";
-import { ComposerMenu } from "./ComposerMenu";
-import { PERMISSIONS, permissionOf } from "@/lib/chat-options";
+import { PermissionPicker } from "./PermissionPicker";
+import { permissionOf } from "@/lib/chat-options";
+import { Markdown } from "./Markdown";
+import { ApprovalDetails } from "./ApprovalDetails";
 import { threadModelPicker } from "@/lib/hub-models";
 import { useHubResource } from "@/lib/hub-organization";
 import type { ModelAccessResponse } from "./HubModelAccess";
@@ -66,6 +68,8 @@ import type { Route } from "@/lib/route";
 type Approval = {
   requestId: string;
   title?: string;
+  reason?: string;
+  plan?: string;
   tool: string;
   arg?: string;
   allowAlways: boolean;
@@ -180,7 +184,7 @@ export default function HubThreads({
     if (pending?.phase === "ready" && pending.created && threadId === pending.requestId) {
       navigate({name: "threads", organizationId, threadId: pending.created.id});
     }
-    if (pending && savedThread) forgetThreadStart(pending.requestId);
+    if (pending?.phase === "ready" && savedThread) forgetThreadStart(pending.requestId);
   }, [pending, savedThread, threadId, organizationId, navigate]);
   useEffect(() => {
     if (followsLatest.current && transcript.current)
@@ -198,10 +202,13 @@ export default function HubThreads({
     !!thread && !!member && canWriteThread(thread.access, member.id);
   const disabled = !!pending || busy || !thread || thread.stale || !writable;
   const path = actingComputer ? hubThreadPath(organizationId, actingComputer, actingThread) : "";
-  const entries = visibleThreadEntries(thread?.detail.entries ?? []);
+  const visibleEntries = thread?.detail.entries ?? [];
+  const entries = visibleThreadEntries(pending && !visibleEntries.some(entry => entry.id === `u-${pending.requestId}`)
+    ? [{id: `u-${pending.requestId}`, kind: "user", text: pending.message}, ...visibleEntries]
+    : visibleEntries);
   const picker = threadModelPicker({ provider: thread?.detail.provider ?? pending?.provider, model: thread?.detail.model ?? pending?.model, effort: thread?.detail.effort ?? pending?.effort }, computer, modelAccess.value?.providers ?? []);
   const { runtimeProvider, modelProvider, providers } = picker;
-  const permission = permissionOf(typeof thread?.detail.permissionMode === "string" ? thread.detail.permissionMode : undefined);
+  const permission = permissionOf(typeof thread?.detail.permissionMode === "string" ? thread.detail.permissionMode : pending?.permissionMode);
   const approval = thread?.detail.approval as Approval | undefined;
   const question = thread?.detail.question as Question | undefined;
   const act = async (action: string, input: unknown = {}) => {
@@ -330,8 +337,8 @@ export default function HubThreads({
                     <Bubble
                       variant={entry.kind === "user" ? "default" : "ghost"}
                     >
-                      <BubbleContent className="whitespace-pre-wrap break-words">
-                        {threadEntryText(entry)}
+                      <BubbleContent className="min-w-0 break-words">
+                        <Markdown text={threadEntryText(entry)} />
                       </BubbleContent>
                     </Bubble>
                     {entry.kind === "user" && Array.isArray(entry.codeReferences) && entry.codeReferences.length > 0 && (
@@ -388,9 +395,9 @@ export default function HubThreads({
           </div>
           {approval && (
             <div className="flex shrink-0 flex-wrap items-center gap-2 border-t p-4">
-              <p className="min-w-0 flex-1 break-words">
-                {approval.title ?? `${approval.tool}: ${approval.arg ?? ""}`}
-              </p>
+              <div className="min-w-0 basis-full overflow-auto max-h-64">
+                <ApprovalDetails title={approval.title ?? approval.tool} reason={approval.reason} command={approval.arg} plan={approval.plan} />
+              </div>
               <Button
                 disabled={disabled}
                 onClick={() =>
@@ -484,7 +491,7 @@ export default function HubThreads({
                 controls={<>
                   {cursorCloud ? <InputGroupText>Cursor Cloud default</InputGroupText> : <ModelPickerButton variant="composer" catalogue={providers} onlyProvider={modelProvider} value={picker.value} disabled={disabled}
                     onPick={choice => void act("options", picker.options(choice))} />}
-                  <ComposerMenu icon={permission.icon} label={permission.label} value={permission.value} options={PERMISSIONS} disabled={disabled} onChange={permissionMode => void act("options", {permissionMode})} />
+                  <PermissionPicker value={permission.value} cloud={cursorCloud} disabled={disabled} onChange={permissionMode => void act("options", {permissionMode})} />
                 </>}
                 context={<>
                   <InputGroupText className="hidden @3xl:flex"><ComputerIcon />{computerName}</InputGroupText>

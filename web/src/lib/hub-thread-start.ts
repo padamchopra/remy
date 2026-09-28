@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { HubRequestError, hubRequest, hubThreadBase } from "./hub-threads";
 import { threadStartProgressLabel, type ThreadStartProgress } from "./thread-start-progress";
+import { recoverThreadStartRequest } from "./thread-start-recovery";
 
 type StartedThread = { id: string; computerId: string; phase?: string; error?: string };
 export type ThreadStart = {
@@ -16,6 +17,7 @@ export type ThreadStart = {
   provider?: string;
   model?: string;
   effort?: string;
+  permissionMode?: string;
   /// A review: the hub reads this pull request with your GitHub connection,
   /// names the thread "Review #n: title" and checks its head out on the computer.
   review?: { repository: string; number: number };
@@ -60,18 +62,20 @@ function stillStarting(requestId: string) {
 }
 async function waitForCreated(start: ThreadStart): Promise<StartedThread | undefined> {
   let current = applyProgress(start, "creating");
-  const created = await hubRequest<StartedThread>(`${hubThreadBase(start.organizationId)}/threads`, "POST", {
+  const created = await recoverThreadStartRequest(() => hubRequest<StartedThread>(`${hubThreadBase(start.organizationId)}/threads`, "POST", {
     workspaceId: start.workspaceId, computerId: start.computerId,
     title: start.message.slice(0, 200), message: start.message, requestId: start.requestId,
     branch: start.branch, provider: start.provider, model: start.model, effort: start.effort,
-    visibility: start.visibility,
+    visibility: start.visibility, permissionMode: start.permissionMode ?? "default",
     ...(start.review ? { review: start.review } : {}),
-  });
+  }), () => stillStarting(start.requestId));
+  if (!created) return undefined;
   if (created.id && created.computerId) return created;
   current = applyProgress(current, created.phase ?? "creating");
   const path = `${hubThreadBase(start.organizationId)}/threads/starts/${encodeURIComponent(start.requestId)}`;
   while (stillStarting(start.requestId)) {
-    const status = await hubRequest<StartedThread>(path);
+    const status = await recoverThreadStartRequest(() => hubRequest<StartedThread>(path), () => stillStarting(start.requestId));
+    if (!status) return undefined;
     if (!stillStarting(start.requestId)) return undefined;
     current = applyProgress(current, status.phase);
     if (status.id && status.computerId) return status;

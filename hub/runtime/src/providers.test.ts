@@ -32,7 +32,17 @@ test("a fresh Sprite installs Remy when the entrypoint does not exist", async ()
     computerId: "fresh", organizationId: "org", image: "image", archive: "https://example.com/runtime.tar.gz", environment: {}, allowedDomains: [],
     settings: { enabled: true, provider: "fly-sprites", cpu: 1, memoryMiB: 1024, region: "", idleMinutes: 12, maxComputers: 5 },
   });
-  assert.deepEqual(calls, ["test", "curl", "tar", "node"]);
+  assert.deepEqual(calls, ["test", "curl", "tar", "setpriv"]);
+});
+
+test("Fly drops inherited capabilities without disabling the provider sandbox", async () => {
+  let command: unknown;
+  const sprite = {updateNetworkPolicy: async () => {}, execFile: async (file: string, args: string[], options: unknown) => {
+    command = {file, args: args.slice(0, 5), options};
+    return {exitCode: 0};
+  }};
+  await new FlySpritesRuntime({sprite: () => sprite} as unknown as SpritesClient).start({id: "one", provider: "fly-sprites", providerReference: "one"}, {environment: {SAFE: "value"}, allowedDomains: []} as unknown as ProvisionComputerInput);
+  assert.deepEqual(command, {file: "setpriv", args: ["--inh-caps=-all", "--ambient-caps=-all", "--", "node", "-e"], options: {env: {SAFE: "value"}}});
 });
 
 test("Fly failures expose the operation and status without credential-bearing SDK text", async () => {
