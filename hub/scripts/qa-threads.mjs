@@ -356,7 +356,19 @@ const registration = await registerHubComputer(
   organizationId,
   tokens["computer-owner"],
 );
-const capabilities = registration.capabilities;
+const capabilities = real.realProviders || registration.capabilities.providers.some((entry) => entry.id === "claude")
+  ? registration.capabilities
+  : {
+      ...registration.capabilities,
+      providers: [
+        {
+          id: "claude",
+          models: [""],
+          modelInfo: [{ value: "", label: "Default", resolvedLabel: "Opus 5.5 (1M)" }],
+        },
+        ...registration.capabilities.providers,
+      ],
+    };
 stopHubComputerConnection();
 const connection = new HubComputerConnection(
   registration,
@@ -389,7 +401,8 @@ if (!process.env.QA_COMPUTER_POLICY) await request(`/computers/${registration.co
 for (let attempt = 0; attempt < 150; attempt++) {
   if (
     (await request("/computers")).computers.some(
-      (computer) => computer.availability === "available",
+      (computer) => computer.availability === "available"
+        && computer.capabilities.providers.some((entry) => entry.id === "claude"),
     )
   )
     break;
