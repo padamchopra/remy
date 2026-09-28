@@ -52,13 +52,18 @@ jobs:
       - run: node hub/scripts/check-runtime-bundle.mjs
       - run: npx playwright-core install --with-deps chromium
         working-directory: web
+      - name: Check the complete thread journey
+        run: node web/scripts/qa-thread-journey.mjs
       - name: Check public home and web app
         run: |
           node web/scripts/serve-hub.mjs web/dist 5180 &
           server_pid=$!
-          trap 'kill "$server_pid"' EXIT
+          node web/scripts/hosted-runtime-check.mjs &
+          runtime_pid=$!
+          QA_SCOPE_ONLY=1 node web/scripts/hosted-runtime-check.mjs &
+          scope_pid=$!
+          trap 'kill "$server_pid" "$runtime_pid" "$scope_pid" 2>/dev/null || true' EXIT
           node web/scripts/hub-website-check.mjs
-          node web/scripts/hosted-runtime-check.mjs
           node web/scripts/workspaces-load-check.mjs
           node web/scripts/pull-request-tile-check.mjs
           QA_COMPUTER_ONLY=1 node web/scripts/hosted-runtime-check.mjs
@@ -68,11 +73,10 @@ jobs:
           QA_START_ONLY=1 node web/scripts/hosted-runtime-check.mjs
           QA_COMPUTER_DEFAULTS_ONLY=1 node web/scripts/hosted-runtime-check.mjs
           QA_COMPOSER_ONLY=1 node web/scripts/hosted-runtime-check.mjs
-          QA_SCOPE_ONLY=1 node web/scripts/hosted-runtime-check.mjs
           QA_THREAD_RECOVERY_ONLY=1 node web/scripts/hosted-runtime-check.mjs
+          wait "$runtime_pid"
+          wait "$scope_pid"
           node --test web/scripts/hosted-preview.test.mjs web/scripts/hub-resource.test.mjs web/scripts/qa-hosted-account.test.mjs web/scripts/workspace-image-cache.test.mjs web/scripts/hub-workspace-cache.test.mjs web/scripts/workspace-list.test.mjs web/scripts/hub-models.test.mjs web/scripts/thread-menu.test.mjs web/scripts/route.test.mjs web/scripts/thread-start-progress.test.mjs web/scripts/pull-request-workspace.test.mjs web/scripts/pull-request-order.test.mjs web/scripts/pull-request-checks.test.mjs web/scripts/pull-request-patch.test.mjs web/scripts/markdown-html-comments.test.mjs web/scripts/pull-request-detail.test.mjs web/scripts/diff-words.test.mjs web/scripts/pull-request-review-state.test.mjs web/scripts/pull-request-activity.test.mjs web/scripts/review-agent.test.mjs web/scripts/markdown-html.test.mjs web/scripts/environment-text.test.mjs
-      - name: Check the complete thread journey
-        run: node web/scripts/qa-thread-journey.mjs
       - name: Check the built website
         env:
           WEBSITE_URL: http://127.0.0.1:5181

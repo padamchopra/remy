@@ -463,13 +463,11 @@ const control = createServer(async (req, res) => {
       .bind(req.url === "/restore-grace" ? null : Date.now(), "grace")
       .run();
   } else if (req.url === "/reset") {
-    connection.stop();
     await mf.unsafeEvictDurableObject("hub", "HubCoordinator", {
       id: (await mf.getDurableObjectNamespace("COORDINATOR"))
         .idFromName(`organization:${organizationId}`)
         .toString(),
     });
-    connection.start();
   } else {
     res.writeHead(404);
     res.end();

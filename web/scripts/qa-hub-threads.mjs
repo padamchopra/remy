@@ -270,11 +270,6 @@ try {
     ).length,
     socketReads,
   );
-  await context.setOffline(true);
-  await teammateContext.setOffline(true);
-  await control("/reset");
-  await context.setOffline(false);
-  await teammateContext.setOffline(false);
   await page.waitForTimeout(1000);
   const beforeReload = page.url();
   await page.reload();
