@@ -8,6 +8,7 @@ if (!state) throw new Error("Start this computer with npm run dev:local.");
 const environment = localComputerEnvironment(process.env, state);
 for (const key of Object.keys(process.env)) if (!(key in environment)) delete process.env[key];
 Object.assign(process.env, environment);
+if (accountSession) process.env.MC_EPHEMERAL_TASK_ACCESS = "1";
 const { getKv, setKv } = await import("../../server/dist/db.js");
 setKv("config", localComputerConfig(getKv("config")));
 const { patchSettings } = await import("../../server/dist/config.js");

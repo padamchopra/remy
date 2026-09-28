@@ -18,6 +18,8 @@ The metadata endpoint is `/api/development/:registrationOrganizationId/bootstrap
 
 The separately authorized `/api/development/:registrationOrganizationId/thread-access` endpoint returns the selected workspace's merged Workspace and Personal environment values and the owner's Linear execution access. Production checks current workspace access on every request and retains ownership of connection refresh. Local execution can read these values; the browser and local database must not receive them. This does not authorize export of GitHub, cloud hosting, or model credentials. The local connection accepts only the registered owner and those two fixed production endpoints, rejects redirects, and signs a fresh request for each turn.
 
+The shared-account launcher enables memory-only execution access on its separate computer. Unlike an ordinary connected computer, it never saves delivered environment or Linear access records, even encrypted. Restart forgets them, and the next turn must fetch them again. Local code can still read its inherited values and could write or transmit them; this is not a sandbox against that code.
+
 ## Remaining work
 
 - Deploy and enable the production bridge, then verify the shared-account launcher against the real account. Local implementation tests do not prove that live path.
