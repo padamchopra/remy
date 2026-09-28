@@ -5,6 +5,8 @@ import { LINEAR_MCP_URL, type LinearHttpMcp } from "./linear-mcp.js";
 import { localLinearAccess, type LocalLinearAccess } from "./linear-accounts.js";
 
 const HUB_THREAD_ACCESS = "hubThreadAccess";
+const ephemeralTaskAccess = process.env.MC_EPHEMERAL_TASK_ACCESS === "1";
+const taskAccess = new Map<string,LocalLinearAccess>();
 
 type Sealed = { ciphertext: string; iv: string; tag: string };
 type Stored =
@@ -27,6 +29,15 @@ export function setHubLinear(chatId: string, value: unknown) {
   const scope = key(chatId);
   if (!value || typeof value !== "object") return;
   const kind = (value as { kind?: unknown }).kind;
+  if (ephemeralTaskAccess) {
+    const input = value as {token?:unknown;url?:unknown;notice?:unknown};
+    const access: LocalLinearAccess = kind === "ready" && typeof input.token === "string" && input.url === LINEAR_MCP_URL
+      ? {kind:"ready",token:input.token,url:LINEAR_MCP_URL,fingerprint:createHash("sha256").update(input.token).digest("hex").slice(0,16)}
+      : kind === "notice" && typeof input.notice === "string" ? {kind:"notice",notice:input.notice.slice(0,300)} : {kind:"off"};
+    taskAccess.set(chatId,access);
+    rememberSecrets(scope,access.kind === "ready" ? [access.token] : []);
+    return;
+  }
   if (kind === "off") {
     setKv(scope, { kind: "off" } satisfies Stored);
     rememberSecrets(scope, []);
@@ -54,6 +65,7 @@ export function setHubLinear(chatId: string, value: unknown) {
 }
 
 function hubAccess(chatId: string): LocalLinearAccess {
+  if (ephemeralTaskAccess) return taskAccess.get(chatId) ?? {kind:"off"};
   const stored = getKv<Stored>(key(chatId));
   if (!stored || stored.kind === "off") return { kind: "off" };
   if (stored.kind === "notice") return { kind: "notice", notice: stored.notice };

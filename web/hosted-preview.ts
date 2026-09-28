@@ -23,8 +23,9 @@ const systemClock: PreviewClock = {
   },
 };
 
-export function hostedPreview(target: string, clock: PreviewClock = systemClock): { plugin: Plugin; proxy: ProxyOptions } {
+export function hostedPreview(target: string, clock: PreviewClock = systemClock, localSession?: {accessToken:string;expiresIn:number}): { plugin: Plugin; proxy: ProxyOptions } {
   const hub = new URL(target);
+  if (localSession && hub.hostname !== '127.0.0.1') throw Error('Use a loopback hub for a local session.');
   if (hub.protocol !== 'https:' && !['127.0.0.1', 'localhost'].includes(hub.hostname)) throw Error('Use HTTPS for the hosted service.');
   const agent = new (hub.protocol === 'https:' ? HttpsAgent : HttpAgent)({keepAlive:true, autoSelectFamilyAttemptTimeout:2000});
   let origin = '';
@@ -83,6 +84,7 @@ export function hostedPreview(target: string, clock: PreviewClock = systemClock)
       retryDelay = Math.min(retryDelay * 2, REFRESH_RETRY_MAX_MS);
     }
   })().finally(() => { refreshing = undefined; });
+  if (localSession) accept(localSession);
   const trusted = (request: IncomingMessage) => request.headers.host === new URL(origin).host
     && (!request.headers.origin || request.headers.origin === origin)
     && request.headers['sec-fetch-site'] !== 'cross-site';

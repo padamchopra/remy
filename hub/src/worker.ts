@@ -61,6 +61,7 @@ import { D1AccountStore, type AccountStore } from "./account-store.js";
 import { AccountService, bearerToken, webSessionCookie } from "./accounts.js";
 import { authFor } from "./auth.js";
 import { authenticateComputer } from "./computer-auth.js";
+import { developmentBridge } from "./development-bridge.js";
 import { D1ComputerStore, type ComputerStore } from "./computer-store.js";
 import { ComputerService, versionBefore } from "./computers.js";
 import { D1OrganizationStore, type OrganizationStore } from "./organization-store.js";
@@ -75,6 +76,9 @@ export interface Env extends ApplePushConfig {
   ASSETS?: Fetcher;
   WEB_APP_URL?: string;
   PREVIEW_ORIGINS?: string;
+  DEVELOPMENT_COMPUTER_IDS?: string;
+  /// Only the local development launcher supplies this in-process connection.
+  DEVELOPMENT_EXECUTION?: Fetcher;
   PROVIDER_RUNTIME?: DurableObjectNamespace;
   HOSTED_CONTROL_URL?: string;
   HOSTED_CONTROL_TOKEN?: SecretsStoreSecret;
@@ -393,6 +397,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
 
   if (url.pathname === "/api/runtime" && request.method === "GET") return Response.json({ mode: "hub", auth: { magicLink: emailAvailable(env), google: !!env.GOOGLE_CLIENT_ID && !!env.GOOGLE_CLIENT_SECRET, github: !!env.GITHUB_CLIENT_ID && !!env.GITHUB_CLIENT_SECRET, sso: true, password: true } }, { headers: { "cache-control": "no-store" } });
   const protectedRoute = isGitHubConnectionCallback(url)
+    || url.pathname.startsWith("/api/development/")
     || url.pathname === "/api/device/approve"
     || url.pathname === "/api/sessions"
     || url.pathname === "/api/sessions/revoke-all"
@@ -521,6 +526,26 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
     return new Response(object.body, { headers: { "content-type": object.httpMetadata?.contentType ?? "application/octet-stream", "content-length": String(object.size), "x-filename": object.customMetadata?.name ?? "image" } });
   }
 
+  const developmentResponse = await developmentBridge(request, {
+    allowedComputerIds: env.DEVELOPMENT_COMPUTER_IDS,
+    authenticate: (incoming, org) => authenticateComputer(incoming, org, computerStore),
+    bootstrap: async userId => {
+      const profile = await store.profile(userId);
+      if (!profile) throw new Error("Your account is unavailable.");
+      const scopes = await organizations.list(userId);
+      const personal = await personalSpace(env.DB, userId);
+      const accounts = [personal, ...scopes.filter(scope => scope.id !== personal.id)];
+      return { profile, accounts: await Promise.all(accounts.map(async account => ({...account, workspaces: await organizations.workspaces(account.id, userId)}))) };
+    },
+    threadAccess: async (userId, organizationId, workspaceId) => {
+      const workspace = await organizations.workspace(organizationId, userId, workspaceId);
+      return {
+        hubEnvironment: await new EnvironmentStore(env.DB, () => env.AUTH_SECRET.get()).forThread(organizationId, workspace.id, userId),
+        hubLinear: await linearAccountsFor(env).forThread(organizationId, userId),
+      };
+    },
+  });
+  if (developmentResponse) return developmentResponse;
   const webhookResponse = await connectionWebhook(request, env);
   if (webhookResponse) return webhookResponse;
   const identity = await identityFor(request, service);
@@ -1867,10 +1892,21 @@ export class HubCoordinator {
       // workspace's own, read fresh for every turn so a change reaches the
       // next one. A message from a participant still carries the starter's.
       const starter=thread?.access.owner.id ?? actor.id;
-      input={...input,hubEnvironment:await new EnvironmentStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).forThread(org,workspace?.id,starter)};
-      const current=input as Record<string, unknown>;
-      try { input={...current, hubLinear: await linearAccountsFor(this.env).forThread(org, actor.id)}; }
-      catch { input={...current, hubLinear:{kind:"off"}}; }
+      if (this.env.DEVELOPMENT_EXECUTION) {
+        if (!workspace || starter !== actor.id) return jsonError("Use your own development connection in a connected workspace.",403);
+        const response = await this.env.DEVELOPMENT_EXECUTION.fetch(new Request("https://internal/thread-access", {
+          method:"POST", headers:{"content-type":"application/json"},
+          body:JSON.stringify({userId:starter,organizationId:org,workspaceId:workspace.id}),
+        }));
+        if (!response.ok) return jsonError("Your production connection is unavailable. Check your development access and try again.",response.status);
+        const access = await response.json() as {hubEnvironment:unknown;hubLinear:unknown};
+        input={...input,hubEnvironment:access.hubEnvironment,hubLinear:access.hubLinear};
+      } else {
+        input={...input,hubEnvironment:await new EnvironmentStore(this.env.DB,()=>this.env.AUTH_SECRET.get()).forThread(org,workspace?.id,starter)};
+        const current=input as Record<string, unknown>;
+        try { input={...current, hubLinear: await linearAccountsFor(this.env).forThread(org, actor.id)}; }
+        catch { input={...current, hubLinear:{kind:"off"}}; }
+      }
       // Every message to a review carries its owner's rules as they are now
       // and the commit it is about, so a rule saved mid-review applies from
       // the next turn and Review new changes reaches the worktree.

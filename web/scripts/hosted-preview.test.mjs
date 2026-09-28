@@ -3,6 +3,24 @@ import test from 'node:test';
 import { createServer, request } from 'node:http';
 import { createServer as vite } from 'vite';
 import { hostedPreview } from '../hosted-preview.ts';
+test('local bootstrap session stays private and cannot target production', async () => {
+ assert.throws(()=>hostedPreview('https://app.tryremy.dev',undefined,{accessToken:'local-private',expiresIn:600}),/loopback/);
+ let authorization;
+ const upstream=createServer((req,res)=>{authorization=req.headers.authorization;res.setHeader('content-type','application/json');res.end('{"ok":true}');});
+ await new Promise(resolve=>upstream.listen(0,'127.0.0.1',resolve));
+ const reserve=createServer();await new Promise(resolve=>reserve.listen(0,'127.0.0.1',resolve));
+ const port=reserve.address().port;await new Promise(resolve=>reserve.close(resolve));
+ const p=hostedPreview(`http://127.0.0.1:${upstream.address().port}`,undefined,{accessToken:'local-private',expiresIn:600});
+ const actual=await vite({configFile:false,plugins:[p.plugin],server:{host:'127.0.0.1',port,strictPort:true,proxy:{'/api':p.proxy}}});
+ try {
+  await actual.listen();
+  const result=await fetch(`http://127.0.0.1:${port}/api/profile`);
+  assert.equal(result.status,200);assert.equal(authorization,'Bearer local-private');
+  assert(!(await result.text()).includes('local-private'));
+  assert.equal(result.headers.get('set-cookie'),null);
+  assert.equal((await fetch(`http://127.0.0.1:${port}/api/profile`,{headers:{origin:'https://evil.test'}})).status,403);
+ } finally {await actual.close();await new Promise(resolve=>upstream.close(resolve));}
+});
 test('preview approval keeps credentials on the proxy and rejects foreign origins', async () => {
  const requests=[];
  const upstream=createServer(async(req,res)=>{
@@ -223,4 +241,3 @@ test('preview password sign-in fails clearly when secrets are missing', async ()
   if(previousPassword===undefined) delete process.env.REMY_QA_PASSWORD; else process.env.REMY_QA_PASSWORD=previousPassword;
  }
 });
-

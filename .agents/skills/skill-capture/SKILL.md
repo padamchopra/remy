@@ -53,3 +53,9 @@ The model picker shimmered on first paint. Fix the picker in this change, and ad
 The skill edit lands with the code or copy it governs. A reviewer should see the convention next to the work that made it necessary. Do not open a follow-up just to write the skill down.
 
 If the highlight is the only work, the skill file — and the `AGENTS.md` list if it is new — is the whole change.
+
+## Check the feedback before handing back
+
+Before handing work back, review the user's corrections from the task. For each recurring miss, check whether the owning skill needs a rule or whether an existing rule was not followed. Add the missing case in the same change; do not duplicate an existing rule to explain an execution failure. State what changed and what remains unverified. This is an agent convention, not an automated check.
+
+Capturing a lesson does not finish the underlying task. After a correction, resume the authorized work. A plan, apology, or skill edit is not a completion handoff while a safe next step remains; stop for completion, an explicit pause, or a concrete blocker requiring new authority or information.

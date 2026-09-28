@@ -210,10 +210,13 @@ export function redactKnownSecrets(text: string): string {
 }
 
 type ThreadEnvironment = { values: Record<string, string>; secrets: string[] };
+const ephemeralTaskAccess = process.env.MC_EPHEMERAL_TASK_ACCESS === "1";
+const taskAccess = new Map<string,ThreadEnvironment>();
 
 /// The values the hub last delivered for this thread, and which of them are
 /// secrets; none when it has none.
 function threadEnvironment(chatId: string): ThreadEnvironment {
+  if (ephemeralTaskAccess) return taskAccess.get(chatId) ?? {values:{},secrets:[]};
   const stored = getKv<ReturnType<typeof encrypt>>(`taskEnvironment:${chatId}`);
   if (!stored) return { values: {}, secrets: [] };
   const parsed = JSON.parse(decrypt(stored)) as ThreadEnvironment | Record<string, string>;
@@ -307,7 +310,8 @@ export function setTaskEnvironment(chatId:string,input:unknown) {
   if(entries.length>THREAD_VALUE_LIMIT || JSON.stringify(values).length>THREAD_SIZE_LIMIT || entries.some(([name,value])=>!validTaskVariable(name) || typeof value!=="string"))throw Error("Your environment is invalid.");
   const secrets=Array.isArray(profile?.secrets) ? profile.secrets.filter((key):key is string=>typeof key==="string" && key in values) : Object.keys(values);
   const environment={values:values as Record<string,string>,secrets};
-  setKv(`taskEnvironment:${chatId}`,encrypt(JSON.stringify(environment)));
+  if (ephemeralTaskAccess) taskAccess.set(chatId,environment);
+  else setKv(`taskEnvironment:${chatId}`,encrypt(JSON.stringify(environment)));
   remember(chatId,environment);
 }
 function validTaskVariable(name:string) {
