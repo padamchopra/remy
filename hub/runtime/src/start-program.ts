@@ -1,6 +1,12 @@
 export const startProgram = `
 const {spawn}=require("node:child_process");
 const fs=require("node:fs");
+const path=require("node:path");
+const codexRoot="/usr/local/lib/node_modules/@openai/codex";
+const host=fs.readdirSync(codexRoot,{recursive:true}).find(file=>String(file).endsWith("/bin/codex-code-mode-host"));
+if(!host)throw Error("The Codex command helper is missing from this computer.");
+const helperDirectory=path.dirname(path.join(codexRoot,String(host)));
+process.env.PATH=["/usr/local/bin",helperDirectory,process.env.PATH || "/usr/bin:/bin"].join(":");
 const entry="/opt/remy/server/dist/hosted-entry.js";
 let running=false;
 try {
