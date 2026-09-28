@@ -101,9 +101,9 @@ test("hosted models never add a Claude Code account row, and add ChatGPT only wh
 });
 
 test("a ChatGPT start runs Codex on the account, not an API key gateway", () => {
-  const choice = hostedComposerChoice([], { provider: "codex", model: "gpt-5.5" }, true);
-  assert.deepEqual(choice, { provider: "codex", model: "gpt-5.5" });
-  assert.deepEqual(hostedExecutionChoice(choice), { provider: "codex", model: "gpt-5.5" });
+  const choice = hostedComposerChoice([], { provider: "codex", model: "gpt-5.5", effort: "medium" }, true);
+  assert.deepEqual(choice, { provider: "codex", model: "gpt-5.5", effort: "medium" });
+  assert.deepEqual(hostedExecutionChoice(choice), { provider: "codex", model: "gpt-5.5", effort: "medium" });
   const fallback = hostedComposerChoice(
     [{ id: "openai", enabled: true, configured: true, models: [] }],
     { provider: "codex", model: "gpt-5.5" },

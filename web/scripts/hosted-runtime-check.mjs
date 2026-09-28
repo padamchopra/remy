@@ -175,7 +175,10 @@ try {
         }
         if(process.env.QA_START_ONLY === "1" && /\/threads\/starts\/[0-9a-f-]{36}$/.test(path) && route.request().method()==="GET") {
           startStatusCalls++;
-          if(!completeStart) return route.fulfill({json:{phase: startStatusCalls < 3 ? "creating" : "waking"}});
+          if(!completeStart) {
+            const phases=["creating","waking","starting_runtime","connecting","preparing_branch","sending"];
+            return route.fulfill({json:{phase:phases[Math.min(Math.floor((startStatusCalls-1)/2),phases.length-1)]}});
+          }
           finishStart(org);
           return route.fulfill({json:{phase:"ready",id:threadInput.requestId,computerId:"sprite"}});
         }
@@ -778,6 +781,10 @@ try {
           assert.equal(threadInput.visibility,"private");
           await page.getByRole("status",{name:"Creating thread…",exact:true}).waitFor();
           await page.getByRole("status",{name:"Waking computer…",exact:true}).waitFor();
+          await page.getByRole("status",{name:"Starting runtime…",exact:true}).waitFor();
+          await page.getByRole("status",{name:"Connecting…",exact:true}).waitFor();
+          await page.getByRole("status",{name:"Preparing branch…",exact:true}).waitFor();
+          await page.getByRole("status",{name:"Sending message…",exact:true}).waitFor();
           if(artifacts)await page.screenshot({path:`${artifacts}/start-progress-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
           await page.getByRole("tab", {name:"Hello startup QA", exact:true}).waitFor();
           assert.equal(await page.getByRole("heading", {name:"Threads", exact:true}).count(), 0);

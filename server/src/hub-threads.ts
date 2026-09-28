@@ -164,6 +164,7 @@ export async function handleHubThreadRequest(
         else await checkoutWorkspaceBranch(workspace.id, input.branch, "main");
       }
       if (input.permissionMode !== undefined && !["default", "auto", "acceptEdits", "plan", "bypassPermissions"].includes(String(input.permissionMode))) return fail(400, "Choose a permission level.");
+      if (input.effort !== undefined && (typeof input.effort !== "string" || input.effort.length > 64)) return fail(400, "Choose a reasoning level.");
       let cwd = workspace.path;
       if (review) {
         try { cwd = await checkoutReviewWorktree(workspace.path, review, reviewGitOptions()); }
@@ -176,6 +177,7 @@ export async function handleHubThreadRequest(
         title: typeof input.title === "string" ? input.title : undefined,
         provider: input.provider,
         model: typeof input.model === "string" ? input.model : undefined,
+        effort: typeof input.effort === "string" ? input.effort : undefined,
       });
       if(review)setThreadReview(chat.id,{...review,worktree:cwd});
       if(taskKey)setKv(taskKey,chat.id);

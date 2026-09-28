@@ -1015,7 +1015,7 @@ test("Cursor Cloud connects, stays encrypted, starts without a guest computer, a
   }
 });
 
-test("owners can archive and delete hosted threads after the cloud computer sleeps", async () => {
+test("owners can archive and delete hosted threads without waking the cloud computer", async () => {
   const { sqlite, db, computers, service } = database();
   const { HubCoordinator } = await import("./worker.js");
   const hostedId = crypto.randomUUID();
@@ -1040,13 +1040,11 @@ test("owners can archive and delete hosted threads after the cloud computer slee
     const coordinator = new HubCoordinator({ storage: { get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); }, delete: async (key: string) => values.delete(key), list: async (options?: { prefix?: string }) => new Map([...values].filter(([key]) => key.startsWith(options?.prefix ?? ""))), getAlarm: async () => null, setAlarm: async () => {}, transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn({ get: async (key: string) => values.get(key), put: async (key: string, value: unknown) => { values.set(key, value); }, delete: async (key: string) => values.delete(key) }) }, blockConcurrencyWhile: async <T>(work: () => Promise<T>) => work(), getWebSockets: () => [], waitUntil: (work: Promise<unknown>) => { void work; } } as unknown as DurableObjectState, { DB: db, AUTH_SECRET: { get: async () => "test-encryption-root-with-at-least-thirty-two-characters" }, BETTER_AUTH_URL: "https://hub.example" } as never);
     const forwarded: unknown[][] = [];
     let ensured = 0;
-    let wake: "ok" | "fail" = "ok";
     (coordinator as unknown as { hostedService: () => { list: () => Promise<unknown[]>; ensure: () => Promise<unknown> } }).hostedService = () => ({
       list: async () => [{ computerId: hostedId, workspaceId: "org-release", settings }],
       ensure: async () => {
         ensured += 1;
-        if (wake === "fail") throw new Error("Your computer could not resume.");
-        return { computerId: hostedId };
+        throw new Error("Deleting a hosted thread must not wake its computer.");
       },
     });
     (coordinator as unknown as { dispatchComputer: (...args: unknown[]) => Promise<Response> }).dispatchComputer = async (...args) => {
@@ -1066,23 +1064,22 @@ test("owners can archive and delete hosted threads after the cloud computer slee
     await snapshot(threadId, "ada");
     const archived = await handle(request("ada", `/computers/${hostedId}/threads/${threadId}/archive`, "POST"));
     assert.equal(archived?.status, 200);
-    assert.equal(ensured, 1);
-    assert.equal(forwarded.at(-1)?.[2], "POST");
-    assert.equal(forwarded.at(-1)?.[3], `/hub/threads/${threadId}/archive`);
+    assert.equal(ensured, 0);
+    assert.equal(forwarded.length, 0);
+    assert.equal(values.get(`threads:retired:${hostedId}:${threadId}`), true);
     assert.equal(await threads.get(hostedId, threadId), undefined);
 
     const deleteId = crypto.randomUUID();
     await snapshot(deleteId, "ada");
     const deleted = await handle(request("ada", `/computers/${hostedId}/threads/${deleteId}`, "DELETE"));
     assert.equal(deleted?.status, 200);
-    assert.equal(ensured, 2);
-    assert.equal(forwarded.at(-1)?.[2], "DELETE");
-    assert.equal(forwarded.at(-1)?.[3], `/hub/threads/${deleteId}`);
+    assert.equal(ensured, 0);
+    assert.equal(forwarded.length, 0);
+    assert.equal(values.get(`threads:retired:${hostedId}:${deleteId}`), true);
     assert.equal(await threads.get(hostedId, deleteId), undefined);
 
     const stuckId = crypto.randomUUID();
     await snapshot(stuckId, "ada");
-    wake = "fail";
     const retired = await handle(request("ada", `/computers/${hostedId}/threads/${stuckId}/archive`, "POST"));
     assert.equal(retired?.status, 200);
     assert.equal(await threads.get(hostedId, stuckId), undefined);
@@ -1104,7 +1101,6 @@ test("owners can archive and delete hosted threads after the cloud computer slee
       access: { organizationId: "org", owner: { id: "ada", label: "ada" }, visibility: "open", participants: [{ id: "ada", label: "ada" }] },
       detail: { id: foreign, title: "Shared thread", cwd: "/workspace", state: "idle", entries: [] },
     });
-    wake = "ok";
     const denied = await handle(request("grace", `/computers/${hostedId}/threads/${foreign}/archive`, "POST"));
     assert.equal(denied?.status, 403);
     assert.ok(await threads.get(hostedId, foreign));

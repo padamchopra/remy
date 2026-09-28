@@ -26,7 +26,7 @@ const HOSTED_PROGRESS: Record<string, ThreadStartProgress> = {
   restoring: "restoring",
   starting_runtime: "starting_runtime",
   connecting: "connecting",
-  ready: "connecting",
+  ready: "preparing_branch",
   failed: "failed",
 };
 
@@ -39,8 +39,8 @@ export function threadStartProgress(input: {
   if (record?.error || record?.phase === "failed") return "failed";
   if (record?.phase === "ready" && record.id && record.computerId && record.messageSent) return "ready";
   if (record?.phase === "sending") return "sending";
+  if (record?.phase === "preparing_branch") return "preparing_branch";
   const hosted = input.hostedPhase ? HOSTED_PROGRESS[input.hostedPhase] : undefined;
   if (hosted) return hosted;
-  if (record?.phase === "preparing_branch") return "preparing_branch";
   return "creating";
 }

@@ -119,6 +119,7 @@ type ManualThreadStartCommand = {
   visibility?: string;
   provider?: string;
   model?: string;
+  effort?: string;
   review?: HubReview;
   chatgpt?: boolean;
   ownModel?: OwnModelTask;
@@ -2219,7 +2220,7 @@ export class HubCoordinator {
         }
       } else if (!record.id) {
         if (input.branch && computer?.ownership !== "hosted") record = await this.saveManualThreadStart(key, { phase: "preparing_branch" });
-        const made = await this.dispatchComputer(choice.computerId, actor, "POST", "/hub/threads", {threadId:input.requestId, workspaceId:choice.workspaceId, hubTaskId:key, permissionMode:"default", branch:input.branch, provider:input.provider, model:input.model, visibility:input.visibility ?? "private", title:typeof input.title === "string" ? input.title.slice(0,200) : undefined, ...(input.review ? {hubReview:input.review} : {})});
+        const made = await this.dispatchComputer(choice.computerId, actor, "POST", "/hub/threads", {threadId:input.requestId, workspaceId:choice.workspaceId, hubTaskId:key, permissionMode:"default", branch:input.branch, provider:input.provider, model:input.model, effort:input.effort, visibility:input.visibility ?? "private", title:typeof input.title === "string" ? input.title.slice(0,200) : undefined, ...(input.review ? {hubReview:input.review} : {})});
         if (!made.ok) throw new Error(await this.computerFailure(made));
         const thread = threadSnapshotSchema.parse(await made.json());
         await this.threads.snapshot(choice.computerId, thread);
@@ -2353,7 +2354,7 @@ export class HubCoordinator {
     }
     if (url.pathname === "/threads" && request.method === "POST") {
       const org = request.headers.get("x-organization-id")!;
-      const input = await body<{workspaceId?: string; title?: string; message?: string; requestId?: string; computerId?:string|null; provider?:string; model?:string; modelSource?:unknown; modelProvider?:unknown; modelConnection?:unknown; branch?:string; visibility?:string; review?:unknown}>(request);
+      const input = await body<{workspaceId?: string; title?: string; message?: string; requestId?: string; computerId?:string|null; provider?:string; model?:string; effort?:unknown; modelSource?:unknown; modelProvider?:unknown; modelConnection?:unknown; branch?:string; visibility?:string; review?:unknown}>(request);
       if (!input || typeof input.workspaceId !== "string" || typeof input.requestId !== "string" || !/^[0-9a-f-]{36}$/.test(input.requestId)) return jsonError("Choose a workspace and retry your thread.", 400);
       if (typeof input.message !== "string" || !input.message.trim() || input.message.length > THREAD_MESSAGE_MAX_CHARACTERS) return jsonError("Write a message of up to 64,000 characters.", 400);
       const workspace = await new OrganizationService(new D1OrganizationStore(this.env.DB)).workspace(org, actor.id, input.workspaceId);
@@ -2377,6 +2378,7 @@ export class HubCoordinator {
       const start=hostedStartChoice(input.provider,input.model);
       if(start.provider !== undefined && !["claude","codex","cursor"].includes(start.provider))return jsonError("Choose a provider.",400);
       if(start.model !== undefined && (typeof start.model !== "string" || start.model.length>512))return jsonError("Choose a model.",400);
+      if(input.effort !== undefined && (typeof input.effort !== "string" || input.effort.length>64))return jsonError("Choose a reasoning level.",400);
       if(input.branch !== undefined && (typeof input.branch !== "string" || !input.branch || input.branch.length > 255)) return jsonError("Choose a branch.",400);
       if(input.visibility !== undefined && input.visibility !== "private" && input.visibility !== "open") return jsonError("Choose who can read this thread.",400);
       if(input.modelSource !== undefined && input.modelSource !== "own" && input.modelSource !== "enrolled" && input.modelSource !== "organization") return jsonError("Choose where your model comes from.",400);
@@ -2429,6 +2431,7 @@ export class HubCoordinator {
         ...(input.visibility ? { visibility: input.visibility } : {}),
         ...(start.provider ? { provider: start.provider } : {}),
         ...(start.model ? { model: start.model } : {}),
+        ...(input.effort ? { effort: input.effort } : {}),
         ...(review ? { review } : {}),
         ...(chatgpt ? { chatgpt } : {}),
         ...(ownModel ? { ownModel } : {}),
@@ -2484,12 +2487,15 @@ export class HubCoordinator {
     const allowed = id ? ((request.method === "GET" || request.method === "PATCH" || request.method === "DELETE") && !action) || (request.method === "POST" && !!action) : request.method === "POST";
     if (!allowed) return jsonError("This action is not available.", 404);
     const hostedRetire = Boolean(id && target.ownership === "hosted" && (request.method === "DELETE" || action === "archive"));
+    if (hostedRetire) {
+      await this.retireHostedThread(computerId, id!);
+      return Response.json({ ok: true });
+    }
     if(id && !targetAvailable && (request.method==="POST" || request.method==="PATCH" || request.method==="DELETE")) {
       const state=(await this.hostedService().list()).find(s=>s.computerId===computerId);
-      if(state){try{await this.hostedService().ensure(state.workspaceId,state.settings,state.taskId);targetAvailable=true;}catch(error){if(!hostedRetire)return jsonError(error instanceof Error?error.message:"Your computer could not resume.",409);}}
+      if(state){try{await this.hostedService().ensure(state.workspaceId,state.settings,state.taskId);targetAvailable=true;}catch(error){return jsonError(error instanceof Error?error.message:"Your computer could not resume.",409);}}
     }
     if (!targetAvailable) {
-      if (hostedRetire) { await this.retireHostedThread(computerId, id!); return Response.json({ ok: true }); }
       return jsonError("This computer is offline; try again when it reconnects.", 503);
     }
     let payload = await limitedBody(request, THREAD_REQUEST_MAX_BYTES);
@@ -2537,7 +2543,6 @@ export class HubCoordinator {
         await new ReviewAgent(this.env.DB).forget(request.headers.get("x-organization-id")!, computerId, id);
         return answer;
       }
-      if (hostedRetire) { await this.retireHostedThread(computerId, id); return Response.json({ ok: true }); }
     }
     if (answer.ok) {
       const updated = threadSnapshotSchema.safeParse(await answer.clone().json());
