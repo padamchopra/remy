@@ -4,10 +4,15 @@ import { chromiumPath } from "./chromium.mjs";
 import { readFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 const info = JSON.parse(readFileSync(process.env.QA_SESSION, "utf8"));
-await fetch(info.controlUrl + "/restore-grace", {
-  method: "POST",
-  headers: { authorization: `Bearer ${info.controlToken}` },
-});
+const control = async (action) => {
+  const response = await fetch(info.controlUrl + action, {
+    method: "POST",
+    headers: { authorization: `Bearer ${info.controlToken}` },
+  });
+  assert.equal(response.status, 204);
+};
+await control("/restore-grace");
+await control("/reconnect");
 const base = process.env.QA_WEB_URL;
 const out = process.env.QA_ARTIFACTS ?? "/tmp/remy-pr-artifacts/wrk-10";
 mkdirSync(out, { recursive: true });
@@ -15,7 +20,19 @@ const bootstrap = await fetch(
   `${info.hubUrl}/api/organizations/${info.organizationId}/computers`,
   { headers: { authorization: `Bearer ${info.tokens.ada}` } },
 ).then((r) => r.json());
-const started = await fetch(
+const sharedComputer = await fetch(
+  `${info.hubUrl}/api/organizations/${info.organizationId}/computers/${info.computerId}`,
+  {
+    method: "PATCH",
+    headers: {
+      authorization: `Bearer ${info.tokens.ada}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ access: { mode: "organization", userIds: [], teamIds: [] } }),
+  },
+);
+assert.equal(sharedComputer.status, 200);
+const startedResponse = await fetch(
   `${info.hubUrl}/api/organizations/${info.organizationId}/computers/${info.computerId}/threads`,
   {
     method: "POST",
@@ -28,10 +45,12 @@ const started = await fetch(
       title: "Prepare the release notes",
     }),
   },
-).then((r) => r.json());
+);
+const started = await startedResponse.json();
+assert.equal(startedResponse.status, 201, JSON.stringify(started));
 assert.equal(started.access.visibility, "private");
 info.threadId = started.id;
-const route = `${base}/#/threads/${info.threadId}?organization=${info.organizationId}&computer=${info.computerId}`;
+const route = `${base}/threads/${info.threadId}`;
 const browser = await chromium.launch({ executablePath: chromiumPath() });
 const context = await browser.newContext({
   viewport: { width: 1280, height: 850 },
@@ -84,19 +103,23 @@ const call = async (member, suffix, body, method = "POST") => {
   });
   return { status: response.status, body: await response.json() };
 };
+let deleteDurationMs;
 try {
   await page.goto(route);
   await page.getByRole("textbox", { name: "Message", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Thread details", exact: true }).click();
   await page
-    .getByRole("button", { name: "Open to organization", exact: true })
+    .getByRole("menuitem", { name: "Share with organization", exact: true })
     .click();
+  await page.getByRole("button", { name: "Thread details", exact: true }).click();
   await page
-    .getByRole("button", { name: "Make private", exact: true })
+    .getByRole("menuitem", { name: "Make private", exact: true })
     .waitFor();
+  await page.keyboard.press("Escape");
   await page
     .getByRole("textbox", { name: "Message", exact: true })
     .fill("Review the release notes with me.");
-  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await page.getByRole("button", { name: "Send", exact: true }).click();
   await page.getByLabel("Thread transcript")
     .getByText("I’m checking the release notes with your latest feedback.", {
       exact: true,
@@ -130,7 +153,7 @@ try {
     .getByRole("textbox", { name: "Message", exact: true })
     .fill("Check the upgrade instructions too.");
   await teammate
-    .getByRole("button", { name: "Send message", exact: true })
+    .getByRole("button", { name: "Send", exact: true })
     .click();
   await page
     .getByText("Check the upgrade instructions too.", { exact: true })
@@ -146,7 +169,7 @@ try {
   await page
     .getByRole("textbox", { name: "Message", exact: true })
     .fill("Ask for approval before continuing.");
-  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await page.getByRole("button", { name: "Send", exact: true }).click();
   await page.getByRole("button", { name: "Allow once", exact: true }).waitFor();
   const waiting = await call("ada", "", undefined, "GET");
   await teammate
@@ -165,7 +188,7 @@ try {
   await page
     .getByRole("textbox", { name: "Message", exact: true })
     .fill("Ask a question about the release.");
-  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await page.getByRole("button", { name: "Send", exact: true }).click();
   await page
     .getByLabel("Which release should I prepare?", { exact: true })
     .waitFor();
@@ -177,16 +200,17 @@ try {
     .getByText("Which release should I prepare?\nStable", { exact: true })
     .waitFor();
   const png = readFileSync(new URL("../public/favicon.png", import.meta.url));
-  await page.getByLabel("Attach image", { exact: true }).setInputFiles({
-    name: "release-mark.png",
-    mimeType: "image/png",
-    buffer: png,
-  });
-  await page.getByText("1 attached", { exact: true }).waitFor();
+  await page.getByRole("textbox", { name: "Message", exact: true }).evaluate((element, base64) => {
+    const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+    const clipboard = new DataTransfer();
+    clipboard.items.add(new File([bytes], "release-mark.png", { type: "image/png" }));
+    element.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: clipboard }));
+  }, png.toString("base64"));
+  await page.getByText("Image 1", { exact: true }).waitFor();
   await page
     .getByRole("textbox", { name: "Message", exact: true })
     .fill("Use this release mark.");
-  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await page.getByRole("button", { name: "Send", exact: true }).click();
   await page
     .getByRole("img", { name: "release-mark.png", exact: true })
     .waitFor();
@@ -196,13 +220,7 @@ try {
       .evaluate((image) => image.complete && image.naturalWidth > 0),
     true,
   );
-  const control = async (action) => {
-    const response = await fetch(info.controlUrl + action, {
-      method: "POST",
-      headers: { authorization: `Bearer ${info.controlToken}` },
-    });
-    assert.equal(response.status, 204);
-  };
+  await page.getByRole("button", { name: "Stop", exact: true }).waitFor({ state: "hidden" });
   await control("/disconnect");
   await page
     .getByText(
@@ -262,9 +280,13 @@ try {
       .count(),
     1,
   );
-  const overflow = await page
-    .locator('[aria-label="Team threads"]')
-    .evaluate((element) => element.scrollWidth > element.clientWidth);
+  const recentThreads = page
+    .locator('[data-sidebar="group"]')
+    .filter({ hasText: "Recent threads" })
+    .first();
+  const overflow = await recentThreads.evaluate(
+    (element) => element.scrollWidth > element.clientWidth,
+  );
   assert.equal(overflow, false);
   await page.screenshot({ path: join(out, "desktop.png") });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -273,9 +295,9 @@ try {
   await page.waitForTimeout(250);
   await page.screenshot({ path: join(out, "mobile.png") });
   assert.equal(
-    await page
-      .locator('[aria-label="Team threads"]')
-      .evaluate((element) => element.scrollWidth > element.clientWidth),
+    await recentThreads.evaluate(
+      (element) => element.scrollWidth > element.clientWidth,
+    ),
     false,
   );
   for (const [label, expected] of [
@@ -286,7 +308,7 @@ try {
       .getByRole("textbox", { name: "Message", exact: true })
       .fill(`Request approval: ${label}.`);
     await page
-      .getByRole("button", { name: "Send message", exact: true })
+      .getByRole("button", { name: "Send", exact: true })
       .click();
     await page.getByRole("button", { name: label, exact: true }).click();
     await page.getByText(expected, { exact: true }).waitFor();
@@ -294,12 +316,15 @@ try {
   await page
     .getByRole("textbox", { name: "Message", exact: true })
     .fill("Check one more release detail.");
-  await page.getByRole("button", { name: "Send message", exact: true }).click();
-  await page.getByRole("button", { name: "Stop turn", exact: true }).click();
-  await page.getByRole("button", { name: "Make private", exact: true }).click();
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await page.getByRole("button", { name: "Stop", exact: true }).click();
+  await page.getByRole("button", { name: "Thread details", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Make private", exact: true }).click();
+  await page.getByRole("button", { name: "Thread details", exact: true }).click();
   await page
-    .getByRole("button", { name: "Open to organization", exact: true })
+    .getByRole("menuitem", { name: "Share with organization", exact: true })
     .waitFor();
+  await page.keyboard.press("Escape");
   assert.equal(
     (await call("reader", "", undefined, "GET")).status,
     404,
@@ -309,8 +334,8 @@ try {
   await page
     .getByRole("textbox", { name: "Message", exact: true })
     .fill("Keep this follow-up with the remaining participants.");
-  await page.getByRole("button", { name: "Send message", exact: true }).click();
-  await teammate.getByText("Sign in again.", { exact: true }).first().waitFor();
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await teammate.getByRole("alert").filter({ hasText: "Sign in again." }).waitFor();
   assert.equal(
     await teammate
       .getByText("Keep this follow-up with the remaining participants.", {
@@ -319,19 +344,39 @@ try {
       .count(),
     0,
   );
+  await page.setViewportSize({ width: 1280, height: 850 });
+  const threadRow = page.locator(`[data-thread-id="${info.threadId}"]`);
+  await threadRow.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Delete thread…", exact: true }).click();
+  const deleteStartedAt = performance.now();
+  await page.getByRole("button", { name: "Delete thread", exact: true }).click();
+  await page
+    .getByText("This thread is unavailable", { exact: true })
+    .waitFor({ timeout: 5_000 });
+  deleteDurationMs = Math.round(performance.now() - deleteStartedAt);
+  assert.equal(await threadRow.count(), 0);
+  await control("/restore-grace");
   assert.deepEqual(errors, []);
   console.log(
     JSON.stringify({
       passed: true,
       video: await page.video().path(),
-      requests,
+      requestCount: requests.length,
+      deleteDurationMs,
       desktop: join(out, "desktop.png"),
       mobile: join(out, "mobile.png"),
     }),
   );
 } catch (error) {
-  await page.screenshot({ path: join(out, "failure.png") });
-  console.error("Visible page:", await page.locator("body").innerText());
+  await page.screenshot({ path: join(out, "failure.png") }).catch((captureError) => {
+    console.error("Could not capture the failed page:", captureError);
+  });
+  await page.locator("body").innerText()
+    .then((text) => console.error("Visible page:", text))
+    .catch(() => {});
+  await teammate.locator("body").innerText()
+    .then((text) => console.error("Visible teammate page:", text))
+    .catch(() => {});
   throw error;
 } finally {
   await teammateContext.close();

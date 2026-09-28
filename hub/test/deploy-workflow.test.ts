@@ -29,7 +29,7 @@ test("web workflow validates hub and website checks together", () => {
     ...(workflow.on.pull_request?.paths ?? []),
     ...(workflow.on.push?.paths ?? []),
   ]);
-  for (const path of [".github/workflows/web.yml", "contract/**", "hub/**", "web/**", "package.json"]) {
+  for (const path of [".github/workflows/web.yml", "contract/**", "hub/**", "server/**", "web/**", "package.json"]) {
     assert.ok(paths.has(path), path);
   }
   const validateCommands = workflow.jobs.validate?.steps.flatMap((step) => (step.run ? [step.run] : []));
@@ -46,10 +46,13 @@ test("web workflow validates hub and website checks together", () => {
   )), [
     "npm ci --prefix contract --no-audit --no-fund",
     "npm ci --prefix hub --no-audit --no-fund",
+    "npm ci --prefix server --no-audit --no-fund",
     "npm ci --prefix web --no-audit --no-fund",
     "npm ci --prefix hub/runtime --no-audit --no-fund",
     "npm run build:hub --prefix web",
+    "npm run build --prefix server",
     "node hub/scripts/check-runtime-bundle.mjs",
+    "node web/scripts/qa-thread-journey.mjs",
     "npm test --prefix contract",
     "npm run typecheck --prefix contract",
     "npm test --prefix hub",

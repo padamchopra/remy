@@ -279,6 +279,13 @@ export default function HubThreads({
           {error}
         </p>
       )}
+      {thread?.stale && (
+        <p role="status" className="shrink-0 border-b px-4 py-2 text-xs text-muted-foreground">
+          {computer?.availability === "offline"
+            ? "This computer is offline; you’re reading its last saved update."
+            : "Remy is reconnecting; you’re reading the last saved update."}
+        </p>
+      )}
       {!loaded && threadId && !pending ? (
         <div className="p-4"><PaneLoading label="Loading threads" /></div>
       ) : threadId && !thread ? (

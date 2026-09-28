@@ -3,6 +3,7 @@ import { startFakeOpenAIAuth } from "./fake-openai-auth.mjs";
 import { startConnectionProvider } from "./qa-connection-provider.mjs";
 import { fixtureReviewTurn, isReviewThread } from "./qa-review-fixture.mjs";
 import { assertNoSecrets, cloneWithToken, loadQaEnv, qaRealInputs, seedPullRequest, writeGitCredentialHelper } from "./qa-github.mjs";
+import "tsx/esm";
 import { createServer } from "node:http";
 import { builtinModules } from "node:module";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
