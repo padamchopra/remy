@@ -479,7 +479,7 @@ try {
           assert.equal(new URL(page.url()).search, "", "Thread URLs drop computer and owner query");
           if(artifacts)await page.screenshot({path:`${artifacts}/thread-url-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
           assert.equal(await page.getByRole("button",{name:"Back to all",exact:true}).count(),0,"Thread details do not add a second navigation row");
-          assert.equal(await page.getByText("This computer is offline; you’re reading its last saved update.",{exact:true}).count(),0,"Offline threads do not add a redundant status row");
+          assert.equal(await page.getByText("This computer is offline; you’re reading its last saved update.",{exact:true}).count(),1,"Offline threads explain why their composer is unavailable");
           for(const retired of ["/board","/tasks","/tickets/REMY-1"]){
             await page.goto(clean(retired));
             await page.waitForURL((current)=>/\/threads$/.test(current.pathname));
