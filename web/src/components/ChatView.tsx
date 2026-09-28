@@ -102,6 +102,7 @@ import { ProviderMark } from "@/components/ProviderMark";
 import { WorkingMarker } from "@/components/WorkingMarker";
 import { UserAvatar } from "@/components/UserAvatar";
 import { Markdown } from "@/components/Markdown";
+import { ApprovalDetails } from "@/components/ApprovalDetails";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -1431,7 +1432,7 @@ function Entry({
                 >
                   {entry.text}
                 </Button>
-              ) : entry.text}
+              ) : <Markdown text={entry.text ?? ""} onOpenLink={onOpenLink} />}
             </BubbleContent>
           </Bubble>
           {entry.codeReferences && entry.codeReferences.length > 0 && (
@@ -1770,10 +1771,7 @@ function ApprovalCard({
 
   return (
     <Card className="w-full min-w-0 max-w-full gap-3 overflow-hidden border-warning/50 p-4">
-      <div className="flex min-w-0 flex-col gap-1">
-        <p className="min-w-0 max-w-full text-sm font-medium [overflow-wrap:anywhere]">{approval.title ?? `${approval.verb} ${approval.arg}`.trim()}</p>
-        {approval.reason && <p className="min-w-0 max-w-full text-xs text-muted-foreground [overflow-wrap:anywhere]">{approval.reason}</p>}
-      </div>
+      <ApprovalDetails title={approval.title ?? approval.verb} reason={approval.reason} command={approval.arg} onOpenLink={onOpenLink} />
       {approval.plan && (
         <div className="min-w-0 max-w-full max-h-72 overflow-auto rounded-md bg-muted/50 p-3">
           <Markdown text={approval.plan} className="min-w-0 max-w-full text-xs" onOpenLink={onOpenLink} />

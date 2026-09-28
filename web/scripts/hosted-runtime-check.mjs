@@ -51,10 +51,18 @@ try {
       const startIds=[], messageIds=[];
       let startedThread;
       let completeStart=false;
-      const finishStart = org => {
-        if (startedThread) return startedThread;
+      const finishStart = (org, early = false) => {
+        if (startedThread && !early) {
+          startedThread.detail.entries=[{id:`u-${threadInput.requestId}`,kind:"user",text:threadInput.message},{id:"answer",kind:"assistant",text:"A **reply** from the selected provider."}];
+          startedThread.revision++;
+          for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot",cursor:startedThread.revision,thread:startedThread}));}catch{}
+          return startedThread;
+        }
         const id=threadInput.requestId;
         startedThread={id,computerId:"sprite",revision:1,stale:false,observedAt:Date.now(),access:{organizationId:org.id,owner:{id:"reader",label:"Reader"},participants:[],visibility:"private"},detail:{id,title:threadInput.message,branch:"feature/working",state:"idle",provider:threadInput.provider,model:threadInput.model,effort:threadInput.effort,permissionMode:"default",entries:[{id:`u-${id}`,kind:"user",text:threadInput.message},{id:"answer",kind:"assistant",text:"A reply from the selected provider."}]}};
+        startedThread.detail.permissionMode=threadInput.permissionMode;
+        startedThread.detail.workspaceId=threadInput.workspaceId;
+        if(early)startedThread.detail.entries=[];
         for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot",cursor:1,thread:startedThread}));}catch{}
         return startedThread;
       };
@@ -175,7 +183,9 @@ try {
         }
         if(process.env.QA_START_ONLY === "1" && /\/threads\/starts\/[0-9a-f-]{36}$/.test(path) && route.request().method()==="GET") {
           startStatusCalls++;
+          if(startStatusCalls===5)return route.fulfill({status:500,json:{error:"Internal server error"}});
           if(!completeStart) {
+            if(startStatusCalls===12)finishStart(org,true);
             const phases=["creating","waking","starting_runtime","connecting","preparing_branch","sending"];
             return route.fulfill({json:{phase:phases[Math.min(Math.floor((startStatusCalls-1)/2),phases.length-1)]}});
           }
@@ -185,6 +195,7 @@ try {
         if(process.env.QA_START_ONLY === "1" && path.endsWith("/attachments")) return route.fulfill({status:201,json:{id:"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}});
         if(process.env.QA_START_ONLY === "1" && path.endsWith("/options")) {
           Object.assign(startedThread.detail,route.request().postDataJSON());
+          startedThread.revision++;
           for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot",cursor:2,thread:startedThread}));}catch{}
           return route.fulfill({json:startedThread});
         }
@@ -776,6 +787,8 @@ try {
           const entry=modelEntries.find(p=>p.id==="openrouter");entry.enabled=true;entry.configured=true;entry.models=["openrouter/auto"];
           preference="cloud:fly-sprites";
           await page.reload();await page.getByRole("button",{name:"Branch",exact:true}).getByText("main",{exact:true}).waitFor();
+          await page.getByRole("button",{name:"Permission mode: Ask",exact:true}).click();
+          await page.getByRole("option",{name:"Accept edits",exact:true}).click();
           await page.locator("#hub-thread-message").fill("Hello startup QA");
           const at=Date.now();await page.getByRole("button",{name:"Send",exact:true}).click();
           await page.getByLabel("Thread transcript",{exact:true}).waitFor();
@@ -784,12 +797,16 @@ try {
           assert.equal(threadInput.provider,"codex");
           assert.equal(threadInput.model,"remy:openrouter:openrouter/auto");
           assert.equal(threadInput.visibility,"private");
+          assert.equal(threadInput.permissionMode,"acceptEdits");
           await page.getByRole("status",{name:"Creating thread…",exact:true}).waitFor();
           await page.getByRole("status",{name:"Waking computer…",exact:true}).waitFor();
           await page.getByRole("status",{name:"Starting runtime…",exact:true}).waitFor();
           await page.getByRole("status",{name:"Connecting…",exact:true}).waitFor();
           await page.getByRole("status",{name:"Preparing branch…",exact:true}).waitFor();
           await page.getByRole("status",{name:"Sending message…",exact:true}).waitFor();
+          await page.waitForTimeout(1000);
+          assert.equal(await page.getByRole("status",{name:"Sending message…",exact:true}).count(),1,"An empty early snapshot must not end startup");
+          await page.getByLabel("Thread transcript",{exact:true}).getByText("Hello startup QA",{exact:true}).waitFor();
           if(artifacts)await page.screenshot({path:`${artifacts}/start-progress-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
           await page.getByRole("tab", {name:"Hello startup QA", exact:true}).waitFor();
           assert.equal(await page.getByRole("heading", {name:"Threads", exact:true}).count(), 0);
@@ -823,6 +840,11 @@ try {
           assert.equal(threadInput.message,"Hello startup QA");
           assert.equal(await page.getByRole("button",{name:"Retry",exact:true}).count(),0);
           const transcript = page.getByLabel("Thread transcript",{exact:true});
+          await transcript.locator("strong").getByText("reply",{exact:true}).waitFor();
+          await page.getByRole("button",{name:"Permission mode: Accept edits",exact:true}).click();
+          await page.getByRole("option",{name:"Plan",exact:true}).click();
+          await page.getByRole("button",{name:"Permission mode: Plan",exact:true}).waitFor();
+          assert.equal(startedThread.detail.permissionMode,"plan");
           await transcript.getByRole("img",{name:"Codex",exact:true}).waitFor();
           if(artifacts)await page.screenshot({path:`${artifacts}/start-ready-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
           assert.equal(await transcript.getByText("Agent",{exact:true}).count(),0);
@@ -861,11 +883,12 @@ try {
           assert.equal(await page.getByRole("button",{name:"Send",exact:true}).isDisabled(),true);
           assert.equal(await page.getByRole("button",{name:"Stop",exact:true}).count(),0);
           assert.equal(await page.locator('input[type="file"]:visible').count(),0);
-          await reply.fill("Reply QA");await reply.press("Shift+Enter");
+          await reply.fill("**Reply QA**");await reply.press("Shift+Enter");
           assert.equal(messageCalls,0);
           await reply.press("Enter");
           await page.waitForFunction(()=>document.querySelector('textarea[aria-label="Message"]')?.value==='');
           assert.equal(messageCalls,1);
+          await transcript.locator("strong").getByText("Reply QA",{exact:true}).waitFor();
           await reply.evaluate((node,bytes)=>{
             const transfer=new DataTransfer();
             transfer.items.add(new File([new Uint8Array(bytes)],"avatar.png",{type:"image/png"}));

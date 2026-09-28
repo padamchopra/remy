@@ -6,6 +6,8 @@ import { ThreadComposerEditor } from "./ThreadComposerEditor";
 import { NewThreadSurface, ComposerWorkspaceTrigger } from "./NewThreadSurface";
 import { WorkspaceMark } from "./WorkspaceIcon";
 import { ComposerMenu } from "./ComposerMenu";
+import { PermissionPicker } from "./PermissionPicker";
+import { type PermissionValue } from "@/lib/chat-options";
 import { Check, Cloud, Laptop, Lock, Users } from "lucide-react";
 import { InputGroupButton, InputGroupText } from "./ui/input-group";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "./ui/dropdown-menu";
@@ -88,6 +90,7 @@ export function HubThreadComposer({
     });
   };
   const [branch, setBranch] = useState("");
+  const [permissionMode, setPermissionMode] = useState<PermissionValue>("default");
   const [resolvingBranch, setResolvingBranch] = useState(true);
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
   const base = hubThreadBase(organizationId),
@@ -265,7 +268,7 @@ export function HubThreadComposer({
           organizationId, ownerId: memberId, requestId, workspaceId,
           computerId: selected,
           computerName: cloudOptions.find(c => c.id === selected)?.name ?? eligible.find(c => c.computerId === selected)?.name ?? "Computer unavailable",
-          message: message.trim(), visibility, ...(branch ? {branch} : {}), ...(usingCursorCloud ? {provider: "cursor"} : executionChoice),
+          message: message.trim(), visibility, permissionMode: usingCursorCloud && permissionMode !== "plan" ? "default" : permissionMode, ...(branch ? {branch} : {}), ...(usingCursorCloud ? {provider: "cursor"} : executionChoice),
         });
         open("pending", requestId);
       }}
@@ -274,7 +277,7 @@ export function HubThreadComposer({
         textarea={{ id: "hub-thread-message", maxLength: THREAD_MESSAGE_MAX_CHARACTERS, value: message, onChange: e => setMessage(e.target.value), required: true, disabled: false }}
         canSend={!!memberId && !!workspace && !!selected && preferenceLoaded && visibilityLoaded && !!resolvedDefaults && !!message.trim() && !!catalogue.value && !catalogue.stale && !(usingCloud && !usingCursorCloud && !modelAccess.value) && !codexAccountPending && (usingCursorCloud || !(usingCloud || selectedChoice.provider) || !!choiceValid)}
         busy={false} sendLabel="Send"
-        controls={modelReady
+        controls={<>{modelReady
           ? (usingCursorCloud
             ? <InputGroupText>Cursor Cloud default</InputGroupText>
             : <ModelPickerButton variant="composer" value={selectedChoice} onPick={setPickedModel} catalogue={modelCatalogue} cataloguePending={cataloguePending} disabled={false} />)
@@ -283,6 +286,8 @@ export function HubThreadComposer({
             : early?.cloud && early.computerId === CURSOR_CLOUD_COMPUTER_ID
               ? <InputGroupText>Cursor Cloud default</InputGroupText>
               : <span className="inline-flex h-6 min-w-40" aria-hidden />}
+          <PermissionPicker value={usingCursorCloud && permissionMode !== "plan" ? "default" : permissionMode} cloud={usingCursorCloud} onChange={setPermissionMode} />
+        </>}
         contextEnd={branchShown && computerReady
           ? <BranchPicker workspaceId={workspaceId} branch={branch || "Choose branch"} pending={false} busy={false} loadBranches={loadBranches} onPick={async value => { setBranch(value); return true; }} />
           : early?.branch

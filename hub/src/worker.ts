@@ -120,6 +120,7 @@ type ManualThreadStartCommand = {
   provider?: string;
   model?: string;
   effort?: string;
+  permissionMode?: string;
   review?: HubReview;
   chatgpt?: boolean;
   ownModel?: OwnModelTask;
@@ -2242,14 +2243,14 @@ export class HubCoordinator {
             ...(input.title ? { title: input.title } : {}),
             ...(input.visibility ? { visibility: input.visibility } : {}),
             ...(input.branch ? { branch: input.branch } : {}),
-            permissionMode: "default",
+            permissionMode: input.permissionMode ?? "default",
             ...(input.cloudTask ? { cloudTask: input.cloudTask } : {}),
           });
           record = await this.saveManualThreadStart(key, { computerId: started.computerId, id: started.threadId, phase: "sending" });
         }
       } else if (!record.id) {
         if (input.branch && computer?.ownership !== "hosted") record = await this.saveManualThreadStart(key, { phase: "preparing_branch" });
-        const made = await this.dispatchComputer(choice.computerId, actor, "POST", "/hub/threads", {threadId:input.requestId, workspaceId:choice.workspaceId, hubTaskId:key, permissionMode:"default", branch:input.branch, provider:input.provider, model:input.model, effort:input.effort, visibility:input.visibility ?? "private", title:typeof input.title === "string" ? input.title.slice(0,200) : undefined, ...(input.review ? {hubReview:input.review} : {})});
+        const made = await this.dispatchComputer(choice.computerId, actor, "POST", "/hub/threads", {threadId:input.requestId, workspaceId:choice.workspaceId, hubTaskId:key, permissionMode:input.permissionMode ?? "default", branch:input.branch, provider:input.provider, model:input.model, effort:input.effort, visibility:input.visibility ?? "private", title:typeof input.title === "string" ? input.title.slice(0,200) : undefined, ...(input.review ? {hubReview:input.review} : {})});
         if (!made.ok) throw new Error(await this.computerFailure(made));
         const thread = threadSnapshotSchema.parse(await made.json());
         await this.threads.snapshot(choice.computerId, thread);
@@ -2384,7 +2385,7 @@ export class HubCoordinator {
     }
     if (url.pathname === "/threads" && request.method === "POST") {
       const org = request.headers.get("x-organization-id")!;
-      const input = await body<{workspaceId?: string; title?: string; message?: string; requestId?: string; computerId?:string|null; provider?:string; model?:string; effort?:unknown; modelSource?:unknown; modelProvider?:unknown; modelConnection?:unknown; branch?:string; visibility?:string; review?:unknown}>(request);
+      const input = await body<{workspaceId?: string; title?: string; message?: string; requestId?: string; computerId?:string|null; provider?:string; model?:string; effort?:unknown; permissionMode?:unknown; modelSource?:unknown; modelProvider?:unknown; modelConnection?:unknown; branch?:string; visibility?:string; review?:unknown}>(request);
       if (!input || typeof input.workspaceId !== "string" || typeof input.requestId !== "string" || !/^[0-9a-f-]{36}$/.test(input.requestId)) return jsonError("Choose a workspace and retry your thread.", 400);
       if (typeof input.message !== "string" || !input.message.trim() || input.message.length > THREAD_MESSAGE_MAX_CHARACTERS) return jsonError("Write a message of up to 64,000 characters.", 400);
       const workspace = await new OrganizationService(new D1OrganizationStore(this.env.DB)).workspace(org, actor.id, input.workspaceId);
@@ -2409,6 +2410,7 @@ export class HubCoordinator {
       if(start.provider !== undefined && !["claude","codex","cursor"].includes(start.provider))return jsonError("Choose a provider.",400);
       if(start.model !== undefined && (typeof start.model !== "string" || start.model.length>512))return jsonError("Choose a model.",400);
       if(input.effort !== undefined && (typeof input.effort !== "string" || input.effort.length>64))return jsonError("Choose a reasoning level.",400);
+      if(input.permissionMode !== undefined && (typeof input.permissionMode !== "string" || !["default", "auto", "acceptEdits", "plan", "bypassPermissions"].includes(input.permissionMode))) return jsonError("Choose a permission mode.",400);
       if(input.branch !== undefined && (typeof input.branch !== "string" || !input.branch || input.branch.length > 255)) return jsonError("Choose a branch.",400);
       if(input.visibility !== undefined && input.visibility !== "private" && input.visibility !== "open") return jsonError("Choose who can read this thread.",400);
       if(input.modelSource !== undefined && input.modelSource !== "own" && input.modelSource !== "enrolled" && input.modelSource !== "organization") return jsonError("Choose where your model comes from.",400);
@@ -2462,6 +2464,7 @@ export class HubCoordinator {
         ...(start.provider ? { provider: start.provider } : {}),
         ...(start.model ? { model: start.model } : {}),
         ...(input.effort ? { effort: input.effort } : {}),
+        ...(typeof input.permissionMode === "string" ? { permissionMode: input.permissionMode } : {}),
         ...(review ? { review } : {}),
         ...(chatgpt ? { chatgpt } : {}),
         ...(ownModel ? { ownModel } : {}),

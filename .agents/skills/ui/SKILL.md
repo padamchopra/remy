@@ -202,6 +202,8 @@ The `shimmer` class is for text that has no settled value yet, not for a control
 
 ## Text containment
 
+Render user and agent message prose, including approval titles and explanations, with the shared `Markdown` component. Keep executable commands in literal code blocks so formatting cannot hide what the person is approving.
+
 Every flex or grid child that owns variable text must be able to shrink. Use `min-w-0` on the text-bearing flex child and `minmax(0, 1fr)` for the corresponding grid track; keep icons and trailing actions `shrink-0`.
 
 Choose wrapping or truncation deliberately. `truncate` is only for a bounded single line whose omitted text is acceptable. A title meant to remain readable uses `whitespace-normal break-words`; do not use `break-all` for ordinary prose.

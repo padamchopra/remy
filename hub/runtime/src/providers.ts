@@ -206,7 +206,9 @@ export class FlySpritesRuntime implements ComputerRuntimeProvider {
         { domain: "*", action: "deny" },
       ],
     });
-    const result = await sprite.execFile("node", ["-e", startProgram], {
+    // Sprites can give a non-root process ambient capabilities. Bubblewrap
+    // rejects those before it can establish Codex's requested sandbox.
+    const result = await sprite.execFile("setpriv", ["--inh-caps=-all", "--ambient-caps=-all", "--", "node", "-e", startProgram], {
       env: input.environment,
     });
     if (result.exitCode !== 0) throw new Error("Computer entrypoint failed.");
