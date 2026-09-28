@@ -182,7 +182,7 @@ export function hostedComposerChoice(
 
 /// Maps a composer or stored gateway choice onto the runtime pair POST /threads
 /// accepts. A model that already carries `remy:` keeps that prefix.
-export function hostedExecutionChoice(choice: ModelChoice): { provider: string; model: string; modelSource?: "own" | "enrolled"; modelProvider?: string; modelConnection?: string } {
+export function hostedExecutionChoice(choice: ModelChoice): { provider: string; model: string; effort?: string; modelSource?: "own" | "enrolled"; modelProvider?: string; modelConnection?: string } {
   if (isOwnProvider(choice.provider)) {
     const [provider, ...key] = choice.provider.slice(OWN_PREFIX.length).split(":");
     return { ...hostedExecutionChoice({ ...choice, provider }), modelSource: "own", modelProvider: provider, modelConnection: key.join(":") };
@@ -192,13 +192,14 @@ export function hostedExecutionChoice(choice: ModelChoice): { provider: string; 
     const [, provider] = connection.split(":");
     return { ...hostedExecutionChoice({ ...choice, provider }), modelSource: "enrolled", modelProvider: provider, modelConnection: connection };
   }
-  if (choice.provider === "anthropic") return { provider: "claude", model: choice.model };
+  const effort = choice.effort ? { effort: choice.effort } : {};
+  if (choice.provider === "anthropic") return { provider: "claude", model: choice.model, ...effort };
   if (choice.provider === "openai" || choice.provider === "router" || choice.provider === "openrouter") {
     const model = choice.model.startsWith("remy:") ? choice.model : `remy:${choice.provider}:${choice.model}`;
-    return { provider: "codex", model };
+    return { provider: "codex", model, ...effort };
   }
-  if (choice.model.startsWith("remy:")) return { provider: "codex", model: choice.model };
-  return { provider: choice.provider, model: choice.model };
+  if (choice.model.startsWith("remy:")) return { provider: "codex", model: choice.model, ...effort };
+  return { provider: choice.provider, model: choice.model, ...effort };
 }
 
 /// What a computer says it can run, as a provider carries it on the wire.

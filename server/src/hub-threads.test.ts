@@ -202,7 +202,7 @@ test("thread creation checks out the requested branch before creating and dedupl
   writeFileSync(join(cwd,"file"),"main");git("add",".");git("commit","-m","Initial");git("branch","feature/selected");
   const workspace=await addWorkspace("Branch QA",cwd);
   const threadId = randomUUID();
-  const input={threadId,workspaceId:workspace.id,branch:"feature/selected",hubTaskId:"branch-qa",permissionMode:"plan",visibility:"open"};
+  const input={threadId,workspaceId:workspace.id,branch:"feature/selected",hubTaskId:"branch-qa",permissionMode:"plan",visibility:"open",provider:"codex",model:"gpt-5.6-sol",effort:"medium"};
   const response=await handleHubThreadRequest("org",owner,"POST","/hub/threads",input,noAttachment);
   assert.equal(response.status,201);
   assert.equal(git("branch","--show-current"),"feature/selected");
@@ -211,6 +211,7 @@ test("thread creation checks out the requested branch before creating and dedupl
   assert.equal(thread.access.visibility,"open");
   const {getChat}=await import("./chat.js");
   assert.equal(getChat(thread.id)?.permissionMode,"plan");
+  assert.equal(getChat(thread.id)?.effort,"medium");
   git("checkout","main");
   const retry=await handleHubThreadRequest("org",owner,"POST","/hub/threads",input,noAttachment);
   assert.equal((await retry.json() as {id:string}).id,thread.id);

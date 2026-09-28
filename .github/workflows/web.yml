@@ -6,6 +6,7 @@ on:
       - ".github/workflows/web.yml"
       - "contract/**"
       - "hub/**"
+      - "server/**"
       - "web/**"
       - "package.json"
   push:
@@ -14,6 +15,7 @@ on:
       - ".github/workflows/web.yml"
       - "contract/**"
       - "hub/**"
+      - "server/**"
       - "web/**"
       - "package.json"
 
@@ -38,12 +40,15 @@ jobs:
             contract/package-lock.json
             hub/package-lock.json
             hub/runtime/package-lock.json
+            server/package-lock.json
             web/package-lock.json
       - run: npm ci --prefix contract --no-audit --no-fund
       - run: npm ci --prefix hub --no-audit --no-fund
+      - run: npm ci --prefix server --no-audit --no-fund
       - run: npm ci --prefix web --no-audit --no-fund
       - run: npm ci --prefix hub/runtime --no-audit --no-fund
       - run: npm run build:hub --prefix web
+      - run: npm run build --prefix server
       - run: node hub/scripts/check-runtime-bundle.mjs
       - run: npx playwright-core install --with-deps chromium
         working-directory: web
@@ -66,6 +71,8 @@ jobs:
           QA_SCOPE_ONLY=1 node web/scripts/hosted-runtime-check.mjs
           QA_THREAD_RECOVERY_ONLY=1 node web/scripts/hosted-runtime-check.mjs
           node --test web/scripts/hosted-preview.test.mjs web/scripts/hub-resource.test.mjs web/scripts/qa-hosted-account.test.mjs web/scripts/workspace-image-cache.test.mjs web/scripts/hub-workspace-cache.test.mjs web/scripts/workspace-list.test.mjs web/scripts/hub-models.test.mjs web/scripts/thread-menu.test.mjs web/scripts/route.test.mjs web/scripts/thread-start-progress.test.mjs web/scripts/pull-request-workspace.test.mjs web/scripts/pull-request-order.test.mjs web/scripts/pull-request-checks.test.mjs web/scripts/pull-request-patch.test.mjs web/scripts/markdown-html-comments.test.mjs web/scripts/pull-request-detail.test.mjs web/scripts/diff-words.test.mjs web/scripts/pull-request-review-state.test.mjs web/scripts/pull-request-activity.test.mjs web/scripts/review-agent.test.mjs web/scripts/markdown-html.test.mjs web/scripts/environment-text.test.mjs
+      - name: Check the complete thread journey
+        run: node web/scripts/qa-thread-journey.mjs
       - name: Check the built website
         env:
           WEBSITE_URL: http://127.0.0.1:5181

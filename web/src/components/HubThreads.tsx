@@ -1,4 +1,5 @@
 import { speaker } from "@/lib/thread-message";
+import { threadEntryText, visibleThreadEntries } from "@/lib/thread-entry-display";
 import { useHubThreadBranch } from "@/lib/hub-thread-branch";
 import { ThreadMessageAvatar } from "./ThreadMessageAvatar";
 import { BranchName } from "./BranchName";
@@ -197,7 +198,8 @@ export default function HubThreads({
     !!thread && !!member && canWriteThread(thread.access, member.id);
   const disabled = !!pending || busy || !thread || thread.stale || !writable;
   const path = actingComputer ? hubThreadPath(organizationId, actingComputer, actingThread) : "";
-  const picker = threadModelPicker({ provider: thread?.detail.provider ?? pending?.provider, model: thread?.detail.model ?? pending?.model, effort: thread?.detail.effort }, computer, modelAccess.value?.providers ?? []);
+  const entries = visibleThreadEntries(thread?.detail.entries ?? []);
+  const picker = threadModelPicker({ provider: thread?.detail.provider ?? pending?.provider, model: thread?.detail.model ?? pending?.model, effort: thread?.detail.effort ?? pending?.effort }, computer, modelAccess.value?.providers ?? []);
   const { runtimeProvider, modelProvider, providers } = picker;
   const permission = permissionOf(typeof thread?.detail.permissionMode === "string" ? thread.detail.permissionMode : undefined);
   const approval = thread?.detail.approval as Approval | undefined;
@@ -277,6 +279,13 @@ export default function HubThreads({
           {error}
         </p>
       )}
+      {thread?.stale && (
+        <p role="status" className="shrink-0 border-b px-4 py-2 text-xs text-muted-foreground">
+          {computer?.availability === "offline"
+            ? "This computer is offline; you’re reading its last saved update."
+            : "Remy is reconnecting; you’re reading the last saved update."}
+        </p>
+      )}
       {!loaded && threadId && !pending ? (
         <div className="p-4"><PaneLoading label="Loading threads" /></div>
       ) : threadId && !thread ? (
@@ -302,13 +311,13 @@ export default function HubThreads({
             aria-label="Thread transcript"
           >
             <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4">
-              {thread.detail.entries.map((entry, index) => (
+              {entries.map((entry, index) => (
                 <Message
                   key={String(entry.id)}
                   align={entry.kind === "user" ? "end" : "start"}
                 >
                   {entry.kind === "user" && profile && ((entry.member as ThreadMember | undefined)?.id ?? member?.id) === profile.id && <AvatarFrom avatar={profile.image ?? ""} className="size-8 self-end" />}
-                  {(entry.kind === "assistant" || entry.kind === "thinking") && <ThreadMessageAvatar provider={runtimeProvider} lead={index === 0 || speaker(thread.detail.entries[index - 1]) !== speaker(entry)} /> }
+                  {(entry.kind === "assistant" || entry.kind === "thinking") && <ThreadMessageAvatar provider={runtimeProvider} lead={index === 0 || speaker(entries[index - 1]) !== speaker(entry)} /> }
                   <MessageContent>
                     {entry.kind !== "assistant" && entry.kind !== "thinking" && <MessageHeader>
                       {(entry.member as ThreadMember | undefined)?.label ??
@@ -322,7 +331,7 @@ export default function HubThreads({
                       variant={entry.kind === "user" ? "default" : "ghost"}
                     >
                       <BubbleContent className="whitespace-pre-wrap break-words">
-                        {String(entry.text ?? entry.output ?? entry.arg ?? "")}
+                        {threadEntryText(entry)}
                       </BubbleContent>
                     </Bubble>
                     {entry.kind === "user" && Array.isArray(entry.codeReferences) && entry.codeReferences.length > 0 && (

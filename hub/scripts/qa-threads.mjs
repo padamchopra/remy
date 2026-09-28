@@ -3,6 +3,7 @@ import { startFakeOpenAIAuth } from "./fake-openai-auth.mjs";
 import { startConnectionProvider } from "./qa-connection-provider.mjs";
 import { fixtureReviewTurn, isReviewThread } from "./qa-review-fixture.mjs";
 import { assertNoSecrets, cloneWithToken, loadQaEnv, qaRealInputs, seedPullRequest, writeGitCredentialHelper } from "./qa-github.mjs";
+import "tsx/esm";
 import { createServer } from "node:http";
 import { builtinModules } from "node:module";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
@@ -31,6 +32,12 @@ process.on("exit", () => rmSync(temp, { recursive: true, force: true }));
 for (const key of Object.keys(process.env))
   if (/^(MC_|REMY_)/.test(key)) delete process.env[key];
 process.env.MC_CONFIG_DIR = join(temp, "computer");
+if (!real.realProviders) {
+  const fixtureBin = join(temp, "bin");
+  mkdirSync(fixtureBin);
+  writeFileSync(join(fixtureBin, "claude"), "#!/bin/sh\nprintf 'Claude Code fixture\\n'\n", { mode: 0o755 });
+  process.env.PATH = `${fixtureBin}:${process.env.PATH ?? ""}`;
+}
 // Started from inside a Claude Code session, the script inherits that host's
 // session variables (its entrypoint, API proxy and auth refresh), which would
 // make a real Claude thread use the host's session instead of this Mac's own
@@ -388,7 +395,8 @@ if (!process.env.QA_COMPUTER_POLICY) await request(`/computers/${registration.co
 for (let attempt = 0; attempt < 150; attempt++) {
   if (
     (await request("/computers")).computers.some(
-      (computer) => computer.availability === "available",
+      (computer) => computer.availability === "available"
+        && computer.capabilities.providers.some((entry) => entry.id === "claude"),
     )
   )
     break;

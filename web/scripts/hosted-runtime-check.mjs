@@ -175,7 +175,10 @@ try {
         }
         if(process.env.QA_START_ONLY === "1" && /\/threads\/starts\/[0-9a-f-]{36}$/.test(path) && route.request().method()==="GET") {
           startStatusCalls++;
-          if(!completeStart) return route.fulfill({json:{phase: startStatusCalls < 3 ? "creating" : "waking"}});
+          if(!completeStart) {
+            const phases=["creating","waking","starting_runtime","connecting","preparing_branch","sending"];
+            return route.fulfill({json:{phase:phases[Math.min(Math.floor((startStatusCalls-1)/2),phases.length-1)]}});
+          }
           finishStart(org);
           return route.fulfill({json:{phase:"ready",id:threadInput.requestId,computerId:"sprite"}});
         }
@@ -476,7 +479,7 @@ try {
           assert.equal(new URL(page.url()).search, "", "Thread URLs drop computer and owner query");
           if(artifacts)await page.screenshot({path:`${artifacts}/thread-url-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
           assert.equal(await page.getByRole("button",{name:"Back to all",exact:true}).count(),0,"Thread details do not add a second navigation row");
-          assert.equal(await page.getByText("This computer is offline; you’re reading its last saved update.",{exact:true}).count(),0,"Offline threads do not add a redundant status row");
+          assert.equal(await page.getByText("This computer is offline; you’re reading its last saved update.",{exact:true}).count(),1,"Offline threads explain why their composer is unavailable");
           for(const retired of ["/board","/tasks","/tickets/REMY-1"]){
             await page.goto(clean(retired));
             await page.waitForURL((current)=>/\/threads$/.test(current.pathname));
@@ -778,6 +781,10 @@ try {
           assert.equal(threadInput.visibility,"private");
           await page.getByRole("status",{name:"Creating thread…",exact:true}).waitFor();
           await page.getByRole("status",{name:"Waking computer…",exact:true}).waitFor();
+          await page.getByRole("status",{name:"Starting runtime…",exact:true}).waitFor();
+          await page.getByRole("status",{name:"Connecting…",exact:true}).waitFor();
+          await page.getByRole("status",{name:"Preparing branch…",exact:true}).waitFor();
+          await page.getByRole("status",{name:"Sending message…",exact:true}).waitFor();
           if(artifacts)await page.screenshot({path:`${artifacts}/start-progress-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
           await page.getByRole("tab", {name:"Hello startup QA", exact:true}).waitFor();
           assert.equal(await page.getByRole("heading", {name:"Threads", exact:true}).count(), 0);

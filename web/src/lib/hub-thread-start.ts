@@ -15,6 +15,7 @@ export type ThreadStart = {
   branch?: string;
   provider?: string;
   model?: string;
+  effort?: string;
   /// A review: the hub reads this pull request with your GitHub connection,
   /// names the thread "Review #n: title" and checks its head out on the computer.
   review?: { repository: string; number: number };
@@ -62,7 +63,7 @@ async function waitForCreated(start: ThreadStart): Promise<StartedThread | undef
   const created = await hubRequest<StartedThread>(`${hubThreadBase(start.organizationId)}/threads`, "POST", {
     workspaceId: start.workspaceId, computerId: start.computerId,
     title: start.message.slice(0, 200), message: start.message, requestId: start.requestId,
-    branch: start.branch, provider: start.provider, model: start.model,
+    branch: start.branch, provider: start.provider, model: start.model, effort: start.effort,
     visibility: start.visibility,
     ...(start.review ? { review: start.review } : {}),
   });
