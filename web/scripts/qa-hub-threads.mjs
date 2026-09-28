@@ -297,12 +297,17 @@ try {
   if (await toggle.isVisible()) { await toggle.click(); await page.keyboard.press("Escape"); }
   await page.waitForTimeout(250);
   await page.screenshot({ path: join(out, "mobile.png") });
+  if (!(await recentThreads.isVisible())) {
+    await toggle.click();
+    await recentThreads.waitFor({ state: "visible" });
+  }
   assert.equal(
     await recentThreads.evaluate(
       (element) => element.scrollWidth > element.clientWidth,
     ),
     false,
   );
+  await page.keyboard.press("Escape");
   for (const [label, expected] of [
     ["Decline", "Declined permission."],
     ["Always allow", "Always allowed permission."],
