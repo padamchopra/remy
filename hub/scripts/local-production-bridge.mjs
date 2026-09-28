@@ -2,12 +2,15 @@ import "tsx/esm";
 import { DatabaseSync } from "node:sqlite";
 import { createPrivateKey, randomBytes, sign } from "node:crypto";
 import { join } from "node:path";
+import { existsSync } from "node:fs";
 const { computerConnectionMessage } = await import("../../contract/src/index.ts");
 
 const production = "https://app.tryremy.dev";
 
 export function savedDevelopmentIdentity(state) {
-  const db = new DatabaseSync(join(state, "bridge/computer/remy.db"), {readOnly:true});
+  const path = join(state, "bridge/computer/remy.db");
+  if (!existsSync(path)) throw new Error("Run npm run dev:local -- --connect-account once to approve your development computer.");
+  const db = new DatabaseSync(path, {readOnly:true});
   try {
     const get = key => JSON.parse(db.prepare("SELECT value FROM kv WHERE key = ?").get(key)?.value ?? "null");
     return {registration:get("hubComputerRegistration"), privateKey:get("hubComputerPrivateKey")};

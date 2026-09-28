@@ -1,12 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, verify } from "node:crypto";
-import { productionBridge } from "./local-production-bridge.mjs";
+import { productionBridge, savedDevelopmentIdentity } from "./local-production-bridge.mjs";
 const { computerConnectionMessage } = await import("../../contract/src/index.ts");
 
 const keys = generateKeyPairSync("ed25519");
 const identity = {registration:{hubUrl:"https://app.tryremy.dev",ownership:"personal",ownerUserId:"owner",organizationId:"personal",computerId:"dev"},privateKey:keys.privateKey.export({format:"der",type:"pkcs8"}).toString("base64url")};
 const incoming = (body,path="/thread-access") => new Request(`https://internal${path}`,{method:"POST",body:JSON.stringify(body)});
+
+test("missing development identity explains the one-time connection step",()=>{
+  assert.throws(()=>savedDevelopmentIdentity("/nonexistent-remy-local-test"),/--connect-account/);
+});
 
 test("signs fresh scoped requests and never forwards the supplied actor", async () => {
   const nonces = new Set();
