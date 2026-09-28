@@ -54,7 +54,7 @@ try {
       const finishStart = org => {
         if (startedThread) return startedThread;
         const id=threadInput.requestId;
-        startedThread={id,computerId:"sprite",revision:1,stale:false,observedAt:Date.now(),access:{organizationId:org.id,owner:{id:"reader",label:"Reader"},participants:[],visibility:"private"},detail:{id,title:threadInput.message,branch:"feature/working",state:"idle",provider:"codex",model:"remy:openrouter:openrouter/auto",permissionMode:"default",entries:[{id:`u-${id}`,kind:"user",text:threadInput.message},{id:"answer",kind:"assistant",text:"A reply from the selected provider."}]}};
+        startedThread={id,computerId:"sprite",revision:1,stale:false,observedAt:Date.now(),access:{organizationId:org.id,owner:{id:"reader",label:"Reader"},participants:[],visibility:"private"},detail:{id,title:threadInput.message,branch:"feature/working",state:"idle",provider:threadInput.provider,model:threadInput.model,effort:threadInput.effort,permissionMode:"default",entries:[{id:`u-${id}`,kind:"user",text:threadInput.message},{id:"answer",kind:"assistant",text:"A reply from the selected provider."}]}};
         for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot",cursor:1,thread:startedThread}));}catch{}
         return startedThread;
       };
@@ -350,7 +350,12 @@ try {
           if(artifacts)await page.screenshot({path:`${artifacts}/composer-picker-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
           await page.getByPlaceholder("Search providers and models",{exact:true}).fill("");
           await page.getByRole("tablist",{name:"Providers",exact:true}).getByRole("tab",{name:"ChatGPT"}).waitFor();
-          await page.getByPlaceholder("Search providers and models",{exact:true}).fill("");
+          await page.getByRole("tablist",{name:"Providers",exact:true}).getByRole("tab",{name:"ChatGPT"}).click();
+          await page.getByRole("tabpanel").getByText("GPT-5.6 Sol",{exact:true}).click();
+          await page.getByText("Medium",{exact:true}).click();
+          await model.getByText("GPT-5.6 Sol · Medium",{exact:true}).waitFor();
+          await model.click();
+          await page.getByPlaceholder("Search providers and models",{exact:true}).fill("test/model-a");
           await page.getByRole("option",{name:/test\/model-a/}).click();
           await model.getByText("test/model-a",{exact:true}).waitFor();
           await model.click();
