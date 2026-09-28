@@ -9,7 +9,7 @@ type EnvironmentConfig = {
   name: string;
   workers_dev?: boolean;
   routes?: Array<{ pattern: string; custom_domain: boolean }>;
-  vars: { ENVIRONMENT: string; EMAIL_FROM?: string };
+  vars: { ENVIRONMENT: string; EMAIL_FROM?: string; HOSTED_IMAGE?: string; HOSTED_ARCHIVE?: string };
   send_email?: Array<{ name: string; allowed_sender_addresses: string[] }>;
   d1_databases: Array<{ binding: string; database_id: string; database_name: string }>;
   durable_objects?: { bindings: Array<{ name: string; class_name: string }> };
@@ -101,4 +101,12 @@ test("production enables email signup with a restricted native sender", () => {
   const production = config.env.production;
   assert.equal(production.vars.EMAIL_FROM, "no-reply@tryremy.dev");
   assert.deepEqual(production.send_email, [{ name: "EMAIL", allowed_sender_addresses: [production.vars.EMAIL_FROM] }]);
+});
+
+test("production boots hosted computers from one published release", () => {
+  const { HOSTED_IMAGE: image, HOSTED_ARCHIVE: archive } = config.env.production.vars;
+  const imageVersion = /^ghcr\.io\/padamchopra\/remy-computer:(\d+\.\d+\.\d+)$/.exec(image ?? "")?.[1];
+  const archiveVersion = /^https:\/\/github\.com\/padamchopra\/remy\/releases\/download\/v(\d+\.\d+\.\d+)\/remy-computer-linux\.tar\.gz$/.exec(archive ?? "")?.[1];
+  assert.ok(imageVersion, "the hosted image must be a published version, not a branch build");
+  assert.equal(archiveVersion, imageVersion, "the image and archive must come from the same release");
 });

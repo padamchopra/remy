@@ -270,7 +270,6 @@ try {
     ).length,
     socketReads,
   );
-  await control("/reset");
   await page.waitForTimeout(1000);
   const beforeReload = page.url();
   await page.reload();
