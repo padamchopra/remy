@@ -196,13 +196,13 @@ try {
         if(process.env.QA_START_ONLY === "1" && path.endsWith("/options")) {
           Object.assign(startedThread.detail,route.request().postDataJSON());
           startedThread.revision++;
-          for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot",cursor:2,thread:startedThread}));}catch{}
+          for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot",cursor:startedThread.revision,thread:startedThread}));}catch{}
           return route.fulfill({json:startedThread});
         }
         if(process.env.QA_START_ONLY === "1" && /^\/api\/organizations\/[^/]+\/computers\/sprite\/threads\/[0-9a-f-]{36}\/message$/.test(path)) {
           messageCalls++;const input=route.request().postDataJSON();lastMessage=input;messageIds.push(input.messageId);
           startedThread={...startedThread,revision:startedThread.revision+1,detail:{...startedThread.detail,entries:[...startedThread.detail.entries,{id:input.messageId,kind:"user",text:input.text}]}};
-          for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot",cursor:1,thread:startedThread}));}catch{}
+          for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot",cursor:startedThread.revision,thread:startedThread}));}catch{}
           return route.fulfill({json:{ok:true}});
         }
         const chatgptPath=/^\/api\/chatgpt-account(?:\/(start|cancel|logout))?$/.exec(path);
@@ -855,7 +855,7 @@ try {
           if(mobile) await page.locator('[data-slot="sheet-overlay"]').click({position:{x:380,y:400}});
           await page.getByRole("button",{name:"Copy branch feature/working",exact:true}).waitFor();
           startedThread.detail.branch="feature/switched";startedThread.revision++;
-          for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot",cursor:2,thread:startedThread}));}catch{}
+          for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot",cursor:startedThread.revision,thread:startedThread}));}catch{}
           await page.getByRole("button",{name:"Copy branch feature/switched",exact:true}).waitFor();
           await page.reload();
           await page.getByRole("button",{name:"Copy branch feature/switched",exact:true}).waitFor();
@@ -871,12 +871,12 @@ try {
           // Sharing the thread swaps the lock for the shared glyph.
           startedThread.access.visibility="open";
           startedThread.revision++;
-          for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot",cursor:10+startedThread.revision,thread:startedThread}));}catch{}
+          for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot",cursor:startedThread.revision,thread:startedThread}));}catch{}
           await lane.getByLabel("Shared",{exact:true}).waitFor();
           assert.equal(await lane.getByLabel("Private",{exact:true}).count(),0);
           startedThread.access.visibility="private";
           startedThread.revision++;
-          for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot",cursor:10+startedThread.revision,thread:startedThread}));}catch{}
+          for(const socket of liveSockets)try{socket.send(JSON.stringify({kind:"snapshot",cursor:startedThread.revision,thread:startedThread}));}catch{}
           await lane.getByLabel("Private",{exact:true}).waitFor();
           if(mobile) await page.locator('[data-slot="sheet-overlay"]').click({position:{x:380,y:400}});
           const reply=page.getByRole("textbox",{name:"Message",exact:true});
