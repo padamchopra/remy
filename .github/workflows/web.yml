@@ -77,6 +77,10 @@ jobs:
           QA_THREAD_RECOVERY_ONLY=1 node web/scripts/hosted-runtime-check.mjs
           wait "$runtime_pid"
           node --test web/scripts/thread-start-recovery.test.mjs web/scripts/message-markdown.test.mjs
+          node --test hub/scripts/local-development.test.mjs
+          node --test hub/scripts/local-production-bridge.test.mjs
+          node --test hub/scripts/local-account.test.mjs
+          node --test hub/scripts/local-runtime.test.mjs
           node --test web/scripts/hosted-preview.test.mjs web/scripts/hub-resource.test.mjs web/scripts/qa-hosted-account.test.mjs web/scripts/workspace-image-cache.test.mjs web/scripts/hub-workspace-cache.test.mjs web/scripts/workspace-list.test.mjs web/scripts/hub-models.test.mjs web/scripts/thread-menu.test.mjs web/scripts/route.test.mjs web/scripts/thread-start-progress.test.mjs web/scripts/pull-request-workspace.test.mjs web/scripts/pull-request-order.test.mjs web/scripts/pull-request-checks.test.mjs web/scripts/pull-request-patch.test.mjs web/scripts/markdown-html-comments.test.mjs web/scripts/pull-request-detail.test.mjs web/scripts/diff-words.test.mjs web/scripts/pull-request-review-state.test.mjs web/scripts/pull-request-activity.test.mjs web/scripts/review-agent.test.mjs web/scripts/markdown-html.test.mjs web/scripts/environment-text.test.mjs
       - name: Check the built website
         env:

@@ -10,6 +10,7 @@
     "install:all": "npm --prefix contract install && npm --prefix hub install && npm --prefix server install && npm --prefix web install",
     "install:computer": "npm --prefix contract ci --no-audit --no-fund && npm --prefix server ci --no-audit --no-fund && npm --prefix web ci --no-audit --no-fund",
     "dev:hosted": "node scripts/dev-hosted.mjs",
+    "dev:local": "node hub/scripts/dev-local.mjs",
     "dev:server": "npm --prefix server run build && npm --prefix server start",
     "dev:website": "npm --prefix web run dev:website",
     "qa:hosted": "node web/scripts/qa-hosted-live.mjs",

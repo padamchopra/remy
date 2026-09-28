@@ -9,10 +9,14 @@ import { fileURLToPath, URL } from "node:url";
 const remyVersion = (JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string })
   .version;
 
-const preview = process.env.REMY_HOSTED_PREVIEW_URL ? hostedPreview(process.env.REMY_HOSTED_PREVIEW_URL) : undefined;
+const localHub = process.env.REMY_LOCAL_HUB_URL;
+if (localHub && new URL(localHub).hostname !== "127.0.0.1") throw new Error("The local hub must bind to 127.0.0.1.");
+const localSession = process.env.REMY_LOCAL_PREVIEW_SESSION ? JSON.parse(process.env.REMY_LOCAL_PREVIEW_SESSION) : undefined;
+if (localSession && !localHub) throw new Error("A local session requires a local hub.");
+const preview = localHub && localSession ? hostedPreview(localHub,undefined,localSession) : process.env.REMY_HOSTED_PREVIEW_URL ? hostedPreview(process.env.REMY_HOSTED_PREVIEW_URL) : undefined;
 
 export default defineConfig(({ command }) => {
-  if (command === "serve" && !preview) {
+  if (command === "serve" && !preview && !localHub) {
     throw new Error("Run `npm run dev:hosted` for the web app.");
   }
   return {
@@ -36,11 +40,12 @@ export default defineConfig(({ command }) => {
       // Vite's default resolves to IPv6 loopback alone here. Still loopback:
       // this is never reachable from the network.
       host: "127.0.0.1",
+      fs: { deny: [".env", ".env.*", "*.{crt,pem}", "**/.git/**", "**/.wrangler/**"] },
       // No live reloading. Editing Remy in Remy meant the page yanked itself out
       // from under whatever was on screen on every save; reload it yourself when
       // you want to see a change.
       hmr: false,
-      proxy: preview ? { "/api": preview.proxy } : {},
+      proxy: localHub ? { "/api": preview?.proxy ?? {target:localHub,ws:true}, "/__dev": {target:localHub} } : preview ? { "/api": preview.proxy } : {},
     },
     // The hosted app is served under /app, so assets are referenced relatively
     // rather than from the server root.
