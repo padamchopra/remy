@@ -51,7 +51,11 @@ assert.equal(startedResponse.status, 201, JSON.stringify(started));
 assert.equal(started.access.visibility, "private");
 info.threadId = started.id;
 const route = `${base}/threads/${info.threadId}`;
-const browser = await chromium.launch({ executablePath: chromiumPath() });
+const browser = await chromium.launch({
+  executablePath:
+    process.env.CHROMIUM_PATH ||
+    (process.platform === "darwin" ? chromiumPath() : chromium.executablePath()),
+});
 const context = await browser.newContext({
   viewport: { width: 1280, height: 850 },
   colorScheme: "dark",

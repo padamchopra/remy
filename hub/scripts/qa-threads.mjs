@@ -32,6 +32,12 @@ process.on("exit", () => rmSync(temp, { recursive: true, force: true }));
 for (const key of Object.keys(process.env))
   if (/^(MC_|REMY_)/.test(key)) delete process.env[key];
 process.env.MC_CONFIG_DIR = join(temp, "computer");
+if (!real.realProviders) {
+  const fixtureBin = join(temp, "bin");
+  mkdirSync(fixtureBin);
+  writeFileSync(join(fixtureBin, "claude"), "#!/bin/sh\nprintf 'Claude Code fixture\\n'\n", { mode: 0o755 });
+  process.env.PATH = `${fixtureBin}:${process.env.PATH ?? ""}`;
+}
 // Started from inside a Claude Code session, the script inherits that host's
 // session variables (its entrypoint, API proxy and auth refresh), which would
 // make a real Claude thread use the host's session instead of this Mac's own
@@ -356,19 +362,7 @@ const registration = await registerHubComputer(
   organizationId,
   tokens["computer-owner"],
 );
-const capabilities = real.realProviders || registration.capabilities.providers.some((entry) => entry.id === "claude")
-  ? registration.capabilities
-  : {
-      ...registration.capabilities,
-      providers: [
-        {
-          id: "claude",
-          models: [""],
-          modelInfo: [{ value: "", label: "Default", resolvedLabel: "Opus 5.5 (1M)" }],
-        },
-        ...registration.capabilities.providers,
-      ],
-    };
+const capabilities = registration.capabilities;
 stopHubComputerConnection();
 const connection = new HubComputerConnection(
   registration,
