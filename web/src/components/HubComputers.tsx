@@ -8,7 +8,7 @@ import { HubModelAccessPage, MODEL_ACCESS_LABELS, type ModelAccessResponse } fro
 import { PaneHeader } from "./PaneHeader";
 import { PaneLoading } from "./PaneLoading";
 import { EmptyState } from "./EmptyState";
-import { RowMark, SettingsLinkRow, SettingsList, SettingsSection, StateDot } from "./SettingsList";
+import { RowMark, SettingsLinkRow, SettingsList, SettingsRow, SettingsSection, StateDot } from "./SettingsList";
 import { Button } from "./ui/button";
 import { HubPersonalContext } from "@/lib/hub-scope";
 import { useHubResource } from "@/lib/hub-organization";
@@ -48,6 +48,7 @@ export function HubComputers({ accounts, all }: { accounts: Organization[]; all:
   const across = useComputersAcross(accounts);
   const [connecting, setConnecting] = useState(false);
   const connectable = useMemo(() => accounts.filter(account => account.personal), [accounts]);
+  const inventoryAccount = accounts.find(entry => entry.personal) ?? accounts[0];
   const account = accounts.find(entry => entry.id === where.account) ?? (accounts.length === 1 ? accounts[0] : accounts.find(entry => entry.personal));
   const connect = <HubConnectComputerDialog open={connecting} onOpenChange={setConnecting} accounts={connectable.length ? connectable : accounts.slice(0, 1)} initial={account?.id} onConnected={(org, computerId) => go(computerId, org)} />;
   const crumbs = (label?: string) => [{ label: "Settings" }, label ? { label: "Computers", onClick: back } : { label: "Computers" }, ...(label ? [{ label }] : [])];
@@ -62,8 +63,8 @@ export function HubComputers({ accounts, all }: { accounts: Organization[]; all:
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         <PaneHeader sidebar crumbs={crumbs(title ?? "Computer")} />
         <div className="min-h-0 flex-1 overflow-auto">
-          {cloud ? <HubCloudProviderPage key={`${account.id}:${cloud.id}`} organizationId={account.id} owner={owner} provider={cloud} admin={admin} onModelAccess={() => go("model-access", account.id)} />
-            : where.page === "model-access" ? <HubModelAccessPage key={account.id} organizationId={account.id} owner={owner} admin={admin} />
+          {cloud ? <HubCloudProviderPage key={`${account.id}:${cloud.id}`} organizationId={account.id} owner={owner} provider={cloud} admin={admin} onModelAccess={() => go("model-access", account.id)} organizationAccess={all && owner.personal ? <OrganizationCloudAccess accounts={accounts.filter(entry => !entry.personal)} providerId={cloud.id} providerName={cloud.name} /> : undefined} />
+            : where.page === "model-access" ? <HubModelAccessPage key={account.id} organizationId={account.id} owner={owner} admin={admin} organizationAccess={all && owner.personal ? <OrganizationModelAccess accounts={accounts.filter(entry => !entry.personal)} /> : undefined} />
             : listed ? <HubComputerPage key={listed.computer.computerId} organizationId={listed.account.id} owner={{ name: listed.account.name, personal: listed.account.personal === true }} computer={listed.computer} threads={across.threads} onOpenThread={thread => openThread(thread, listed.account.id)} onRemoved={back} />
             : !across.loaded ? <PaneLoading label="Loading computer" />
             : <EmptyState title="Computer unavailable" description="It was removed, or you no longer have access to it.">
@@ -83,7 +84,7 @@ export function HubComputers({ accounts, all }: { accounts: Organization[]; all:
         <SettingsSection id="computers-cloud" title="Cloud" description="Each thread gets a fresh computer in your own cloud account.">
           {accounts[0] && <CloudAvailability organizationId={accounts[0].id} />}
           <SettingsList label="Cloud">
-            {accounts.map(entry => <CloudRows key={entry.id} account={entry} full={entry.personal === true} named={accounts.length > 1} open={(page) => go(page, entry.id)} />)}
+            {inventoryAccount && <CloudRows account={inventoryAccount} full={inventoryAccount.personal === true} named={false} open={(page) => go(page)} />}
           </SettingsList>
         </SettingsSection>
         <SettingsSection id="computers-connected" title="Connected" description="Your Macs and Linux machines. Threads run in the folders on them.">
@@ -106,6 +107,44 @@ export function HubComputers({ accounts, all }: { accounts: Organization[]; all:
     </div>
     {connect}
   </main>;
+}
+
+function OrganizationCloudAccess({ accounts, providerId, providerName }: { accounts: Organization[]; providerId: string; providerName: string }) {
+  if (!accounts.length) return null;
+  return <SettingsSection id={`organization-${providerId}`} title="Organizations" description="See where your keys are available.">
+    <SettingsList label={`${providerName} organization access`}>
+      {accounts.map(account => <OrganizationCloudRow key={account.id} account={account} providerId={providerId} />)}
+    </SettingsList>
+  </SettingsSection>;
+}
+
+function OrganizationCloudRow({ account, providerId }: { account: Organization; providerId: string }) {
+  const hosted = useHubResource<CloudConnections>(account.id, "/hosted");
+  const placements = hosted.value?.cloudPlacements?.filter(placement => placement.provider === providerId) ?? [];
+  return <SettingsRow
+    title={account.name}
+    description={placements.length ? placements.map(placement => `${placement.keyName} · ${placement.own ? "Yours" : placement.owner}`).join(", ") : "No key is available here."}
+  >{hosted.value ? placements.length ? `${placements.length} ${placements.length === 1 ? "key" : "keys"}` : "None" : undefined}</SettingsRow>;
+}
+
+function OrganizationModelAccess({ accounts }: { accounts: Organization[] }) {
+  if (!accounts.length) return null;
+  return <SettingsSection id="organization-model-access" title="Organizations" description="See what your organizations can use.">
+    <SettingsList label="Organization model access">
+      {accounts.map(account => <OrganizationModelAccessRow key={account.id} account={account} />)}
+    </SettingsList>
+  </SettingsSection>;
+}
+
+function OrganizationModelAccessRow({ account }: { account: Organization }) {
+  const access = useHubResource<ModelAccessResponse>(account.id, "/model-access");
+  const memberAccess = useHubResource<OwnModelAccessResponse>(account.id, "/own-model-access", "/computers/live");
+  const available = [
+    ...(access.value?.providers ?? []).filter(entry => entry.enabled && entry.configured).map(entry => MODEL_ACCESS_LABELS[entry.id] ?? entry.id),
+    ...(memberAccess.value?.providers ?? []).flatMap(provider => provider.id === "chatgpt" ? provider.configured ? ["Your ChatGPT"] : [] : provider.keys.map(key => `Your ${key.name}`)),
+    ...(memberAccess.value?.enrolled ?? []).map(entry => `${entry.owner} · ${entry.keyName}`),
+  ];
+  return <SettingsRow title={account.name} description={available.length ? available.join(", ") : "No model access is available here."}>{(access.value || memberAccess.value) ? available.length ? `${available.length} available` : "None" : undefined}</SettingsRow>;
 }
 
 /// Whether the hub can start cloud computers at all. It is the same for every

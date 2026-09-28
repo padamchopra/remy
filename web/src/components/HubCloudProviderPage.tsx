@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ChevronRight, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { HubKeyList, type KeyInput } from "./HubKeyList";
@@ -18,12 +18,13 @@ const LABELS: Record<string, string> = { anthropic: "Anthropic", openai: "OpenAI
 
 /// One cloud provider in one account: whether it is on, the keys it uses, the
 /// default model for threads there, and what those threads can run.
-export function HubCloudProviderPage({ organizationId, owner, provider, admin, onModelAccess }: {
+export function HubCloudProviderPage({ organizationId, owner, provider, admin, onModelAccess, organizationAccess }: {
   organizationId: string;
   owner: { name: string; personal: boolean };
   provider: CloudProvider;
   admin: boolean;
   onModelAccess: () => void;
+  organizationAccess?: ReactNode;
 }) {
   const resource = useHubResource<CloudConnections>(organizationId, "/hosted");
   const [saved, setSaved] = useState<CloudConnections>();
@@ -96,6 +97,7 @@ export function HubCloudProviderPage({ organizationId, owner, provider, admin, o
       </SettingsList> : <p className="text-[13px] text-muted-foreground">No key is available to you.</p>}
       {admin && <p className="text-xs leading-4 text-muted-foreground">Get one from <a className="text-info hover:underline" href={provider.href} target="_blank" rel="noreferrer" data-link>{provider.hrefLabel}</a>.</p>}
     </SettingsSection>
+    {organizationAccess}
     {configured && provider.id !== "cursor-cloud" && <CanRun organizationId={organizationId} onModelAccess={onModelAccess} />}
   </div>;
 }

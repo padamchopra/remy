@@ -277,6 +277,7 @@ try {
         }
         if(process.env.QA_SCOPE_ONLY === "1") {
           profile.image="preset:cobalt-cyclops";
+          providerKeys["fly-sprites"]=[{id:"production",name:"Production",active:true},{id:"preview",name:"Preview",active:false}];
           const entry=modelEntries.find(p=>p.id==="openrouter");
           entry.enabled=true;entry.configured=true;entry.models=["openrouter/auto"];
           computerDefaults.set("cloud:fly-sprites:personal:legacy",{provider:"openrouter",model:"openrouter/auto"});
@@ -644,19 +645,29 @@ try {
           await page.goto(clean("/settings/devices"));
           const computersList=page.getByRole("main",{name:"Computers",exact:true});
           await computersList.waitFor();
-          // All lists every account's cloud rows in one Cloud section, named by owner.
+          // All lists each provider once. Account and key availability lives inside it.
           const cloudRows=computersList.getByRole("region",{name:"Cloud",exact:true});
-          await cloudRows.getByRole("button",{name:"Fly.io Sprites, Personal",exact:true}).waitFor();
-          await cloudRows.getByRole("button",{name:"Model access, Personal",exact:true}).waitFor();
-          await cloudRows.getByRole("button",{name:"Fly.io Sprites, Studio",exact:true}).waitFor();
+          await cloudRows.getByRole("button",{name:"Fly.io Sprites",exact:true}).waitFor();
+          await cloudRows.getByRole("button",{name:"Model access",exact:true}).waitFor();
+          assert.equal(await cloudRows.getByRole("button",{name:"Fly.io Sprites",exact:true}).count(),1,"Fly.io has one inventory row");
+          assert.equal(await cloudRows.getByRole("button",{name:"Model access",exact:true}).count(),1,"Model access has one inventory row");
           await computersList.getByRole("region",{name:"Connected",exact:true}).getByRole("button",{name:"Personal Mac",exact:true}).waitFor();
           assert.equal(await computersList.getByRole("tab").count(),0,"Computers is one list, not tabs");
           assert.equal(await page.locator('[data-slot="pane-header"]').count(),1,"Computers uses the shared pane header");
           await page.locator('[data-slot="pane-header"]').getByRole("button",{name:"Connect a computer",exact:true}).waitFor();
-          await cloudRows.getByRole("button",{name:"Fly.io Sprites, Studio",exact:true}).click();
-          await page.waitForURL(current=>current.searchParams.get("device")==="cloud:fly-sprites" && current.searchParams.get("owner")==="team");
+          if(artifacts && !returning && !mobile) await page.screenshot({path:`${artifacts}/computers-cloud-inventory.png`});
+          await cloudRows.getByRole("button",{name:"Fly.io Sprites",exact:true}).click();
+          await page.waitForURL(current=>current.searchParams.get("device")==="cloud:fly-sprites" && !current.searchParams.has("owner"));
           await page.getByRole("heading",{name:"Fly.io Sprites",level:1,exact:true}).waitFor();
-          await page.getByText("Studio",{exact:true}).first().waitFor();
+          const organizationAccess=page.getByRole("region",{name:"Organizations",exact:true});
+          await organizationAccess.getByText("Studio",{exact:true}).waitFor();
+          await organizationAccess.getByText("Default · Reader",{exact:true}).waitFor();
+          if(artifacts && !returning && !mobile) await page.screenshot({path:`${artifacts}/computers-fly-keys.png`});
+          await page.getByRole("navigation",{name:"breadcrumb",exact:true}).getByRole("button",{name:"Computers",exact:true}).click();
+          await computersList.waitFor();
+          await cloudRows.getByRole("button",{name:"Model access",exact:true}).click();
+          await page.getByRole("heading",{name:"Model access",level:1,exact:true}).waitFor();
+          await page.getByRole("region",{name:"Organizations",exact:true}).getByText("Studio",{exact:true}).waitFor();
           await page.getByRole("navigation",{name:"breadcrumb",exact:true}).getByRole("button",{name:"Computers",exact:true}).click();
           await computersList.waitFor();
           assert.equal(await page.getByRole("button",{name:"Manage computers",exact:true}).count(),0);
@@ -1015,10 +1026,10 @@ try {
         // Settings → Computers is one list: Cloud first, then Connected.
         const computersList = page.getByRole("main", { name: "Computers", exact: true });
         const cloudList = computersList.getByRole("list", { name: "Cloud", exact: true });
-        const personalCloudRow = name => cloudList.getByRole("button", { name: `${name}, Personal`, exact: true });
+        const personalCloudRow = name => cloudList.getByRole("button", { name, exact: true });
         await personalCloudRow("Fly.io Sprites").waitFor();
         assert.deepEqual(await computersList.locator("section h2").allInnerTexts(), ["Cloud", "Connected"], "Cloud comes before Connected");
-        assert.deepEqual(await cloudList.locator('[data-slot="item-title"]').allInnerTexts(), ["Fly.io Sprites", "Modal", "Cursor Cloud", "Model access", "Model access"]);
+        assert.deepEqual(await cloudList.locator('[data-slot="item-title"]').allInnerTexts(), ["Fly.io Sprites", "Modal", "Cursor Cloud", "Model access"]);
         assert.equal(await computersList.getByRole("tab").count(), 0, "Computers is one list, not tabs");
         await computersList.getByRole("region", { name: "Connected", exact: true }).getByText("No computers connected", { exact: true }).waitFor();
         assert.equal(await page.getByRole("button", { name: "Add computer", exact: true }).count(), 0);

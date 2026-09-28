@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { KeyRound } from "lucide-react";
 import { toast } from "sonner";
 import type { ChatGPTAccount } from "@remy/contract";
@@ -21,7 +21,7 @@ export const MODEL_ACCESS_LABELS: Record<string,string> = {anthropic:"Anthropic"
 
 /// What cloud threads in one account can run. Personal holds your ChatGPT
 /// sign-in and your own keys; an organization page is a read-only inventory.
-export function HubModelAccessPage({ organizationId, owner, admin }: { organizationId: string; owner: { name: string; personal: boolean }; admin: boolean }) {
+export function HubModelAccessPage({ organizationId, owner, admin, organizationAccess }: { organizationId: string; owner: { name: string; personal: boolean }; admin: boolean; organizationAccess?: ReactNode }) {
   return <div className="mx-auto flex w-full max-w-[760px] flex-col gap-9 px-4 pt-9 pb-10 sm:px-10">
     <div className="flex min-w-0 items-center gap-3.5">
       <span className="flex size-11 shrink-0 items-center justify-center rounded-[10px] border bg-muted"><KeyRound className="size-5" /></span>
@@ -31,6 +31,7 @@ export function HubModelAccessPage({ organizationId, owner, admin }: { organizat
       </div>
     </div>
     <HubModelAccess organizationId={organizationId} owner={owner} admin={admin} />
+    {organizationAccess}
     {!owner.personal && <AvailableMemberModelAccess organizationId={organizationId} />}
   </div>;
 }
