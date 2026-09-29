@@ -32,10 +32,16 @@ const thread = {
     ] },
 };
 let reviewReady = false;
+let startInput;
 await page.routeWebSocket(/\/api\//, () => {});
 await page.route('**/api/**', (route) => {
   const path = new URL(route.request().url()).pathname;
   const base = '/api/organizations/personal';
+  if (path === `${base}/threads` && route.request().method() === 'POST') {
+    startInput = route.request().postDataJSON();
+    reviewReady = true;
+    return route.fulfill({ status: 201, json: { id, computerId: 'computer', phase: 'ready' } });
+  }
   const responses = {
     '/api/runtime': { mode: 'hub', auth: {} },
     '/api/profile': { id: 'reader', name: 'Alex' },
@@ -71,11 +77,13 @@ try {
   await page.getByRole('option', { name: 'Auto', exact: true }).click();
   await page.getByRole('button', { name: 'Permission mode: Auto', exact: true }).waitFor();
   await page.screenshot({ path: `${output}/review-permission.png` });
-  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
-  reviewReady = true;
+  await page.getByRole('button', { name: 'Start review', exact: true }).click();
+  await page.waitForURL(/\/threads\/11111111/);
+  assert.equal(startInput.permissionMode, 'auto');
+  assert.deepEqual(startInput.review, { repository: 'studio/remy', number: 42 });
+  assert.equal(await page.locator('section[aria-label="prs pane"]:visible').count(), 1);
+  assert.equal(await page.locator('section[aria-label="Thread pane"]:visible').count(), 1);
   await page.reload();
-  await page.getByRole('button', { name: 'Review agent', exact: true }).waitFor();
-  await page.getByRole('button', { name: 'Review agent', exact: true }).click();
   await page.getByRole('tab', { name: 'Review #42: Keep work in app tabs', exact: true }).first().waitFor();
   await page.getByText('The new tabs keep your pull request and review thread visible together.').waitFor();
   assert.equal(await page.locator('section[aria-label="prs pane"]:visible').count(), 1);
