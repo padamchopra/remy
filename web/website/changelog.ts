@@ -3,6 +3,7 @@
 /// first change of the day. `backticks` mark inline code.
 export const CHANGELOG: { date: string; entries: string[] }[] = [
   { date: "2026-09-30", entries: [
+    "See what each pull request is waiting on in Pull requests: its icon is coloured and its row says Draft, Checks failing, Changes requested, Checks running, Your review, Waiting for review, or Ready to merge.",
     "Watch the videos in a pull request’s description, including from a private repository.",
     "Read the whole thread on the web, and jump to a message from the marks beside it.",
     "Start a thread on a new computer. Remy creates its environment key, including when the keychain cannot ask you to approve it.",
