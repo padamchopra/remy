@@ -296,10 +296,15 @@ if (!real.realProviders) setProviderAdapterForTest({
                 const key = name.replace(/=\?$/, ""), value = _options.env?.[key];
                 return value === undefined ? `${key} is not set` : name.endsWith("=?") ? `${key}=${value}` : `${key} is set`;
               }).join(", ");
-            const reply = toolReply ?? (input.prompt.includes("approval")
+            // "in full" answers at length, at once, so a few turns carry a
+            // thread past the hub mirror and its earlier pages can be read.
+            const long = !toolReply && input.prompt.includes("in full");
+            const reply = toolReply ?? (long
+              ? Array.from({ length: 24 }, (_, index) => `Section ${index + 1}. The release notes cover the change, who it reaches, and what to check after it ships. ${"Each item names the surface it touches and the person who should confirm it. ".repeat(6)}`).join("\n\n")
+              : input.prompt.includes("approval")
               ? "I’ll ask before changing the release notes."
               : "I’m checking the release notes with your latest feedback.");
-            for (let end = 1; end <= reply.length; end += 4) {
+            for (let end = long ? reply.length : 1; end <= reply.length; end += 4) {
               if (interrupted) return;
               handlers.event({
                 type: "entry.updated",
