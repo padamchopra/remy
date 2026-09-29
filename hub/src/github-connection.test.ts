@@ -125,7 +125,7 @@ function fixture() {
         return Response.json({ data: { pr: { pullRequest: { isDraft: false } } } });
       }
       if (String(body?.query ?? "").includes("PullRequestImages")) {
-        return Response.json({ data: { repository: { pullRequest: { bodyHTML: '<table><tr><td><a href="x"><img width="190" alt="Buy sheet" src="https://private-user-images.githubusercontent.com/19776024/659476008-5C22357B-a164-4e88-9294-4c12eee8542d.png?jwt=signed&amp;v=1" style="max-width: 100%;"></a></td></tr></table><img src="https://camo.githubusercontent.com/abc" data-canonical-src="https://example.com/a.png">' } } } });
+        return Response.json({ data: { repository: { pullRequest: { bodyHTML: '<table><tr><td><a href="x"><img width="190" alt="Buy sheet" src="https://private-user-images.githubusercontent.com/19776024/659476008-5C22357B-a164-4e88-9294-4c12eee8542d.png?jwt=signed&amp;v=1" style="max-width: 100%;"></a></td></tr></table><img src="https://camo.githubusercontent.com/abc" data-canonical-src="https://example.com/a.png"><video src="https://private-user-images.githubusercontent.com/19776024/661394753-ec5bb8b1-74da-43c6-9729-3f936a0c1282.mp4?jwt=clip&amp;v=1" controls="controls" muted="muted"></video>' } } } });
       }
       const viewerPullRequests = [
         {
@@ -534,6 +534,8 @@ test("pull request images map private attachments to the signed copies for a wor
     images: {
       "https://github.com/user-attachments/assets/5c22357b-a164-4e88-9294-4c12eee8542d":
         "https://private-user-images.githubusercontent.com/19776024/659476008-5C22357B-a164-4e88-9294-4c12eee8542d.png?jwt=signed&v=1",
+      "https://github.com/user-attachments/assets/ec5bb8b1-74da-43c6-9729-3f936a0c1282":
+        "https://private-user-images.githubusercontent.com/19776024/661394753-ec5bb8b1-74da-43c6-9729-3f936a0c1282.mp4?jwt=clip&v=1",
     },
   });
   assert.equal(calls.at(-1)?.actor, "Bearer member-ada");

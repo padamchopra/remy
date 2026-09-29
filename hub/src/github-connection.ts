@@ -1388,11 +1388,12 @@ function positive(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
-const PRIVATE_ATTACHMENT = /<img\b[^>]*?\ssrc="(https:\/\/private-user-images\.githubusercontent\.com\/[^"]+)"/gi;
+const PRIVATE_ATTACHMENT = /<(?:img|video)\b[^>]*?\ssrc="(https:\/\/private-user-images\.githubusercontent\.com\/[^"]+)"/gi;
 const ATTACHMENT_ID = /-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.[a-z0-9]+$/i;
 
 /// Each private attachment's `github.com/user-attachments` address, mapped to
-/// the signed copy GitHub rendered for this reader.
+/// the signed copy GitHub rendered for this reader. A video is an attachment
+/// too: GitHub draws a bare attachment line as a `<video>` with its own copy.
 export function signedAttachmentImages(bodyHTML: string): Record<string, string> {
   const images: Record<string, string> = {};
   for (const match of bodyHTML.matchAll(PRIVATE_ATTACHMENT)) {
