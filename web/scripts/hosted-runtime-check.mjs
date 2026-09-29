@@ -490,7 +490,7 @@ try {
           await composer.waitFor();
           assert.equal(await threadPane.getByText("Studio thread",{exact:true}).count(),0,"A reload keeps the new-thread view");
           await page.goto(clean("/threads/team-thread?computer=team-computer&owner=team"));
-          await page.getByRole("main",{name:"Threads",exact:true}).getByRole("tab",{name:"Studio thread",exact:true}).waitFor();
+          await page.getByRole("tab",{name:"Studio thread",exact:true}).first().waitFor();
           assert.equal(new URL(page.url()).pathname.endsWith("/threads/team-thread"), true, "A thread address names only the thread");
           assert.equal(new URL(page.url()).search, "", "Thread URLs drop computer and owner query");
           if(artifacts)await page.screenshot({path:`${artifacts}/thread-url-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
