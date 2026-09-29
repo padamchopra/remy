@@ -437,11 +437,14 @@ export default function HubAllView({
     ? starts.find((start) => start.requestId === route.threadId || start.created?.id === route.threadId)
     : undefined;
   const remembered = route.name === "threads" && route.threadId ? cachedHubThread(route.threadId) : undefined;
+  // A remembered account only stands in until the live catalogue answers.
+  // After that, a thread the catalogue left out is unavailable.
+  const rememberedOwnerId = threadsLoaded ? undefined : remembered?.organizationId;
   const threadOwnerId = route.name === "threads" && route.threadId
     ? route.ownerOrganizationId
       ?? threads.find((thread) => thread.id === route.threadId)?.access.organizationId
       ?? pendingStart?.organizationId
-      ?? remembered?.organizationId
+      ?? rememberedOwnerId
     : route.ownerOrganizationId;
   const selectedOwner = organizations.find(
     (organization) => organization.id === threadOwnerId,
