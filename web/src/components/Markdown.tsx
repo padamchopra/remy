@@ -62,8 +62,57 @@ function DetailsSummary({ children }: { children?: ReactNode }) {
   );
 }
 
+const ATTACHMENT_URL = /^https:\/\/github\.com\/user-attachments\/assets\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const IMAGE_FILE = /\.(?:png|jpe?g|gif|webp|svg|avif)$/i;
+
+interface HastNode {
+  type: string;
+  tagName?: string;
+  value?: string;
+  properties?: { href?: unknown };
+  children?: HastNode[];
+}
+
+/// GitHub draws a paragraph holding only a bare attachment address as the
+/// video it names; images arrive as `![]()` instead. This is that address.
+function bareAttachment(node: HastNode | undefined): string | undefined {
+  const parts = node?.children?.filter((child) => child.type !== "text" || child.value?.trim()) ?? [];
+  const link = parts.length === 1 && parts[0]!.tagName === "a" ? parts[0]! : undefined;
+  const href = typeof link?.properties?.href === "string" ? link.properties.href : undefined;
+  const text = link?.children?.length === 1 && link.children[0]!.type === "text" ? link.children[0]!.value?.trim() : undefined;
+  return href && text === href && ATTACHMENT_URL.test(href) ? href : undefined;
+}
+
+function MarkdownVideo({ src }: { src: string }) {
+  const sources = useContext(ImageSources);
+  const resolved = sources?.[src.toLowerCase()] ?? sources?.[src] ?? src;
+  const [failed, setFailed] = useState<string>();
+  if (IMAGE_FILE.test(new URL(resolved).pathname)) return <p><MarkdownImage src={src} /></p>;
+  if (failed === resolved) {
+    return (
+      <p className="wrap-break-word">
+        <a data-link href={src} target="_blank" rel="noreferrer noopener" className="underline underline-offset-2 hover:text-primary">{src}</a>
+      </p>
+    );
+  }
+  return (
+    <video
+      src={resolved}
+      controls
+      muted
+      playsInline
+      preload="metadata"
+      onError={() => setFailed(resolved)}
+      className="block max-h-[640px] w-full rounded-md border border-border bg-black"
+    />
+  );
+}
+
 const COMPONENTS: Components = {
-  p: ({ children }) => <p className="wrap-break-word whitespace-pre-wrap">{children}</p>,
+  p: ({ children, node }) => {
+    const video = bareAttachment(node as HastNode | undefined);
+    return video ? <MarkdownVideo src={video} /> : <p className="wrap-break-word whitespace-pre-wrap">{children}</p>;
+  },
   h1: ({ children }) => <h1 className="mt-2 text-base font-semibold first:mt-0">{children}</h1>,
   h2: ({ children }) => <h2 className="mt-2 text-base font-semibold first:mt-0">{children}</h2>,
   h3: ({ children }) => <h3 className="mt-1 text-sm font-semibold first:mt-0">{children}</h3>,
