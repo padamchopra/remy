@@ -26,6 +26,8 @@ Each computer signs in with remy login and appears in the same account.
 
 ## Shared components
 
+The centre view holds app tabs for threads, pull requests, workspaces, and settings. A split shows at most two tabs. The sidebar and address follow the focused pane, while the other open tabs keep their state. Keep a thread's tools inside its own thread workbench.
+
 The website's product preview draws the same components as the web app with sample state. Reuse shared components and interaction patterns rather than forking a second one for a surface; a missing endpoint, separate implementation, or unfinished integration is work to complete. Missing credentials or an unavailable computer calls for a connection or availability state, not removal of a capability the web app can support.
 
 Sidebar thread rows are one of those shared surfaces. Hosted `HubThreadSidebar` and `AppSidebar` (the website preview) both render `ThreadMenu` — the same right-click `ContextMenu` and hover ⋯ `DropdownMenu`. Item order and enablement come from `threadMenuGroups` in `web/src/lib/thread-menu.ts`. A missing hosted endpoint is work to complete, not a reason to drop the item or fork the menu. Allow a difference only when the platform cannot support the action: hosted threads cannot start a subthread.

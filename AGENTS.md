@@ -166,7 +166,7 @@ A server module opens its database at import time, so a test that touches state 
   hook holding its state, a label helper — out of it, or the import that draws
   the button drags the surface back into the first load. `npm run bundle` says
   what is in the first load.
-- **A desktop thread is a workbench of tabs.** Everything open for a main thread — its transcript, each subthread, each tool — is a tab in that thread's collection (`web/src/lib/thread-workbench.ts`), shown as a strip or as panes side by side, and never mixed with another main thread's. A tool opened from the transcript lands beside it; a tab stays mounted behind the one in front, so a terminal keeps its shell. The layout is remembered per thread on this device, and the URL names only the thread in front. The transcript stays a narrow, identity-light reading column.
+- **The centre view is a collection of app tabs.** A person opens threads, pull requests, workspaces, and settings in separate tabs. One split can show two tabs side by side or top to bottom. The sidebar and URL follow the focused pane; inactive tabs stay mounted, and the layout is remembered on this device (`web/src/lib/app-tabs.ts`). A thread's own tools still live in its thread workbench (`web/src/lib/thread-workbench.ts`). The transcript stays a narrow, identity-light reading column.
 - **A person starts every thread.** There is no roster of personas, no
   conversation outside a workspace, and no schedule that sends work on its own.
   A thread is work in a repository, started by someone, running on a provider.
