@@ -5,7 +5,7 @@ import { isEnvironmentKey, type WorkspaceEnvironment as Environment, type Worksp
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "./ui/item";
-import { Avatar, AvatarFallback } from "./ui/avatar-base";
+import { PersonAvatar } from "./UserAvatar";
 import { Segmented, SegmentedItem } from "./ui/segmented-base";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip-base";
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "./ui/dialog-base";
@@ -13,7 +13,6 @@ import { Spinner } from "./ui/spinner";
 import { useHubResource } from "@/lib/hub-organization";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { parseEnvironmentText } from "@/lib/environment-text";
-import { initials } from "@/lib/pull-request-detail";
 import { apiError } from "@/lib/api-error";
 import { cn } from "@/lib/utils";
 
@@ -105,9 +104,7 @@ function ValueRow({ value, onRemove }: { value: WorkspaceEnvironmentValue; onRem
     </span>
     <Tooltip>
       <TooltipTrigger render={<span className="shrink-0" tabIndex={0} aria-label={`Added by ${value.createdBy.name}`} />}>
-        <Avatar className="size-5 bg-input">
-          <AvatarFallback className="text-[9px] font-semibold text-foreground">{initials(value.createdBy.name)}</AvatarFallback>
-        </Avatar>
+        <PersonAvatar avatar={value.createdBy.image} name={value.createdBy.name} className="size-5 bg-input" />
       </TooltipTrigger>
       <TooltipContent>Added by {value.createdBy.name}</TooltipContent>
     </Tooltip>

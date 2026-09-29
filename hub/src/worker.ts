@@ -904,7 +904,10 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         const workspaceId = decodeURIComponent(environmentPath[1]);
         await organizations.workspace(organizationId, identity.userId, workspaceId);
         const envs = new EnvironmentStore(env.DB, () => env.AUTH_SECRET.get());
-        const list = async () => Response.json({ values: await envs.list(organizationId, workspaceId, identity.userId, async (id) => (await store.profile(id))?.name || "Former member") }, { headers: { "cache-control": "no-store" } });
+        const list = async () => Response.json({ values: await envs.list(organizationId, workspaceId, identity.userId, async (id) => {
+          const profile = await store.profile(id);
+          return profile ? { name: profile.name, ...(profile.image ? { image: profile.image } : {}) } : { name: "Former member" };
+        }) }, { headers: { "cache-control": "no-store" } });
         if (!environmentPath[2] && request.method === "GET") return list();
         if (!allowedRequestOrigin(request, env.PREVIEW_ORIGINS)) return jsonError("Manage workspace values in Remy.", 403);
         let changed: { workspace: boolean; personal: boolean };

@@ -12,7 +12,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { apiError } from "@/lib/api-error";
 import { hubRequest, HubRequestError, hubThreadBase } from "@/lib/hub-threads";
 import { stripMarkdownHtmlComments } from "@/lib/markdown-html-comments";
-import { initials } from "@/lib/pull-request-detail";
+import { PersonAvatar } from "@/components/UserAvatar";
 import { cn } from "@/lib/utils";
 
 /// A pull request write goes through the hub with the member's own GitHub
@@ -266,9 +266,5 @@ export function RequestReviewers({
 
 /// A reviewer's mark: their initials in a small well.
 export function ReviewerInitials({ name }: { name: string }) {
-  return (
-    <span aria-hidden className="flex size-5 shrink-0 items-center justify-center rounded-full bg-foreground/10 text-[9px] leading-3 font-semibold text-foreground/75">
-      {initials(name)}
-    </span>
-  );
+  return <PersonAvatar aria-hidden avatar="" name={name} className="size-5 bg-foreground/10" fallbackClassName="bg-transparent text-foreground/75" />;
 }

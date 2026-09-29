@@ -15,7 +15,9 @@ function database() {
   for (const [org, id] of [["org", "api"], ["org", "web"], ["other", "api-2"]]) sqlite.prepare("INSERT INTO organization_workspaces(id,organization_id,name,origin,created_at,updated_at) VALUES(?,?,?,?,?,?)").run(id, org, id, `github.com/example/${id}`, at, at);
   return { db, sqlite, store: new EnvironmentStore(db, async () => "disposable-root-secret") };
 }
-const names = async (id: string) => (id === "ada" ? "Ada Lovelace" : "Ben Ng");
+const people = async (id: string) => id === "ada"
+  ? { name: "Ada Lovelace", image: "https://example.test/ada.jpg" }
+  : { name: "Ben Ng" };
 
 test("the migration drops named environments and creates one table per scope", () => {
   const { sqlite } = database();
@@ -42,12 +44,13 @@ test("another member's thread gets Ada's Workspace secret but never her Personal
   assert.deepEqual((await store.forThread("other", "api-2", "ben")).values, {});
   assert.deepEqual((await store.forThread("org", "api", "ada")).secrets.sort(), ["DATABASE_URL", "OPENAI_API_KEY"]);
 
-  const seenByBen = await store.list("org", "api", "ben", names);
+  const seenByBen = await store.list("org", "api", "ben", people);
   assert.deepEqual(seenByBen.map((value) => value.key), ["DATABASE_URL", "LOG_LEVEL"]);
   assert.ok(!JSON.stringify(seenByBen).includes("test-shared-secret"));
   assert.equal(seenByBen.find((value) => value.key === "LOG_LEVEL")?.value, "debug");
   assert.equal(seenByBen[0].createdBy.name, "Ada Lovelace");
-  const seenByAda = await store.list("org", "api", "ada", names);
+  assert.equal(seenByBen[0].createdBy.image, "https://example.test/ada.jpg");
+  const seenByAda = await store.list("org", "api", "ada", people);
   assert.ok(!JSON.stringify(seenByAda).includes("test-ada-personal"));
   assert.ok(!JSON.stringify(sqlite.prepare("SELECT * FROM workspace_environment_values").all()).includes("test-shared-secret"));
   assert.ok(!JSON.stringify(sqlite.prepare("SELECT * FROM personal_environment_values").all()).includes("test-ada-personal"));
@@ -60,15 +63,15 @@ test("anyone removes a Workspace value, but only its owner removes a Personal on
     { key: "SHARED", value: "one", kind: "variable", scope: "workspace" },
     { key: "MINE", value: "two", kind: "variable", scope: "personal" },
   ] });
-  const [shared, mine] = await store.list("org", "api", "ada", names);
+  const [shared, mine] = await store.list("org", "api", "ada", people);
   assert.equal(shared.removable, true);
   assert.equal(mine.removable, true);
-  assert.equal((await store.list("org", "api", "ben", names))[0].removable, true);
+  assert.equal((await store.list("org", "api", "ben", people))[0].removable, true);
   await assert.rejects(store.remove("org", "api", "ben", mine.id), (error: unknown) => error instanceof EnvironmentError && error.status === 404);
   assert.deepEqual((await store.forThread("org", "web", "ada")).values, { MINE: "two" });
   assert.equal(await store.remove("org", "api", "ben", shared.id), "workspace");
   assert.equal(await store.remove("org", "api", "ada", mine.id), "personal");
-  assert.deepEqual(await store.list("org", "api", "ada", names), []);
+  assert.deepEqual(await store.list("org", "api", "ada", people), []);
   sqlite.close();
 });
 
@@ -79,12 +82,12 @@ test("a Workspace value wins over a Personal one with the same key, and a key re
   await store.add("org", "api", "ben", { values: [{ key: "API_URL", value: "https://shared.test", kind: "variable", scope: "workspace" }] });
   assert.equal((await store.forThread("org", "api", "ada")).values.API_URL, "https://shared.test");
   assert.equal((await store.forThread("org", "web", "ada")).values.API_URL, "https://mine.test");
-  const listed = await store.list("org", "api", "ada", names);
+  const listed = await store.list("org", "api", "ada", people);
   assert.deepEqual(listed.map((value) => [value.scope, value.overridden ?? false]), [["personal", true], ["workspace", false]]);
-  assert.equal((await store.list("org", "web", "ada", names))[0].overridden, undefined);
+  assert.equal((await store.list("org", "web", "ada", people))[0].overridden, undefined);
 
   await store.add("org", "api", "ada", { values: [{ key: "API_URL", value: "test-replaced", kind: "secret", scope: "workspace" }] });
-  const replaced = (await store.list("org", "api", "ben", names)).filter((value) => value.key === "API_URL");
+  const replaced = (await store.list("org", "api", "ben", people)).filter((value) => value.key === "API_URL");
   assert.equal(replaced.length, 1);
   assert.equal(replaced[0].kind, "secret");
   assert.equal(replaced[0].value, undefined);

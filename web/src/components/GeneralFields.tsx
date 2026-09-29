@@ -7,7 +7,7 @@ import { Button } from "./ui/button";
 import { Field, FieldContent, FieldDescription, FieldLabel } from "./ui/field";
 import { Switch } from "./ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "./ui/dialog";
-import { AvatarFrom, PresetAvatar } from "./UserAvatar";
+import { PersonAvatar, PresetAvatar } from "./UserAvatar";
 import { AVATAR_PRESETS, isImageAvatar, readAvatarFile } from "@/lib/avatars";
 import { apiError } from "@/lib/api-error";
 import { cn } from "@/lib/utils";
@@ -60,7 +60,7 @@ export function AvatarField({ avatar, onSave, onGithub }: { avatar: string; onSa
         </FieldDescription>
       </FieldContent>
       <div className="flex shrink-0 items-center gap-2">
-        <AvatarFrom avatar={avatar} />
+        <PersonAvatar avatar={avatar} />
         <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
           Change
         </Button>

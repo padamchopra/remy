@@ -21,6 +21,14 @@ const call = async (path, method = "GET", body, user = "ada") => {
   });
   return { status: response.status, body: response.status === 204 ? null : await response.json() };
 };
+const saveProfile = async (body, user = "ada") => {
+  const response = await fetch(`${info.hubUrl}/api/profile`, {
+    method: "PATCH",
+    headers: { authorization: `Bearer ${info.tokens[user]}`, "content-type": "application/json", origin: info.hubUrl },
+    body: JSON.stringify(body),
+  });
+  assert.equal(response.status, 200, await response.text());
+};
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Values reach a thread through the hub workspace with the computer's origin.
@@ -39,6 +47,7 @@ const open = async (user, viewport = { width: 1280, height: 900 }) => {
   return { context, page, errors };
 };
 try {
+  await saveProfile({ image: "https://github.com/octocat.png" });
   const ada = await open("ada");
   const { page } = ada;
   await page.goto(route);
@@ -76,6 +85,7 @@ try {
   await dialog.getByRole("button", { name: "Add values", exact: true }).click();
   await dialog.waitFor({ state: "hidden" });
   await page.getByText("OPENAI_API_KEY", { exact: true }).waitFor();
+  await page.locator('[role="listitem"]', { hasText: "OPENAI_API_KEY" }).locator("img").waitFor();
 
   // Grace adds a Workspace value from her own session; Ada's view refreshes.
   const graceAdd = await call(path, "POST", { values: [{ key: "SENTRY_DSN", value: "https://sample@sentry.test/1", kind: "variable", scope: "workspace" }] }, "grace");
