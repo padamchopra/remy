@@ -5,6 +5,7 @@ import type {
 } from "@remy/contract";
 import type { Route } from "@/lib/route";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
+import { cachedHubThread } from "@/lib/hub-thread-cache";
 import { useThreadStarts } from "@/lib/hub-thread-start";
 import { watchHubResource } from "@/lib/hub-computers";
 import { cacheHubWorkspaces, cachedHubWorkspaces, hasCachedHubWorkspaces } from "@/lib/hub-workspace-cache";
@@ -419,21 +420,28 @@ export default function HubAllView({
   navigate,
   threads = [],
   threadsLoaded = true,
+  accountsLoaded = true,
 }: {
   organizations: Organization[];
   route: Route;
   navigate: (route: Route) => void;
   threads?: HubThread[];
   threadsLoaded?: boolean;
+  /// False while Personal and the organization list are still arriving. A
+  /// remembered thread can paint before those catalogues, but not before the
+  /// account it belongs to is known.
+  accountsLoaded?: boolean;
 }) {
   const starts = useThreadStarts();
   const pendingStart = route.name === "threads" && route.threadId
     ? starts.find((start) => start.requestId === route.threadId || start.created?.id === route.threadId)
     : undefined;
+  const remembered = route.name === "threads" && route.threadId ? cachedHubThread(route.threadId) : undefined;
   const threadOwnerId = route.name === "threads" && route.threadId
     ? route.ownerOrganizationId
       ?? threads.find((thread) => thread.id === route.threadId)?.access.organizationId
       ?? pendingStart?.organizationId
+      ?? remembered?.organizationId
     : route.ownerOrganizationId;
   const selectedOwner = organizations.find(
     (organization) => organization.id === threadOwnerId,
@@ -445,7 +453,7 @@ export default function HubAllView({
       organizationId: "all",
       ...(next.name === "threads" && next.threadId ? {} : { ownerOrganizationId: next.organizationId ?? selectedOwner?.id }),
     });
-  if (route.name === "threads" && route.threadId && !threadsLoaded && !pendingStart && !route.ownerOrganizationId)
+  if (route.name === "threads" && route.threadId && !threadsLoaded && !pendingStart && !route.ownerOrganizationId && !remembered)
     return <div className="flex min-h-0 flex-1 items-center justify-center"><Spinner aria-label="Loading threads" /></div>;
   // Computers is the person's account-wide inventory. Organization grants
   // are configured under Organizations and appear here only as read-only
@@ -461,7 +469,9 @@ export default function HubAllView({
     );
   }
   if (threadOwnerId && !selectedOwner)
-    return <EmptyState title="This account is unavailable" />;
+    return accountsLoaded
+      ? <EmptyState title="This account is unavailable" />
+      : <div className="flex min-h-0 flex-1 items-center justify-center"><Spinner aria-label="Loading threads" /></div>;
   if (route.name === "threads" && route.threadId && !selectedOwner)
     return <EmptyState title="This thread is unavailable" />;
   if (selectedOwner)

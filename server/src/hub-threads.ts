@@ -36,7 +36,7 @@ import { closeTerminal } from "./terminal.js";
 import { getKv, setKv } from "./db.js";
 import { broadcast } from "./notify.js";
 import { checkoutReviewWorktree, checkoutWorkspaceBranch, listWorkspaces } from "./workspaces.js";
-import type { ChatCodeReference, ChatImageAttachment } from "./transcript.js";
+import type { ChatCodeReference, ChatImageAttachment, ConvEntry } from "./transcript.js";
 import { validateChatCodeReferences } from "./chat-references.js";
 import { removeWorktree } from "./git.js";
 import { forgetThreadReview, movedHeadContext, parseHubReview, setThreadReview, threadReview, updatedRulesContext } from "./review-agent.js";
@@ -80,6 +80,35 @@ export function shareHubThread(
   broadcast({ type: "hub-thread", chatId: id });
 }
 
+const HUB_MIRROR_BYTES = 96_000;
+
+function heartbeat(entry: ConvEntry): boolean {
+  return entry.kind === "tool" && Boolean(entry.activity)
+    && !entry.verb && !entry.tool && !entry.arg && !entry.output && !entry.text
+    && !entry.diff?.length && !entry.file;
+}
+
+/// The hub keeps a 96 KB mirror of a thread. Activity heartbeats are not drawn
+/// in that column; left in the budget, they push the words off the front until
+/// the column is shorter than the screen and will not scroll. Thinking goes
+/// before a message or a tool call when the mirror still has to shrink.
+export function fitHubMirror<T extends { entries: ConvEntry[] }>(detail: T, byteLimit = HUB_MIRROR_BYTES): T {
+  detail.entries = detail.entries.flatMap((entry) => {
+    if (heartbeat(entry)) return [];
+    if (!entry.activity) return [entry];
+    const { activity: _activity, ...rest } = entry;
+    return [rest];
+  });
+  const over = () => Buffer.byteLength(JSON.stringify(detail)) > byteLimit;
+  while (over()) {
+    const thinking = detail.entries.findIndex((entry) => entry.kind === "thinking");
+    if (thinking < 0) break;
+    detail.entries.splice(thinking, 1);
+  }
+  while (detail.entries.length && over()) detail.entries.shift();
+  return detail;
+}
+
 export function hubThreadSnapshot(
   id: string,
   organizationId: string,
@@ -88,14 +117,20 @@ export function hubThreadSnapshot(
   const detail = getChatWindow(id, 8);
   if (!access || access.organizationId !== organizationId || !detail)
     return undefined;
+  // A tool-heavy turn whose opening message has already rolled out of storage
+  // has no user row, so the eight-turn window keeps only a short tail. That
+  // tail fits on screen and the thread cannot scroll. Read the stored turn.
+  const stored = detail.history?.hasEarlier && !detail.entries.some((entry) => entry.kind === "user")
+    ? getChat(id)
+    : undefined;
+  if (stored) {
+    detail.entries = stored.entries.slice();
+    detail.history = undefined;
+  }
   const revisionKey = `hubThreadRevision:${id}`;
   const revision = (getKv<number>(revisionKey) ?? 0) + 1;
   setKv(revisionKey, revision);
-  while (
-    detail.entries.length &&
-    Buffer.byteLength(JSON.stringify(detail)) > 96_000
-  )
-    detail.entries.shift();
+  fitHubMirror(detail);
   const branchState = `${detail.cwd}:${detail.state}`;
   const refreshBranch = branchStates.get(id) !== branchState;
   branchStates.set(id, branchState);

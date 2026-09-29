@@ -32,7 +32,7 @@ test("a fresh Sprite installs Remy when the entrypoint does not exist", async ()
     computerId: "fresh", organizationId: "org", image: "image", archive: "https://example.com/runtime.tar.gz", environment: {}, allowedDomains: [],
     settings: { enabled: true, provider: "fly-sprites", cpu: 1, memoryMiB: 1024, region: "", idleMinutes: 12, maxComputers: 5 },
   });
-  assert.deepEqual(calls, ["test", "curl", "tar", "setpriv"]);
+  assert.deepEqual(calls, ["test", "curl", "tar", "mkdir", "chmod", "setpriv"]);
 });
 
 test("Fly drops inherited capabilities without disabling the provider sandbox", async () => {
@@ -43,6 +43,14 @@ test("Fly drops inherited capabilities without disabling the provider sandbox", 
   }};
   await new FlySpritesRuntime({sprite: () => sprite} as unknown as SpritesClient).start({id: "one", provider: "fly-sprites", providerReference: "one"}, {environment: {SAFE: "value"}, allowedDomains: []} as unknown as ProvisionComputerInput);
   assert.deepEqual(command, {file: "setpriv", args: ["--inh-caps=-all", "--ambient-caps=-all", "--", "node", "-e"], options: {env: {SAFE: "value"}}});
+});
+
+test("Fly reports the guest boot log without credentials", async () => {
+  const sprite = { updateNetworkPolicy: async () => {}, execFile: async () => { throw new ExecError("Command failed with exit code 1", { exitCode: 1, stdout: "token=secret", stderr: "fatal: could not read the repository\n" }); } };
+  await assert.rejects(new FlySpritesRuntime({ sprite: () => sprite } as unknown as SpritesClient).start({ id: "one", provider: "fly-sprites", providerReference: "one" }, { environment: {}, allowedDomains: [] } as unknown as ProvisionComputerInput), error => {
+    assert.equal((error as Error).message, "Computer entrypoint failed. fatal: could not read the repository");
+    return true;
+  });
 });
 
 test("Fly failures expose the operation and status without credential-bearing SDK text", async () => {

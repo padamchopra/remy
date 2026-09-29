@@ -29,6 +29,7 @@ import {
   watchHubThreads,
 } from "@/lib/hub-threads";
 import { watchHubResource } from "@/lib/hub-computers";
+import { cachedHubThread, clearHubThreadCache } from "@/lib/hub-thread-cache";
 import { requestComposerWorkspace } from "@/lib/composer-workspace";
 import { currentLocation, listenToLocationChanges, navigateLocation, normalizeLocation, parseLocation, type Route } from "@/lib/route";
 import { apiError } from "@/lib/api-error";
@@ -94,6 +95,11 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [personal, setPersonal] = useState<Organization>();
   const [threadsLoaded, setThreadsLoaded] = useState(false);
+  const openThread = (id?: string): HubThread[] => {
+    if (!id) return [];
+    const cached = cachedHubThread(id);
+    return cached ? [cached.thread] : [];
+  };
   const [profile, setProfile] = useState<{ id: string; name: string; image?: string }>();
   const liveProfile = useHubProfile(route.organizationId === "all" ? personal?.id ?? "personal" : route.organizationId ?? "personal").profile;
   const shownProfile = liveProfile ?? profile;
@@ -101,7 +107,10 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
   const [signedOut, setSignedOut] = useState(false);
   const [error, setError] = useState("");
   const [threadError, setThreadError] = useState("");
-  const [threads, setThreads] = useState<HubThread[]>([]);
+  const [threads, setThreads] = useState<HubThread[]>(() => {
+    const initial = normalizeLocation().route;
+    return initial.name === "threads" ? openThread(initial.threadId) : [];
+  });
   const [create, setCreate] = useState(false);
   const [addingWorkspace, setAddingWorkspace] = useState(false);
   const [notificationsAccount, setNotificationsAccount] = useState<string>();
@@ -127,7 +136,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
       setError("");
       setSignedOut(false);
     } catch (e) {
-      if (e instanceof HubRequestError && e.status === 401) setSignedOut(true);
+      if (e instanceof HubRequestError && e.status === 401) { clearHubThreadCache(); setSignedOut(true); }
       else setError(apiError(e));
     } finally {
       setLoaded(true);
@@ -161,7 +170,11 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
   const contextIds = contexts.map(o => o.id).join(",");
   const isPersonal = organization?.personal === true;
   useEffect(() => {
-    setThreads([]);
+    setThreads((current) => {
+      const open = route.name === "threads" ? openThread(route.threadId) : [];
+      if (isAll) return current.length ? current : open;
+      return open.filter((thread) => thread.access.organizationId === organization?.id);
+    });
     setThreadsLoaded(false);
     setError("");
     setThreadError("");
@@ -369,7 +382,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               label: "Sign out",
               icon: LogOut,
               onSelect: () => void hubRequest("/api/sessions/current", "DELETE")
-                .then(() => { setPersonal(undefined); setOrganizations([]); setThreads([]); setSignedOut(true); })
+                .then(() => { clearHubThreadCache(); setPersonal(undefined); setOrganizations([]); setThreads([]); setSignedOut(true); })
                 .catch((e) => setError(apiError(e))),
             }],
           }}
@@ -449,7 +462,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                 : { name: "workspaces", workspaceId, organizationId })}
             /></Deferred></div>
           ) : isAll ? (
-            <Deferred open><AllView organizations={contexts} route={route} navigate={navigate} threads={threads} threadsLoaded={threadsLoaded} /></Deferred>
+            <Deferred open><AllView organizations={contexts} route={route} navigate={navigate} threads={threads} threadsLoaded={threadsLoaded} accountsLoaded={loaded} /></Deferred>
           ) : (
             <div key={organization.id} className="flex min-h-0 flex-1 flex-col">
               <div hidden={section !== "general"} className="min-h-0 overflow-auto px-5 py-6"><Deferred open={section === "general"}><GeneralSettings organizationId={organization.id} /></Deferred></div>
