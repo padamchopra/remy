@@ -6,6 +6,7 @@ import {
   focusAppTab,
   navigateAppTab,
   newAppTabs,
+  openAppTabBeside,
   splitAppTab,
 } from '../src/lib/app-tabs.ts';
 
@@ -16,6 +17,18 @@ test('each tab keeps its route while the focused tab changes', () => {
   assert.deepEqual(third.tabs.map((tab) => tab.route.name), ['threads', 'prs', 'settings']);
   assert.equal(focusAppTab(third, first.focused).tabs[2].route.name, 'settings');
   assert.equal(focusAppTab(third, first.focused).focused, first.focused);
+});
+
+test('a review thread opens beside its pull request and keeps the detail on the left', () => {
+  const first = newAppTabs({ name: 'prs', repository: 'owner/repo', number: 42 });
+  const other = addAppTab(first, { name: 'settings', tab: 'general' });
+  const review = { name: 'threads', threadId: 'review-42' };
+  const split = openAppTabBeside(other, first.focused, review);
+  assert.equal(split.split?.first, first.focused);
+  assert.equal(split.tabs.find((tab) => tab.id === split.split?.first)?.route.name, 'prs');
+  assert.deepEqual(split.tabs.find((tab) => tab.id === split.split?.second)?.route, review);
+  assert.equal(split.focused, split.split?.second);
+  assert.equal(openAppTabBeside(split, first.focused, review).tabs.length, 3);
 });
 
 test('a split has two panes and moves focus with the chosen tab', () => {

@@ -191,14 +191,13 @@ export function stackDependencies(findings: readonly ReviewFinding[]) {
 
 const PANE_KEY = "remy:review-agent-pane";
 
-/// Whether the review agent pane is open on this pull request, on this
-/// device. Open until you close it.
+/// Whether the findings pane is open on this pull request, on this device.
 export function reviewPaneOpen(repository: string, number: number): boolean {
   try {
     const saved = JSON.parse(localStorage.getItem(PANE_KEY) ?? "{}") as Record<string, boolean>;
-    return saved[`${repository.toLowerCase()}#${number}`] !== false;
+    return saved[`${repository.toLowerCase()}#${number}`] === true;
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -206,9 +205,9 @@ export function rememberReviewPane(repository: string, number: number, open: boo
   try {
     const saved = JSON.parse(localStorage.getItem(PANE_KEY) ?? "{}") as Record<string, boolean>;
     const key = `${repository.toLowerCase()}#${number}`;
-    if (open) delete saved[key]; else saved[key] = false;
+    if (open) saved[key] = true; else delete saved[key];
     const keys = Object.keys(saved);
-    // Only closed panes are written down; the oldest go first past a few hundred.
+    // Only open panes are written down; the oldest go first past a few hundred.
     for (const old of keys.slice(0, Math.max(0, keys.length - 300))) delete saved[old];
     localStorage.setItem(PANE_KEY, JSON.stringify(saved));
   } catch {

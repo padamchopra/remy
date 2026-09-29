@@ -35,7 +35,7 @@ import { watchHubResource } from "@/lib/hub-computers";
 import { cachedHubThread, clearHubThreadCache } from "@/lib/hub-thread-cache";
 import { requestComposerWorkspace } from "@/lib/composer-workspace";
 import { currentLocation, listenToLocationChanges, navigateLocation, normalizeLocation, parseLocation, type Route } from "@/lib/route";
-import { addAppTab, closeAppTab, focusAppTab, navigateAppTab, readAppTabs, saveAppTabs, splitAppTab, type AppTabs } from "@/lib/app-tabs";
+import { addAppTab, closeAppTab, focusAppTab, navigateAppTab, openAppTabBeside, readAppTabs, saveAppTabs, splitAppTab, type AppTabs } from "@/lib/app-tabs";
 import { apiError } from "@/lib/api-error";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -341,7 +341,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
         },
       ]
     : [];
-  const renderPane = (paneRoute: Route) => {
+  const renderPane = (paneRoute: Route, paneId: string) => {
     const route = paneRoute;
     const organizationId = route.organizationId ?? "all";
     const isAll = organizationId === "all";
@@ -423,6 +423,11 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               onSelect={(address) => navigate({ name: "prs", organizationId: route.organizationId, ...address })}
               hubThreads={paneThreads}
               onOpenHubThread={(thread) => navigate({ name: "threads", organizationId, threadId: thread.id })}
+              onOpenReviewThread={(threadId, ownerOrganizationId) => {
+                const next = openAppTabBeside(appTabs, paneId, { name: "threads", organizationId: ownerOrganizationId, threadId });
+                changeTabs(() => next);
+                navigateLocation({ route: next.tabs.find((tab) => tab.id === next.focused)!.route });
+              }}
               onStartThread={() => navigate({ name: "threads", organizationId })}
               onConnectGitHub={() => navigate({ name: "settings", tab: "connections", organizationId })}
               onOpenHostedWorkspace={(owner, workspaceId) => navigate(isAll
@@ -580,7 +585,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               if (!tab) return null;
               const visible = tab.id === appTabs.focused || tab.id === appTabs.split?.first || tab.id === appTabs.split?.second;
               return <section key={tab.id} aria-label={tab.route.name === "threads" ? "Thread pane" : `${tab.route.name} pane`} onPointerDownCapture={() => { if (tab.id !== appTabs.focused) focusTab(tab.id); }} onFocusCapture={() => { if (tab.id !== appTabs.focused) focusTab(tab.id); }} className={visible ? `flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${appTabs.split && tab.id !== appTabs.focused ? "max-md:hidden" : ""} ${appTabs.split && tab.id !== appTabs.split.first ? appTabs.split.direction === "horizontal" ? "border-border md:border-l" : "border-border md:border-t" : ""}` : "hidden"}>
-                {renderPane(tab.route)}
+                {renderPane(tab.route, tab.id)}
               </section>;
             })}
           </div>

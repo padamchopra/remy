@@ -3,6 +3,7 @@
 /// first change of the day. `backticks` mark inline code.
 export const CHANGELOG: { date: string; entries: string[] }[] = [
   { date: "2026-09-30", entries: [
+    "Choose the review agent’s permission mode when you start it, and keep the pull request beside its review thread in a split tab.",
     "Keep threads, pull requests, workspaces, and settings in tabs, split two at once, and have the sidebar follow the pane you use.",
     "See what each pull request is waiting on in Pull requests: its icon is coloured and its row says Draft, Checks failing, Changes requested, Checks running, Your review, Waiting for review, or Ready to merge.",
     "Watch the videos in a pull request’s description, including from a private repository.",

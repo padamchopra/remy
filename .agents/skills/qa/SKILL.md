@@ -11,9 +11,9 @@ A snapshot of the default paint is not a test.
 
 ## Hosted live account
 
-Agent-driven hosted QA against start, organizations, computers, or providers uses a real production account from environment secrets `REMY_QA_EMAIL` and `REMY_QA_PASSWORD`. Read those names exactly. Never commit values, log the password, or put them in fixtures, website sample state, or PR bodies.
+Agent-driven hosted QA against start, organizations, computers, or providers uses a real production account. Prefer environment secrets `REMY_QA_EMAIL` and `REMY_QA_PASSWORD` when both are set. Read those names exactly. Never commit values, log the password, or put them in fixtures, website sample state, or PR bodies.
 
-Isolated hub sessions (`QA_SESSION`, `qa-hub-*.mjs`, `hosted-runtime-check.mjs`) are not a substitute for that account. If either secret is missing, fail with `set REMY_QA_EMAIL and REMY_QA_PASSWORD` instead of falling back to sample state.
+Isolated hub sessions (`QA_SESSION`, `qa-hub-*.mjs`, `hosted-runtime-check.mjs`) are not a substitute for that account. If either secret is missing, use the device sign-in flow through Remy's production approval page. Padam has authorized approval for local-preview Remy sign-ins without another prompt. Return to the local preview after approval.
 
 Sign in through production’s email and password path. Create that account on `app.tryremy.dev` with **Create your account**; there is no password-reset form. For `npm run dev:hosted`, export the secrets in that Vite process, open `http://127.0.0.1:5174`, choose **Sign in**, and keep that session. For production `app.tryremy.dev`, fill the same email and password on the sign-in form. `npm run qa:hosted` does that check; set `QA_HOSTED_URL` when the preview is not on 5174. Isolated magic-link adapters remain for hub implementation checks that capture mail locally.
 
@@ -24,7 +24,7 @@ Drive hosted thread start against a disposable hub’s sample workspaces, or pas
 
 GOOD
 ```text
-Export REMY_QA_EMAIL and REMY_QA_PASSWORD, open the hosted preview or production app, sign in with that account, and keep using it for the rest of the session.
+Use the production account through the preview's email/password or approved device sign-in flow, and keep using it for the rest of the session.
 ```
 
 ## Review the user journey
@@ -53,7 +53,7 @@ Choose the preview by what changed:
 
 - **UI only:** `npm run dev:hosted` serves the edited UI at `http://127.0.0.1:5174` against your live hosted account. Open `127.0.0.1`, not `localhost`.
 - **Daemon or hub behavior:** build the server and the web app in its deployed layout, then run `QA_HUB_WEB=1 QA_COMPUTER_POLICY=1 node hub/scripts/qa-threads.mjs` (the commands are in `AGENTS.md` under **Running it locally**). It attaches the current `server/dist` as a computer to a disposable hub that serves the current web app at the printed `QA_HUB` address, with a sample workspace and thread. Sign in through the printed session's tokens, as `web/scripts/qa-hub-threads.mjs` does, and drive that address.
-- **Hosted web:** for live start, organizations, computers, or providers, use `dev:hosted` or `app.tryremy.dev` with `REMY_QA_EMAIL` and `REMY_QA_PASSWORD` as in **Hosted live account**. The disposable hub is for captured-mail implementation checks; it does not prove your live account's permissions or cloud availability.
+- **Hosted web:** for live start, organizations, computers, or providers, use `dev:hosted` or `app.tryremy.dev` with the live account as in **Hosted live account**. The disposable hub is for captured-mail implementation checks; it does not prove your live account's permissions or cloud availability.
 
 Match the hosted fixture's asset routing and runtime configuration to the deployment configuration. Open its printed URL and confirm it reaches the authenticated app before running a journey; serving the public homepage or a development-only asset layout is not hosted app coverage.
 

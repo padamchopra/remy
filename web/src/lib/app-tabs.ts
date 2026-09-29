@@ -72,6 +72,17 @@ export function splitAppTab(value: AppTabs, direction: "horizontal" | "vertical"
     split: { direction, first: value.focused, second: next } };
 }
 
+export function openAppTabBeside(value: AppTabs, sourceId: string, route: Route): AppTabs {
+  if (!value.tabs.some((tab) => tab.id === sourceId)) return value;
+  const existing = value.tabs.find((tab) => JSON.stringify(tab.route) === JSON.stringify(route) && tab.id !== sourceId);
+  const next = existing?.id ?? id();
+  return {
+    tabs: existing ? value.tabs : [...value.tabs, { id: next, route }],
+    focused: next,
+    split: { direction: "horizontal", first: sourceId, second: next },
+  };
+}
+
 export function closeAppTab(value: AppTabs, tabId: string): AppTabs {
   if (value.tabs.length === 1) return value;
   const index = value.tabs.findIndex((tab) => tab.id === tabId);

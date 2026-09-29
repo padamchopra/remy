@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Menu, MenuContent, MenuGroup, MenuGroupLabel, MenuItem, MenuItemCheck, MenuTrigger } from "@/components/ui/menu-base";
 import { PopoverDescription, PopoverTitle } from "@/components/ui/popover-base";
 import { ModelPickerButton } from "@/components/ModelPicker";
+import { PermissionPicker } from "@/components/PermissionPicker";
+import type { PermissionValue } from "@/lib/chat-options";
 import type { ModelAccessResponse } from "@/components/HubModelAccess";
 import { startHubThread } from "@/lib/hub-thread-start";
 import { useHubStartChoice, type StartPreference } from "@/lib/hub-start-choice";
@@ -92,6 +94,7 @@ export function ReviewAgentStart({
     workspaceOrigin: workspace?.origin, preferred: last, exclude,
   });
   const [focus, setFocus] = useState("");
+  const [permissionMode, setPermissionMode] = useState<PermissionValue>("default");
   const access = useHubResource<ModelAccessResponse>(organizationId, "/model-access");
   const name = workspace?.name ?? repositoryName(repository);
   const cloudAccess = (access.value?.providers ?? []).some((entry) => entry.enabled && entry.configured);
@@ -108,6 +111,7 @@ export function ReviewAgentStart({
       message,
       // A review is yours: its findings and rules are, so its thread starts private.
       visibility: "private",
+      permissionMode: choice.selected === CURSOR_CLOUD_COMPUTER_ID && permissionMode !== "plan" ? "default" : permissionMode,
       review: { repository, number: target.number },
       ...choice.executionChoice,
     });
@@ -195,6 +199,16 @@ export function ReviewAgentStart({
           ) : (
             <span className={cn(FIELD, "text-muted-foreground")}><span className="shimmer">Choosing a model</span></span>
           )}
+        </div>
+        <div className="flex h-[30px] shrink-0 items-center gap-2.5">
+          <span className="w-[72px] shrink-0 text-xs leading-4 text-foreground/70">Permission</span>
+          <PermissionPicker
+            value={choice.selected === CURSOR_CLOUD_COMPUTER_ID && permissionMode !== "plan" ? "default" : permissionMode}
+            cloud={choice.selected === CURSOR_CLOUD_COMPUTER_ID}
+            onChange={setPermissionMode}
+            description="Applies to this review thread."
+            className={FIELD}
+          />
         </div>
       </div>
       <textarea

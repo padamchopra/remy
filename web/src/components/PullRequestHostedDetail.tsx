@@ -1,4 +1,4 @@
-import { lazy, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ArrowRight,
   CircleCheck,
@@ -321,6 +321,7 @@ export function PullRequestHostedDetail({
   canOpen,
   onOpen,
   onOpenThread,
+  onOpenReviewThread,
   onOpenWorkspace,
   onChanged,
   view,
@@ -336,6 +337,7 @@ export function PullRequestHostedDetail({
   canOpen: (number: number) => boolean;
   onOpen: (number: number) => void;
   onOpenThread: (thread: HubThread) => void;
+  onOpenReviewThread: (threadId: string) => void;
   onOpenWorkspace?: (organizationId: string, workspaceId: string) => void;
   /// Something here changed the pull request; the list reads GitHub again.
   onChanged: () => void;
@@ -378,6 +380,8 @@ export function PullRequestHostedDetail({
     && entry.review.repository.toLowerCase() === pullRequest.repository.toLowerCase()
     && entry.review.number === pullRequest.number).at(-1), [starts, organizationId, pullRequest.repository, pullRequest.number]);
   const starting = review ? undefined : start;
+  const [launchedRequestId, setLaunchedRequestId] = useState<string>();
+  const openedRequestId = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (start && review && start.created?.id === review.threadId) forgetThreadStart(start.requestId);
   }, [start, review]);
@@ -395,6 +399,12 @@ export function PullRequestHostedDetail({
     setDesktopPane(open);
     rememberReviewPane(pullRequest.repository, pullRequest.number, open);
   };
+  useEffect(() => {
+    if (!launchedRequestId || start?.requestId !== launchedRequestId || start.phase !== "ready" || !start.created?.id || openedRequestId.current === launchedRequestId) return;
+    openedRequestId.current = launchedRequestId;
+    showPane(false);
+    onOpenReviewThread(start.created.id);
+  }, [launchedRequestId, start, onOpenReviewThread]);
   const rules = useReviewRules(organizationId, pullRequest.repository, reviewing || paneShown);
   const [focusFinding, setFocusFinding] = useState<{ id: string; at: number }>();
   const showFinding = useCallback((finding: ReviewFinding) => {
@@ -475,9 +485,12 @@ export function PullRequestHostedDetail({
                 state={starting ? (starting.phase === "failed" ? "idle" : "working") : reviewThread?.detail.state}
                 paneOpen={paneShown}
                 rules={rules.rules}
-                onTogglePane={() => showPane(!paneShown)}
+                onTogglePane={() => {
+                  if (review?.threadId) { showPane(false); onOpenReviewThread(review.threadId); }
+                  else showPane(!paneShown);
+                }}
                 onViewRules={() => showPane(true, "rules")}
-                onStarted={() => showPane(true)}
+                onStarted={(requestId) => { setLaunchedRequestId(requestId); showPane(true); }}
               />
             )}
             <Tooltip>
@@ -502,6 +515,11 @@ export function PullRequestHostedDetail({
                 <MoreHorizontal className="size-[15px]" />
               </MenuTrigger>
               <MenuContent align="end" className="w-52">
+                {reviewing && <>
+                  <MenuItem onClick={() => showPane(true)}>Review findings</MenuItem>
+                  <MenuItem onClick={() => showPane(true, "rules")}>Review rules</MenuItem>
+                  <MenuSeparator />
+                </>}
                 <MenuItem onClick={() => void copy(window.location.href, "Link copied.")}>Copy link</MenuItem>
                 <MenuItem onClick={() => void copy(pullRequest.headRefName, "Branch name copied.")}>Copy branch name</MenuItem>
                 {open && (
