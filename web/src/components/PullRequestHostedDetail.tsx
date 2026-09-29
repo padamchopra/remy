@@ -383,8 +383,8 @@ export function PullRequestHostedDetail({
   const [launchedRequestId, setLaunchedRequestId] = useState<string>();
   const openedRequestId = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (start && review && start.created?.id === review.threadId) forgetThreadStart(start.requestId);
-  }, [start, review]);
+    if (start && review && reviewThread && start.created?.id === review.threadId) forgetThreadStart(start.requestId);
+  }, [start, review, reviewThread]);
   // A start that is through reads the review it made, in case its frame came first.
   useEffect(() => { if (start?.phase === "ready") void reloadReview(); }, [start?.phase, reloadReview]);
   const phone = useIsMobile();

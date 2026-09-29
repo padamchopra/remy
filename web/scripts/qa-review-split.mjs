@@ -83,6 +83,7 @@ try {
   assert.deepEqual(startInput.review, { repository: 'studio/remy', number: 42 });
   assert.equal(await page.locator('section[aria-label="prs pane"]:visible').count(), 1);
   assert.equal(await page.locator('section[aria-label="Thread pane"]:visible').count(), 1);
+  assert.equal(await page.getByText('This thread is unavailable').count(), 0);
   await page.reload();
   await page.getByRole('tab', { name: 'Review #42: Keep work in app tabs', exact: true }).first().waitFor();
   await page.getByText('The new tabs keep your pull request and review thread visible together.').waitFor();
