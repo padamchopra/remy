@@ -808,7 +808,7 @@ try {
           assert.equal(await page.getByRole("status",{name:"Sending message…",exact:true}).count(),1,"An empty early snapshot must not end startup");
           await page.getByLabel("Thread transcript",{exact:true}).getByText("Hello startup QA",{exact:true}).waitFor();
           if(artifacts)await page.screenshot({path:`${artifacts}/start-progress-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
-          await page.getByRole("tab", {name:"Hello startup QA", exact:true}).waitFor();
+          await page.getByRole("tab", {name:"Hello startup QA", exact:true}).first().waitFor();
           assert.equal(await page.getByRole("heading", {name:"Threads", exact:true}).count(), 0);
           await page.getByRole("button", {name:"Thread details", exact:true}).click();
           await page.getByRole("menu", {name:"Thread details"}).getByText("Private", {exact:true}).waitFor();
