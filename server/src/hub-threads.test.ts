@@ -16,7 +16,7 @@ for (const command of ["claude", "codex", "agent"]) {
 }
 process.env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
 const { createChat, deleteChat, getChat } = await import("./chat.js");
-const { shareHubThread, hubThreadSnapshot, handleHubThreadRequest, fitHubMirror } =
+const { shareHubThread, hubThreadSnapshot, handleHubThreadRequest, fitHubMirror, transcriptPage } =
   await import("./hub-threads.js");
 const owner = { id: "ada", label: "Ada" };
 const teammate = { id: "grace", label: "Grace" };
@@ -317,6 +317,79 @@ test("the hub mirror keeps the thread and drops activity heartbeats", () => {
   const tight = fitHubMirror(structuredClone(detail), 420);
   assert.ok(Buffer.byteLength(JSON.stringify(tight)) <= 420);
   assert.deepEqual(tight.entries.map((entry) => entry.id), ["said", "ran", "done"]);
+});
+
+test("a long turn keeps its opening message once heartbeats are out of the mirror", () => {
+  const cwd = mkdtempSync(join(state, "heartbeats-"));
+  const chat = createChat({ cwd });
+  shareHubThread(chat.id, "org", owner, "manual");
+  const stored = getChat(chat.id);
+  assert.ok(stored);
+  stored.entries.push({ id: "u1", kind: "user", text: "Use one person avatar." });
+  for (let index = 0; index < 80; index += 1) {
+    stored.entries.push({
+      id: `b${index}`,
+      kind: "tool",
+      activity: {
+        id: `b${index}`,
+        kind: "shell",
+        provider: "codex",
+        title: "Running",
+        status: "running",
+        startedAt: 1,
+        updatedAt: 1,
+        output: "beat".repeat(800),
+      },
+    });
+  }
+  stored.entries.push({ id: "done", kind: "assistant", text: "Implemented." });
+  const snapshot = hubThreadSnapshot(chat.id, "org");
+  const history = snapshot?.detail.history as { hasEarlier?: boolean } | undefined;
+  assert.equal(snapshot?.detail.entries[0] && (snapshot.detail.entries[0] as { id: string }).id, "u1");
+  assert.equal(snapshot?.detail.entries.at(-1) && (snapshot.detail.entries.at(-1) as { id: string }).id, "done");
+  assert.notEqual(history?.hasEarlier, true);
+  deleteChat(chat.id);
+});
+
+test("earlier pages still hold the opening message when the mirror keeps only the tail", async () => {
+  const cwd = mkdtempSync(join(state, "pages-"));
+  const chat = createChat({ cwd });
+  shareHubThread(chat.id, "org", owner, "manual");
+  const stored = getChat(chat.id);
+  assert.ok(stored);
+  stored.entries.push({ id: "u1", kind: "user", text: "Open the thread." });
+  for (let index = 0; index < 30; index += 1) {
+    stored.entries.push({ id: `a${index}`, kind: "assistant", text: "word ".repeat(2000) });
+  }
+  const snapshot = hubThreadSnapshot(chat.id, "org");
+  const history = snapshot?.detail.history as { hasEarlier?: boolean; before?: string } | undefined;
+  const before = history?.before;
+  assert.equal(history?.hasEarlier, true);
+  assert.ok(before);
+  assert.notEqual((snapshot?.detail.entries[0] as { id: string }).id, "u1");
+  const ids: string[] = [];
+  let cursor: string | undefined = before;
+  for (let page = 0; cursor && page < 10; page += 1) {
+    const older = transcriptPage(stored.entries, cursor);
+    ids.unshift(...older.entries.map((entry) => entry.id));
+    cursor = older.history.hasEarlier ? older.history.before : undefined;
+  }
+  ids.push(...(snapshot?.detail.entries ?? []).map((entry) => (entry as { id: string }).id));
+  assert.equal(ids[0], "u1");
+  assert.equal(ids.at(-1), "a29");
+  assert.equal(new Set(ids).size, ids.length);
+  const response = await handleHubThreadRequest("org", owner, "GET", `/hub/threads/${chat.id}/transcript`, { before }, noAttachment);
+  assert.equal(response.status, 200);
+  const body = await response.json() as { entries: { id: string }[] };
+  assert.ok(body.entries.length > 0);
+  assert.equal(body.entries.at(-1)?.id, ids[ids.indexOf(before) - 1]);
+  const refused = await handleHubThreadRequest("org", teammate, "GET", `/hub/threads/${chat.id}/transcript`, { before }, noAttachment);
+  assert.equal(refused.status, 404);
+  const missing = await handleHubThreadRequest("org", owner, "GET", `/hub/threads/${chat.id}/transcript`, { before: "gone" }, noAttachment);
+  assert.equal(missing.status, 409);
+  const posted = await handleHubThreadRequest("org", owner, "POST", `/hub/threads/${chat.id}/transcript`, {}, noAttachment);
+  assert.equal(posted.status, 404);
+  deleteChat(chat.id);
 });
 
 test("thread snapshots retain the confirmed branch", async () => {

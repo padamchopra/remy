@@ -88,17 +88,21 @@ function heartbeat(entry: ConvEntry): boolean {
     && !entry.diff?.length && !entry.file;
 }
 
-/// The hub keeps a 96 KB mirror of a thread. Activity heartbeats are not drawn
-/// in that column; left in the budget, they push the words off the front until
-/// the column is shorter than the screen and will not scroll. Thinking goes
-/// before a message or a tool call when the mirror still has to shrink.
-export function fitHubMirror<T extends { entries: ConvEntry[] }>(detail: T, byteLimit = HUB_MIRROR_BYTES): T {
-  detail.entries = detail.entries.flatMap((entry) => {
+function readableEntries(entries: readonly ConvEntry[]): ConvEntry[] {
+  return entries.flatMap((entry) => {
     if (heartbeat(entry)) return [];
     if (!entry.activity) return [entry];
     const { activity: _activity, ...rest } = entry;
     return [rest];
   });
+}
+
+/// The hub keeps a 96 KB mirror of a thread. Activity heartbeats are not drawn
+/// in that column; left in the budget, they push the words off the front until
+/// the column is shorter than the screen and will not scroll. Thinking goes
+/// before a message or a tool call when the mirror still has to shrink.
+export function fitHubMirror<T extends { entries: ConvEntry[] }>(detail: T, byteLimit = HUB_MIRROR_BYTES): T {
+  detail.entries = readableEntries(detail.entries);
   const over = () => Buffer.byteLength(JSON.stringify(detail)) > byteLimit;
   while (over()) {
     const thinking = detail.entries.findIndex((entry) => entry.kind === "thinking");
@@ -107,6 +111,42 @@ export function fitHubMirror<T extends { entries: ConvEntry[] }>(detail: T, byte
   }
   while (detail.entries.length && over()) detail.entries.shift();
   return detail;
+}
+
+/// One page of the transcript the mirror did not keep. Pages move backward
+/// from `before` and stop on any entry, so one long turn can still be read.
+export function transcriptPage(entries: readonly ConvEntry[], before?: string, byteLimit = HUB_MIRROR_BYTES): {
+  entries: ConvEntry[];
+  history: { hasEarlier: boolean; before?: string };
+} {
+  const readable = readableEntries(entries);
+  let end = readable.length;
+  if (before !== undefined) {
+    end = readable.findIndex((entry) => entry.id === before);
+    if (end < 0) throw new Error("That part of the thread is no longer available.");
+  }
+  const page: ConvEntry[] = [];
+  let start = end;
+  while (start > 0) {
+    const candidate = readable[start - 1];
+    if (page.length > 0 && Buffer.byteLength(JSON.stringify([candidate, ...page])) > byteLimit) break;
+    page.unshift(candidate);
+    start -= 1;
+  }
+  return {
+    entries: page,
+    history: start > 0 && page[0]?.id ? { hasEarlier: true, before: page[0].id } : { hasEarlier: false },
+  };
+}
+
+function rememberEarlier(detail: { entries: ConvEntry[]; history?: { hasEarlier: boolean; before?: string } }, stored: readonly ConvEntry[]): void {
+  const readable = readableEntries(stored);
+  const first = detail.entries[0]?.id;
+  const index = first ? readable.findIndex((entry) => entry.id === first) : -1;
+  // Heartbeats before the first kept row are not readable, so they are not
+  // another page. Anything else in front of that row still is.
+  if (index > 0 && first) detail.history = { hasEarlier: true, before: first };
+  else detail.history = undefined;
 }
 
 export function hubThreadSnapshot(
@@ -131,6 +171,8 @@ export function hubThreadSnapshot(
   const revision = (getKv<number>(revisionKey) ?? 0) + 1;
   setKv(revisionKey, revision);
   fitHubMirror(detail);
+  const full = getChat(id);
+  if (full) rememberEarlier(detail, full.entries);
   const branchState = `${detail.cwd}:${detail.state}`;
   const refreshBranch = branchStates.get(id) !== branchState;
   branchStates.set(id, branchState);
@@ -161,7 +203,7 @@ export async function handleHubThreadRequest(
   ) => Promise<ChatImageAttachment>,
 ): Promise<Response> {
   const match =
-    /^\/hub\/threads(?:\/([0-9a-f-]{36})(?:\/(join|message|approval|question|interrupt|stop|visibility|options|archive))?)?$/.exec(
+    /^\/hub\/threads(?:\/([0-9a-f-]{36})(?:\/(join|message|approval|question|interrupt|stop|visibility|options|archive|transcript))?)?$/.exec(
       path,
     );
   if (!match) return fail(404, "This thread is no longer available.");
@@ -232,6 +274,21 @@ export async function handleHubThreadRequest(
       });
     }
     if (!id) return fail(404, "This thread is no longer available.");
+    // Reading a page must not publish a new snapshot. That bumps the revision
+    // the open thread is already following.
+    if (method === "GET" && action === "transcript") {
+      const access = accessRecords()[id];
+      if (!access || access.organizationId !== organizationId || !canReadThread(access, actor.id))
+        return fail(404, "This thread is no longer available.");
+      const chat = getChat(id);
+      if (!chat) return fail(404, "This thread is no longer available.");
+      const before = typeof input.before === "string" ? input.before : undefined;
+      try {
+        return Response.json(transcriptPage(chat.entries, before));
+      } catch (error) {
+        return fail(409, error instanceof Error ? error.message : "That part of the thread is no longer available.");
+      }
+    }
     const snapshot = hubThreadSnapshot(id, organizationId);
     if (!snapshot || !canReadThread(snapshot.access, actor.id))
       return fail(404, "This thread is no longer available.");

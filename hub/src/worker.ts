@@ -2375,7 +2375,7 @@ export class HubCoordinator {
 
   private async threadRequest(request: Request): Promise<Response | undefined> {
     const url = new URL(request.url);
-    const match = /^\/computers\/([^/]+)\/threads(?:\/([0-9a-f-]{36})(?:\/(join|message|approval|question|interrupt|stop|visibility|options|attachments|archive)(?:\/([0-9a-f-]{36}))?)?)?$/.exec(url.pathname);
+    const match = /^\/computers\/([^/]+)\/threads(?:\/([0-9a-f-]{36})(?:\/(join|message|approval|question|interrupt|stop|visibility|options|attachments|archive|transcript)(?:\/([0-9a-f-]{36}))?)?)?$/.exec(url.pathname);
     const branchMatch = /^\/computers\/([^/]+)\/workspaces\/([^/]+)\/branches$/.exec(url.pathname);
     const startMatch = /^\/threads\/starts\/([0-9a-f-]{36})$/.exec(url.pathname);
     if (!match && !branchMatch && !startMatch && url.pathname !== "/threads" && url.pathname !== "/threads/live") return undefined;
@@ -2555,6 +2555,11 @@ export class HubCoordinator {
         return Response.json({ id: attachment }, { status: 201 });
       }
       return jsonError("This action is not available.", 404);
+    }
+    if (action === "transcript" && id && request.method === "GET") {
+      if (!targetAvailable) return Response.json({ entries: snapshot!.detail.entries, history: { hasEarlier: false }, stale: true });
+      const before = url.searchParams.get("before");
+      return this.dispatchComputer(computerId, actor, "GET", `/hub/threads/${id}/transcript`, before ? { before } : {});
     }
     const allowed = id ? ((request.method === "GET" || request.method === "PATCH" || request.method === "DELETE") && !action) || (request.method === "POST" && !!action) : request.method === "POST";
     if (!allowed) return jsonError("This action is not available.", 404);

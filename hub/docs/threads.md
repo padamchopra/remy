@@ -65,8 +65,10 @@ Its picker contains only available execution choices; it has no automatic value.
 These routes use a same-origin
 hub session, with native API clients using their bearer session.
 
-Snapshots contain the latest eight turns, bounded to 96 KB of detail, while the
-computer retains its existing complete stored history. The hub retains 128 live
+Snapshots contain the latest readable tail, bounded to 96 KB. Activity
+heartbeats stay out of that budget. When earlier messages remain, the snapshot
+says so, and the open thread reads those pages from its computer. The computer
+retains its complete stored history. The hub retains 128 live
 frames per organization. Images are private R2 objects; this change does not add
 object retention policies or a full historical attachment cleanup service.
 
