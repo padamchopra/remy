@@ -16,7 +16,7 @@ for (const command of ["claude", "codex", "agent"]) {
 }
 process.env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
 const { createChat, deleteChat, getChat } = await import("./chat.js");
-const { shareHubThread, hubThreadSnapshot, handleHubThreadRequest } =
+const { shareHubThread, hubThreadSnapshot, handleHubThreadRequest, fitHubMirror } =
   await import("./hub-threads.js");
 const owner = { id: "ada", label: "Ada" };
 const teammate = { id: "grace", label: "Grace" };
@@ -268,6 +268,55 @@ test("hosted OpenRouter starts even when the selected model is not in the fetche
     if (before.models === undefined) delete process.env.OPENROUTER_MODELS;
     else process.env.OPENROUTER_MODELS = before.models;
   }
+});
+
+test("a turn with no remaining user message is mirrored from storage, not the short tail", () => {
+  const cwd = mkdtempSync(join(state, "mirror-"));
+  const chat = createChat({ cwd });
+  shareHubThread(chat.id, "org", owner, "manual");
+  const stored = getChat(chat.id);
+  assert.ok(stored);
+  for (let index = 0; index < 40; index += 1) {
+    stored.entries.push({ id: `t${index}`, kind: "tool", verb: "Ran", tool: "Bash", arg: `step ${index}`, output: "ok" });
+  }
+  stored.entries.push({ id: "done", kind: "assistant", text: "The pull request is up." });
+  const snapshot = hubThreadSnapshot(chat.id, "org");
+  assert.equal(snapshot?.detail.entries.length, 41);
+  assert.equal(snapshot?.detail.entries[0] && (snapshot.detail.entries[0] as { id: string }).id, "t0");
+  assert.equal(snapshot?.detail.entries.at(-1) && (snapshot.detail.entries.at(-1) as { id: string }).id, "done");
+  deleteChat(chat.id);
+});
+
+test("the hub mirror keeps the thread and drops activity heartbeats", () => {
+  const activity = (id: string) => ({
+    id,
+    kind: "shell" as const,
+    provider: "codex",
+    title: id,
+    status: "running" as const,
+    startedAt: 1,
+    updatedAt: 1,
+    output: "beat".repeat(400),
+  });
+  const detail = {
+    id: "thread",
+    title: "Work",
+    entries: [
+      { id: "said", kind: "assistant" as const, text: "The first step is in." },
+      { id: "beat", kind: "tool" as const, activity: activity("beat") },
+      { id: "ran", kind: "tool" as const, verb: "Ran", tool: "Bash", arg: "ls", output: "ok", activity: activity("ran") },
+      { id: "thought", kind: "thinking" as const, text: "weighing".repeat(400) },
+      { id: "done", kind: "assistant" as const, text: "The pull request is up." },
+    ],
+  };
+  const fitted = fitHubMirror(structuredClone(detail), 96_000);
+  assert.deepEqual(fitted.entries.map((entry) => entry.id), ["said", "ran", "thought", "done"]);
+  assert.equal("activity" in fitted.entries[1], false);
+  assert.equal(fitted.entries[1].output, "ok");
+
+  const tight = fitHubMirror(structuredClone(detail), 420);
+  assert.ok(Buffer.byteLength(JSON.stringify(tight)) <= 420);
+  assert.deepEqual(tight.entries.map((entry) => entry.id), ["said", "ran", "done"]);
 });
 
 test("thread snapshots retain the confirmed branch", async () => {

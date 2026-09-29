@@ -11,6 +11,18 @@ const ENTRY = "/opt/remy/server/dist/hosted-entry.js";
 const stopProgram = `(async()=>{const fs=require("node:fs");let pid;try{pid=Number(fs.readFileSync("/tmp/remy.pid","utf8"))}catch{return}if(!Number.isInteger(pid)||pid<2)throw Error("Invalid computer process");try{process.kill(-pid,"SIGTERM")}catch{}for(let n=0;n<100;n++){let status;try{status=fs.readFileSync("/proc/"+pid+"/stat","utf8")}catch{break}if(status.split(") ")[1]?.startsWith("Z"))break;if(n===99)throw Error("Computer did not stop");await new Promise(r=>setTimeout(r,100))}fs.rmSync("/tmp/remy.pid",{force:true})})().catch(()=>process.exit(1));`;
 
 const nameFor = (id: string) => `remy-${id}`;
+
+function bootText(value: string | Uint8Array | undefined): string {
+  if (typeof value === "string") return value;
+  if (value instanceof Uint8Array) return new TextDecoder().decode(value);
+  return "";
+}
+
+function bootFailure(result: { stdout?: string | Uint8Array; stderr?: string | Uint8Array }) {
+  const text = `${bootText(result.stderr)}\n${bootText(result.stdout)}`.replace(/\u001b\[[0-9;]*m/g, "");
+  const detail = text.split(/\r?\n/).map(line => line.trim()).filter(line => line && !/bootstrap|private key|begin |authorization|bearer |token|password/i.test(line)).slice(-6).join(" ").slice(0, 280);
+  return detail ? `Computer entrypoint failed. ${detail}` : "Computer entrypoint failed.";
+}
 export class ModalRuntime implements ComputerRuntimeProvider {
   readonly id = "modal";
   readonly capabilities = { checkpoints: true, persistentFilesystem: true };
@@ -190,6 +202,7 @@ export class FlySpritesRuntime implements ComputerRuntimeProvider {
       input,
     );
     } catch (cause) {
+      if (cause instanceof HostedStartupError) throw cause;
       const status = (cause as {statusCode?: number}).statusCode;
       const detail = typeof status === "number" ? ` (HTTP ${status})` : cause instanceof ExecError ? ` (exit ${cause.exitCode})` : "";
       throw new HostedStartupError(`Fly.io failed while ${step}${detail}. Retry to continue.`);
@@ -197,22 +210,32 @@ export class FlySpritesRuntime implements ComputerRuntimeProvider {
   }
   async start(runtime: ComputerRuntime, input: ProvisionComputerInput) {
     const sprite = this.client.sprite(runtime.providerReference);
-    await sprite.updateNetworkPolicy({
-      rules: [
-        ...input.allowedDomains.map((domain) => ({
-          domain,
-          action: "allow" as const,
-        })),
-        { domain: "*", action: "deny" },
-      ],
-    });
-    // Sprites can give a non-root process ambient capabilities. Bubblewrap
-    // rejects those before it can establish Codex's requested sandbox.
-    const result = await sprite.execFile("setpriv", ["--inh-caps=-all", "--ambient-caps=-all", "--", "node", "-e", startProgram], {
-      env: input.environment,
-    });
-    if (result.exitCode !== 0) throw new Error("Computer entrypoint failed.");
-    return runtime;
+    try {
+      await sprite.updateNetworkPolicy({
+        rules: [
+          ...input.allowedDomains.map((domain) => ({
+            domain,
+            action: "allow" as const,
+          })),
+          { domain: "*", action: "deny" },
+        ],
+      });
+      // setpriv below drops the ambient capabilities Sprites grants. Root-owned
+      // /data is then not writable, and Remy exits before it can connect.
+      await sprite.execFile("mkdir", ["-p", "/data/remy", "/data/codex", "/data/claude", "/workspace", "/tmp/remy-uploads"]);
+      await sprite.execFile("chmod", ["0777", "/data", "/data/remy", "/data/codex", "/data/claude", "/workspace", "/tmp/remy-uploads"]);
+      // Sprites can give a non-root process ambient capabilities. Bubblewrap
+      // rejects those before it can establish Codex's requested sandbox.
+      const result = await sprite.execFile("setpriv", ["--inh-caps=-all", "--ambient-caps=-all", "--", "node", "-e", startProgram], {
+        env: input.environment,
+      });
+      if (result.exitCode !== 0) throw new HostedStartupError(bootFailure(result));
+      return runtime;
+    } catch (cause) {
+      if (cause instanceof HostedStartupError) throw cause;
+      if (cause instanceof ExecError) throw new HostedStartupError(bootFailure(cause));
+      throw new HostedStartupError(bootFailure({ stderr: cause instanceof Error ? cause.message : "Your cloud computer could not start." }));
+    }
   }
   async stop(runtime: ComputerRuntime) {
     const r = await this.client

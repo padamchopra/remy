@@ -1,5 +1,9 @@
 import { speaker } from "@/lib/thread-message";
 import { threadEntryText, visibleThreadEntries } from "@/lib/thread-entry-display";
+import { ToolGroup } from "./ThreadTools";
+import { workingToolGroupId } from "@/lib/working-tool";
+import { PROVIDERS } from "@/lib/providers";
+import type { ConvEntry } from "@/state/types";
 import { useHubThreadBranch } from "@/lib/hub-thread-branch";
 import { ThreadMessageAvatar } from "./ThreadMessageAvatar";
 import { BranchName } from "./BranchName";
@@ -20,14 +24,12 @@ import { AvatarFrom } from "./UserAvatar";
 import { useHubProfile } from "@/lib/hub-profile";
 import { useThreadStarts, retryHubThread, forgetThreadStart } from "@/lib/hub-thread-start";
 import { ThreadStartMarker } from "./ThreadStartMarker";
-import { FileCode2, MessagesSquare, MoreHorizontal } from "lucide-react";
+import { FileCode2, MoreHorizontal } from "lucide-react";
 import { Attachment, AttachmentContent, AttachmentDescription, AttachmentGroup, AttachmentMedia, AttachmentTitle } from "@/components/ui/attachment";
 import { referenceLabel } from "@/lib/pull-request-review";
 import type { ChatCodeReference } from "@/state/types";
-import { TabStrip, WorkbenchTabTrigger, tabListClass } from "@/components/WorkbenchTabs";
-import { Tabs, TabsList } from "@/components/ui/tabs";
+import { HubThreadWorkbench } from "@/components/HubThreadWorkbench";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuLabel, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
-import { SidebarTrigger } from "@/components/ui/sidebar";
 import { EmptyState } from "@/components/EmptyState";
 import { PaneLoading } from "@/components/PaneLoading";
 import { PaneHeader } from "@/components/PaneHeader";
@@ -62,6 +64,7 @@ import {
   hubThreadPath,
   watchHubThreads,
 } from "@/lib/hub-threads";
+import { cacheHubThread, cachedHubThread, forgetHubThread } from "@/lib/hub-thread-cache";
 import { LinearThreadNotice } from "./LinearConnection";
 import type { Route } from "@/lib/route";
 
@@ -115,9 +118,12 @@ export default function HubThreads({
   const transcript = useRef<HTMLDivElement>(null);
   const followsLatest = useRef(true);
   const isPersonal = usePersonalHub();
-  const [threads, setThreads] = useState<HubThread[]>([]);
+  const remembered = threadId ? cachedHubThread(threadId) : undefined;
+  const [threads, setThreads] = useState<HubThread[]>(() => (
+    remembered && remembered.organizationId === organizationId ? [remembered.thread] : []
+  ));
   const [member, setMember] = useState<ThreadMember>();
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState(() => threads.length > 0);
   const [error, setError] = useState("");
   const [draft, setDraft] = useState<InlineImageComposerValue>({text:"",attachments:[],uploading:false});
   const editor = useRef<InlineImageComposerHandle>(null);
@@ -127,9 +133,12 @@ export default function HubThreads({
   const [computersLoaded, setComputersLoaded] = useState(false);
   const [computerError, setComputerError] = useState("");
   const [computers, setComputers] = useState<ComputerSummary[]>([]);
+  // Seed once per account. Switching threads keeps the catalogue already in hand.
   useEffect(() => {
-    setThreads([]);
-    setLoaded(false);
+    const cached = threadId ? cachedHubThread(threadId) : undefined;
+    const seed = cached && cached.organizationId === organizationId ? [cached.thread] : [];
+    setThreads(seed);
+    setLoaded(seed.length > 0);
     setError("");
     setComputers([]);
     setComputersLoaded(false);
@@ -187,19 +196,22 @@ export default function HubThreads({
     if (pending?.phase === "ready" && savedThread) forgetThreadStart(pending.requestId);
   }, [pending, savedThread, threadId, organizationId, navigate]);
   useEffect(() => {
-    if (followsLatest.current && transcript.current)
-      transcript.current.scrollTop = transcript.current.scrollHeight;
-  }, [thread?.revision]);
-  useEffect(() => {
     followsLatest.current = true;
   }, [threadId]);
   const computer = computers.find((c) => c.computerId === thread?.computerId);
-  const computerName = computer?.name ?? cloudComputerName(thread?.computerId) ?? pending?.computerName ?? "Computer unavailable";
+  const rememberedName = remembered && remembered.thread.computerId === thread?.computerId ? remembered.computerName : undefined;
+  const computerName = computer?.name ?? rememberedName ?? cloudComputerName(thread?.computerId) ?? pending?.computerName ?? "Computer unavailable";
+  useEffect(() => {
+    if (!loaded || !threadId || pending) return;
+    if (savedThread) cacheHubThread(organizationId, savedThread, { computerName: computer?.name ?? rememberedName, memberId: member?.id });
+    else forgetHubThread(threadId);
+  }, [loaded, threadId, pending, savedThread, organizationId, computer?.name, rememberedName, member?.id]);
   const cursorCloud = (thread?.computerId ?? pending?.computerId) === CURSOR_CLOUD_COMPUTER_ID;
   const branch = useHubThreadBranch(organizationId, savedThread, computer) ?? pending?.branch;
   const ComputerIcon = deviceIcon((computer?.icon ?? (pending?.computerId?.startsWith("cloud:") ? "cloud" : undefined)) as DeviceIconId);
+  const viewerId = member?.id ?? (remembered?.organizationId === organizationId ? remembered.memberId : undefined);
   const writable =
-    !!thread && !!member && canWriteThread(thread.access, member.id);
+    !!thread && !!viewerId && canWriteThread(thread.access, viewerId);
   const disabled = !!pending || busy || !thread || thread.stale || !writable;
   const path = actingComputer ? hubThreadPath(organizationId, actingComputer, actingThread) : "";
   const visibleEntries = thread?.detail.entries ?? [];
@@ -226,6 +238,11 @@ export default function HubThreads({
       setBusy(false);
     }
   };
+  const feed = transcriptItems(entries as unknown as ConvEntry[]);
+  const workingTools = workingToolGroupId(
+    feed.flatMap((item) => item.kind === "tools" ? item.entries : [item.entry]),
+    !pending && thread?.detail.state === "working",
+  );
   const open = (_computer: string, id?: string) =>
     navigate({
       name: "threads",
@@ -250,8 +267,34 @@ export default function HubThreads({
       aria-label="Threads"
     >
       {thread ? (
-        <Tabs value={thread.id} className="shrink-0 gap-0">
-          <TabStrip actions={
+        <HubThreadWorkbench
+          threadId={thread.id}
+          title={thread.detail.title || "Thread"}
+          state={typeof thread.detail.state === "string" ? thread.detail.state : undefined}
+          organizationId={organizationId}
+          entries={entries as unknown as ConvEntry[]}
+          provider={runtimeProvider}
+          working={!pending && thread.detail.state === "working"}
+          connected={!thread.stale && computer?.availability !== "offline"}
+          revision={thread.revision}
+          sidebar={!showNavigation}
+          transcriptRef={transcript}
+          followsLatest={followsLatest}
+          onBack={() => navigate({ name: "threads", organizationId })}
+          navigate={navigate}
+          notice={<>
+            {error && (
+              <p role="alert" className="shrink-0 px-4 py-2 text-sm text-destructive">{error}</p>
+            )}
+            {thread.stale && (
+              <p role="status" className="shrink-0 border-b px-4 py-2 text-xs text-muted-foreground">
+                {computer?.availability === "offline"
+                  ? "This computer is offline; you’re reading its last saved update."
+                  : "Remy is reconnecting; you’re reading the last saved update."}
+              </p>
+            )}
+          </>}
+          actions={
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon-sm" aria-label="Thread details"><MoreHorizontal /></Button>
@@ -271,40 +314,11 @@ export default function HubThreads({
                 </>}
               </DropdownMenuContent>
             </DropdownMenu>
-          }>
-            {!showNavigation && <SidebarTrigger className="md:hidden" />}
-            <TabsList aria-label="Open tabs" className={tabListClass}>
-              <WorkbenchTabTrigger value={thread.id} label={thread.detail.title} title={thread.detail.title} icon={<MessagesSquare className="size-3.5 shrink-0" />} />
-            </TabsList>
-          </TabStrip>
-        </Tabs>
-      ) : showNavigation && <PaneHeader sidebar crumbs={[{ label: "Threads" }]}>
-        <HubNotifications organizationId={organizationId} />
-      </PaneHeader>}
-      {error && (
-        <p role="alert" className="px-4 py-2 text-sm text-destructive">
-          {error}
-        </p>
-      )}
-      {thread?.stale && (
-        <p role="status" className="shrink-0 border-b px-4 py-2 text-xs text-muted-foreground">
-          {computer?.availability === "offline"
-            ? "This computer is offline; you’re reading its last saved update."
-            : "Remy is reconnecting; you’re reading the last saved update."}
-        </p>
-      )}
-      {!loaded && threadId && !pending ? (
-        <div className="p-4"><PaneLoading label="Loading threads" /></div>
-      ) : threadId && !thread ? (
-        <EmptyState title="This thread is unavailable" description="Ask the person who started it to check your access." />
-      ) : !thread ? (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-auto">
-          {!loaded && <span role="status" aria-label="Loading threads" className="sr-only">Loading threads</span>}
-          <HubThreadComposer key={organizationId} organizationId={organizationId} memberId={member?.id} computers={computers} computersLoaded={computersLoaded} computerError={computerError} canManageWorkspaces={canManageWorkspaces} open={open} sharingControl={newThreadSharingControl} controlledVisibility={newThreadVisibility} controlledMessage={newThreadMessage} onMessageChange={onNewThreadMessageChange} workspaceOptions={newThreadWorkspaceOptions} controlledWorkspaceId={newThreadWorkspaceId} onWorkspaceChange={onNewThreadWorkspaceChange} />
-        </div>
-      ) : (
+          }
+        >
+          {({ openLink }) => (
         <>
-          {!pending && !writable && <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2 text-xs text-muted-foreground">
+          {!pending && !!member && !writable && <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2 text-xs text-muted-foreground">
             <Button size="sm" disabled={busy || thread.stale} onClick={() => void act("join")}>Join thread</Button>
           </div>}
           <div
@@ -317,52 +331,50 @@ export default function HubThreads({
             className="min-h-0 flex-1 overflow-auto"
             aria-label="Thread transcript"
           >
-            <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4">
-              {entries.map((entry, index) => (
+            <div className="mx-auto flex w-full max-w-[44rem] flex-col gap-4 px-6 py-7">
+              {feed.map((item) => item.kind === "tools" ? (
+                <ToolGroup
+                  key={`tools:${item.entries[0].id}`}
+                  entries={item.entries}
+                  working={item.entries[0].id === workingTools}
+                />
+              ) : (
                 <Message
-                  key={String(entry.id)}
-                  align={entry.kind === "user" ? "end" : "start"}
+                  key={String(item.entry.id)}
+                  align={item.entry.kind === "user" ? "end" : "start"}
                 >
-                  {entry.kind === "user" && profile && ((entry.member as ThreadMember | undefined)?.id ?? member?.id) === profile.id && <AvatarFrom avatar={profile.image ?? ""} className="size-8 self-end" />}
-                  {(entry.kind === "assistant" || entry.kind === "thinking") && <ThreadMessageAvatar provider={runtimeProvider} lead={index === 0 || speaker(entries[index - 1]) !== speaker(entry)} /> }
+                  {item.entry.kind === "user" && profile && ((item.entry.member as ThreadMember | undefined)?.id ?? member?.id) === profile.id && <AvatarFrom avatar={profile.image ?? ""} className="size-8 self-end" />}
+                  {item.entry.kind !== "user" && <ThreadMessageAvatar provider={runtimeProvider} lead={item.lead} />}
                   <MessageContent>
-                    {entry.kind !== "assistant" && entry.kind !== "thinking" && <MessageHeader>
-                      {(entry.member as ThreadMember | undefined)?.label ??
-                        (entry.kind === "user"
-                          ? "You"
-                          : entry.kind === "tool"
-                            ? String(entry.tool ?? "Tool")
-                            : "Agent")}
-                    </MessageHeader>}
-                    <Bubble
-                      variant={entry.kind === "user" ? "default" : "ghost"}
-                    >
-                      <BubbleContent className="min-w-0 break-words">
-                        <Markdown text={threadEntryText(entry)} />
+                    {item.lead && item.entry.kind === "user" && <MessageHeader>{(item.entry.member as ThreadMember | undefined)?.label ?? "You"}</MessageHeader>}
+                    {item.lead && item.entry.kind !== "user" && <MessageHeader>{PROVIDERS.find((provider) => provider.id === runtimeProvider)?.label ?? "Codex"}</MessageHeader>}
+                    <Bubble variant={item.entry.kind === "user" ? "muted" : "ghost"}>
+                      <BubbleContent className={item.entry.kind === "thinking" ? "text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground italic" : "min-w-0 break-words"}>
+                        {item.entry.kind === "thinking" ? String(item.entry.text ?? "") : <Markdown text={threadEntryText(item.entry)} onOpenLink={openLink} />}
                       </BubbleContent>
                     </Bubble>
-                    {entry.kind === "user" && Array.isArray(entry.codeReferences) && entry.codeReferences.length > 0 && (
+                    {item.entry.kind === "user" && Array.isArray(item.entry.codeReferences) && item.entry.codeReferences.length > 0 && (
                       // Lines sent from a pull request's diff, named the way the diff names them.
                       <AttachmentGroup data-slot="code-references" className="max-w-full justify-end py-0">
-                        {(entry.codeReferences as ChatCodeReference[]).map((reference) => (
+                        {(item.entry.codeReferences as ChatCodeReference[]).map((reference) => (
                           <Attachment key={reference.id} size="sm" className="max-w-80">
                             <AttachmentMedia><FileCode2 /></AttachmentMedia>
                             <AttachmentContent>
                               <AttachmentTitle title={reference.path}>{referenceLabel(reference)}</AttachmentTitle>
-                              {reference.comment !== entry.text && <AttachmentDescription>{reference.comment}</AttachmentDescription>}
+                              {reference.comment !== item.entry.text && <AttachmentDescription>{reference.comment}</AttachmentDescription>}
                             </AttachmentContent>
                           </Attachment>
                         ))}
                       </AttachmentGroup>
                     )}
-                    {shownArtifacts(entry.artifacts).map((artifact, index) => {
+                    {shownArtifacts(item.entry.artifacts).map((artifact, index) => {
                       const route = organizationArtifactRoute(artifact);
                       return <Button key={index} data-link variant="outline" className="h-auto justify-start whitespace-normal text-left" disabled={!route} onClick={() => route && navigate(route)}>
                         {artifact.title}
                       </Button>;
                     })}
-                    {(Array.isArray(entry.attachments)
-                      ? entry.attachments
+                    {(Array.isArray(item.entry.attachments)
+                      ? item.entry.attachments
                       : []
                     ).map(
                       (attachment: {
@@ -374,9 +386,9 @@ export default function HubThreads({
                           <img
                             key={attachment.id}
                             onLoad={() => {
-                              if (followsLatest.current && transcript.current)
-                                transcript.current.scrollTop =
-                                  transcript.current.scrollHeight;
+                              const node = transcript.current;
+                              if (followsLatest.current && node && node.clientHeight > 0)
+                                node.scrollTop = node.scrollHeight;
                             }}
                             className="h-auto max-h-64 w-auto max-w-full self-end object-contain"
                             alt={attachment.name}
@@ -512,7 +524,50 @@ export default function HubThreads({
             </form>
           </div>
         </>
+          )}
+        </HubThreadWorkbench>
+      ) : (
+        <>
+          {showNavigation && <PaneHeader sidebar crumbs={[{ label: "Threads" }]}>
+            <HubNotifications organizationId={organizationId} />
+          </PaneHeader>}
+          {error && (
+            <p role="alert" className="px-4 py-2 text-sm text-destructive">{error}</p>
+          )}
+          {!loaded && threadId && !pending ? (
+            <div className="p-4"><PaneLoading label="Loading threads" /></div>
+          ) : threadId ? (
+            <EmptyState title="This thread is unavailable" description="Ask the person who started it to check your access." />
+          ) : (
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-auto">
+              {!loaded && <span role="status" aria-label="Loading threads" className="sr-only">Loading threads</span>}
+              <HubThreadComposer key={organizationId} organizationId={organizationId} memberId={member?.id} computers={computers} computersLoaded={computersLoaded} computerError={computerError} canManageWorkspaces={canManageWorkspaces} open={open} sharingControl={newThreadSharingControl} controlledVisibility={newThreadVisibility} controlledMessage={newThreadMessage} onMessageChange={onNewThreadMessageChange} workspaceOptions={newThreadWorkspaceOptions} controlledWorkspaceId={newThreadWorkspaceId} onWorkspaceChange={onNewThreadWorkspaceChange} />
+            </div>
+          )}
+        </>
       )}
     </section>
   );
+}
+
+/// Heartbeats carry no words. A run of real tool calls is one line in the thread.
+function transcriptItems(entries: ConvEntry[]) {
+  const readable = entries.filter((entry) => (
+    entry.kind !== "tool" || Boolean(entry.verb || entry.tool || entry.arg || entry.output || entry.text || entry.diff?.length)
+  ));
+  const items: ({ kind: "tools"; entries: ConvEntry[] } | { kind: "entry"; entry: ConvEntry; lead: boolean })[] = [];
+  readable.forEach((entry, index) => {
+    if (entry.kind === "tool") {
+      const previous = items.at(-1);
+      if (previous?.kind === "tools") previous.entries.push(entry);
+      else items.push({ kind: "tools", entries: [entry] });
+      return;
+    }
+    items.push({
+      kind: "entry",
+      entry,
+      lead: index === 0 || speaker(readable[index - 1]) !== speaker(entry),
+    });
+  });
+  return items;
 }

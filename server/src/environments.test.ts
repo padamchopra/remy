@@ -34,6 +34,16 @@ test("a thread keeps the values the hub delivered for it, sealed, and nothing el
   assert.equal(env.redactForThread("thread-legacy", "legacy-test-value"), "[REDACTED]");
 });
 
+test("a missing keychain item is a first save, not a keychain failure", () => {
+  const missed = Object.assign(new Error("Command failed: /usr/bin/security find-generic-password"), {
+    stderr: "security: The specified item could not be found in the keychain.\n",
+  });
+  assert.equal(env.isMissingKeychainItem(missed), true);
+  // Dropping stderr leaves only the command line, which is what made a new computer refuse every thread.
+  assert.equal(env.isMissingKeychainItem(new Error("Command failed: /usr/bin/security find-generic-password")), false);
+  assert.equal(env.isMissingKeychainItem(Object.assign(new Error("Command failed"), { stderr: "User interaction is not allowed." })), false);
+});
+
 test("the local named environments are gone", () => {
   const tables = (db.prepare("select name from sqlite_master where type='table'").all() as { name: string }[]).map((row) => row.name);
   assert.ok(!tables.some((name) => name.startsWith("workspace_environment")));

@@ -30,6 +30,15 @@ export interface RuntimeCommandResult {
 let cachedKey: Buffer | undefined;
 const cleartextCache = new Map<string, string[]>();
 
+/// `security` writes "The specified item could not be found in the keychain."
+/// on stderr. A caller that drops stderr cannot tell a first save from a
+/// keychain that refused the read, and every thread start then stops.
+export function isMissingKeychainItem(error: unknown): boolean {
+  const stderr = (error as { stderr?: unknown }).stderr ?? "";
+  const message = error instanceof Error ? error.message : "";
+  return /could not be found|item.*not found/i.test(`${stderr}\n${message}`);
+}
+
 function machineKey(): Buffer {
   if (cachedKey) return cachedKey;
   const fallback = getKv<string>("workspaceEnvironmentKey");
@@ -38,10 +47,9 @@ function machineKey(): Buffer {
     try {
       encoded = execFileSync("/usr/bin/security", [
         "find-generic-password", "-a", deviceId, "-s", KEYCHAIN_SERVICE, "-w",
-      ], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      ], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
     } catch (error) {
-      const detail = String((error as { stderr?: unknown; message?: unknown }).stderr ?? (error as Error).message ?? "");
-      if (!/could not be found|item.*not found/i.test(detail)) {
+      if (!isMissingKeychainItem(error)) {
         throw new Error("workspace environment encryption is unavailable");
       }
       const encrypted = db.prepare(

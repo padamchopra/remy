@@ -59,7 +59,9 @@ export class HttpRuntimeProvider implements ComputerRuntimeProvider {
           "content-type": "application/json",
         },
         body: JSON.stringify({ ...(input as object), connection: this.connection ? await this.connection() : undefined }),
-        signal: AbortSignal.timeout(180_000),
+        // A cold Fly computer clones its workspace before Remy can connect.
+        // Stopping that early reports a computer that never joined.
+        signal: AbortSignal.timeout(action === "provision" || action === "start" ? 600_000 : 180_000),
         redirect: "manual",
       },
     );
