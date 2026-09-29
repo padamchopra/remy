@@ -1,8 +1,10 @@
+import { threadCheckpoints, type ThreadCheckpoint } from "@/lib/hub-transcript";
+import { ThreadCheckpointRail } from "@/components/ThreadCheckpointRail";
 import { modelSwitch, speaker } from "@/lib/thread-message";
 import { BranchName } from "./BranchName";
 import { ReplyComposer, replyComposerFrame, replyComposerForm } from "./ReplyComposer";
 import { LinearThreadNotice } from "./LinearConnection";
-import type { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, ReactNode, RefObject } from "react";
+import type { CSSProperties, FormEvent, ReactNode, RefObject } from "react";
 import {
   forwardRef,
   memo,
@@ -107,12 +109,6 @@ import { rowAt, virtualLayout, virtualRange, type VirtualLayout, type VirtualRan
 import { useStore } from "@/state/store";
 import { ThreadDiff as Diff } from "@/components/ThreadDiff";
 import type { ArchivedThread, Chat, ChatApproval, ChatCodeReference, ChatQuestionRequest, ConvEntry } from "@/state/types";
-
-interface ThreadCheckpoint {
-  id: string;
-  userText: string;
-  assistantText?: string;
-}
 
 function useStableOptionalCallback<Arguments extends unknown[]>(
   callback: ((...args: Arguments) => void) | undefined,
@@ -277,21 +273,8 @@ export function ChatView({
   const workingToolId = useMemo(() => workingToolGroupId(visibleEntries, working), [visibleEntries, working]);
   const feedTurns = useMemo(() => groupFeedTurns(feedItems), [feedItems]);
   const checkpoints = useMemo(
-    () => conversational ? [] : feedTurns.flatMap((turn): ThreadCheckpoint[] => {
-      if (!turn.checkpoint) return [];
-      let assistantText: string | undefined;
-      for (const item of turn.items) {
-        if (item.kind === "entry" && item.entry.kind === "assistant" && item.entry.text?.trim()) {
-          assistantText = compactCheckpointPreview(item.entry.text);
-        }
-      }
-      return [{
-        id: turn.checkpoint.id,
-        userText: compactCheckpointPreview(turn.checkpoint.text) || "Your message",
-        assistantText,
-      }];
-    }),
-    [conversational, feedTurns],
+    () => conversational ? [] : threadCheckpoints(visibleEntries),
+    [conversational, visibleEntries],
   );
   useEffect(() => {
     setActiveCheckpoint((current) => checkpoints.some((checkpoint) => checkpoint.id === current)
@@ -658,12 +641,10 @@ function ScrollFeed({
   const checkpointTarget = useRef<number | undefined>(undefined);
   const checkpointTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const stickySection = useRef<HTMLElement | undefined>(undefined);
-  const [hoveredCheckpoint, setHoveredCheckpoint] = useState<number | undefined>(undefined);
 
   useEffect(() => {
     pinned.current = true;
     checkpointTarget.current = undefined;
-    setHoveredCheckpoint(undefined);
     clearTimeout(checkpointTimer.current);
     return () => {
       clearTimeout(checkpointTimer.current);
@@ -820,27 +801,6 @@ function ScrollFeed({
     }, 1_500);
   };
 
-  const resolvedHoveredCheckpoint = hoveredCheckpoint !== undefined && hoveredCheckpoint < checkpoints.length
-    ? hoveredCheckpoint
-    : undefined;
-  const hoveredItem = resolvedHoveredCheckpoint === undefined
-    ? undefined
-    : checkpoints[resolvedHoveredCheckpoint];
-  const activeCheckpointIndex = checkpoints.findIndex((checkpoint) => checkpoint.id === activeCheckpoint);
-  const checkpointTop = (index: number) => checkpoints.length <= 1
-    ? 0
-    : (index / (checkpoints.length - 1)) * 100;
-  const checkpointFromPointer = (event: MouseEvent<HTMLElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    if (checkpoints.length <= 1 || rect.height <= 0) return 0;
-    const progress = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
-    return Math.round(progress * (checkpoints.length - 1));
-  };
-  const moveHoveredCheckpoint = (event: KeyboardEvent<HTMLElement>, delta: number) => {
-    event.preventDefault();
-    setHoveredCheckpoint((current) => Math.max(0, Math.min(checkpoints.length - 1, (current ?? 0) + delta)));
-  };
-
   return (
     <div className={cn("relative", className)}>
       <ScrollArea
@@ -870,99 +830,7 @@ function ScrollFeed({
         {children}
       </ScrollArea>
 
-      {checkpoints.length > 0 && (
-        <nav
-          aria-label="Thread checkpoints"
-          className="pointer-events-none absolute inset-y-0 left-0 z-30 w-14"
-        >
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            data-link
-            aria-label={`Go to checkpoint ${(resolvedHoveredCheckpoint ?? Math.max(0, activeCheckpointIndex)) + 1}`}
-            className="pointer-events-auto absolute top-1/2 left-3 h-auto w-10 -translate-y-1/2 rounded-sm bg-transparent p-0 hover:bg-transparent dark:hover:bg-transparent focus-visible:ring-2 focus-visible:ring-ring/70"
-            style={{
-              height: `min(${Math.max(1, (checkpoints.length - 1) * 8)}px, calc(100vh - 18rem))`,
-              width: hoveredItem ? "22rem" : 40,
-            }}
-            onBlur={() => setHoveredCheckpoint(undefined)}
-            onClick={(event) => {
-              if (event.target instanceof Element && event.target.closest("[data-checkpoint-preview]")) return;
-              const index = checkpointFromPointer(event);
-              const checkpoint = checkpoints[index];
-              if (checkpoint) scrollToCheckpoint(checkpoint.id);
-            }}
-            onFocus={() => {
-              setHoveredCheckpoint((current) => current ?? Math.max(0, activeCheckpointIndex));
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "ArrowDown") moveHoveredCheckpoint(event, 1);
-              else if (event.key === "ArrowUp") moveHoveredCheckpoint(event, -1);
-              else if (event.key === "Home") {
-                event.preventDefault();
-                setHoveredCheckpoint(0);
-              } else if (event.key === "End") {
-                event.preventDefault();
-                setHoveredCheckpoint(checkpoints.length - 1);
-              } else if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                if (hoveredItem) scrollToCheckpoint(hoveredItem.id);
-              }
-            }}
-            onMouseLeave={() => setHoveredCheckpoint(undefined)}
-            onMouseMove={(event) => setHoveredCheckpoint(checkpointFromPointer(event))}
-          >
-            {checkpoints.map((checkpoint, index) => {
-              const active = checkpoint.id === activeCheckpoint;
-              const hoverDistance = resolvedHoveredCheckpoint === undefined
-                ? undefined
-                : Math.abs(index - resolvedHoveredCheckpoint);
-              return (
-                <span
-                  key={checkpoint.id}
-                  aria-hidden="true"
-                  data-active={active ? "true" : "false"}
-                  data-checkpoint-index={index}
-                  className={cn(
-                    "pointer-events-none absolute left-0 h-0.5 w-2 -translate-y-1/2 rounded-full bg-foreground/25 transition-[background-color,width] duration-150 motion-reduce:transition-none",
-                    hoverDistance === 0 && "bg-foreground/65",
-                    active && "bg-foreground/85",
-                  )}
-                  style={{
-                    top: `${checkpointTop(index)}%`,
-                    width: hoverDistance === 0 ? 24 : hoverDistance === 1 ? 16 : hoverDistance === 2 ? 10 : 8,
-                  }}
-                />
-              );
-            })}
-            {hoveredItem && resolvedHoveredCheckpoint !== undefined && (
-              <Card
-                data-checkpoint-preview
-                className="pointer-events-auto absolute left-8 z-10 w-80 cursor-text select-text gap-1 rounded-xl border-border/60 bg-popover/95 p-3 text-left text-popover-foreground shadow-xl shadow-black/20 backdrop-blur-md"
-                onMouseMove={(event) => event.stopPropagation()}
-                style={{
-                  top: `${checkpointTop(resolvedHoveredCheckpoint)}%`,
-                  transform: resolvedHoveredCheckpoint === 0
-                    ? "translateY(0)"
-                    : resolvedHoveredCheckpoint === checkpoints.length - 1
-                      ? "translateY(-100%)"
-                      : "translateY(-50%)",
-                }}
-              >
-                <span className="block max-w-full truncate text-sm font-medium leading-5">
-                  {hoveredItem.userText}
-                </span>
-                {hoveredItem.assistantText && (
-                  <span className="line-clamp-3 whitespace-normal text-sm leading-5 text-muted-foreground">
-                    {hoveredItem.assistantText}
-                  </span>
-                )}
-              </Card>
-            )}
-          </Button>
-        </nav>
-      )}
+      <ThreadCheckpointRail checkpoints={checkpoints} activeCheckpoint={activeCheckpoint} onJump={scrollToCheckpoint} />
     </div>
   );
 }
@@ -975,10 +843,6 @@ type FeedItem =
 interface FeedTurn {
   checkpoint?: ConvEntry;
   items: FeedItem[];
-}
-
-function compactCheckpointPreview(text: string | null | undefined): string {
-  return text?.replace(/\s+/g, " ").trim() ?? "";
 }
 
 /// Consecutive tool calls are one passage in the conversation. Prose starts a

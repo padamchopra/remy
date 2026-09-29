@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -34,14 +35,32 @@ test("a thread keeps the values the hub delivered for it, sealed, and nothing el
   assert.equal(env.redactForThread("thread-legacy", "legacy-test-value"), "[REDACTED]");
 });
 
-test("a missing keychain item is a first save, not a keychain failure", () => {
+test("a new computer saves an environment key when the keychain read fails", () => {
   const missed = Object.assign(new Error("Command failed: /usr/bin/security find-generic-password"), {
     stderr: "security: The specified item could not be found in the keychain.\n",
   });
+  const dropped = new Error("Command failed: /usr/bin/security find-generic-password");
+  const locked = Object.assign(new Error("Command failed"), { stderr: "User interaction is not allowed." });
   assert.equal(env.isMissingKeychainItem(missed), true);
-  // Dropping stderr leaves only the command line, which is what made a new computer refuse every thread.
-  assert.equal(env.isMissingKeychainItem(new Error("Command failed: /usr/bin/security find-generic-password")), false);
-  assert.equal(env.isMissingKeychainItem(Object.assign(new Error("Command failed"), { stderr: "User interaction is not allowed." })), false);
+  // Dropping stderr leaves only the command line. That is not "missing", but a
+  // computer with nothing sealed still creates a key instead of refusing every thread.
+  assert.equal(env.isMissingKeychainItem(dropped), false);
+  assert.equal(env.isMissingKeychainItem(locked), false);
+  const stored = randomBytes(32).toString("base64");
+  for (const error of [missed, dropped, locked]) {
+    assert.equal(env.planEnvironmentKey({ error, sealed: false }).action, "create");
+    assert.deepEqual(env.planEnvironmentKey({ error, sealed: false, stored }), { action: "create", encoded: stored });
+  }
+  assert.deepEqual(env.planEnvironmentKey({ error: missed, sealed: true }), { action: "refuse", reason: "missing" });
+  assert.deepEqual(env.planEnvironmentKey({ error: locked, sealed: true }), { action: "refuse", reason: "locked" });
+  assert.deepEqual(env.planEnvironmentKey({ error: dropped, sealed: true }), { action: "refuse", reason: "locked" });
+  const encoded = randomBytes(32).toString("base64");
+  assert.deepEqual(env.planEnvironmentKey({ encoded, sealed: true }), { action: "use", encoded });
+  assert.equal(env.planEnvironmentKey({ encoded: "not-a-key", sealed: false }).action, "create");
+  assert.deepEqual(env.planEnvironmentKey({ encoded: "not-a-key", sealed: true }), { action: "refuse", reason: "locked" });
+  assert.deepEqual(env.keychainSaveArgs("computer", encoded).slice(0, 3), ["add-generic-password", "-U", "-A"]);
+  assert.equal(env.environmentKeyRefusal("missing"), "The environment key is missing from this computer's keychain.");
+  assert.equal(env.environmentKeyRefusal("locked"), "This computer can't open its keychain. Unlock it and try again.");
 });
 
 test("the local named environments are gone", () => {

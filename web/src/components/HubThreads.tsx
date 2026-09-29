@@ -1,5 +1,7 @@
 import { speaker } from "@/lib/thread-message";
 import { threadEntryText, visibleThreadEntries } from "@/lib/thread-entry-display";
+import { mergeThreadTranscript, prependThreadEntries, threadCheckpoints } from "@/lib/hub-transcript";
+import { ThreadCheckpointRail } from "@/components/ThreadCheckpointRail";
 import { ToolGroup } from "./ThreadTools";
 import { workingToolGroupId } from "@/lib/working-tool";
 import { PROVIDERS } from "@/lib/providers";
@@ -39,7 +41,7 @@ import { HubThreadComposer, type HubThreadWorkspaceOption } from "./HubThreadCom
 import { watchHubComputers } from "@/lib/hub-computers";
 import { HubNotifications } from "./HubNotifications";
 import { deviceIcon, type DeviceIconId } from "@/lib/devices";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import {
   canWriteThread,
   cloudComputerName,
@@ -117,6 +119,16 @@ export default function HubThreads({
   const { profile } = useHubProfile(organizationId);
   const transcript = useRef<HTMLDivElement>(null);
   const followsLatest = useRef(true);
+  const assembledId = useRef<string | undefined>(undefined);
+  const assembled = useRef<ConvEntry[]>([]);
+  const assembledComplete = useRef(false);
+  const historyBeforeRef = useRef<string | undefined>(undefined);
+  const scrollAdjust = useRef(0);
+  const [transcriptTick, setTranscriptTick] = useState(0);
+  const [historyBefore, setHistoryBefore] = useState<string | undefined>(undefined);
+  const [transcriptEpoch, setTranscriptEpoch] = useState(0);
+  historyBeforeRef.current = historyBefore;
+  const [activeCheckpoint, setActiveCheckpoint] = useState<string | undefined>(undefined);
   const isPersonal = usePersonalHub();
   const remembered = threadId ? cachedHubThread(threadId) : undefined;
   const [threads, setThreads] = useState<HubThread[]>(() => (
@@ -198,6 +210,69 @@ export default function HubThreads({
   useEffect(() => {
     followsLatest.current = true;
   }, [threadId]);
+  useEffect(() => {
+    if (!thread) return;
+    const next = mergeThreadTranscript(
+      { id: assembledId.current, entries: assembled.current, before: historyBeforeRef.current, complete: assembledComplete.current, replaced: false },
+      {
+        id: thread.id,
+        entries: ((thread.detail.entries ?? []) as unknown as ConvEntry[]).slice(),
+        stale: thread.stale,
+        history: thread.detail.history as { hasEarlier?: boolean; before?: string } | undefined,
+      },
+    );
+    const opened = assembledId.current !== thread.id;
+    assembledId.current = next.id;
+    assembled.current = next.entries;
+    assembledComplete.current = next.complete;
+    historyBeforeRef.current = next.before;
+    if (opened) setActiveCheckpoint(undefined);
+    if (next.replaced) setTranscriptEpoch((value) => value + 1);
+    setHistoryBefore(next.before);
+    setTranscriptTick((value) => value + 1);
+  }, [thread?.id, thread?.revision, thread?.stale, thread?.detail.entries, thread?.detail.history]);
+  useEffect(() => {
+    if (!historyBefore || !thread || thread.stale || thread.id !== assembledId.current) return;
+    const computerId = thread.computerId;
+    const openThread = thread.id;
+    const before = historyBeforeRef.current;
+    if (!before) return;
+    let cancelled = false;
+    const load = async () => {
+      let result: { entries?: ConvEntry[]; history?: { hasEarlier?: boolean; before?: string }; stale?: boolean };
+      try {
+        result = await hubRequest(`${hubThreadPath(organizationId, computerId, openThread)}/transcript?before=${encodeURIComponent(before)}`);
+      } catch {
+        return;
+      }
+      if (cancelled || historyBeforeRef.current !== before || assembledId.current !== openThread) return;
+      if (result.stale || !Array.isArray(result.entries)) return;
+      const node = transcript.current;
+      if (node && !followsLatest.current) scrollAdjust.current = node.scrollHeight;
+      assembled.current = prependThreadEntries(result.entries, assembled.current);
+      const next = result.history?.hasEarlier && result.history.before && result.history.before !== before
+        ? result.history.before
+        : undefined;
+      if (!next) assembledComplete.current = true;
+      setHistoryBefore(next);
+      setTranscriptTick((value) => value + 1);
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, [historyBefore, transcriptEpoch, thread?.id, thread?.stale, thread?.computerId, organizationId]);
+  useLayoutEffect(() => {
+    const node = transcript.current;
+    if (!node) return;
+    if (followsLatest.current) {
+      scrollAdjust.current = 0;
+      node.scrollTop = node.scrollHeight;
+      return;
+    }
+    if (scrollAdjust.current) {
+      node.scrollTop += node.scrollHeight - scrollAdjust.current;
+      scrollAdjust.current = 0;
+    }
+  }, [transcriptTick]);
   const computer = computers.find((c) => c.computerId === thread?.computerId);
   const rememberedName = remembered && remembered.thread.computerId === thread?.computerId ? remembered.computerName : undefined;
   const computerName = computer?.name ?? rememberedName ?? cloudComputerName(thread?.computerId) ?? pending?.computerName ?? "Computer unavailable";
@@ -214,7 +289,10 @@ export default function HubThreads({
     !!thread && !!viewerId && canWriteThread(thread.access, viewerId);
   const disabled = !!pending || busy || !thread || thread.stale || !writable;
   const path = actingComputer ? hubThreadPath(organizationId, actingComputer, actingThread) : "";
-  const visibleEntries = thread?.detail.entries ?? [];
+  const mirrorEntries = (thread?.detail.entries ?? []) as unknown as ConvEntry[];
+  const visibleEntries = transcriptTick > 0 && assembledId.current === thread?.id && assembled.current.length
+    ? assembled.current
+    : mirrorEntries;
   const entries = visibleThreadEntries(pending && !visibleEntries.some(entry => entry.id === `u-${pending.requestId}`)
     ? [{id: `u-${pending.requestId}`, kind: "user", text: pending.message}, ...visibleEntries]
     : visibleEntries);
@@ -321,14 +399,17 @@ export default function HubThreads({
           {!pending && !!member && !writable && <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2 text-xs text-muted-foreground">
             <Button size="sm" disabled={busy || thread.stale} onClick={() => void act("join")}>Join thread</Button>
           </div>}
+          <div className="relative min-h-0 flex-1">
           <div
             ref={transcript}
             onScroll={(e) => {
               const node = e.currentTarget;
               followsLatest.current =
                 node.scrollHeight - node.scrollTop - node.clientHeight < 80;
+              const next = checkpointAt(node);
+              if (next) setActiveCheckpoint((current) => current === next ? current : next);
             }}
-            className="min-h-0 flex-1 overflow-auto"
+            className="absolute inset-0 overflow-auto"
             aria-label="Thread transcript"
           >
             <div className="mx-auto flex w-full max-w-[44rem] flex-col gap-4 px-6 py-7">
@@ -342,6 +423,7 @@ export default function HubThreads({
                 <Message
                   key={String(item.entry.id)}
                   align={item.entry.kind === "user" ? "end" : "start"}
+                  data-checkpoint-section={item.entry.kind === "user" ? String(item.entry.id) : undefined}
                 >
                   {item.entry.kind === "user" && profile && ((item.entry.member as ThreadMember | undefined)?.id ?? member?.id) === profile.id && <AvatarFrom avatar={profile.image ?? ""} className="size-8 self-end" />}
                   {item.entry.kind !== "user" && <ThreadMessageAvatar provider={runtimeProvider} lead={item.lead} />}
@@ -404,6 +486,17 @@ export default function HubThreads({
                   : <ThreadStartMarker progress={pending.progress} />}
               </MessageContent></Message>}
             </div>
+          </div>
+          <ThreadCheckpointRail
+            checkpoints={threadCheckpoints(entries)}
+            activeCheckpoint={activeCheckpoint}
+            onJump={(id) => {
+              followsLatest.current = false;
+              setActiveCheckpoint(id);
+              const node = transcript.current?.querySelector<HTMLElement>(`[data-checkpoint-section="${CSS.escape(id)}"]`);
+              node?.scrollIntoView({ block: "start", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+            }}
+          />
           </div>
           {approval && (
             <div className="flex shrink-0 flex-wrap items-center gap-2 border-t p-4">
@@ -548,6 +641,17 @@ export default function HubThreads({
       )}
     </section>
   );
+}
+
+function checkpointAt(node: HTMLElement): string | undefined {
+  const sections = [...node.querySelectorAll<HTMLElement>("[data-checkpoint-section]")];
+  const edge = node.getBoundingClientRect().top + 24;
+  let current = sections[0]?.dataset.checkpointSection;
+  for (const section of sections) {
+    if (section.getBoundingClientRect().top <= edge) current = section.dataset.checkpointSection;
+    else break;
+  }
+  return current;
 }
 
 /// Heartbeats carry no words. A run of real tool calls is one line in the thread.

@@ -30,45 +30,115 @@ export interface RuntimeCommandResult {
 let cachedKey: Buffer | undefined;
 const cleartextCache = new Map<string, string[]>();
 
-/// `security` writes "The specified item could not be found in the keychain."
-/// on stderr. A caller that drops stderr cannot tell a first save from a
-/// keychain that refused the read, and every thread start then stops.
-export function isMissingKeychainItem(error: unknown): boolean {
+function keychainText(error: unknown): string {
   const stderr = (error as { stderr?: unknown }).stderr ?? "";
   const message = error instanceof Error ? error.message : "";
-  return /could not be found|item.*not found/i.test(`${stderr}\n${message}`);
+  return `${stderr}\n${message}`;
+}
+
+/// `security` writes "The specified item could not be found in the keychain."
+/// on stderr. The command's own message never says that, so a caller that
+/// drops stderr cannot tell a first save from a keychain that refused the read.
+export function isMissingKeychainItem(error: unknown): boolean {
+  return /could not be found|item.*not found/i.test(keychainText(error));
+}
+
+/// `-A` lets `security` read the item later without a prompt. A background
+/// Remy cannot approve one, which is what stopped a new computer. `-U`
+/// replaces an unreadable item only when nothing has been sealed with it yet.
+export function keychainSaveArgs(account: string, encoded: string): string[] {
+  return ["add-generic-password", "-U", "-A", "-a", account, "-s", KEYCHAIN_SERVICE, "-w", encoded];
+}
+
+function encodedKey(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  return Buffer.from(value, "base64").length === 32 ? value : undefined;
+}
+
+export type EnvironmentKeyPlan =
+  | { action: "use"; encoded: string }
+  | { action: "create"; encoded: string }
+  | { action: "refuse"; reason: "missing" | "locked" };
+
+/// A new computer has nothing sealed, so any failed keychain read is the first
+/// save. Refusing that read is what stopped every thread. A computer that
+/// already sealed values keeps its key: a new one could not open them.
+export function planEnvironmentKey(input: {
+  encoded?: string;
+  error?: unknown;
+  sealed: boolean;
+  stored?: string;
+}): EnvironmentKeyPlan {
+  const read = input.error ? undefined : encodedKey(input.encoded);
+  if (read) return { action: "use", encoded: read };
+  if (input.sealed) {
+    return { action: "refuse", reason: input.error && isMissingKeychainItem(input.error) ? "missing" : "locked" };
+  }
+  return { action: "create", encoded: encodedKey(input.stored) ?? randomBytes(32).toString("base64") };
+}
+
+export function environmentKeyRefusal(reason: "missing" | "locked"): string {
+  return reason === "missing"
+    ? "The environment key is missing from this computer's keychain."
+    : "This computer can't open its keychain. Unlock it and try again.";
+}
+
+function sealedEnvironmentValues(): boolean {
+  const kv = db.prepare(
+    "select 1 as present from kv where (key like 'taskEnvironment:%' or key = 'hubModelKeys' or key like 'hubLinear:%') and value like '%\"ciphertext\"%' limit 1",
+  ).get() as { present?: number } | undefined;
+  if (kv?.present) return true;
+  try {
+    const linear = db.prepare("select 1 as present from linear_accounts limit 1").get() as { present?: number } | undefined;
+    return Boolean(linear?.present);
+  } catch {
+    return false;
+  }
+}
+
+function readKeychain(): string {
+  return execFileSync("/usr/bin/security", [
+    "find-generic-password", "-a", deviceId, "-s", KEYCHAIN_SERVICE, "-w",
+  ], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+}
+
+function rememberKey(encoded: string): Buffer {
+  const key = Buffer.from(encoded, "base64");
+  if (key.length !== 32) throw new Error(environmentKeyRefusal("locked"));
+  cachedKey = key;
+  return key;
 }
 
 function machineKey(): Buffer {
   if (cachedKey) return cachedKey;
-  const fallback = getKv<string>("workspaceEnvironmentKey");
-  let encoded = "";
-  if (process.platform === "darwin" && !process.env.MC_CONFIG_DIR) {
-    try {
-      encoded = execFileSync("/usr/bin/security", [
-        "find-generic-password", "-a", deviceId, "-s", KEYCHAIN_SERVICE, "-w",
-      ], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-    } catch (error) {
-      if (!isMissingKeychainItem(error)) {
-        throw new Error("workspace environment encryption is unavailable");
-      }
-      const encrypted = db.prepare(
-        "select 1 as present from kv where key like 'taskEnvironment:%' limit 1",
-      ).get() as { present?: number } | undefined;
-      if (encrypted?.present) throw new Error("the workspace environment key is missing from Keychain");
-      encoded = randomBytes(32).toString("base64");
-      execFileSync("/usr/bin/security", [
-        "add-generic-password", "-a", deviceId, "-s", KEYCHAIN_SERVICE, "-w", encoded,
-      ], { stdio: "ignore" });
-    }
-  } else {
-    encoded = fallback ?? randomBytes(32).toString("base64");
-    if (!fallback) setKv("workspaceEnvironmentKey", encoded);
+  const stored = encodedKey(getKv<string>("workspaceEnvironmentKey"));
+  if (process.platform !== "darwin" || process.env.MC_CONFIG_DIR) {
+    const encoded = stored ?? randomBytes(32).toString("base64");
+    if (!stored) setKv("workspaceEnvironmentKey", encoded);
+    return rememberKey(encoded);
   }
-  const key = Buffer.from(encoded, "base64");
-  if (key.length !== 32) throw new Error("workspace environment encryption is unavailable");
-  cachedKey = key;
-  return key;
+  let plan: EnvironmentKeyPlan;
+  try {
+    const encoded = readKeychain();
+    plan = encodedKey(encoded)
+      ? { action: "use", encoded }
+      : planEnvironmentKey({ encoded, sealed: sealedEnvironmentValues(), stored });
+  } catch (error) {
+    plan = planEnvironmentKey({ error, sealed: sealedEnvironmentValues(), stored });
+  }
+  if (plan.action === "refuse") throw new Error(environmentKeyRefusal(plan.reason));
+  if (plan.action === "create") {
+    try {
+      execFileSync("/usr/bin/security", keychainSaveArgs(deviceId, plan.encoded), { stdio: ["ignore", "pipe", "pipe"] });
+      if (stored) setKv("workspaceEnvironmentKey", null);
+    } catch {
+      // The keychain would not take a write without a prompt. Keep the same
+      // key in the database so this computer can still seal values, and try
+      // the keychain again on the next start.
+      setKv("workspaceEnvironmentKey", plan.encoded);
+    }
+  } else if (stored) setKv("workspaceEnvironmentKey", null);
+  return rememberKey(plan.encoded);
 }
 
 function encrypt(value: string): { ciphertext: string; iv: string; tag: string } {
