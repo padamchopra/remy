@@ -120,6 +120,8 @@ Keep inline copy only for durable page state — loading, stale, reconnect — a
 
 A composed screen assembles primitives; it never replaces one that exists. A control that appears on two screens moves into its own module rather than being copied — `ComposerMenu.tsx`, `PathPicker.tsx`, and `ThreadMenu.tsx` are shared this way.
 
+A person's avatar is always `PersonAvatar`, including compact attribution and reviewer rows. Pass the saved image and name through the owning API instead of rebuilding initials or composing an avatar at the call site.
+
 ## Workspace icons
 
 A workspace icon is `WorkspaceIcon` for the glyph or image, and `WorkspaceMark` when it sits in a tinted well. Hosted and local both go through those. Do not render `projectIcon` or a second hosted icon component at a call site — sizing may change, the glyph, fill, and rounded well must not.

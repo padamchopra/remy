@@ -20,7 +20,7 @@ import { ApprovalDetails } from "./ApprovalDetails";
 import { threadModelPicker } from "@/lib/hub-models";
 import { useHubResource } from "@/lib/hub-organization";
 import type { ModelAccessResponse } from "./HubModelAccess";
-import { AvatarFrom } from "./UserAvatar";
+import { PersonAvatar } from "./UserAvatar";
 import { useHubProfile } from "@/lib/hub-profile";
 import { useThreadStarts, retryHubThread, forgetThreadStart } from "@/lib/hub-thread-start";
 import { ThreadStartMarker } from "./ThreadStartMarker";
@@ -343,7 +343,7 @@ export default function HubThreads({
                   key={String(item.entry.id)}
                   align={item.entry.kind === "user" ? "end" : "start"}
                 >
-                  {item.entry.kind === "user" && profile && ((item.entry.member as ThreadMember | undefined)?.id ?? member?.id) === profile.id && <AvatarFrom avatar={profile.image ?? ""} className="size-8 self-end" />}
+                  {item.entry.kind === "user" && profile && ((item.entry.member as ThreadMember | undefined)?.id ?? member?.id) === profile.id && <PersonAvatar avatar={profile.image} name={profile.name} className="size-8 self-end" />}
                   {item.entry.kind !== "user" && <ThreadMessageAvatar provider={runtimeProvider} lead={item.lead} />}
                   <MessageContent>
                     {item.lead && item.entry.kind === "user" && <MessageHeader>{(item.entry.member as ThreadMember | undefined)?.label ?? "You"}</MessageHeader>}

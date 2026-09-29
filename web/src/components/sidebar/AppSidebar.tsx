@@ -26,7 +26,7 @@ import {
   MenuTrigger,
 } from "@/components/ui/menu-base";
 import { Button } from "@/components/ui/button";
-import { AvatarFrom } from "@/components/UserAvatar";
+import { PersonAvatar } from "@/components/UserAvatar";
 import { SidebarChildThreadRow, SidebarThreadRow } from "./SidebarThreadRow";
 import type {
   SidebarAccount,
@@ -257,7 +257,7 @@ function AccountMenu({ menu }: { menu: SidebarAccountMenu }) {
   return (
     <Menu>
       <MenuTrigger render={<SidebarMenuButton size="lg" aria-label="Account menu" title="Account menu" />}>
-        <AvatarFrom avatar={menu.image ?? ""} label={menu.name} className="size-6" />
+        <PersonAvatar avatar={menu.image} name={menu.name} className="size-6" />
         <span className="min-w-0 flex-1 truncate">{menu.name}</span>
         <ChevronsUpDown className="text-muted-foreground" />
       </MenuTrigger>
@@ -265,7 +265,7 @@ function AccountMenu({ menu }: { menu: SidebarAccountMenu }) {
         {menu.email && (
           <>
             <div className="flex items-center gap-2 px-2 py-1.5">
-              <AvatarFrom avatar={menu.image ?? ""} label={menu.name} className="size-7" />
+              <PersonAvatar avatar={menu.image} name={menu.name} className="size-7" />
               <div className="flex min-w-0 flex-col">
                 <span className="truncate text-sm font-medium">{menu.name}</span>
                 <span className="truncate text-xs text-muted-foreground">{menu.email}</span>

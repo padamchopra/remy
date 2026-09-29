@@ -1,4 +1,4 @@
-import { AvatarFrom } from "@/components/UserAvatar";
+import { PersonAvatar } from "@/components/UserAvatar";
 import { useEffect, useState } from "react";
 import { Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -198,9 +198,9 @@ export default function HubOrganizationSettings({
           <Item key={item.id} variant="outline">
             <ItemMedia>
               {kind === "members" ? (
-                <AvatarFrom
+                <PersonAvatar
                   avatar={member.image ?? ""}
-                  label={item.name}
+                  name={item.name}
                   className="size-8"
                 />
               ) : (

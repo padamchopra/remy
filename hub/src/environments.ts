@@ -13,6 +13,7 @@ const COUNT_LIMIT = 200;
 const SIZE_LIMIT = 131_072;
 
 type Row = { id: string; key: string; kind: "variable" | "secret"; ciphertext: string; created_by: string; created_at: number };
+type Person = { name: string; image?: string };
 
 export class EnvironmentError extends Error {
   constructor(message: string, readonly status = 400) { super(message); }
@@ -51,12 +52,12 @@ export class EnvironmentStore {
 
   /// What `viewer` sees in a workspace: its Workspace values and their own
   /// Personal ones, oldest first. A secret's value never leaves the hub.
-  async list(org: string, workspace: string, viewer: string, name: (userId: string) => Promise<string>): Promise<WorkspaceEnvironmentValue[]> {
+  async list(org: string, workspace: string, viewer: string, person: (userId: string) => Promise<Person>): Promise<WorkspaceEnvironmentValue[]> {
     const shared = await this.workspaceRows(org, workspace);
     const personal = await this.personalRows(viewer);
     const keys = new Set(shared.map((row) => row.key));
-    const names = new Map<string, string>();
-    for (const id of new Set([...shared, ...personal].map((row) => row.created_by))) names.set(id, await name(id));
+    const people = new Map<string, Person>();
+    for (const id of new Set([...shared, ...personal].map((row) => row.created_by))) people.set(id, await person(id));
     const view = async (row: Row, scope: "workspace" | "personal"): Promise<WorkspaceEnvironmentValue> => ({
       id: row.id,
       key: row.key,
@@ -65,7 +66,7 @@ export class EnvironmentStore {
       ...(row.kind === "variable"
         ? { value: await this.crypto().unseal(scope === "workspace" ? this.workspaceScope(org, workspace, row.id) : this.personalScope(viewer, row.id), row.ciphertext) }
         : {}),
-      createdBy: { id: row.created_by, name: names.get(row.created_by) ?? "Former member" },
+      createdBy: { id: row.created_by, ...(people.get(row.created_by) ?? { name: "Former member" }) },
       createdAt: row.created_at,
       ...(scope === "personal" && keys.has(row.key) ? { overridden: true } : {}),
       removable: scope === "workspace" || row.created_by === viewer,

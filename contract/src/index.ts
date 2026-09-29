@@ -343,7 +343,7 @@ export const workspaceEnvironmentValueSchema = z.object({
   kind: environmentValueKindSchema,
   scope: environmentValueScopeSchema,
   value: z.string().optional(),
-  createdBy: z.object({ id: z.string(), name: z.string() }),
+  createdBy: z.object({ id: z.string(), name: z.string(), image: z.string().optional() }),
   createdAt: z.number().int(),
   /// A Personal value whose key this workspace already sets; the Workspace value wins.
   overridden: z.boolean().optional(),

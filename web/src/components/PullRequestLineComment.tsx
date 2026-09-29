@@ -3,13 +3,13 @@ import type { HubThread, ReviewFinding } from "@remy/contract";
 import { Bot, ChevronDown, MessagesSquare } from "lucide-react";
 import { Menu, MenuContent, MenuGroup, MenuGroupLabel, MenuItem, MenuItemCheck, MenuTrigger } from "@/components/ui/menu-base";
 import type { ChatCodeReference } from "@/state/types";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar-base";
+import { PersonAvatar } from "@/components/UserAvatar";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog-base";
 import { Spinner } from "@/components/ui/spinner";
 import { Markdown } from "@/components/Markdown";
 import { LinkedThreadChip, ThreadDot } from "@/components/PullRequestLinkedThread";
-import { initials, timeAgo } from "@/lib/pull-request-detail";
+import { timeAgo } from "@/lib/pull-request-detail";
 import { lineCommentActions, lineRangeLabel, type LineCommentAction, type ReviewAuthor, type ReviewComment, type ReviewThread } from "@/lib/pull-request-review-state";
 import { cn } from "@/lib/utils";
 
@@ -65,14 +65,9 @@ export function useReviewSurface() {
 /// there is none. `you` is the comment box's own avatar, in the primary colour.
 export function ReviewAvatar({ author, you }: { author?: ReviewAuthor; you?: boolean }) {
   const name = author?.name || author?.login || "You";
-  return (
-    <Avatar className={cn("size-[22px]", you ? "bg-primary" : "bg-foreground/12")}>
-      {author?.avatarUrl && <AvatarImage src={author.avatarUrl} alt="" />}
-      <AvatarFallback className={cn("text-[9px] leading-3 font-semibold normal-case", you ? "text-primary-foreground" : "text-foreground/70")}>
-        {initials(name)}
-      </AvatarFallback>
-    </Avatar>
-  );
+  return <PersonAvatar aria-hidden avatar={author?.avatarUrl} name={name}
+    className={cn("size-[22px]", you ? "bg-primary" : "bg-foreground/12")}
+    fallbackClassName={cn("bg-transparent font-semibold normal-case", you ? "text-primary-foreground" : "text-foreground/70")} />;
 }
 
 const FOOTER_BUTTON = "h-7 rounded-lg px-3 text-xs leading-4 font-normal shadow-none";
