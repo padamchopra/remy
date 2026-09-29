@@ -99,7 +99,14 @@ try {
   await phone.locator('.mobile-links').getByRole('link', { name: 'Docs', exact: true }).click();
   await phone.getByRole('heading', { name: 'Install Remy on a computer' }).waitFor();
   await phone.goto(`${url}/changelog/`);
-  await phone.getByText('Unreleased', { exact: true }).waitFor();
+  // Each day is a dated heading, newest first, with its changes beneath it.
+  const days = phone.locator('.changelog-page article h2 time');
+  await days.first().waitFor();
+  const dates = await days.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('datetime')));
+  assert.ok(dates.length > 1);
+  assert.deepEqual(dates, [...dates].sort().reverse());
+  assert.equal(new Set(dates).size, dates.length);
+  assert.ok(await phone.locator('.changelog-page article').first().locator('li').count() > 0);
   await phone.goto(url);
   await phone.getByRole('link', { name: 'Try the live demo' }).click();
   await phone.getByRole('combobox', { name: 'Sample thread' }).waitFor();
