@@ -9,7 +9,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs-base";
 import { PaneHeader } from "@/components/PaneHeader";
-import { PullRequestStackHeader, PullRequestStackIcon, PullRequestStackItem, PullRequestStackRows, pullRequestStackState } from "@/components/PullRequestStack";
+import { PullRequestStackHeader, PullRequestStackItem, PullRequestStackRows } from "@/components/PullRequestStack";
+import { PullRequestStatusIcon } from "@/components/PullRequestStatusIcon";
 import { WorkspaceMark } from "@/components/WorkspaceIcon";
 import { watchHubResource } from "@/lib/hub-computers";
 import type { HubWorkspace } from "@/lib/hub-organization";
@@ -17,6 +18,7 @@ import { hubRequest, HubRequestError, hubThreadBase } from "@/lib/hub-threads";
 import { cacheHubWorkspaces, cachedHubWorkspaces, type CachedHubWorkspace } from "@/lib/hub-workspace-cache";
 import { workspaceGroups, type WorkspaceGroup } from "@/lib/projects";
 import { groupPullRequests, orderPullRequests } from "@/lib/pull-request-order";
+import { pullRequestStatus } from "@/lib/pull-request-status";
 import { pullRequestTileWorkspace } from "@/lib/pull-request-workspace";
 import { relativeDate } from "@/lib/relative-date";
 import { transport } from "@/lib/transport";
@@ -823,6 +825,7 @@ function PullRequestListItem({
   const failed = pullRequest.checks.some((check) => check.state === "fail");
   const total = pullRequest.checks.length;
   const tile = pullRequestTileWorkspace(pullRequest, workspace ? [workspace] : [], hostedWorkspaces);
+  const status = pullRequestStatus(pullRequest, Boolean(pullRequest.worktreePath));
   const threadLink = thread ? (
     <button type="button" data-link className="flex max-w-44 min-w-0 shrink-0 items-center gap-1.5 text-xs" onClick={() => onOpenThread(thread.id)}>
       <CircleDot className="size-3.5 shrink-0 text-muted-foreground" />
@@ -854,12 +857,12 @@ function PullRequestListItem({
           className="flex min-h-[42px] min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 px-3.5 py-2.5 hover:bg-accent/50 sm:flex-nowrap sm:py-2"
         >
           <button type="button" data-link className="flex min-w-0 basis-full items-start gap-2.5 text-left sm:flex-1 sm:basis-0" onClick={onOpen}>
-            <PullRequestStackIcon state="OPEN" isDraft={pullRequest.isDraft} />
+            <PullRequestStatusIcon status={status} className="mt-[2.5px] size-[13px]" />
             <span className="shrink-0 font-mono text-xs leading-[18px] text-muted-foreground tabular-nums">#{pullRequest.number}</span>
             <span data-slot="pull-request-title" className="line-clamp-2 min-w-0 flex-1 text-[13px] leading-[18px] wrap-break-word sm:block sm:truncate">{pullRequest.title}</span>
           </button>
-          <span data-slot="pull-request-stack-position" className="min-w-0 flex-1 pl-[23px] text-xs whitespace-nowrap text-muted-foreground sm:order-last sm:w-[5.5rem] sm:flex-none sm:pl-0 sm:text-right">
-            {pullRequest.stack.position} of {pullRequest.stack.size} · {pullRequestStackState("OPEN", pullRequest.isDraft)}
+          <span data-slot="pull-request-stack-position" className="min-w-0 flex-1 pl-[23px] text-xs whitespace-nowrap text-muted-foreground sm:order-last sm:w-44 sm:flex-none sm:pl-0 sm:text-right">
+            {pullRequest.stack.position} of {pullRequest.stack.size} · <span data-slot="pull-request-status">{status.label}</span>
           </span>
           {threadLink}
           {trailing}
@@ -870,11 +873,12 @@ function PullRequestListItem({
   return (
     <div data-slot="pull-request-tile" className="flex min-w-0 items-center gap-3 px-5 py-2 hover:bg-accent/60">
       <button type="button" data-link className="flex min-w-0 flex-1 items-start gap-2 text-left" onClick={onOpen}>
-        <GitPullRequest className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        <PullRequestStatusIcon status={status} className="mt-0.5 size-4" />
         <span className="min-w-0 flex-1 overflow-hidden">
           <span data-slot="pull-request-title" className="block min-w-0 w-full truncate text-sm">{pullRequest.title}</span>
           <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
             <span className="shrink-0">#{pullRequest.number}</span>
+            <span data-slot="pull-request-status" className="shrink-0">{status.label}</span>
             {pullRequest.stack ? (
               <span className="shrink-0">{pullRequest.stack.position} of {pullRequest.stack.size}</span>
             ) : null}
