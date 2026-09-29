@@ -6,7 +6,7 @@ import { chromiumPath } from './chromium.mjs';
 const origin = process.env.WEBSITE_URL || 'http://127.0.0.1:5180';
 const output = process.env.QA_ARTIFACTS || '/tmp/remy-pr-artifacts/review-agent-split';
 mkdirSync(output, { recursive: true });
-const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || chromiumPath(), headless: true });
+const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || (process.platform === 'darwin' ? chromiumPath() : chromium.executablePath()), headless: true });
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 const page = await context.newPage();
 const errors = [];
