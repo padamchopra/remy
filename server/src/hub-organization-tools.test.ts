@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateKeyPairSync } from "node:crypto";
 import test from "node:test";
 process.env.MC_CONFIG_DIR=mkdtempSync(join(tmpdir(),"remy-orchestration-auth-"));
+const binDir=mkdtempSync(join(tmpdir(),"remy-orchestration-bin-"));
+const claude=join(binDir,"claude");
+writeFileSync(claude,"#!/bin/sh\nexit 0\n");
+chmodSync(claude,0o755);
+process.env.PATH=`${binDir}:${process.env.PATH ?? ""}`;
+test.after(()=>rmSync(binDir,{recursive:true,force:true}));
 const {getKv,setKv}=await import("./db.js");
 const {hubOrganizationTool}=await import("./hub-organization-tools.js");
 const {createChat,deleteChat}=await import("./chat.js");
