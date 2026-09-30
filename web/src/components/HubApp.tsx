@@ -36,11 +36,12 @@ import { watchHubResource } from "@/lib/hub-computers";
 import { cachedHubThread, clearHubThreadCache } from "@/lib/hub-thread-cache";
 import { requestComposerWorkspace } from "@/lib/composer-workspace";
 import { currentLocation, listenToLocationChanges, navigateLocation, normalizeLocation, parseLocation, type Route } from "@/lib/route";
-import { addAppTab, closeAppTab, focusAppTab, navigateAppTab, openAppTabBeside, readAppTabs, saveAppTabs, splitAppTab, type AppTabs } from "@/lib/app-tabs";
+import { addAppTab, closeAppTab, dropAppTab, focusAppTab, navigateAppTab, openAppTabBeside, readAppTabs, saveAppTabs, splitAppTab, type AppTabs } from "@/lib/app-tabs";
 import { apiError } from "@/lib/api-error";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field, FieldLabel } from "@/components/ui/field";
+import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem } from "@/components/ui/context-menu-base";
 import { Tabs as AppTabsRoot, TabsList as AppTabsList, TabsTrigger as AppTabsTrigger } from "@/components/ui/tabs-base";
 
 import {
@@ -111,6 +112,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
     const stored = readAppTabs(initial);
     return navigateAppTab(stored, initial);
   });
+  const [draggedTab, setDraggedTab] = useState<string>();
   const route = appTabs.tabs.find((tab) => tab.id === appTabs.focused)?.route ?? appTabs.tabs[0]!.route;
   const changeTabs = (change: (current: AppTabs) => AppTabs) => setAppTabs((current) => {
     const next = change(current);
@@ -134,8 +136,8 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
     changeTabs(() => next);
     navigateLocation({ route: next.tabs.at(-1)!.route });
   };
-  const splitTab = (direction: "horizontal" | "vertical") => {
-    const next = splitAppTab(appTabs, direction, { name: "threads", organizationId: route.organizationId });
+  const splitTab = (direction: "horizontal" | "vertical", tabId = appTabs.focused) => {
+    const next = splitAppTab(focusAppTab(appTabs, tabId), direction, { name: "threads", organizationId: route.organizationId });
     changeTabs(() => next);
     navigateLocation({ route: next.tabs.find((tab) => tab.id === next.focused)!.route });
   };
@@ -564,23 +566,34 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
         <SidebarInset className="h-svh min-w-0 overflow-hidden">
           <AppTabsRoot value={appTabs.focused} onValueChange={(value) => focusTab(String(value))} className="flex h-11 shrink-0 flex-row data-[orientation=horizontal]:flex-row items-center gap-1 border-b border-border px-2">
             {route.name === "threads" && route.threadId && <SidebarTrigger className="md:hidden" />}
-            <AppTabsList aria-label="Open tabs" className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-none">
+            <div className="flex min-w-0 items-center gap-1 overflow-x-auto scrollbar-none">
+            <AppTabsList aria-label="Open tabs" activateOnFocus={false} className="flex shrink-0 items-center gap-1">
               {appTabs.tabs.map((tab) => {
                 const selected = tab.id === appTabs.focused;
                 const label = appTabLabel(tab.route, threads);
-                return <div key={tab.id} className="flex min-w-0 shrink-0 items-center rounded-md bg-transparent data-[selected=true]:bg-foreground/8" data-selected={selected}>
-                  <AppTabsTrigger value={tab.id} className="max-w-44 min-w-0 gap-1.5 px-2 text-xs font-normal" aria-label={label}>
+                return <ContextMenu key={tab.id}><ContextMenuTrigger className="flex min-w-0 shrink-0 items-center rounded-md bg-transparent data-[selected=true]:bg-foreground/8" data-selected={selected}>
+                  <AppTabsTrigger value={tab.id} draggable onDragStart={(event) => { event.dataTransfer.setData("application/x-remy-tab", tab.id); event.dataTransfer.effectAllowed = "move"; setDraggedTab(tab.id); }} onDragEnd={() => setDraggedTab(undefined)} onKeyDown={(event) => {
+                    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+                    event.preventDefault();
+                    const box = event.currentTarget.getBoundingClientRect();
+                    event.currentTarget.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: box.left, clientY: box.bottom }));
+                  }} className="max-w-44 min-w-0 gap-1.5 px-2 text-xs font-normal" aria-label={label}>
                     {tab.route.name === "threads" ? <MessagesSquare className="size-3.5 shrink-0" /> : tab.route.name === "prs" ? <GitPullRequest className="size-3.5 shrink-0" /> : tab.route.name === "settings" ? <Settings2 className="size-3.5 shrink-0" /> : <Folder className="size-3.5 shrink-0" />}
                     <span className="truncate">{label}</span>
                   </AppTabsTrigger>
                   {appTabs.tabs.length > 1 && <Button type="button" variant="ghost" size="icon-xs" aria-label={`Close ${label}`} className="size-5 shrink-0" onClick={() => closeTab(tab.id)}><X /></Button>}
-                </div>;
+                </ContextMenuTrigger>
+                  <ContextMenuContent aria-label={`Tab actions: ${label}`}>
+                    <ContextMenuItem onClick={() => splitTab("horizontal", tab.id)}><Columns2 />Split left and right</ContextMenuItem>
+                    <ContextMenuItem onClick={() => splitTab("vertical", tab.id)}><Rows2 />Split top and bottom</ContextMenuItem>
+                    {appTabs.split && <ContextMenuItem onClick={() => changeTabs(current => ({ ...current, split: undefined }))}>Unsplit</ContextMenuItem>}
+                    <ContextMenuItem disabled={appTabs.tabs.length === 1} onClick={() => closeTab(tab.id)}><X />Close tab</ContextMenuItem>
+                  </ContextMenuContent>
+                </ContextMenu>;
               })}
             </AppTabsList>
             <Button type="button" variant="ghost" size="icon-sm" aria-label="New tab" title="New tab" onClick={newTab}><Plus /></Button>
-            <Button type="button" variant="ghost" size="icon-sm" aria-label="Split left and right" title="Split left and right" className="hidden md:inline-flex" onClick={() => splitTab("horizontal")}><Columns2 /></Button>
-            <Button type="button" variant="ghost" size="icon-sm" aria-label="Split top and bottom" title="Split top and bottom" className="hidden md:inline-flex" onClick={() => splitTab("vertical")}><Rows2 /></Button>
-            {appTabs.split && <Button type="button" variant="ghost" size="sm" onClick={() => changeTabs((current) => ({ ...current, split: undefined }))}>Unsplit</Button>}
+            </div>
           </AppTabsRoot>
           <div className={appTabs.split ? appTabs.split.direction === "horizontal" ? "flex min-h-0 flex-1" : "flex min-h-0 flex-1 flex-col" : "flex min-h-0 flex-1"}>
             {[...(appTabs.split ? [appTabs.split.first, appTabs.split.second] : [appTabs.focused]), ...appTabs.tabs.map((tab) => tab.id).filter((id) => id !== appTabs.focused && id !== appTabs.split?.first && id !== appTabs.split?.second)].map((tabId) => {
@@ -590,8 +603,24 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               const ratio = appTabs.split?.ratio ?? 0.5;
               return <Fragment key={tab.id}>
                 {appTabs.split?.second === tab.id && <AppSplitDivider direction={appTabs.split.direction} ratio={ratio} onResize={(ratio) => changeTabs((current) => current.split ? { ...current, split: { ...current.split, ratio } } : current)} />}
-                <section key="pane" aria-label={tab.route.name === "threads" ? "Thread pane" : `${tab.route.name} pane`} style={visible && appTabs.split ? { flexGrow: tab.id === appTabs.split.first ? ratio : 1 - ratio } : undefined} onPointerDownCapture={() => { if (tab.id !== appTabs.focused) focusTab(tab.id); }} onFocusCapture={() => { if (tab.id !== appTabs.focused) focusTab(tab.id); }} className={visible ? `flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${appTabs.split && tab.id !== appTabs.focused ? "max-md:hidden" : ""}` : "hidden"}>
+                <section key="pane" aria-label={tab.route.name === "threads" ? "Thread pane" : `${tab.route.name} pane`} style={visible && appTabs.split ? { flexGrow: tab.id === appTabs.split.first ? ratio : 1 - ratio } : undefined} onPointerDownCapture={() => { if (tab.id !== appTabs.focused) focusTab(tab.id); }} onFocusCapture={() => { if (tab.id !== appTabs.focused) focusTab(tab.id); }} className={visible ? `relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${appTabs.split && tab.id !== appTabs.focused ? "max-md:hidden" : ""}` : "hidden"}>
                 {renderPane(tab.route, tab.id)}
+                {visible && draggedTab && draggedTab !== tab.id && <div className="absolute inset-0 z-30 grid grid-cols-2 grid-rows-[1fr_2fr_1fr] gap-2 bg-background/70 p-3">
+                  {(appTabs.split ? ["right"] as const : ["top", "left", "right", "bottom"] as const).map(side => <div key={side}
+                    className={`flex min-h-0 items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground data-[over=true]:bg-accent ${appTabs.split ? "col-span-2 row-span-3" : side === "top" || side === "bottom" ? "col-span-2" : ""}`}
+                    onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; event.currentTarget.dataset.over = "true"; }}
+                    onDragLeave={event => { delete event.currentTarget.dataset.over; }}
+                    data-drop-side={side}
+                    onDrop={event => {
+                      event.preventDefault();
+                      const next = dropAppTab(appTabs, draggedTab, tab.id, side);
+                      changeTabs(() => next);
+                      setDraggedTab(undefined);
+                      const target = next.tabs.find(entry => entry.id === next.focused);
+                      if (target) navigateLocation({ route: target.route });
+                    }}
+                  >{appTabs.split ? "Move tab here" : `Split ${side}`}</div>)}
+                </div>}
                 </section>
               </Fragment>;
             })}

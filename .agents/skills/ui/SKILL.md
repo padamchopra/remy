@@ -162,6 +162,8 @@ GOOD
 
 ## One pane title
 
+The app tab strip puts New tab immediately after the last tab, inside the scrollable strip. Split and Unsplit belong in each tab header’s context menu, available by right-click or Shift+F10. Dragging a header creates a split from a pane edge or replaces a pane in an existing split; it never creates another split level. Keep pane resizing on the divider.
+
 The shared top bar is `PaneHeader` (`data-slot="pane-header"`). Every main pane uses it — the shell draws it, or a section that owns its chrome draws it itself so the shell does not add a second one. Do not hand-roll a `header` with `h-12`. Trailing actions such as Open on GitHub or Refresh sit in `children`. Do not put an `h1` of the same section name under `PaneHeader`.
 
 BAD

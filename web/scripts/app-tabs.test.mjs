@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   addAppTab,
   closeAppTab,
+  dropAppTab,
   focusAppTab,
   navigateAppTab,
   newAppTabs,
@@ -51,4 +52,21 @@ test('splitting with another open tab reuses it', () => {
   assert.equal(split.tabs.length, 2);
   assert.equal(split.split?.first, second.focused);
   assert.equal(split.split?.second, first.focused);
+});
+
+test('dropping tabs creates two panes or replaces and swaps within the existing split', () => {
+  const first = newAppTabs({ name: 'threads', threadId: 'one' });
+  const second = addAppTab(first, { name: 'prs' });
+  const split = dropAppTab(second, second.focused, first.focused, 'left');
+  assert.equal(split.split.first, second.focused);
+  assert.equal(split.split.second, first.focused);
+  const third = addAppTab({ ...split, split: undefined }, { name: 'settings', tab: 'general' });
+  const replaced = dropAppTab({ ...third, split: { ...split.split, ratio: .62 } }, third.focused, first.focused, 'right');
+  assert.equal(replaced.split.first, second.focused);
+  assert.equal(replaced.split.second, third.focused);
+  assert.equal(replaced.split.ratio, .62);
+  const swapped = dropAppTab(replaced, second.focused, third.focused, 'right');
+  assert.equal(swapped.split.first, third.focused);
+  assert.equal(swapped.split.second, second.focused);
+  assert.equal(swapped.tabs.length, 3);
 });

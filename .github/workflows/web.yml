@@ -77,7 +77,7 @@ jobs:
           QA_COMPOSER_ONLY=1 node web/scripts/hosted-runtime-check.mjs
           QA_THREAD_RECOVERY_ONLY=1 node web/scripts/hosted-runtime-check.mjs
           wait "$runtime_pid"
-          node --test web/scripts/thread-start-recovery.test.mjs web/scripts/message-markdown.test.mjs
+          node --test web/scripts/app-tabs.test.mjs web/scripts/thread-start-recovery.test.mjs web/scripts/message-markdown.test.mjs
           node --test hub/scripts/local-development.test.mjs
           node --test hub/scripts/local-production-bridge.test.mjs
           node --test hub/scripts/local-account.test.mjs

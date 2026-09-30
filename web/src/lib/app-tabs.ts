@@ -92,3 +92,18 @@ export function closeAppTab(value: AppTabs, tabId: string): AppTabs {
   const focused = value.focused === tabId ? tabs[Math.min(index, tabs.length - 1)]!.id : value.focused;
   return { tabs, focused, ...(split ? { split } : {}) };
 }
+
+export function dropAppTab(value: AppTabs, sourceId: string, targetId: string, side: "left" | "right" | "top" | "bottom"): AppTabs {
+  if (sourceId === targetId || !value.tabs.some(tab => tab.id === sourceId) || !value.tabs.some(tab => tab.id === targetId)) return value;
+  if (value.split && (value.split.first === targetId || value.split.second === targetId)) {
+    const targetSide = value.split.first === targetId ? "first" : "second";
+    const otherSide = targetSide === "first" ? "second" : "first";
+    return { ...value, focused: sourceId, split: { ...value.split, [targetSide]: sourceId,
+      ...(value.split[otherSide] === sourceId ? { [otherSide]: targetId } : {}) } };
+  }
+  const before = side === "left" || side === "top";
+  return { ...value, focused: sourceId, split: {
+    direction: side === "left" || side === "right" ? "horizontal" : "vertical",
+    first: before ? sourceId : targetId, second: before ? targetId : sourceId, ratio: 0.5,
+  } };
+}

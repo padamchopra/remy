@@ -70,6 +70,10 @@ await page.route('**/api/**', (route) => {
   return route.fulfill({ status: path in responses ? 200 : 404, json: responses[path] ?? { error: 'Not in this review scenario' } });
 });
 try {
+  const tabActions = async (action) => {
+    await page.getByRole('tab', { name: 'Review #42: Keep work in app tabs', exact: true }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: action, exact: true }).click();
+  };
   await page.goto(`${origin}/app/pull-requests/studio/remy/42`);
   await page.getByRole('button', { name: 'Review with agent', exact: true }).click();
   await page.getByRole('button', { name: 'Permission mode: Ask', exact: true }).waitFor();
@@ -117,13 +121,13 @@ try {
     assert.equal(await reviewPane.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'Keep this draft while resizing.');
   };
   await resize(0.68, true);
-  await page.getByRole('button', { name: 'Split top and bottom', exact: true }).click();
+  await tabActions('Split top and bottom');
   await resize(0.3, false);
   await page.reload();
   await page.getByText('The new tabs keep your pull request and review thread visible together.').waitFor();
   assert.equal(await page.getByRole('separator', { name: 'Resize panes' }).getAttribute('aria-valuenow'), '30');
   assert.equal(await page.getByRole('separator', { name: 'Resize panes' }).getAttribute('aria-orientation'), 'horizontal');
-  await page.getByRole('button', { name: 'Split left and right', exact: true }).click();
+  await tabActions('Split left and right');
   await page.getByRole('separator', { name: 'Resize panes' }).press('End');
   await page.getByRole('separator', { name: 'Resize panes' }).press('ArrowLeft');
   assert.equal(await page.getByRole('separator', { name: 'Resize panes' }).getAttribute('aria-valuenow'), '93');
@@ -140,12 +144,31 @@ try {
   await page.getByText('The new tabs keep your pull request and review thread visible together.').waitFor();
   assert.equal(await page.locator('section[aria-label$="pane"]:visible').count(), 2);
   assert.equal(await page.getByRole('separator', { name: 'Resize panes' }).getAttribute('aria-valuenow'), '62');
-  await page.getByRole('button', { name: 'Unsplit', exact: true }).click();
+  const lastTab = page.getByRole('tab', { name: 'Review #42: Keep work in app tabs', exact: true });
+  const end = await lastTab.evaluate(element => element.parentElement.getBoundingClientRect().right);
+  const plus = await page.getByRole('button', { name: 'New tab', exact: true }).boundingBox();
+  assert.ok(Math.abs(plus.x - end) < 8, 'New tab sits immediately after the last tab');
+  assert.equal(await page.getByRole('button', { name: /^(Split left and right|Split top and bottom|Unsplit)$/ }).count(), 0);
+  await tabActions('Unsplit');
   assert.equal(await page.locator('section[aria-label$="pane"]:visible').count(), 1);
   assert.equal(await page.getByRole('separator', { name: 'Resize panes' }).count(), 0);
   assert.equal(await reviewPane.getByRole('tablist').count(), 0);
+  const source = await page.getByRole('tab', { name: 'Pull request #42', exact: true }).boundingBox();
+  await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(source.x + source.width / 2, source.y + source.height + 20, { steps: 5 });
+  const drop = reviewPane.locator('[data-drop-side="left"]');
+  await drop.waitFor();
+  const target = await drop.boundingBox();
+  await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 10 });
+  await page.mouse.up();
+  assert.equal(await page.locator('section[aria-label$="pane"]:visible').count(), 2, 'Dragging a header creates a split');
+  assert.equal(await page.getByRole('separator', { name: 'Resize panes' }).count(), 1);
+  await lastTab.press('Shift+F10');
+  await page.getByRole('menuitem', { name: 'Unsplit', exact: true }).waitFor();
+  await page.getByRole('menu').press('Escape');
   assert.deepEqual(errors, []);
-  console.log('Review split QA passed: one tab strip, PR left, review right, resizable panes, preserved draft, keyboard, saved ratio, thread details, sidebar focus and reload.');
+  console.log('Review split QA passed: one tab strip, adjacent plus, context menu, header drag, PR left, review right, resizing, preserved draft, keyboard, saved ratio, thread details, sidebar focus and reload.');
 } catch (error) {
   console.log('Failure state', page.url(), errors, (await page.locator('body').innerText()).slice(0, 2400));
   throw error;
