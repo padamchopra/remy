@@ -29,6 +29,8 @@ Use the production account through the preview's email/password or approved devi
 
 ## Review the user journey
 
+Responsive behavior is part of every UI change's acceptance criteria. Exercise the affected journey in a narrow desktop window and on a touch phone viewport, plus unequal split widths for pane surfaces. Check readable text, reachable actions, menu and dialog containment, composer access, and scrolling with real touch gestures. Test both wide-to-narrow resizing and a fresh phone load. Fix layout and usability failures before calling the change done; a passing desktop journey does not cover phones.
+
 QA includes design and UX gaps. Walk the affected journey from its real entry point to a useful outcome, using only information and actions available in the interface. For onboarding, start signed out with no computers or workspaces and reach a first thread response. Exercise each supported setup path with its deployment-enabled authentication and prerequisites; a seeded account or local preview does not establish that hosted onboarding works.
 
 At each step, judge whether the purpose and next action are clear, the requested information is necessary, the hierarchy keeps the main action obvious, and loading, success and failure explain what happens next. Follow handoffs between the browser, desktop and external providers. Exercise missing prerequisites, cancellation and retry, including keyboard and narrow layouts.

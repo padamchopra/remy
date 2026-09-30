@@ -37,11 +37,16 @@ function base64url(value: Uint8Array | Buffer | string): string {
   return Buffer.from(value).toString("base64url");
 }
 
-function privateKey(): { privateKey: string; publicKey: string } {
+export function storedComputerPrivateKey(): string | undefined {
   let stored: string | undefined;
   if (process.platform === "darwin" && !process.env.MC_CONFIG_DIR) {
     try { stored = execFileSync("/usr/bin/security", ["find-generic-password", "-a", deviceId, "-s", KEYCHAIN_SERVICE, "-w"], { encoding: "utf8" }).trim(); } catch { stored = undefined; }
   } else stored = getKv<string>(PRIVATE_KEY_KV);
+  return stored;
+}
+
+function privateKey(): { privateKey: string; publicKey: string } {
+  const stored = storedComputerPrivateKey();
   if (stored) {
     const key = createPrivateKey({ key: Buffer.from(stored, "base64url"), format: "der", type: "pkcs8" });
     const publicKey = Buffer.from(createPublicKey(key).export({ format: "der", type: "spki" })).toString("base64url");
@@ -71,6 +76,7 @@ export async function computerCapabilities(): Promise<ComputerCapabilities> {
     })),
     workspaces: workspaces.map(({ id, name, path, origin }) => ({ id, name, path, origin })),
     worktrees: status.git.available,
+    threadOrchestration: true,
     terminals: true,
     emulator: process.platform === "darwin" && commandExists("/usr/bin/xcrun", ["-f", "simctl"]),
   };
@@ -198,7 +204,15 @@ export class HubComputerConnection {
 
   /// Provider keys are pulled rather than pushed: the hub only says they moved,
   /// so a computer that was asleep still comes back with the current ones.
-  private async syncModelKeys(): Promise<void> {
+  private modelKeysSync?: Promise<void>;
+  private syncModelKeys(): Promise<void> {
+    if (this.modelKeysSync) return this.modelKeysSync;
+    const pending = this.readModelKeys().finally(() => { this.modelKeysSync = undefined; });
+    this.modelKeysSync = pending;
+    return pending;
+  }
+
+  private async readModelKeys(): Promise<void> {
     const response = await fetch(new URL(`/api/organizations/${encodeURIComponent(this.registration.organizationId)}/computers/model-keys`, this.registration.hubUrl), { method: "POST", headers: { authorization: connectionAuthorization(this.registration.organizationId, this.registration.computerId, privateKey().privateKey) }, signal: AbortSignal.timeout(10_000), redirect: "error" });
     if (response.status === 403) return;
     if (!response.ok) throw new Error("Your provider keys could not be read.");
@@ -313,6 +327,10 @@ export class HubComputerConnection {
         const input = frame.body ? JSON.parse(Buffer.from(frame.body, "base64url").toString()) : {};
         const organizationId = frame.headers["x-organization-id"] ?? this.registration.organizationId;
         if (organizationId !== this.registration.organizationId && !this.sharedOrganizationIds.has(organizationId)) throw new Error("This computer is not shared with that organization.");
+        // Refresh before starting a turn; the hub owns OAuth refresh tokens.
+        if (this.registration.ownership !== "hosted" && frame.method === "POST" &&
+          (frame.path === "/hub/threads" || /^\/hub\/threads\/[^/]+\/message$/.test(frame.path)))
+          await this.syncModelKeys();
         const response = await handleHubThreadRequest(organizationId, frame.actor, frame.method, frame.path, input, async (chatId, attachmentId) => {
           const url = new URL(`/api/organizations/${encodeURIComponent(organizationId)}/computers/${encodeURIComponent(this.registration.computerId)}/thread-attachments/${chatId}/${attachmentId}`, this.registration.hubUrl);
           const image = await fetch(url, { headers: { authorization: connectionAuthorization(this.registration.organizationId, this.registration.computerId, privateKey().privateKey) }, signal: AbortSignal.timeout(15_000), redirect: "error" });

@@ -1,5 +1,6 @@
+import { startThreadInput, sendThreadInput, START_THREAD_DESCRIPTION } from "./thread-orchestration.js";
 import {hubGitHubInput} from "./hub-github-input.js";
-import { PROPOSE_REVIEW_RULE, proposeReviewRuleInput, REPORT_REVIEW_FINDINGS, reportReviewFindingsInput, reviewToolText, type ReviewTool } from "./review-tools.js";
+import { PROPOSE_REVIEW_RULE, proposeReviewRuleInput, reviewToolText, type ReviewTool } from "./review-tools.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { basename } from "node:path";
@@ -14,23 +15,6 @@ interface ApiWorkspace {
   path: string;
   origin?: string | null;
   worktrees?: { path: string }[];
-}
-
-interface ApiThread {
-  id: string;
-  title: string;
-  cwd: string;
-  state: string;
-  provider: string;
-  model?: string;
-  preview?: string;
-  entries?: {
-    kind: string;
-    text?: string;
-    verb?: string;
-    arg?: string;
-    status?: string;
-  }[];
 }
 
 interface ApiBrowserView {
@@ -85,7 +69,7 @@ async function workspaces(): Promise<ApiWorkspace[]> {
 async function workspaceFor(reference?: string): Promise<ApiWorkspace | undefined> {
   const listed = await workspaces();
   if (!reference?.trim()) {
-    const current = await request<ApiThread>(`/chats/${encodeURIComponent(chatId)}`);
+    const current = await request<{cwd:string}>("/organization-tools/read_thread",{method:"POST",body:{thread_id:chatId}});
     return listed.find((workspace) =>
       workspace.path === current.cwd || workspace.worktrees?.some((worktree) => worktree.path === current.cwd));
   }
@@ -100,36 +84,6 @@ async function workspaceFor(reference?: string): Promise<ApiWorkspace | undefine
   return matches[0];
 }
 
-async function workspacePath(reference?: string): Promise<string> {
-  if (!reference?.trim()) {
-    const current = await request<ApiThread>(`/chats/${encodeURIComponent(chatId)}`);
-    return current.cwd;
-  }
-  const asked = reference.trim();
-  const matches = (await workspaces()).filter((workspace) =>
-    workspace.id === asked
-    || workspace.path === asked
-    || workspace.origin === asked
-    || workspace.name.toLowerCase() === asked.toLowerCase());
-  if (matches.length === 0) throw new Error(`No workspace called ${asked}. Register it first if this is a new folder.`);
-  if (matches.length > 1) throw new Error(`More than one workspace is called ${asked}. Use its id or path.`);
-  return matches[0].path;
-}
-
-function describeThread(thread: ApiThread): string {
-  const recent = (thread.entries ?? []).slice(-20).map((entry) => entry.text
-    ? `- ${entry.kind}: ${entry.text}`
-    : `- ${entry.kind}: ${[entry.verb, entry.arg, entry.status].filter(Boolean).join(" ")}`);
-  return [
-    `${thread.title} (${thread.id})`,
-    `State: ${thread.state}`,
-    `Workspace folder: ${thread.cwd}`,
-    `Provider: ${thread.provider}${thread.model ? ` / ${thread.model}` : ""}`,
-    thread.preview ? `Latest: ${thread.preview}` : "",
-    recent.length ? `\nRecent thread activity:\n${recent.join("\n")}` : "",
-  ].filter(Boolean).join("\n");
-}
-
 const server = new McpServer(
   { name: "remy", version: "1" },
   { instructions: REMY_TOOL_INSTRUCTIONS },
@@ -141,11 +95,9 @@ const reviewResult = async (action: ReviewTool, input: unknown) => {
   return ok(reviewToolText(action, result), result.artifact);
 };
 if (process.env.REMY_REVIEW === "1") {
-  server.registerTool("report_review_findings", { description: REPORT_REVIEW_FINDINGS, inputSchema: reportReviewFindingsInput }, async (input) => reviewResult("report_review_findings", input));
   server.registerTool("propose_review_rule", { description: PROPOSE_REVIEW_RULE, inputSchema: proposeReviewRuleInput }, async (input) => reviewResult("propose_review_rule", input));
-} else server.registerTool("github_action",{description:"Create a pull request, comment or review using the linked member account.",inputSchema:hubGitHubInput},async input=>ok(JSON.stringify(await request("/organization-tools/github_action",{method:"POST",body:input}))));
+} else if (process.env.REMY_REVIEW_DELEGATION !== "1") server.registerTool("github_action",{description:"Create a pull request, comment or review using the linked member account.",inputSchema:hubGitHubInput},async input=>ok(JSON.stringify(await request("/organization-tools/github_action",{method:"POST",body:input}))));
 for(const action of ["list_organization_computers","list_organization_workspaces"])server.registerTool(action,{description:"List organization resources visible to the person.",inputSchema:{}},async()=>ok(JSON.stringify(await request(`/organization-tools/${action}`,{method:"POST",body:{}}))));
-for(const action of ["start_organization_thread","move_organization_thread"])server.registerTool(action,{description:"Act within the person's visible organization workspaces.",inputSchema:{workspaceId:z.string(),prompt:z.string().optional(),title:z.string().optional(),threadId:z.string().optional(),computerId:z.string().optional()}},async input=>{const result=await request<{artifact?:ConvArtifact}>(`/organization-tools/${action}`,{method:"POST",body:input});return ok(JSON.stringify(result),result.artifact);});
 server.registerTool("list_workspaces", {
   description: "List the workspace folders registered on this machine.",
   inputSchema: {},
@@ -311,67 +263,15 @@ server.registerTool("browser_wait", {
   return ok(browserResult("Finished waiting.", view));
 });
 
-server.registerTool("list_threads", {
-  description: "List recent Remy threads and their current state.",
-  inputSchema: {},
-  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-}, async () => {
-  const threads = await request<{ chats?: ApiThread[] }>("/chats");
-  const listed = threads.chats ?? [];
-  return ok(listed.slice(0, 50).map((thread) =>
-    `${thread.id} [${thread.state}] ${thread.title}\n${thread.cwd}`,
-  ).join("\n\n") || "There are no threads on this machine.");
+server.registerTool("list_threads", {description:"List accessible, unarchived threads across your connected computers, including idle threads.",inputSchema:{},annotations:{readOnlyHint:true}}, async()=>ok(JSON.stringify(await request("/organization-tools/list_threads",{method:"POST",body:{}}))));
+server.registerTool("read_thread", {description:"Read an accessible thread's state and recent messages.",inputSchema:{thread_id:z.string().uuid()},annotations:{readOnlyHint:true}}, async input=>ok(JSON.stringify(await request("/organization-tools/read_thread",{method:"POST",body:input}))));
+server.registerTool("start_thread", {description:START_THREAD_DESCRIPTION,inputSchema:startThreadInput}, async input=>{
+  const result=await request<{artifact?:ConvArtifact}>("/organization-tools/start_thread",{method:"POST",body:input});
+  return ok(JSON.stringify(result),result.artifact);
 });
-
-server.registerTool("read_thread", {
-  description: "Read a Remy thread's state and recent activity.",
-  inputSchema: { thread_id: z.string() },
-  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-}, async ({ thread_id }) => {
-  const thread = await request<ApiThread>(`/chats/${encodeURIComponent(thread_id)}`);
-  return ok(describeThread(thread));
-});
-
-server.registerTool("start_thread", {
-  description: "Start another Remy thread and send it its first message.",
-  inputSchema: {
-    prompt: z.string().min(1).max(20000).describe("The complete task for the new thread"),
-    workspace: z.string().optional().describe("Registered workspace name, id, path, or origin. Omit it to use this thread's folder."),
-    title: z.string().max(120).optional(),
-    provider: z.enum(["claude", "codex", "cursor"]).optional(),
-    model: z.string().optional(),
-  },
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-}, async ({ prompt, workspace, title, provider, model }) => {
-  const created = await request<{ chat: ApiThread }>("/chats", {
-    method: "POST",
-    body: {
-      cwd: await workspacePath(workspace),
-      title: title?.trim() || prompt.split("\n")[0]?.trim().slice(0, 120),
-      ...(provider ? { provider } : {}),
-      ...(model ? { model } : {}),
-    },
-  });
-  await request(`/chats/${encodeURIComponent(created.chat.id)}/message`, {
-    method: "POST",
-    body: { text: prompt },
-  });
-  return ok(`Started ${created.chat.title} as thread ${created.chat.id}.`, {
-    kind: "thread",
-    id: created.chat.id,
-    title: created.chat.title,
-    detail: created.chat.cwd,
-  });
-});
-
-server.registerTool("send_to_thread", {
-  description: "Send another message to an existing Remy thread.",
-  inputSchema: { thread_id: z.string(), message: z.string().min(1).max(20000) },
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-}, async ({ thread_id, message }) => {
-  if (thread_id === chatId) throw new Error("Reply normally instead of sending a message to this same thread.");
-  await request(`/chats/${encodeURIComponent(thread_id)}/message`, { method: "POST", body: { text: message } });
-  return ok(`Sent the message to thread ${thread_id}.`);
+server.registerTool("send_to_thread", {description:"Send a message as this agent to a thread you can write to; its sender links back to this thread.",inputSchema:sendThreadInput}, async input=>{
+  await request("/organization-tools/send_to_thread",{method:"POST",body:input});
+  return ok(`Sent the message to thread ${input.thread_id}.`);
 });
 
 server.registerTool("stop_thread", {
@@ -380,7 +280,7 @@ server.registerTool("stop_thread", {
   annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
 }, async ({ thread_id }) => {
   if (thread_id === chatId) throw new Error("The current thread cannot stop itself through Remy.");
-  await request(`/chats/${encodeURIComponent(thread_id)}/stop`, { method: "POST" });
+  await request("/organization-tools/stop_thread", { method: "POST", body: {thread_id} });
   return ok(`Stopped thread ${thread_id}.`);
 });
 

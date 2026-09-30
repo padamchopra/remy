@@ -32,7 +32,7 @@ export async function githubRoute(
 ): Promise<Response | undefined> {
   const url = new URL(request.url),
     match =
-      /^\/api\/organizations\/([^/]+)\/github(?:\/(installations|repositories|selection|actions|token|accessible-repositories|import|workspace-images|workspace-branches|pull-requests|pull-request|pull-request-reviewers|pull-request-images|pull-request-files|pull-request-review|pull-request-activity|pull-request-seen|pull-request-ticket))?$/.exec(
+      /^\/api\/organizations\/([^/]+)\/github(?:\/(installations|repositories|selection|actions|token|accessible-repositories|import|workspace-images|workspace-branches|pull-requests|pull-request|pull-request-reviewers|pull-request-images|pull-request-commits|pull-request-files|pull-request-review|pull-request-activity|pull-request-seen|pull-request-ticket))?$/.exec(
         url.pathname,
       );
   if (!match) return;
@@ -44,7 +44,8 @@ export async function githubRoute(
       if (action === "pull-requests") return Response.json(await service.openPullRequests(org, user, url.searchParams.get("refresh") === "1"), { headers: { "cache-control": "no-store" } });
       if (action === "pull-request") return Response.json(await service.pullRequestDetail(org, user, url.searchParams.get("repository") ?? "", Number(url.searchParams.get("number"))), { headers: { "cache-control": "no-store" } });
       if (action === "pull-request-reviewers") return Response.json(await service.pullRequestReviewerCandidates(org, user, url.searchParams.get("repository") ?? "", Number(url.searchParams.get("number")), url.searchParams.get("q") ?? ""), { headers: { "cache-control": "no-store" } });
-      if (action === "pull-request-files") return Response.json(await service.pullRequestFiles(org, user, url.searchParams.get("repository") ?? "", Number(url.searchParams.get("number")), Number(url.searchParams.get("changedFiles") ?? 0)), { headers: { "cache-control": "no-store" } });
+      if (action === "pull-request-commits") return Response.json(await service.pullRequestCommits(org, user, url.searchParams.get("repository") ?? "", Number(url.searchParams.get("number"))), { headers: { "cache-control": "no-store" } });
+      if (action === "pull-request-files") return Response.json(await service.pullRequestFiles(org, user, url.searchParams.get("repository") ?? "", Number(url.searchParams.get("number")), Number(url.searchParams.get("changedFiles") ?? 0), url.searchParams.getAll("commit")), { headers: { "cache-control": "no-store" } });
       if (action === "pull-request-review") return Response.json(await service.pullRequestReview(org, user, url.searchParams.get("repository") ?? "", Number(url.searchParams.get("number"))), { headers: { "cache-control": "no-store" } });
       if (action === "pull-request-activity") return Response.json(await service.pullRequestActivity(org, user, url.searchParams.get("repository") ?? "", Number(url.searchParams.get("number"))), { headers: { "cache-control": "no-store" } });
       if (action === "pull-request-ticket") return Response.json(await pullRequestTicket(env, service, org, user, url.searchParams.get("repository") ?? "", Number(url.searchParams.get("number"))), { headers: { "cache-control": "no-store" } });

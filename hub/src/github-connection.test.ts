@@ -52,12 +52,17 @@ function fixture() {
             : { filename: `src/file-${n}.ts`, status: "modified", additions: 2, deletions: 0, patch: "@@ -1,1 +1,3 @@\n a\n+b\n+c" };
       }));
     }
+    if (path.startsWith("/repos/release/remy/commits/")) return Response.json({ files: [{ filename: "src/shared.ts", status: "modified", additions: 1, deletions: 1, patch: path.endsWith("a".repeat(40)) ? "@@ -1 +1 @@\n-old\n+first" : "@@ -1 +1 @@\n-first\n+second" }] });
     if (path === "/repos/release/remy/git/trees/HEAD") return Response.json({tree:[{path:"assets/logo.png",type:"blob",size:10},{path:"README.md",type:"blob",size:1},{path:"large.png",type:"blob",size:2000000}]});
     if (path === "/repos/release/remy/contents/assets/logo.png") return Response.json({type:"file",size:10,encoding:"base64",content:"aGVsbG8=\n"});
     if (path === "/repos/release/remy/contents/large.png") return Response.json({type:"file",size:2000000,encoding:"base64",content:""});
     if (path === "/graphql") {
       if (githubDelayMs) await new Promise((resolve) => setTimeout(resolve, githubDelayMs));
       const variables = (body?.variables ?? {}) as Record<string, string>;
+      if (String(body?.query ?? "").includes("query PullRequestCommits(")) return Response.json({ data: { repository: { pullRequest: { commits: {
+        nodes: [{ commit: { oid: variables.cursor ? "b".repeat(40) : "a".repeat(40), messageHeadline: variables.cursor ? "Second change" : "First change", committedDate: "2026-09-30T00:00:00Z", author: { name: "Ada" } } }],
+        pageInfo: { hasNextPage: !variables.cursor, endCursor: variables.cursor ? null : "next-commits" },
+      } } } } });
       if (String(body?.query ?? "").includes("PullRequestDetail")) {
         return Response.json({ data: { viewer: { login: "ada" }, repository: { squashMergeAllowed: true, pullRequest: {
           number: 7, state: "OPEN", isDraft: false, createdAt: "2026-09-23T08:00:00Z", mergeable: "MERGEABLE", mergeStateStatus: "CLEAN",
@@ -814,4 +819,22 @@ test("line comments, replies, the pending review and viewed marks go through the
   );
 
   await assert.rejects(service.action("studio", "stranger", workspace.id, "view-file", { number: 7, path: "src/a.ts", viewed: true }));
+});
+
+ test("commit files are restricted to PR commits and preserve separate patches for the same file", async () => {
+  const { service, calls, sqlite } = fixture();
+  await service.importRepository("studio", "ada", "release/remy");
+  const listed = await service.pullRequestCommits("studio", "ada", "release/remy", 7);
+  assert.deepEqual(listed.commits.map(commit => commit.sha), ["a".repeat(40), "b".repeat(40)]);
+  assert.equal(listed.truncated, false);
+  const selected = await service.pullRequestFiles("studio", "ada", "release/remy", 7, undefined, ["b".repeat(40), "a".repeat(40)]);
+  assert.equal(selected.files.length, 2);
+  assert.match(selected.files[0]!.patch!, /\+first/);
+  assert.match(selected.files[1]!.patch!, /\+second/);
+  assert.ok(calls.filter(call => call.path.includes("/commits/")).every(call => call.actor === "Bearer member-ada"));
+  const before = calls.filter(call => call.path.includes("/commits/")).length;
+  await assert.rejects(service.pullRequestFiles("studio", "ada", "release/remy", 7, undefined, ["c".repeat(40)]), /Choose commits/);
+  assert.equal(calls.filter(call => call.path.includes("/commits/")).length, before);
+  await assert.rejects(service.pullRequestCommits("other", "ada", "release/remy", 7));
+  sqlite.close();
 });

@@ -104,3 +104,11 @@ computer reconnect, client reconnect, coordinator restart, deep-link reload,
 and desktop/mobile overflow. It saves original recordings and screenshots under
 `/tmp/remy-pr-artifacts/wrk-10`. Stop the hub command to remove its temporary
 state. It never stops the packaged computer on port 8420.
+
+## Agent orchestration (unreleased)
+
+The Remy MCP exposes `start_thread`, `list_threads`, `read_thread`, and `send_to_thread` for Claude, Codex, Cursor ACP, and PR review agents. Thread-scoped computer authorization binds each call to its initiating member; the hub checks current membership, workspace and computer access, and thread visibility and write access. Discovery includes unarchived idle, waiting, and working threads across accessible computers. Offline snapshots can be read; sends return a computer-offline error.
+
+Starting a thread inherits the current computer and folder, provider, model, effort, permission mode, and visibility. Optional settings override those values; permission overrides can keep or narrow the current permissions. Change the sending thread’s permissions in the app before delegating with broader permissions. Changing providers without a model selects that provider’s default. A child shares the parent’s checkout when using the same workspace, has a separate conversation, and does not inherit a review attachment or rename the shared checkout’s branch. Workspace overrides name a registered folder on the same computer. Personal environment values and model access stay owned by the initiating person and are checked on the hub; no credentials are copied into tool results or messages.
+
+The hub derives sender metadata from the source snapshot and binds authorization to the person’s id separately. Messages retain this metadata in daemon storage and hub snapshots, appear as `Claude [thread title]` (or Codex/Cursor), and link to the sending thread. Provider prompts identify agent messages as agent messages. Retry the same start with `request_id` or message with `message_id` to suppress duplicates. Both the hub and computer runtime need this update; a running provider session must restart to receive its new tool definitions.

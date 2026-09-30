@@ -167,7 +167,7 @@ A server module opens its database at import time, so a test that touches state 
   the button drags the surface back into the first load. `npm run bundle` says
   what is in the first load.
 - **The centre view is a collection of app tabs.** A person opens threads, pull requests, workspaces, and settings in separate tabs. One split can show two tabs side by side or top to bottom, with a draggable divider that remembers its ratio. The sidebar and URL follow the focused pane; inactive tabs stay mounted, and the layout is remembered on this device (`web/src/lib/app-tabs.ts`). The app strip owns work-surface tabs: panes cannot create another app-tab collection, and a thread has no inner tab strip, Add tab control, or tab-navigation back button. Thread details and running work sit beside the reply controls. The transcript stays a narrow, identity-light reading column.
-- **A person starts every thread.** There is no roster of personas, no
+- **Threads start from a person’s work.** A running thread, including a review agent, can delegate into another thread through the Remy tools. Child threads inherit the current computer, folder, model, reasoning level, permissions, and visibility unless overridden; the person remains their owner. Agent messages identify and link to the sending thread. There is no roster of personas, no
   conversation outside a workspace, and no schedule that sends work on its own.
   A thread is work in a repository, started by someone, running on a provider.
   Do not reintroduce Agents, Routines, Routing or an Inbox as product surfaces.

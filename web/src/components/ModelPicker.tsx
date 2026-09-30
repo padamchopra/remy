@@ -123,7 +123,7 @@ export function ModelPickerButton({
     return (
       <InputGroupText data-model-picker="" title={title} className="min-w-0 max-w-40 truncate">
         {mark}
-        {label}
+        <span className="min-w-0 truncate">{label}</span>
       </InputGroupText>
     );
   }
@@ -135,7 +135,7 @@ export function ModelPickerButton({
         aria-label="Model"
         title={title}
         aria-busy={pending || undefined}
-        className="min-w-0 shrink disabled:opacity-100 [@media(pointer:coarse)]:h-8"
+        className={cn("min-w-0 shrink disabled:opacity-100 [@media(pointer:coarse)]:h-8", className)}
         onPointerEnter={loadPanel}
         onFocus={loadPanel}
       >

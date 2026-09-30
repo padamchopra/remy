@@ -14,8 +14,8 @@ test("a Remy capability names only the thread it was minted for", () => {
   assert.equal(remyToolChatId("Bearer not-a-remy-token"), undefined);
 });
 
-test("a review thread's capability reaches its two review tools and nothing beside them", () => {
-  assert.equal(isRemyToolRoute("POST", "/organization-tools/report_review_findings"), true);
+test("a review thread's capability reaches its review rule tool and nothing beside them", () => {
+  assert.equal(isRemyToolRoute("POST", "/organization-tools/report_review_findings"), false);
   assert.equal(isRemyToolRoute("POST", "/organization-tools/propose_review_rule"), true);
   // Deciding on findings and rules is the person's, in Remy.
   assert.equal(isRemyToolRoute("GET", "/organization-tools/report_review_findings"), false);
@@ -61,8 +61,8 @@ test("a Remy capability reaches orchestration without reaching administration", 
   assert.equal(isRemyToolRoute("POST", "/workspaces"), true);
   assert.equal(isRemyToolRoute("POST", "/runtime/environment-command"), true);
   assert.equal(isRemyToolRoute("PATCH", "/routines/one"), false);
-  assert.equal(isRemyToolRoute("POST", "/chats"), true);
-  assert.equal(isRemyToolRoute("POST", "/chats/chat-2/message"), true);
+  assert.equal(isRemyToolRoute("POST", "/chats"), false);
+  assert.equal(isRemyToolRoute("POST", "/chats/chat-2/message"), false);
   assert.equal(isRemyToolRoute("GET", "/chats/chat-1/browser"), true);
   assert.equal(isRemyToolRoute("POST", "/chats/chat-1/browser/click"), true);
   assert.equal(isRemyToolRoute("POST", "/chats/chat-1/browser/viewport"), true);
@@ -74,7 +74,7 @@ test("a Remy capability reaches orchestration without reaching administration", 
   assert.equal(isRemyToolRoute("DELETE", "/tickets/one"), false);
   assert.equal(isRemyToolRoute("DELETE", "/chats/chat-1"), false);
   assert.equal(isRemyToolRoute("PATCH", "/chats/chat-1"), false);
-  assert.equal(isRemyToolRoute("GET", "/chats/chat-1"), true);
+  assert.equal(isRemyToolRoute("GET", "/chats/chat-1"), false);
   assert.equal(isRemyToolRoute("GET", "/chats/chat-1/pull-request"), false);
   assert.equal(isRemyToolRoute("POST", "/chats/chat-1/archive"), false);
   assert.equal(isRemyToolRoute("PATCH", "/workspaces/one"), false);
@@ -95,4 +95,13 @@ test("a Remy capability reaches orchestration without reaching administration", 
   assert.equal(isRemyToolRoute("POST", "/organization-tools/create_organization_routine"), false);
   assert.equal(isRemyToolRoute("POST", "/agents"), false);
   assert.equal(isRemyToolRoute("DELETE", "/agents/one"), false);
+});
+
+test("thread orchestration reaches hub actions and cannot bypass access through local thread routes", () => {
+  for (const action of ["list_threads","read_thread","start_thread","send_to_thread","stop_thread"]) {
+    assert.equal(isRemyToolRoute("POST", `/organization-tools/${action}`), true);
+    assert.equal(isRemyToolRoute("GET", `/organization-tools/${action}`), false);
+  }
+  for (const [method,path] of [["GET","/chats"],["POST","/chats"],["POST","/chats/other/message"],["POST","/chats/other/stop"]]) assert.equal(isRemyToolRoute(method,path),false);
+  assert.equal(isRemyToolRoute("POST","/organization-tools/delete_thread"),false);
 });

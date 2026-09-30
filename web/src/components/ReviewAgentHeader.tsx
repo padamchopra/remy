@@ -71,6 +71,8 @@ export function ReviewAgentHeaderButton({
   onTogglePane,
   onViewRules,
   onStarted,
+  className,
+  labelClassName,
 }: {
   target: ReviewTarget;
   /// A review exists, or one is starting.
@@ -81,6 +83,8 @@ export function ReviewAgentHeaderButton({
   onTogglePane: () => void;
   onViewRules: () => void;
   onStarted: (requestId: string) => void;
+  className?: string;
+  labelClassName?: string;
 }) {
   if (reviewing) {
     return (
@@ -88,11 +92,13 @@ export function ReviewAgentHeaderButton({
         type="button"
         variant="secondary"
         aria-pressed={paneOpen}
+        aria-label="Review agent"
+        title="Review agent"
         onClick={onTogglePane}
-        className={cn(HEADER_BUTTON, paneOpen && "border-foreground/15 bg-foreground/8 dark:bg-foreground/8")}
+        className={cn(HEADER_BUTTON, paneOpen && "border-foreground/15 bg-foreground/8 dark:bg-foreground/8", className)}
       >
         <Bot aria-hidden />
-        Review agent
+        <span className={labelClassName}>Review agent</span>
         <ThreadDot state={state} />
       </Button>
     );
@@ -104,9 +110,9 @@ export function ReviewAgentHeaderButton({
       onViewRules={onViewRules}
       onStarted={onStarted}
       trigger={(
-        <Button type="button" variant="secondary" className={HEADER_BUTTON}>
+        <Button type="button" variant="secondary" aria-label="Review with agent" title="Review with agent" className={cn(HEADER_BUTTON, className)}>
           <Bot aria-hidden />
-          <span className="max-sm:sr-only">Review with agent</span>
+          <span className={cn("max-sm:sr-only", labelClassName)}>Review with agent</span>
         </Button>
       )}
     />

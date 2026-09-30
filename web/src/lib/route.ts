@@ -23,7 +23,7 @@ export type Route = (
   | { name: "settings"; tab: SettingsTab; organizationTab?: "general" | "members" | "teams" | "computers"; deviceId?: string; organizationId?: string }) & { organizationId?: string; ownerOrganizationId?: string };
 
 /// A pull request tab other than the summary, which is the default and has no segment.
-export type PullRequestView = "files" | "activity";
+export type PullRequestView = "files" | "activity" | "commits";
 
 export interface AppLocation {
   route: Route;
@@ -55,7 +55,7 @@ function pullRequestRoute(path: string): Route {
   }
   const [, owner, name, number, view, extra] = parts;
   if (!owner || !name || extra !== undefined || !/^[1-9]\d{0,9}$/.test(number ?? "")) return { name: "prs" };
-  if (view !== undefined && view !== "files" && view !== "activity") return { name: "prs" };
+  if (view !== undefined && view !== "files" && view !== "activity" && view !== "commits") return { name: "prs" };
   return { name: "prs", repository: `${owner}/${name}`, number: Number(number), ...(view ? { view: view as PullRequestView } : {}) };
 }
 

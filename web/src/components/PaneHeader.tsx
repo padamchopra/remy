@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
+import { cn } from "@/lib/utils";
 
 /// The strip across the top of the main pane.
 ///
@@ -33,15 +34,17 @@ export function PaneHeader({
   tabs,
   selection,
   children,
+  className,
 }: {
   crumbs: Crumb[];
   sidebar?: boolean;
   tabs?: ReactNode;
   selection?: ReactNode;
   children?: ReactNode;
+  className?: string;
 }) {
   return (
-    <div data-slot="pane-header" className="flex min-h-14 shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border py-2 pr-6 pl-5">
+    <div data-slot="pane-header" className={cn("flex min-h-14 shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border py-2 pr-6 pl-5", className)}>
       {sidebar && <SidebarTrigger className="shrink-0 md:hidden" />}
       {selection ? selection : <>
       <Breadcrumb className="min-w-0 max-w-full flex-1 basis-40 overflow-hidden">
@@ -72,7 +75,7 @@ export function PaneHeader({
         </BreadcrumbList>
       </Breadcrumb>
       {tabs}
-      {children && <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center gap-3">{children}</div>}
+      {children && <div data-slot="pane-header-actions" className="ml-auto flex min-w-0 max-w-full flex-wrap items-center gap-3">{children}</div>}
       </>}
     </div>
   );

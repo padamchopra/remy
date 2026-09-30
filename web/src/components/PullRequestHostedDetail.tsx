@@ -55,6 +55,7 @@ import { cn } from "@/lib/utils";
 import type { AuthoredPullRequest } from "@/components/PullRequests";
 
 // The diff is its own surface: nobody reading the summary downloads it.
+const PullRequestCommits = lazy(() => import("@/components/PullRequestCommits").then(module => ({ default: module.PullRequestCommits })));
 const PullRequestHostedFiles = lazy(() => import("@/components/PullRequestHostedFiles").then((module) => ({ default: module.PullRequestHostedFiles })));
 // So is the timeline; only its badge's count is read before it opens.
 const PullRequestHostedActivity = lazy(() => import("@/components/PullRequestHostedActivity").then((module) => ({ default: module.PullRequestHostedActivity })));
@@ -348,6 +349,8 @@ export function PullRequestHostedDetail({
   stackPullRequest?: (number: number) => AuthoredPullRequest | undefined;
 }) {
   const [revision, setRevision] = useState(0);
+  const [selectedCommits, setSelectedCommits] = useState<string[]>([]);
+  useEffect(() => setSelectedCommits([]), [organizationId, pullRequest.repository, pullRequest.number]);
   const [filesToolbar, setFilesToolbar] = useState<HTMLDivElement | null>(null);
   const images = useSignedImages(organizationId, pullRequest.repository, pullRequest.number);
   const detail = usePullRequestDetail(organizationId, pullRequest.repository, pullRequest.number, `${pullRequest.updatedAt}:${revision}`);
@@ -383,12 +386,14 @@ export function PullRequestHostedDetail({
   const [launchedRequestId, setLaunchedRequestId] = useState<string>();
   const openedRequestId = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (start && review && reviewThread && start.created?.id === review.threadId) forgetThreadStart(start.requestId);
-  }, [start, review, reviewThread]);
+    if (start && review && reviewThread && start.created?.id === review.threadId
+      && (start.requestId !== launchedRequestId || openedRequestId.current === launchedRequestId)) forgetThreadStart(start.requestId);
+  }, [start, review, reviewThread, launchedRequestId]);
   // A start that is through reads the review it made, in case its frame came first.
   useEffect(() => { if (start?.phase === "ready") void reloadReview(); }, [start?.phase, reloadReview]);
   const phone = useIsMobile();
   const [desktopPane, setDesktopPane] = useState(() => reviewPaneOpen(pullRequest.repository, pullRequest.number));
+  const restoreReviewSplit = useRef(desktopPane);
   const [phonePane, setPhonePane] = useState(false);
   const [paneView, setPaneView] = useState<ReviewPaneView>("review");
   const reviewing = Boolean(review || starting);
@@ -400,11 +405,15 @@ export function PullRequestHostedDetail({
     rememberReviewPane(pullRequest.repository, pullRequest.number, open);
   };
   useEffect(() => {
-    if (!launchedRequestId || start?.requestId !== launchedRequestId || start.phase !== "ready" || !start.created?.id || openedRequestId.current === launchedRequestId) return;
-    openedRequestId.current = launchedRequestId;
+    const createdId = start?.requestId === launchedRequestId ? start?.created?.id : undefined;
+    const threadId = createdId ?? review?.threadId;
+    const launching = launchedRequestId && openedRequestId.current !== launchedRequestId;
+    if (!threadId || (!launching && !restoreReviewSplit.current)) return;
+    if (launching) openedRequestId.current = launchedRequestId;
+    restoreReviewSplit.current = false;
     showPane(false);
-    onOpenReviewThread(start.created.id);
-  }, [launchedRequestId, start, onOpenReviewThread]);
+    onOpenReviewThread(threadId);
+  }, [launchedRequestId, start, review?.threadId, onOpenReviewThread]);
   const rules = useReviewRules(organizationId, pullRequest.repository, reviewing || paneShown);
   const [focusFinding, setFocusFinding] = useState<{ id: string; at: number }>();
   const showFinding = useCallback((finding: ReviewFinding) => {
@@ -451,16 +460,16 @@ export function PullRequestHostedDetail({
   return (
     <TooltipProvider>
       <div data-slot="pull-request-with-review" className="flex min-h-0 min-w-0 flex-1">
-      <main className={cn("flex min-h-0 min-w-0 flex-1 flex-col", phone && paneShown && "hidden")}>
-        <PaneHeader sidebar crumbs={[{ label: "Pull requests", onClick: onBack }, { label }]}>
-          <div className="flex min-w-0 flex-wrap items-center gap-2.5">
+      <main className={cn("@container/pr-pane flex min-h-0 min-w-0 flex-1 flex-col", phone && paneShown && "hidden")}>
+        <PaneHeader sidebar className="@max-[640px]/pr-pane:gap-x-2 @max-[640px]/pr-pane:px-4 @max-[640px]/pr-pane:[&_[data-slot=breadcrumb]]:basis-0 @max-[380px]/pr-pane:[&_[data-slot=pane-header-actions]]:ml-0 @max-[380px]/pr-pane:[&_[data-slot=pane-header-actions]]:basis-full @max-[380px]/pr-pane:[&_[data-slot=pane-header-actions]]:overflow-x-auto" crumbs={[{ label: "Pull requests", onClick: onBack }, { label: <><span className="@max-[640px]/pr-pane:hidden">{workspace.name} </span>#{pullRequest.number}</> }]}>
+          <div className="flex min-w-0 flex-wrap items-center gap-2.5 @max-[640px]/pr-pane:gap-2 @max-[380px]/pr-pane:min-w-max @max-[380px]/pr-pane:flex-nowrap">
             <Button
               type="button"
               variant="secondary"
               data-link
               disabled={!onOpenWorkspace}
               onClick={() => onOpenWorkspace?.(workspaceOrganization, pullRequest.workspaceId)}
-              className={cn(PULL_REQUEST_HEADER_BUTTON, "max-w-44 max-sm:hidden")}
+              className={cn(PULL_REQUEST_HEADER_BUTTON, "max-w-44 max-sm:hidden @max-[640px]/pr-pane:hidden")}
             >
               <WorkspaceMark home={false} workspace={workspace.workspace} size="sm" organizationId={workspace.organizationId} />
               <span className="truncate">{workspace.name}</span>
@@ -472,14 +481,16 @@ export function PullRequestHostedDetail({
                 data-link
                 onClick={() => onOpenThread(thread)}
                 aria-label={`Open thread: ${thread.detail.title || "Untitled thread"}`}
-                className={PULL_REQUEST_HEADER_BUTTON}
+                className={cn(PULL_REQUEST_HEADER_BUTTON, "@max-[640px]/pr-pane:px-2")}
               >
                 <ThreadDot state={thread.detail.state} />
-                Open thread
+                <span className="@max-[640px]/pr-pane:sr-only">Open thread</span>
               </Button>
             )}
             {open && (
               <ReviewAgentHeaderButton
+                className="@max-[640px]/pr-pane:px-2"
+                labelClassName="@max-[640px]/pr-pane:sr-only"
                 target={reviewTarget(pullRequest)}
                 reviewing={reviewing}
                 state={starting ? (starting.phase === "failed" ? "idle" : "working") : reviewThread?.detail.state}
@@ -515,6 +526,7 @@ export function PullRequestHostedDetail({
                 <MoreHorizontal className="size-[15px]" />
               </MenuTrigger>
               <MenuContent align="end" className="w-52">
+                {onOpenWorkspace && <MenuItem onClick={() => onOpenWorkspace(workspaceOrganization, pullRequest.workspaceId)}>Open workspace</MenuItem>}
                 {reviewing && <>
                   <MenuItem onClick={() => showPane(true)}>Review findings</MenuItem>
                   <MenuItem onClick={() => showPane(true, "rules")}>Review rules</MenuItem>
@@ -536,7 +548,7 @@ export function PullRequestHostedDetail({
         </PaneHeader>
         <Tabs
           value={view ?? "summary"}
-          onValueChange={(value) => onViewChange(value === "files" || value === "activity" ? value : undefined)}
+          onValueChange={(value) => onViewChange(value === "files" || value === "activity" || value === "commits" ? value : undefined)}
           className="min-h-0 flex-1 gap-0"
         >
           <header data-slot="pull-request-header" className="flex shrink-0 flex-col gap-2.5 px-4 pt-[22px] sm:px-7">
@@ -567,13 +579,14 @@ export function PullRequestHostedDetail({
               </button>
             </div>
           </header>
-          <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 sm:px-7">
-            <TabsList aria-label="Pull request" className="-mb-px h-[38px] items-end gap-0.5">
+          <div className="flex shrink-0 flex-wrap items-center gap-x-3 border-b border-border px-3 sm:px-7">
+            <TabsList aria-label="Pull request" className="-mb-px h-[38px] max-w-full items-end gap-0.5 overflow-x-auto">
               <TabsTrigger value="summary" className={TAB}>Summary</TabsTrigger>
               <TabsTrigger value="files" className={TAB}>
                 Files
                 {pullRequest.changedFiles ? <span className="font-mono text-[11px] leading-4 text-muted-foreground tabular-nums">{pullRequest.changedFiles.toLocaleString()}</span> : null}
               </TabsTrigger>
+              <TabsTrigger value="commits" className={TAB}>Commits</TabsTrigger>
               <TabsTrigger value="activity" className={TAB}>
                 Activity
                 {unseen > 0 && (
@@ -661,6 +674,8 @@ export function PullRequestHostedDetail({
                 organizationId={organizationId}
                 pullRequest={pullRequest}
                 active={view === "files"}
+                selectedCommits={selectedCommits}
+                onSelectedCommitsChange={setSelectedCommits}
                 thread={thread}
                 review={review}
                 reviewThread={reviewThread}
@@ -670,6 +685,11 @@ export function PullRequestHostedDetail({
                 onOpenLink={openLink}
                 toolbar={filesToolbar}
               />
+            </Deferred>
+          </TabsContent>
+          <TabsContent value="commits" keepMounted className="flex min-h-0 min-w-0 flex-1 data-hidden:hidden">
+            <Deferred open={view === "commits"}>
+              <PullRequestCommits organizationId={organizationId} repository={pullRequest.repository} number={pullRequest.number} revision={pullRequest.updatedAt} selected={selectedCommits} onChange={setSelectedCommits} onShowFiles={() => onViewChange("files")} />
             </Deferred>
           </TabsContent>
           <TabsContent value="activity" keepMounted className="flex min-h-0 flex-1 data-hidden:hidden">

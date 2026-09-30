@@ -1,3 +1,4 @@
+import { fixtureOrchestrationTurn } from "./qa-orchestration-fixture.mjs";
 import { startHostedCodexFixture } from "./qa-codex-account.mjs";
 import { startFakeOpenAIAuth } from "./fake-openai-auth.mjs";
 import { startConnectionProvider } from "./qa-connection-provider.mjs";
@@ -273,7 +274,9 @@ if (!real.realProviders) setProviderAdapterForTest({
             handlers.event({ type: "turn.started" });
             const id = randomUUID();
             let toolReply;
-            if (isReviewThread(_options.developerInstructions) && _options.inProcessMcp)
+            if (input.prompt.includes("Orchestrate QA delegation") && _options.inProcessMcp)
+              toolReply = await fixtureOrchestrationTurn({..._options,event:handlers.event}).catch(error => `Delegation failed: ${error.message}`);
+            if (!toolReply && isReviewThread(_options.developerInstructions) && _options.inProcessMcp)
               toolReply = await fixtureReviewTurn({ ..._options, prompt: input.prompt, event: handlers.event })
                 .catch((error) => `The review fixture could not finish: ${error.message}`);
             if(process.env.QA_BUILTINS && _options.developerInstructions?.includes("organization")) {

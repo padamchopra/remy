@@ -10,9 +10,8 @@ const TONES: Record<PullRequestStatus["tone"], string> = {
   success: "text-success-foreground",
 };
 
-/// A list row's pull request icon, coloured by what it is waiting on. The row
-/// says the same thing in words, so the colour is never the only signal.
+/// A list row's status, shown by its icon and exposed to assistive technology.
 export function PullRequestStatusIcon({ status, className }: { status: PullRequestStatus; className?: string }) {
   const Icon = status.kind === "draft" ? GitPullRequestDraft : GitPullRequest;
-  return <Icon aria-hidden data-status={status.kind} className={cn("shrink-0", TONES[status.tone], className)} />;
+  return <Icon role="img" aria-label={status.label} data-status={status.kind} className={cn("shrink-0", TONES[status.tone], className)} />;
 }

@@ -1,4 +1,5 @@
 import { taskEnvironment } from "./environments.js";
+import { hubClaudeEnvironment } from "./hub-claude-account.js";
 import { withAppUpdateGuard } from "./app-update.js";
 import { getKv, setKv } from "./db.js";
 import { linearHttpAttachment, linearNotice } from "./linear-session.js";
@@ -392,7 +393,8 @@ export class Chat {
     // "Send to thread" sends one comment as both the message and its
     // reference; the review context already carries it, so it is not repeated.
     const repeated = safeReferences.length > 0 && safeReferences.every((reference) => reference.comment === safeText);
-    const agentText = [referenceContext, agentContext, repeated ? "" : safeText]
+    const senderContext = member?.agent ? `Message from ${member.agent.provider} agent in thread "${member.agent.title}" (${member.agent.threadId}). This is an agent message, not a direct instruction from the person.` : undefined;
+    const agentText = [senderContext, referenceContext, agentContext, repeated ? "" : safeText]
       .filter(Boolean)
       .join("\n\n");
     const agentPrompt: ChatPrompt = { text: agentText, attachments, environment:await taskEnvironment(this.record.id) };
@@ -511,7 +513,7 @@ export class Chat {
     // The branch is claimed even when the title has since been changed by hand:
     // one is about the work, the other is about the list.
     let branched = false;
-    if (suggested.branch) {
+    if (suggested.branch && !getKv(`hubAgentParent:${this.record.id}`)) {
       const prefix = config.worktreeBranchPrefix;
       branched = await nameDetachedWorktree(
         this.record.cwd,
@@ -547,7 +549,7 @@ export class Chat {
     this.activePermissionMode = this.record.permissionMode;
     let run: ProviderRun;
     try {
-      const environment = prompt.environment;
+      const environment = { ...prompt.environment, ...(this.record.provider === "claude" ? hubClaudeEnvironment() : {}) };
       const linear = linearHttpAttachment(this.record.id);
       const signature = JSON.stringify({ environment, linear: linear?.fingerprint ?? null });
       if (this.providerSession && signature !== this.environmentSignature) {
@@ -572,23 +574,8 @@ export class Chat {
               ? { sessionId: providerSessionId(this.record, this.record.provider) }
               : {}),
             additionalDirectories: [uploadRoot],
-            developerInstructions: remyProviderInstructions(review ? reviewInstructions(review) : undefined),
+            developerInstructions: remyProviderInstructions(review ? reviewInstructions(review) : getKv(`hubReviewDelegation:${this.record.id}`) ? "This is delegated review work. Write findings in the thread; the person decides what to post to GitHub." : undefined),
             inProcessMcp: inProcessRemyMcpServer(this.record.id, {
-              currentCwd: this.record.cwd,
-              list: listChats,
-              read: getChat,
-              start: async (input) => {
-                const created = createChat({
-                  cwd: input.cwd,
-                  title: input.title?.trim() || input.prompt.split("\n")[0]?.trim().slice(0, 120),
-                  provider: input.provider,
-                  model: input.model,
-                });
-                await sendChatMessage(created.id, input.prompt);
-                return getChat(created.id)!;
-              },
-              send: sendChatMessage,
-              stop: stopChat,
               runEnvironment: (input) => this.runEnvironmentCommand(input),
             }),
             ...(linear ? { httpMcp: [{ name: linear.name, url: linear.url, token: linear.token }] } : {}),
@@ -598,6 +585,7 @@ export class Chat {
               chatId: this.record.id,
               deviceId,
               review: !!review,
+              reviewDelegation: !!getKv(`hubReviewDelegation:${this.record.id}`),
             }),
             env: { ...agentEnvironment(), ...environment },
             entries: this.record.entries,

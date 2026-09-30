@@ -22,6 +22,7 @@ process.env.PATH = `${directory}:${process.env.PATH}`;
 const { Chat } = await import("./chat.js");
 const { patchSettings } = await import("./config.js");
 const { setProviderAdapterForTest } = await import("./provider-adapters/index.js");
+const { setKv } = await import("./db.js");
 after(() => rmSync(directory, { recursive: true, force: true }));
 
 class Session {
@@ -67,6 +68,23 @@ const started = { type: "stream_event", parent_tool_use_id: null, event: { type:
 const tool = { type: "assistant", parent_tool_use_id: null, message: { id: "message-2", content: [
   { type: "tool_use", id: "tool-1", name: "Bash", input: { command: "true" } },
 ] } };
+
+test("Claude uses the managed login and replaces its session when the token changes", async (t) => {
+  const { chat, sessions } = fixture(t);
+  const credentials = (accessToken: string) => JSON.stringify({ claudeAiOauth: { accessToken, expiresAt: Date.now() + 60_000 } });
+  t.after(() => setKv("hubClaudeAccount", null));
+  setKv("hubClaudeAccount", credentials("fresh-remy-login"));
+  await chat.send("First turn.");
+  assert.equal(threadSessions(sessions)[0].options?.env?.CLAUDE_CODE_OAUTH_TOKEN, "fresh-remy-login");
+  threadSessions(sessions)[0].emit(result);
+  await tick();
+  setKv("hubClaudeAccount", credentials("refreshed-remy-login"));
+  await chat.send("Second turn.");
+  assert.equal(threadSessions(sessions).length, 2);
+  assert.equal(threadSessions(sessions)[1].options?.env?.CLAUDE_CODE_OAUTH_TOKEN, "refreshed-remy-login");
+  threadSessions(sessions)[1].emit(result);
+  await tick();
+});
 
 function threadSessions(sessions: Session[]): Session[] {
   return sessions.filter((session) => session.options?.includePartialMessages === true);

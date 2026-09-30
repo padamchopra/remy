@@ -1,5 +1,6 @@
 import { getKv } from "./db.js";
-import { connectionAuthorization } from "./hub-computer.js";
+import { connectionAuthorization, storedComputerPrivateKey } from "./hub-computer.js";
+import { hubThreadAccess } from "./hub-threads.js";
 export async function hubOrganizationTool(
   chatId: string,
   action: string,
@@ -10,12 +11,13 @@ export async function hubOrganizationTool(
       computerId: string;
       hubUrl: string;
     }>("hubComputerRegistration"),
-    key = getKv<string>("hubComputerPrivateKey");
+    key = storedComputerPrivateKey();
   if (!registration || !key)
-    throw Error("This thread is not connected to your organization.");
+    throw Error("This thread is not connected to Remy.");
+  const organizationId = hubThreadAccess(chatId)?.organizationId ?? registration.organizationId;
   const response = await fetch(
     new URL(
-      `/api/organizations/${encodeURIComponent(registration.organizationId)}/computers/organization-tools/${encodeURIComponent(chatId)}`,
+      `/api/organizations/${encodeURIComponent(registration.organizationId)}/computers/organization-tools/${encodeURIComponent(chatId)}${organizationId === registration.organizationId ? "" : `?organization=${encodeURIComponent(organizationId)}`}`,
       registration.hubUrl,
     ),
     {
@@ -30,7 +32,7 @@ export async function hubOrganizationTool(
       },
       body: JSON.stringify({ action, input }),
       redirect: "error",
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(60000),
     },
   );
   // The hub's own words say what to fix, such as a finding off the diff.

@@ -23,9 +23,13 @@ import {
 } from "@/components/ui/item";
 import { hubRequest, hubThreadBase } from "@/lib/hub-threads";
 import { watchHubResource } from "@/lib/hub-computers";
-import { navigateLocation } from "@/lib/route";
+import { currentLocation, listenToLocationChanges, navigateLocation, parseLocation } from "@/lib/route";
 import { apiError } from "@/lib/api-error";
 const announced = new Set<string>();
+const focusedThread = () => {
+  const route = parseLocation(currentLocation()).route;
+  return route.name === "threads" ? route.threadId : undefined;
+};
 export function HubNotifications({
   organizationId,
   organizationIds,
@@ -65,6 +69,14 @@ export function HubNotifications({
   };
   const ownersKey = (organizationIds ?? [organizationId]).join(",");
   useEffect(() => {
+    const dismissFocused = () => {
+      const threadId = focusedThread();
+      for (const item of items) if (item.threadId === threadId) toast.dismiss(`${item.ownerOrganizationId}:${item.id}`);
+    };
+    dismissFocused();
+    return listenToLocationChanges(dismissFocused);
+  }, [items]);
+  useEffect(() => {
     const snapshots = new Map<string, {notifications:(HubNotification & {ownerOrganizationId:string})[]; devices:typeof devices}>();
     const stops = ownersKey.split(",").filter(Boolean).map(ownerOrganizationId => {
     let loaded = false;
@@ -86,9 +98,11 @@ export function HubNotifications({
             loaded &&
             !item.readAt &&
             !announced.has(id) &&
+            item.threadId !== focusedThread() &&
             localStorage.getItem(key) !== "off"
           )
             toast(item.title, {
+              id,
               description: item.message,
               action: {
                 label: "Open thread",

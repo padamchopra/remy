@@ -67,20 +67,7 @@ export async function fixtureReviewTurn({ cwd, developerInstructions, inProcessM
     const commit = (await run("git", ["-C", cwd, "rev-parse", "HEAD"])).stdout.trim();
     const diff = (await run("git", ["-C", cwd, "diff", "--unified=0", `origin/${base}...HEAD`], { maxBuffer: 16 * 1024 * 1024 })).stdout;
     const anchor = firstAddedLine(diff);
-    await call("report_review_findings", {
-      commit,
-      summary: "The QA fixture read the diff against its base and flagged the first changed line.",
-      findings: anchor ? [{
-        path: anchor.path,
-        startLine: anchor.line,
-        endLine: anchor.line,
-        side: "RIGHT",
-        severity: "should",
-        title: "Check this changed line",
-        body: "The QA fixture anchors one finding on the first line this pull request adds, so the finding, its diff anchor and Add to GitHub review can be checked.",
-      }] : [],
-    });
-    return anchor ? "I read the diff and saved 1 finding beside it." : "I read the diff and found nothing to flag.";
+    return anchor ? `I read commit ${commit.slice(0, 12)}. Should fix: check ${anchor.path}:${anchor.line}, the first changed line.` : "I read the diff and found nothing to flag.";
   } finally {
     await client.close();
   }

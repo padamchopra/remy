@@ -459,3 +459,35 @@ test("lines sent from a pull request reach the provider as review context and st
     restore();
   }
 });
+
+test("agent delegation keeps its folder, human ownership and sender metadata through snapshots and retries", async () => {
+  const { addWorkspace } = await import("./workspaces.js");
+  const { getKv,setKv } = await import("./db.js");
+  const folder = mkdtempSync(join(state, "delegation-"));
+  execFileSync("git",["init",folder]);
+  const workspace = await addWorkspace("Delegation",folder);
+  const source = createChat({cwd:workspace.path,title:"Review #42",provider:"claude",model:"opus",effort:"high",permissionMode:"plan"});
+  shareHubThread(source.id,"org",owner,"manual","open");
+  setKv(`hubReviewDelegation:${source.id}`,true);
+  const agent = {...owner,agent:{organizationId:"org",computerId:"mac",threadId:source.id,title:source.title,provider:"claude" as const}};
+  const id = randomUUID();
+  const input = {workspaceId:workspace.id,threadId:id,hubTaskId:"delegation-qa",provider:"claude",model:"opus",effort:"high",permissionMode:"plan",visibility:"open",title:"Inspect"};
+  const response = await handleHubThreadRequest("org",agent,"POST","/hub/threads",input,noAttachment);
+  assert.equal(response.status,201);
+  const snapshot = await response.json();
+  assert.equal(snapshot.detail.cwd,source.cwd);
+  assert.deepEqual(snapshot.access.owner,owner);
+  assert.equal(snapshot.detail.permissionMode,"plan");
+  assert.equal(getKv(`hubAgentParent:${id}`),source.id);
+  assert.equal(getKv(`hubReviewDelegation:${id}`),true);
+  assert.equal(snapshot.detail.review,undefined);
+  assert.equal((await handleHubThreadRequest("org",agent,"POST","/hub/threads",input,noAttachment)).status,201);
+  assert.equal((await handleHubThreadRequest("org",agent,"POST","/hub/threads",{...input,hubTaskId:"collision"},noAttachment)).status,409);
+  const message={text:"Inspect the files",messageId:`u-${randomUUID()}`};
+  assert.equal((await handleHubThreadRequest("org",agent,"POST",`/hub/threads/${id}/message`,message,noAttachment)).status,200);
+  assert.equal((await handleHubThreadRequest("org",agent,"POST",`/hub/threads/${id}/message`,message,noAttachment)).status,200);
+  const entries = hubThreadSnapshot(id,"org")!.detail.entries.filter(e => e.id === message.messageId);
+  assert.equal(entries.length,1);
+  assert.deepEqual(entries[0].member,agent);
+  deleteChat(id);deleteChat(source.id);
+});

@@ -795,6 +795,28 @@ export class GitHubConnection {
     };
   }
 
+  async pullRequestCommits(org: string, user: string, repository: string, number: number) {
+    const { owner, name } = await this.workspacePullRequest(org, user, repository, number);
+    const commits: { sha: string; title: string; author: string; date: string }[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < 10; page++) {
+      const data = await this.graphql(org, user, {
+        query: `query PullRequestCommits($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+          repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+            commits(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { commit { oid messageHeadline committedDate author { name } } } }
+          } }
+        }`, variables: { owner, name, number, cursor },
+      });
+      const pr = (data.data?.repository as { pullRequest?: { commits?: { nodes?: { commit?: { oid?: string; messageHeadline?: string; committedDate?: string; author?: { name?: string } } }[]; pageInfo?: { hasNextPage?: boolean; endCursor?: string } } } } | undefined)?.pullRequest;
+      if (!pr?.commits) throw new ConnectionError(data.errors?.[0]?.message || "Your commits could not be loaded.", 502);
+      for (const { commit } of pr.commits.nodes ?? []) if (commit?.oid && /^[0-9a-f]{40}$/i.test(commit.oid)) commits.push({ sha: commit.oid.toLowerCase(), title: (commit.messageHeadline ?? "").slice(0, 300), author: (commit.author?.name ?? "").slice(0, 120), date: commit.committedDate ?? "" });
+      if (!pr.commits.pageInfo?.hasNextPage) return { commits, truncated: false };
+      if (!pr.commits.pageInfo.endCursor || pr.commits.pageInfo.endCursor === cursor) throw new ConnectionError("Your commits could not be loaded. Try again.", 502);
+      cursor = pr.commits.pageInfo.endCursor;
+    }
+    return { commits, truncated: true };
+  }
+
   /// People who can be asked to review: GitHub's own suggestions first, then
   /// everyone who can be assigned in the repository, matching what was typed.
   /// The author cannot review their own pull request, so they are left out.
@@ -851,8 +873,31 @@ export class GitHubConnection {
   /// at most 3000 files and leaves `patch` off binary and very large files; the
   /// answer also stops carrying patches past a byte budget so one enormous pull
   /// request cannot become a response the browser has to swallow whole.
-  async pullRequestFiles(org: string, user: string, repository: string, number: number, changedFiles?: number) {
+  async pullRequestFiles(org: string, user: string, repository: string, number: number, changedFiles?: number, commits: string[] = []) {
     const { owner, name } = await this.workspacePullRequest(org, user, repository, number);
+    if (commits.length) {
+      const listed = await this.pullRequestCommits(org, user, repository, number);
+      const selected = [...new Set(commits)];
+      if (selected.length > 50 || selected.some(sha => !listed.commits.some(commit => commit.sha === sha))) throw new ConnectionError("Choose commits from this pull request.", 400);
+      let budget = PULL_REQUEST_PATCH_BUDGET;
+      const files: { path: string; status: string; additions: number; deletions: number; patch?: string; patchOmitted?: boolean; commitSha: string; commitTitle: string; previousPath?: string }[] = [];
+      let truncated = false, patchesOmitted = false;
+      for (const commit of listed.commits.filter(commit => selected.includes(commit.sha))) {
+        for (let page = 1; page <= PULL_REQUEST_FILES_MAX_PAGES; page++) {
+          const result = await this.api<{ files?: { filename: string; previous_filename?: string; status: string; additions: number; deletions: number; patch?: string }[] }>(org, user, `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/commits/${commit.sha}?per_page=100&page=${page}`);
+          const entries = result.files ?? [];
+          for (const file of entries) {
+            const keep = typeof file.patch === "string" && file.patch.length <= budget;
+            if (keep) budget -= file.patch!.length;
+            if (file.patch && !keep) patchesOmitted = true;
+            files.push({ path: file.filename, status: file.status, additions: file.additions, deletions: file.deletions, ...(file.previous_filename ? { previousPath: file.previous_filename } : {}), ...(keep ? { patch: file.patch! } : file.patch ? { patchOmitted: true } : {}), commitSha: commit.sha, commitTitle: commit.title });
+          }
+          if (entries.length < 100) break;
+          if (page === PULL_REQUEST_FILES_MAX_PAGES) truncated = true;
+        }
+      }
+      return { files, truncated, patchesOmitted };
+    }
     const base = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${number}/files?per_page=${PULL_REQUEST_FILES_PAGE}`;
     const read = async (page: number) => {
       const value = await this.api<unknown>(org, user, `${base}&page=${page}`);

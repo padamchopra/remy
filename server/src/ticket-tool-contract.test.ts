@@ -14,6 +14,6 @@ test("provider instructions prefer Remy's attached browser over global browser s
   assert.match(REMY_BROWSER_INSTRUCTIONS, /Open the target page with browser_open before deciding that no browser is available/);
   assert.match(REMY_BROWSER_INSTRUCTIONS, /Do not switch to a global Browser skill/);
   assert.match(REMY_TOOL_INSTRUCTIONS, /browser_open/);
-  assert.equal(remyProviderInstructions("Keep answers terse."), `Keep answers terse.\n\n${REMY_BROWSER_INSTRUCTIONS}`);
-  assert.equal(remyProviderInstructions(), REMY_BROWSER_INSTRUCTIONS);
+  assert.equal(remyProviderInstructions("Keep answers terse."), `Keep answers terse.\n\n${REMY_TOOL_INSTRUCTIONS}`);
+  assert.equal(remyProviderInstructions(), REMY_TOOL_INSTRUCTIONS);
 });

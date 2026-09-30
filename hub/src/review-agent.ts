@@ -443,5 +443,5 @@ export class ReviewAgent {
 /// The first message of a review, and the follow-up for new commits. The
 /// hub writes the follow-up because it knows which commit was reviewed.
 export function reviewNewChangesMessage(from: string, to: string) {
-  return `Review the commits after ${from.slice(0, 12)} up to ${to.slice(0, 12)}. Cover only what those commits changed, recheck your earlier findings against them, and report with report_review_findings: update a finding by its id, or list it in resolvedIds when the new commits fixed it.`;
+  return `Review the commits after ${from.slice(0, 12)} up to ${to.slice(0, 12)}. Cover only what those commits changed, recheck your earlier findings against them, and write your findings directly in the thread, explaining which earlier findings the new commits fixed.`;
 }

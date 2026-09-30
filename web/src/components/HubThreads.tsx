@@ -1,3 +1,4 @@
+import { ThreadSender } from "./ThreadSender";
 import { speaker } from "@/lib/thread-message";
 import { threadEntryText, visibleThreadEntries } from "@/lib/thread-entry-display";
 import { mergeThreadTranscript, prependThreadEntries, threadCheckpoints } from "@/lib/hub-transcript";
@@ -301,6 +302,7 @@ export default function HubThreads({
   const entries = visibleThreadEntries(pending && !visibleEntries.some(entry => entry.id === `u-${pending.requestId}`)
     ? [{id: `u-${pending.requestId}`, kind: "user", text: pending.message}, ...visibleEntries]
     : visibleEntries);
+  const latestAssistantEntry = [...entries].reverse().find(entry => entry.kind === "assistant");
   const picker = threadModelPicker({ provider: thread?.detail.provider ?? pending?.provider, model: thread?.detail.model ?? pending?.model, effort: thread?.detail.effort ?? pending?.effort }, computer, modelAccess.value?.providers ?? []);
   const { runtimeProvider, modelProvider, providers } = picker;
   const permission = permissionOf(typeof thread?.detail.permissionMode === "string" ? thread.detail.permissionMode : pending?.permissionMode);
@@ -393,19 +395,28 @@ export default function HubThreads({
               ) : (
                 <Message
                   key={String(item.entry.id)}
-                  align={item.entry.kind === "user" ? "end" : "start"}
+                  align={item.entry.kind === "user" && !(item.entry.member as ThreadMember | undefined)?.agent ? "end" : "start"}
                   data-checkpoint-section={item.entry.kind === "user" ? String(item.entry.id) : undefined}
                 >
-                  {item.entry.kind === "user" && profile && ((item.entry.member as ThreadMember | undefined)?.id ?? member?.id) === profile.id && <PersonAvatar avatar={profile.image} name={profile.name} className="size-8 self-end" />}
+                  {item.entry.kind === "user" && !(item.entry.member as ThreadMember | undefined)?.agent && profile && ((item.entry.member as ThreadMember | undefined)?.id ?? member?.id) === profile.id && <PersonAvatar avatar={profile.image} name={profile.name} className="size-8 self-end" />}
+                  {(item.entry.member as ThreadMember | undefined)?.agent && <ThreadMessageAvatar provider={(item.entry.member as ThreadMember).agent!.provider} lead /> }
                   {item.entry.kind !== "user" && <ThreadMessageAvatar provider={runtimeProvider} lead={item.lead} />}
                   <MessageContent>
-                    {item.lead && item.entry.kind === "user" && <MessageHeader>{(item.entry.member as ThreadMember | undefined)?.label ?? "You"}</MessageHeader>}
+                    {item.entry.kind === "user" && ((item.entry.member as ThreadMember | undefined)?.agent || item.lead) && <MessageHeader>
+                      <ThreadSender member={item.entry.member as ThreadMember | undefined} onOpen={sender => navigate({name:"threads",organizationId:sender.organizationId,threadId:sender.threadId})} />
+                    </MessageHeader>}
                     {item.lead && item.entry.kind !== "user" && <MessageHeader>{PROVIDERS.find((provider) => provider.id === runtimeProvider)?.label ?? "Codex"}</MessageHeader>}
                     <Bubble variant={item.entry.kind === "user" ? "muted" : "ghost"}>
                       <BubbleContent className={item.entry.kind === "thinking" ? "text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground italic" : "min-w-0 break-words"}>
                         {item.entry.kind === "thinking" ? String(item.entry.text ?? "") : <Markdown text={threadEntryText(item.entry)} onOpenLink={openLink} />}
                       </BubbleContent>
                     </Bubble>
+                    {item.entry.kind === "assistant" && item.entry.id === latestAssistantEntry?.id && thread?.computerId && /^(?:Failed to authenticate\b|OAuth session (?:has )?expired\b|Your (?:authentication|login) session (?:has )?expired\b)/i.test(threadEntryText(item.entry).trim()) && (
+                      <Button data-link variant="outline" size="sm" className="self-start" onClick={() => navigate({
+                        name: "settings", tab: "devices", organizationId,
+                        deviceId: thread.computerId.startsWith("cloud:") ? "model-access" : thread.computerId,
+                      })}>Sign in again</Button>
+                    )}
                     {item.entry.kind === "user" && Array.isArray(item.entry.codeReferences) && item.entry.codeReferences.length > 0 && (
                       // Lines sent from a pull request's diff, named the way the diff names them.
                       <AttachmentGroup data-slot="code-references" className="max-w-full justify-end py-0">

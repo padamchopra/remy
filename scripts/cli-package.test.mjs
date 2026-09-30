@@ -55,6 +55,9 @@ test("staging packs remy, the compiled contract, and no tests", () => {
   const files = packed[0].files.map((file) => file.path).sort();
   assert.ok(files.includes("dist/cli.js"));
   assert.ok(files.includes("dist/index.js"));
+  assert.ok(files.includes("dist/hub-claude-account.js"));
+  assert.ok(files.includes("dist/thread-orchestration.js"));
+  assert.ok(files.includes("dist/hub-organization-tools.js"));
   assert.ok(files.includes("vendor/contract/dist/index.js"));
   assert.ok(files.includes("vendor/contract/package.json"));
   assert.ok(files.includes("package.json"));

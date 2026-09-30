@@ -184,8 +184,9 @@ test("review routes answer only the review's owner; Review new changes names the
   head = "c".repeat(40);
   assert.equal((await call("grace", `/reviews/mac/${THREAD}/new-changes`, "POST"))!.status, 404);
   const moved = await (await call("ada", `/reviews/mac/${THREAD}/new-changes`, "POST"))!.json() as { from: string; to: string; review: { headSha: string } };
-  assert.deepEqual([moved.from, moved.to, moved.review.headSha], [HEAD.slice(0, 7), head, head]);
-  assert.match(sent[0]!, /^Review the commits after aaaaaaa up to cccccccccccc\./);
+  assert.deepEqual([moved.from, moved.to, moved.review.headSha], [HEAD, head, head]);
+  assert.match(sent[0]!, /^Review the commits after aaaaaaaaaaaa up to cccccccccccc\./);
+  assert.equal((await call("ada", `/reviews/mac/${THREAD}/new-changes`, "POST"))!.status, 409, "A follow-up is not repeated when no report tool updates reviewedSha");
 });
 
 test("a computer session reaches neither your reviews nor your rules", async () => {
@@ -226,6 +227,7 @@ test("a thread's review tools work only for a review thread on its own computer,
   assert.equal((await tool(OTHER, "propose_review_rule", { text: "Rule", scope: "all", reason: "r" })).status, 403);
   assert.equal((await tool(OTHER, "report_review_findings", { commit: "a4f91c2", findings: [] })).status, 403);
   assert.equal((await tool(THREAD, "propose_review_rule", { text: "Rule", scope: "all", reason: "r" }, "other-computer")).status, 403);
+  assert.equal((await tool(THREAD, "report_review_findings", { commit: "a4f91c2", findings: [] })).status, 403);
   const posted = await tool(THREAD, "github_action", { workspaceId: "ws", action: "comment", number: 7, body: "LGTM" });
   assert.equal(posted.status, 403);
   assert.match((await posted.json() as { error: string }).error, /does not post to GitHub/);
