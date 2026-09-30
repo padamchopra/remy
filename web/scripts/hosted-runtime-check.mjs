@@ -490,7 +490,7 @@ try {
           await composer.waitFor();
           assert.equal(await threadPane.getByText("Studio thread",{exact:true}).count(),0,"A reload keeps the new-thread view");
           await page.goto(clean("/threads/team-thread?computer=team-computer&owner=team"));
-          await page.getByRole("tab",{name:"Studio thread",exact:true}).waitFor();
+          await page.getByRole("tab",{name:"Studio thread",exact:true}).first().waitFor();
           assert.equal(new URL(page.url()).pathname.endsWith("/threads/team-thread"), true, "A thread address names only the thread");
           assert.equal(new URL(page.url()).search, "", "Thread URLs drop computer and owner query");
           if(artifacts)await page.screenshot({path:`${artifacts}/thread-url-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
@@ -808,7 +808,7 @@ try {
           assert.equal(await page.getByRole("status",{name:"Sending message…",exact:true}).count(),1,"An empty early snapshot must not end startup");
           await page.getByLabel("Thread transcript",{exact:true}).getByText("Hello startup QA",{exact:true}).waitFor();
           if(artifacts)await page.screenshot({path:`${artifacts}/start-progress-${returning?'saved':'fresh'}-${mobile?'phone':'desktop'}.png`});
-          await page.getByRole("tab", {name:"Hello startup QA", exact:true}).waitFor();
+          await page.getByRole("tab", {name:"Hello startup QA", exact:true}).first().waitFor();
           assert.equal(await page.getByRole("heading", {name:"Threads", exact:true}).count(), 0);
           await page.getByRole("button", {name:"Thread details", exact:true}).click();
           await page.getByRole("menu", {name:"Thread details"}).getByText("Private", {exact:true}).waitFor();

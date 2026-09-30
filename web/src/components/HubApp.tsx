@@ -19,6 +19,9 @@ import {
   Plug,
   Bell,
   Plus,
+  X,
+  Columns2,
+  Rows2,
 } from "lucide-react";
 import type { HubThread, Organization } from "@remy/contract";
 import type { HubRuntime } from "@/lib/hub-session";
@@ -32,10 +35,12 @@ import { watchHubResource } from "@/lib/hub-computers";
 import { cachedHubThread, clearHubThreadCache } from "@/lib/hub-thread-cache";
 import { requestComposerWorkspace } from "@/lib/composer-workspace";
 import { currentLocation, listenToLocationChanges, navigateLocation, normalizeLocation, parseLocation, type Route } from "@/lib/route";
+import { addAppTab, closeAppTab, focusAppTab, navigateAppTab, readAppTabs, saveAppTabs, splitAppTab, type AppTabs } from "@/lib/app-tabs";
 import { apiError } from "@/lib/api-error";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field, FieldLabel } from "@/components/ui/field";
+import { Tabs as AppTabsRoot, TabsList as AppTabsList, TabsTrigger as AppTabsTrigger } from "@/components/ui/tabs-base";
 
 import {
   Dialog,
@@ -84,10 +89,54 @@ function SidebarNavigation({ route }: { route: Route }) {
   return null;
 }
 
+function appTabLabel(route: Route, threads: HubThread[]): string {
+  if (route.name === "threads") return route.threadId
+    ? threads.find((thread) => thread.id === route.threadId)?.detail.title || "Thread"
+    : "New thread";
+  if (route.name === "prs") return route.number ? `Pull request #${route.number}` : "Pull requests";
+  if (route.name === "workspaces") return route.workspaceId ? "Workspace" : "Workspaces";
+  const labels: Record<string, string> = {
+    general: "General settings", devices: "Computers", connections: "Connections",
+    organization: "Organizations", providers: "Models", members: "Members", teams: "Teams",
+    "version-control": "Version control",
+  };
+  return labels[route.tab] ?? "Settings";
+}
+
 export default function HubApp({ runtime }: { runtime: HubRuntime }) {
-  const [route, setRoute] = useState<Route>(
-    normalizeLocation().route,
-  );
+  const [appTabs, setAppTabs] = useState<AppTabs>(() => {
+    const initial = normalizeLocation().route;
+    const stored = readAppTabs(initial);
+    return navigateAppTab(stored, initial);
+  });
+  const route = appTabs.tabs.find((tab) => tab.id === appTabs.focused)?.route ?? appTabs.tabs[0]!.route;
+  const changeTabs = (change: (current: AppTabs) => AppTabs) => setAppTabs((current) => {
+    const next = change(current);
+    saveAppTabs(next);
+    return next;
+  });
+  const focusTab = (tabId: string) => {
+    const next = focusAppTab(appTabs, tabId);
+    changeTabs(() => next);
+    const selected = next.tabs.find((tab) => tab.id === next.focused);
+    if (selected) navigateLocation({ route: selected.route });
+  };
+  const closeTab = (tabId: string) => {
+    const next = closeAppTab(appTabs, tabId);
+    changeTabs(() => next);
+    const selected = next.tabs.find((tab) => tab.id === next.focused);
+    if (selected) navigateLocation({ route: selected.route });
+  };
+  const newTab = () => {
+    const next = addAppTab(appTabs, { name: "threads", organizationId: route.organizationId });
+    changeTabs(() => next);
+    navigateLocation({ route: next.tabs.at(-1)!.route });
+  };
+  const splitTab = (direction: "horizontal" | "vertical") => {
+    const next = splitAppTab(appTabs, direction, { name: "threads", organizationId: route.organizationId });
+    changeTabs(() => next);
+    navigateLocation({ route: next.tabs.find((tab) => tab.id === next.focused)!.route });
+  };
   const previousSurface = useRef<Route | undefined>(undefined);
   useEffect(() => {
     if (route.name !== "settings") previousSurface.current = route;
@@ -124,6 +173,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
         : null),
   );
   const navigate = (next: Route) => {
+    changeTabs((current) => navigateAppTab(current, next));
     navigateLocation({ route: next });
   };
   const reload = async () => {
@@ -143,7 +193,16 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
     }
   };
   useEffect(() => {
-    const changed = () => setRoute(parseLocation(currentLocation()).route);
+    const changed = () => {
+      const next = parseLocation(currentLocation()).route;
+      setAppTabs((current) => {
+        const selected = current.tabs.find((tab) => tab.id === current.focused)!;
+        if (JSON.stringify(selected.route) === JSON.stringify(next)) return current;
+        const updated = navigateAppTab(current, next);
+        saveAppTabs(updated);
+        return updated;
+      });
+    };
     return listenToLocationChanges(changed);
   }, []);
   useEffect(() => {
@@ -170,74 +229,39 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
   const contextIds = contexts.map(o => o.id).join(",");
   const isPersonal = organization?.personal === true;
   useEffect(() => {
-    setThreads((current) => {
-      const open = route.name === "threads" ? openThread(route.threadId) : [];
-      if (isAll) return current.length ? current : open;
-      return open.filter((thread) => thread.access.organizationId === organization?.id);
-    });
     setThreadsLoaded(false);
     setError("");
     setThreadError("");
-    if (!organization) return;
-    if (isAll) {
-      const values = new Map<string, HubThread[]>();
-      const settled = new Set<string>();
-      const failures = new Map<string, string>();
-      const emitFailure = () => setThreadError(failures.values().next().value ?? "");
-      const emit = () => {
-        const seen = new Set<string>();
-        setThreads(
-          [...values.values()]
-            .flat()
-            .filter((thread) => {
-              if (seen.has(thread.id)) return false;
-              seen.add(thread.id);
-              return true;
-            })
-            .sort((a,b) => Number(b.detail.updatedAt ?? b.observedAt) - Number(a.detail.updatedAt ?? a.observedAt)),
-        );
-        setThreadsLoaded(settled.size === contexts.length);
-      };
-      const off = contexts.map(owner => watchHubThreads(owner.id, value => { values.set(owner.id,value); settled.add(owner.id); failures.delete(owner.id); emitFailure(); emit(); }, message => { settled.add(owner.id); failures.set(owner.id, `${owner.name}: ${message}`); emitFailure(); emit(); }));
-      const offOwners = contexts.map(owner => watchHubResource<{organization:Organization}>(hubThreadBase(owner.id), value => {
-        if (!value) return;
-        if (value.organization.personal) setPersonal(value.organization);
-        else setOrganizations(all => all.map(o => o.id === owner.id ? value.organization : o));
-      }, () => { void reload(); }));
-      return () => [...off, ...offOwners].forEach(stop => stop());
-    }
-    const offThreads = watchHubThreads(
-      organization.id,
-      (value) => {
-        setThreads(value);
-        setThreadsLoaded(true);
-        setThreadError("");
-      },
-      setThreadError,
-    );
-    const offOrganization = watchHubResource<{ organization: Organization }>(
-      hubThreadBase(organization.id),
-      (value) => {
-        if (value?.organization.personal) setPersonal(value.organization);
-        else if (value)
-          setOrganizations((all) =>
-            all.map((o) =>
-              o.id === value.organization.id ? value.organization : o,
-            ),
-          );
-      },
-      () => {
-        void reload();
-      },
-    );
-    return () => {
-      offThreads();
-      offOrganization();
+    if (!contexts.length) return;
+    const values = new Map<string, HubThread[]>();
+    const settled = new Set<string>();
+    const failures = new Map<string, string>();
+    const emitFailure = () => setThreadError(failures.values().next().value ?? "");
+    const emit = () => {
+      const seen = new Set<string>();
+      setThreads(
+        [...values.values()]
+          .flat()
+          .filter((thread) => {
+            if (seen.has(thread.id)) return false;
+            seen.add(thread.id);
+            return true;
+          })
+          .sort((a,b) => Number(b.detail.updatedAt ?? b.observedAt) - Number(a.detail.updatedAt ?? a.observedAt)),
+      );
+      setThreadsLoaded(settled.size === contexts.length);
     };
-  }, [organization?.id, profile?.id, isAll ? contextIds : ""]);
+    const off = contexts.map(owner => watchHubThreads(owner.id, value => { values.set(owner.id,value); settled.add(owner.id); failures.delete(owner.id); emitFailure(); emit(); }, message => { settled.add(owner.id); failures.set(owner.id, `${owner.name}: ${message}`); emitFailure(); emit(); }));
+    const offOwners = contexts.map(owner => watchHubResource<{organization:Organization}>(hubThreadBase(owner.id), value => {
+      if (!value) return;
+      if (value.organization.personal) setPersonal(value.organization);
+      else setOrganizations(all => all.map(o => o.id === owner.id ? value.organization : o));
+    }, () => { void reload(); }));
+    return () => [...off, ...offOwners].forEach(stop => stop());
+  }, [profile?.id, contextIds]);
   const threadGroups = useHubThreadGroups({
     organizationId: organizationId === "all" ? personal?.id ?? "personal" : organizationId,
-    threads,
+    threads: isAll ? threads : threads.filter((thread) => thread.access.organizationId === organizationId),
     onSelect: (thread) => navigate({ name: "threads", organizationId, threadId: thread.id }),
     onOpenWorkspace: (thread, workspaceId) => navigate(isAll
       ? { name: "workspaces", workspaceId, organizationId: "all", ownerOrganizationId: thread.access.organizationId }
@@ -317,77 +341,21 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
         },
       ]
     : [];
-  const paneLabel = [...links, ...settingsLinks].find((link) => link.selected)?.label ?? "Remy";
-  const workspacesListOpen = route.name === "workspaces" && !route.workspaceId;
-  const showPaneHeader =
-    route.name !== "prs" &&
-    // Computers draws its own header, with a crumb for the page it opens.
-    !(route.name === "settings" && route.tab === "devices") &&
-    !(route.name === "threads" && route.threadId) &&
-    !(route.name === "workspaces" && route.workspaceId);
-  const paneCrumbs = route.name === "settings"
-    ? [{ label: "Settings" }, { label: paneLabel }]
-    : [{ label: paneLabel }];
-  return (
-    <HubPersonalContext value={isPersonal}>
-      <HubModelFavorites key={`${profile?.id}:${organizationId}`} organizationId={isAll ? undefined : organizationId}>
-      <SidebarProvider>
-        <SidebarNavigation route={route} />
-        <AppSidebar
-          collapsible="icon"
-          showTrigger
-          selected={route.name === "threads" ? route.threadId ?? null : null}
-          account={organization ? {
-            label: organization.name,
-            icon: isAll ? Layers : isPersonal ? User : Building2,
-            views: [
-              { id: "all", label: "All", icon: Layers, selected: isAll, onSelect: () => navigate({name:"threads",organizationId:"all"}) },
-              ...(personal ? [{ id: personal.id, label: "Personal", icon: User, selected: isPersonal, onSelect: () => navigate({name:"threads",organizationId:personal.id}) }] : []),
-              ...organizations.map(o => ({
-                id: o.id,
-                label: o.name,
-                icon: Building2,
-                organization: true,
-                selected: o.id === organizationId,
-                onSelect: () => navigate({name:"threads",organizationId:o.id}),
-                onSettings: () => navigate({name:"settings",tab:"organization",organizationTab:"members",organizationId:o.id}),
-              })),
-            ],
-            onCreate: () => setCreate(true),
-          } : undefined}
-          back={inSettings ? { label: "Back", onSelect: () => { const previous = previousSurface.current; navigate(previous && previous.organizationId === organizationId ? previous : { name: "threads", organizationId }); } } : undefined}
-          onNewThread={inSettings ? undefined : () => navigate({ name: "threads", organizationId })}
-          nav={inSettings
-            ? [
-                ...settingsLinks.filter(link => !isPersonal || !["Members", "Teams"].includes(link.label)).map(link => ({
-                  id: link.label, label: link.label, icon: link.icon, selected: link.selected, onSelect: () => navigate(link.route),
-                })),
-                ...(organization ? [{ id: "notifications", label: "Notifications", icon: Bell, selected: false, onSelect: () => setNotificationsAccount(organization.id) }] : []),
-              ]
-            : links.map(link => ({
-                id: link.label, label: link.label, icon: link.icon, selected: link.selected, onSelect: () => navigate(link.route),
-              }))}
-          groups={inSettings ? [] : threadGroups}
-          emptyThreads={!inSettings && threadsLoaded && !threads.length ? "No threads yet." : undefined}
-          footer={organization && !inSettings ? [{
-            label: "Settings",
-            icon: Settings2,
-            selected: false,
-            onSelect: () => navigate({ name: "settings", tab: "general", organizationId }),
-          }] : []}
-          accountMenu={{
-            name: shownProfile?.name ?? "",
-            image: shownProfile?.image,
-            items: [{
-              label: "Sign out",
-              icon: LogOut,
-              onSelect: () => void hubRequest("/api/sessions/current", "DELETE")
-                .then(() => { clearHubThreadCache(); setPersonal(undefined); setOrganizations([]); setThreads([]); setSignedOut(true); })
-                .catch((e) => setError(apiError(e))),
-            }],
-          }}
-        />
-        <SidebarInset className="h-svh min-w-0 overflow-hidden">
+  const renderPane = (paneRoute: Route) => {
+    const route = paneRoute;
+    const organizationId = route.organizationId ?? "all";
+    const isAll = organizationId === "all";
+    const organization = isAll ? {...personal, id: "all", name: "All", role: "owner", personal: false} as Organization : contexts.find((item) => item.id === organizationId);
+    const isPersonal = organization?.personal === true;
+    const paneThreads = isAll ? threads : threads.filter((thread) => thread.access.organizationId === organizationId);
+    const requestedSection = route.name === "settings" ? route.tab : route.name;
+    const organizationSettings = route.name === "settings" && ["organization", "members", "teams"].includes(route.tab);
+    const section = organizationSettings ? "organization" : requestedSection;
+    const paneLabel = route.name === "threads" ? "Threads" : route.name === "workspaces" ? "Workspaces" : route.name === "prs" ? "Pull requests" : section === "devices" ? "Computers" : section === "connections" ? "Connections" : section === "organization" ? "Organizations" : "General";
+    const workspacesListOpen = route.name === "workspaces" && !route.workspaceId;
+    const showPaneHeader = route.name !== "prs" && !(route.name === "settings" && route.tab === "devices") && !(route.name === "threads" && route.threadId) && !(route.name === "workspaces" && route.workspaceId);
+    const paneCrumbs = route.name === "settings" ? [{ label: "Settings" }, { label: paneLabel }] : [{ label: paneLabel }];
+    return <HubPersonalContext value={isPersonal}>
           {showPaneHeader && <PaneHeader sidebar crumbs={paneCrumbs}>
             {workspacesListOpen && (isAll ? contexts : organization ? [organization] : []).some(o => o.role !== "member") && (
               <Button className="h-7 gap-1.5 rounded-md px-2.5 text-xs has-[>svg]:px-2.5 [&_svg:not([class*='size-'])]:size-3.5" onClick={() => setAddingWorkspace(true)}>
@@ -422,7 +390,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                   <WorkspacesList
                     organizations={contexts}
                     filter={organizationId ?? "all"}
-                    threads={threads}
+                    threads={paneThreads}
                     open={workspacesListOpen}
                     adding={addingWorkspace}
                     onAddingChange={setAddingWorkspace}
@@ -453,7 +421,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               onOpenWorkspace={() => undefined}
               selected={route.repository && route.number ? { repository: route.repository, number: route.number, ...(route.view ? { view: route.view } : {}) } : undefined}
               onSelect={(address) => navigate({ name: "prs", organizationId: route.organizationId, ...address })}
-              hubThreads={threads}
+              hubThreads={paneThreads}
               onOpenHubThread={(thread) => navigate({ name: "threads", organizationId, threadId: thread.id })}
               onStartThread={() => navigate({ name: "threads", organizationId })}
               onConnectGitHub={() => navigate({ name: "settings", tab: "connections", organizationId })}
@@ -462,7 +430,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                 : { name: "workspaces", workspaceId, organizationId })}
             /></Deferred></div>
           ) : isAll ? (
-            <Deferred open><AllView organizations={contexts} route={route} navigate={navigate} threads={threads} threadsLoaded={threadsLoaded} accountsLoaded={loaded} /></Deferred>
+            <Deferred open><AllView organizations={contexts} route={route} navigate={navigate} threads={paneThreads} threadsLoaded={threadsLoaded} accountsLoaded={loaded} /></Deferred>
           ) : (
             <div key={organization.id} className="flex min-h-0 flex-1 flex-col">
               <div hidden={section !== "general"} className="min-h-0 overflow-auto px-5 py-6"><Deferred open={section === "general"}><GeneralSettings organizationId={organization.id} /></Deferred></div>
@@ -525,6 +493,97 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           )}
             </>
           )}
+          </HubPersonalContext>;
+  };
+  return (
+    <HubPersonalContext value={isPersonal}>
+      <HubModelFavorites key={profile?.id} organizationId={isAll ? undefined : organizationId}>
+      <SidebarProvider>
+        <SidebarNavigation route={route} />
+        <AppSidebar
+          collapsible="icon"
+          showTrigger
+          selected={route.name === "threads" ? route.threadId ?? null : null}
+          account={organization ? {
+            label: organization.name,
+            icon: isAll ? Layers : isPersonal ? User : Building2,
+            views: [
+              { id: "all", label: "All", icon: Layers, selected: isAll, onSelect: () => navigate({name:"threads",organizationId:"all"}) },
+              ...(personal ? [{ id: personal.id, label: "Personal", icon: User, selected: isPersonal, onSelect: () => navigate({name:"threads",organizationId:personal.id}) }] : []),
+              ...organizations.map(o => ({
+                id: o.id,
+                label: o.name,
+                icon: Building2,
+                organization: true,
+                selected: o.id === organizationId,
+                onSelect: () => navigate({name:"threads",organizationId:o.id}),
+                onSettings: () => navigate({name:"settings",tab:"organization",organizationTab:"members",organizationId:o.id}),
+              })),
+            ],
+            onCreate: () => setCreate(true),
+          } : undefined}
+          back={inSettings ? { label: "Back", onSelect: () => { const previous = previousSurface.current; navigate(previous && previous.organizationId === organizationId ? previous : { name: "threads", organizationId }); } } : undefined}
+          onNewThread={inSettings ? undefined : () => navigate({ name: "threads", organizationId })}
+          nav={inSettings
+            ? [
+                ...settingsLinks.filter(link => !isPersonal || !["Members", "Teams"].includes(link.label)).map(link => ({
+                  id: link.label, label: link.label, icon: link.icon, selected: link.selected, onSelect: () => navigate(link.route),
+                })),
+                ...(organization ? [{ id: "notifications", label: "Notifications", icon: Bell, selected: false, onSelect: () => setNotificationsAccount(organization.id) }] : []),
+              ]
+            : links.map(link => ({
+                id: link.label, label: link.label, icon: link.icon, selected: link.selected, onSelect: () => navigate(link.route),
+              }))}
+          groups={inSettings ? [] : threadGroups}
+          emptyThreads={!inSettings && threadsLoaded && !(isAll ? threads : threads.filter((thread) => thread.access.organizationId === organizationId)).length ? "No threads yet." : undefined}
+          footer={organization && !inSettings ? [{
+            label: "Settings",
+            icon: Settings2,
+            selected: false,
+            onSelect: () => navigate({ name: "settings", tab: "general", organizationId }),
+          }] : []}
+          accountMenu={{
+            name: shownProfile?.name ?? "",
+            image: shownProfile?.image,
+            items: [{
+              label: "Sign out",
+              icon: LogOut,
+              onSelect: () => void hubRequest("/api/sessions/current", "DELETE")
+                .then(() => { clearHubThreadCache(); setPersonal(undefined); setOrganizations([]); setThreads([]); setSignedOut(true); })
+                .catch((e) => setError(apiError(e))),
+            }],
+          }}
+        />
+        <SidebarInset className="h-svh min-w-0 overflow-hidden">
+          <AppTabsRoot value={appTabs.focused} onValueChange={(value) => focusTab(String(value))} className="flex h-11 shrink-0 flex-row data-[orientation=horizontal]:flex-row items-center gap-1 border-b border-border px-2">
+            <AppTabsList aria-label="Open tabs" className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-none">
+              {appTabs.tabs.map((tab) => {
+                const selected = tab.id === appTabs.focused;
+                const label = appTabLabel(tab.route, threads);
+                return <div key={tab.id} className="flex min-w-0 shrink-0 items-center rounded-md bg-transparent data-[selected=true]:bg-foreground/8" data-selected={selected}>
+                  <AppTabsTrigger value={tab.id} className="max-w-44 min-w-0 gap-1.5 px-2 text-xs font-normal" aria-label={label}>
+                    {tab.route.name === "threads" ? <MessagesSquare className="size-3.5 shrink-0" /> : tab.route.name === "prs" ? <GitPullRequest className="size-3.5 shrink-0" /> : tab.route.name === "settings" ? <Settings2 className="size-3.5 shrink-0" /> : <Folder className="size-3.5 shrink-0" />}
+                    <span className="truncate">{label}</span>
+                  </AppTabsTrigger>
+                  {appTabs.tabs.length > 1 && <Button type="button" variant="ghost" size="icon-xs" aria-label={`Close ${label}`} className="size-5 shrink-0" onClick={() => closeTab(tab.id)}><X /></Button>}
+                </div>;
+              })}
+            </AppTabsList>
+            <Button type="button" variant="ghost" size="icon-sm" aria-label="New tab" title="New tab" onClick={newTab}><Plus /></Button>
+            <Button type="button" variant="ghost" size="icon-sm" aria-label="Split left and right" title="Split left and right" className="hidden md:inline-flex" onClick={() => splitTab("horizontal")}><Columns2 /></Button>
+            <Button type="button" variant="ghost" size="icon-sm" aria-label="Split top and bottom" title="Split top and bottom" className="hidden md:inline-flex" onClick={() => splitTab("vertical")}><Rows2 /></Button>
+            {appTabs.split && <Button type="button" variant="ghost" size="sm" onClick={() => changeTabs((current) => ({ ...current, split: undefined }))}>Unsplit</Button>}
+          </AppTabsRoot>
+          <div className={appTabs.split ? appTabs.split.direction === "horizontal" ? "flex min-h-0 flex-1" : "flex min-h-0 flex-1 flex-col" : "flex min-h-0 flex-1"}>
+            {[...(appTabs.split ? [appTabs.split.first, appTabs.split.second] : [appTabs.focused]), ...appTabs.tabs.map((tab) => tab.id).filter((id) => id !== appTabs.focused && id !== appTabs.split?.first && id !== appTabs.split?.second)].map((tabId) => {
+              const tab = appTabs.tabs.find((entry) => entry.id === tabId);
+              if (!tab) return null;
+              const visible = tab.id === appTabs.focused || tab.id === appTabs.split?.first || tab.id === appTabs.split?.second;
+              return <section key={tab.id} aria-label={tab.route.name === "threads" ? "Thread pane" : `${tab.route.name} pane`} onPointerDownCapture={() => { if (tab.id !== appTabs.focused) focusTab(tab.id); }} onFocusCapture={() => { if (tab.id !== appTabs.focused) focusTab(tab.id); }} className={visible ? `flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${appTabs.split && tab.id !== appTabs.focused ? "max-md:hidden" : ""} ${appTabs.split && tab.id !== appTabs.split.first ? appTabs.split.direction === "horizontal" ? "border-border md:border-l" : "border-border md:border-t" : ""}` : "hidden"}>
+                {renderPane(tab.route)}
+              </section>;
+            })}
+          </div>
         </SidebarInset>
         {organization && (
           <HubNotifications

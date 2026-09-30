@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "shots": "node scripts/shoot.mjs",
-    "perf:test": "node --test scripts/composer-draft.test.mjs scripts/shared-read.test.mjs scripts/thread-entry-merge.test.mjs scripts/thread-workbench.test.mjs scripts/warm-cache.test.mjs",
+    "perf:test": "node --test scripts/app-tabs.test.mjs scripts/composer-draft.test.mjs scripts/shared-read.test.mjs scripts/thread-entry-merge.test.mjs scripts/thread-workbench.test.mjs scripts/warm-cache.test.mjs",
     "live-check": "node scripts/live-check.mjs",
     "dev:website": "vite --config vite.website.config.ts",
     "build:website": "tsc -p tsconfig.website.json && vite build --config vite.website.config.ts"
