@@ -87,17 +87,65 @@ try {
   await page.reload();
   await page.getByRole('tab', { name: 'Review #42: Keep work in app tabs', exact: true }).first().waitFor();
   await page.getByText('The new tabs keep your pull request and review thread visible together.').waitFor();
+  const reviewPane = page.locator('section[aria-label="Thread pane"]:visible');
+  assert.equal(await reviewPane.getByRole('tablist').count(), 0, 'A thread pane cannot contain another tab collection');
+  assert.equal(await reviewPane.getByRole('button', { name: 'Back', exact: true }).count(), 0);
+  assert.equal(await reviewPane.getByRole('button', { name: 'Add tab', exact: true }).count(), 0);
   assert.equal(await page.locator('section[aria-label="prs pane"]:visible').count(), 1);
   assert.equal(await page.locator('section[aria-label="Thread pane"]:visible').count(), 1);
   assert.equal(await page.getByRole('button', { name: 'Threads', exact: true }).first().getAttribute('data-active'), 'true');
   assert.match(new URL(page.url()).pathname, /\/threads\/11111111/);
+  await reviewPane.getByRole('textbox', { name: 'Message', exact: true }).fill('Keep this draft while resizing.');
+  const resize = async (ratio, horizontal) => {
+    const handle = page.getByRole('separator', { name: 'Resize panes' });
+    const box = await handle.boundingBox();
+    const container = await handle.evaluate(element => {
+      const box = element.parentElement.getBoundingClientRect();
+      return { x: box.x, y: box.y, width: box.width, height: box.height };
+    });
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(horizontal ? container.x + container.width * ratio : box.x + box.width / 2,
+      horizontal ? box.y + box.height / 2 : container.y + container.height * ratio, { steps: 12 });
+    await page.mouse.up();
+    const panes = await page.locator('section[aria-label$="pane"]:visible').evaluateAll(elements => elements.map(element => {
+      const box = element.getBoundingClientRect();
+      return { width: box.width, height: box.height };
+    }));
+    const sizes = panes.map(box => horizontal ? box.width : box.height);
+    assert.ok(Math.abs(sizes[0] / (sizes[0] + sizes[1]) - ratio) < 0.02, 'Dragging changes the actual pane ratio');
+    assert.equal(await reviewPane.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'Keep this draft while resizing.');
+  };
+  await resize(0.68, true);
+  await page.getByRole('button', { name: 'Split top and bottom', exact: true }).click();
+  await resize(0.3, false);
+  await page.reload();
+  await page.getByText('The new tabs keep your pull request and review thread visible together.').waitFor();
+  assert.equal(await page.getByRole('separator', { name: 'Resize panes' }).getAttribute('aria-valuenow'), '30');
+  assert.equal(await page.getByRole('separator', { name: 'Resize panes' }).getAttribute('aria-orientation'), 'horizontal');
+  await page.getByRole('button', { name: 'Split left and right', exact: true }).click();
+  await page.getByRole('separator', { name: 'Resize panes' }).press('End');
+  await page.getByRole('separator', { name: 'Resize panes' }).press('ArrowLeft');
+  assert.equal(await page.getByRole('separator', { name: 'Resize panes' }).getAttribute('aria-valuenow'), '93');
+  await page.getByRole('separator', { name: 'Resize panes' }).dblclick();
+  assert.equal(await page.getByRole('separator', { name: 'Resize panes' }).getAttribute('aria-valuenow'), '50');
+  await reviewPane.getByRole('button', { name: 'Thread details', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Running work', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Running work', exact: true }).waitFor();
+  await page.getByRole('dialog').press('Escape');
+  for (let step = 0; step < 6; step++) await page.getByRole('separator', { name: 'Resize panes' }).press('ArrowRight');
   await page.screenshot({ path: `${output}/pr-review-split.png` });
   await page.reload();
   await page.getByRole('tab', { name: 'Review #42: Keep work in app tabs', exact: true }).first().waitFor();
   await page.getByText('The new tabs keep your pull request and review thread visible together.').waitFor();
   assert.equal(await page.locator('section[aria-label$="pane"]:visible').count(), 2);
+  assert.equal(await page.getByRole('separator', { name: 'Resize panes' }).getAttribute('aria-valuenow'), '62');
+  await page.getByRole('button', { name: 'Unsplit', exact: true }).click();
+  assert.equal(await page.locator('section[aria-label$="pane"]:visible').count(), 1);
+  assert.equal(await page.getByRole('separator', { name: 'Resize panes' }).count(), 0);
+  assert.equal(await reviewPane.getByRole('tablist').count(), 0);
   assert.deepEqual(errors, []);
-  console.log('Review split QA passed: PR left, review thread right, sidebar focus, URL and reload.');
+  console.log('Review split QA passed: one tab strip, PR left, review right, resizable panes, preserved draft, keyboard, saved ratio, thread details, sidebar focus and reload.');
 } catch (error) {
   console.log('Failure state', page.url(), errors, (await page.locator('body').innerText()).slice(0, 2400));
   throw error;

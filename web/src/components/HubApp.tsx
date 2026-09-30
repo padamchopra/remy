@@ -4,7 +4,8 @@ import { PaneHeader } from "./PaneHeader";
 import { useHubProfile } from "@/lib/hub-profile";
 import { HubModelFavorites } from "./HubModelFavorites";
 import { EmptyState } from "@/components/EmptyState";
-import { lazy, useEffect, useRef, useState } from "react";
+import { Fragment, lazy, useEffect, useRef, useState } from "react";
+import { AppSplitDivider } from "@/components/AppSplitDivider";
 import {
   Layers,
   Folder,
@@ -53,6 +54,7 @@ import {
 import {
   SidebarProvider,
   SidebarInset,
+  SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
 import {
@@ -561,6 +563,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
         />
         <SidebarInset className="h-svh min-w-0 overflow-hidden">
           <AppTabsRoot value={appTabs.focused} onValueChange={(value) => focusTab(String(value))} className="flex h-11 shrink-0 flex-row data-[orientation=horizontal]:flex-row items-center gap-1 border-b border-border px-2">
+            {route.name === "threads" && route.threadId && <SidebarTrigger className="md:hidden" />}
             <AppTabsList aria-label="Open tabs" className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-none">
               {appTabs.tabs.map((tab) => {
                 const selected = tab.id === appTabs.focused;
@@ -584,9 +587,13 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
               const tab = appTabs.tabs.find((entry) => entry.id === tabId);
               if (!tab) return null;
               const visible = tab.id === appTabs.focused || tab.id === appTabs.split?.first || tab.id === appTabs.split?.second;
-              return <section key={tab.id} aria-label={tab.route.name === "threads" ? "Thread pane" : `${tab.route.name} pane`} onPointerDownCapture={() => { if (tab.id !== appTabs.focused) focusTab(tab.id); }} onFocusCapture={() => { if (tab.id !== appTabs.focused) focusTab(tab.id); }} className={visible ? `flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${appTabs.split && tab.id !== appTabs.focused ? "max-md:hidden" : ""} ${appTabs.split && tab.id !== appTabs.split.first ? appTabs.split.direction === "horizontal" ? "border-border md:border-l" : "border-border md:border-t" : ""}` : "hidden"}>
+              const ratio = appTabs.split?.ratio ?? 0.5;
+              return <Fragment key={tab.id}>
+                {appTabs.split?.second === tab.id && <AppSplitDivider direction={appTabs.split.direction} ratio={ratio} onResize={(ratio) => changeTabs((current) => current.split ? { ...current, split: { ...current.split, ratio } } : current)} />}
+                <section key="pane" aria-label={tab.route.name === "threads" ? "Thread pane" : `${tab.route.name} pane`} style={visible && appTabs.split ? { flexGrow: tab.id === appTabs.split.first ? ratio : 1 - ratio } : undefined} onPointerDownCapture={() => { if (tab.id !== appTabs.focused) focusTab(tab.id); }} onFocusCapture={() => { if (tab.id !== appTabs.focused) focusTab(tab.id); }} className={visible ? `flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${appTabs.split && tab.id !== appTabs.focused ? "max-md:hidden" : ""}` : "hidden"}>
                 {renderPane(tab.route, tab.id)}
-              </section>;
+                </section>
+              </Fragment>;
             })}
           </div>
         </SidebarInset>

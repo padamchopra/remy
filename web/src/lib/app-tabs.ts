@@ -8,7 +8,7 @@ export interface AppTab {
 export interface AppTabs {
   tabs: AppTab[];
   focused: string;
-  split?: { direction: "horizontal" | "vertical"; first: string; second: string };
+  split?: { direction: "horizontal" | "vertical"; first: string; second: string; ratio?: number };
 }
 
 const storageKey = "remy.app-tabs:v1";
@@ -35,7 +35,7 @@ export function readAppTabs(route: Route): AppTabs {
       value.tabs.some((tab) => tab.id === candidate.first) &&
       value.tabs.some((tab) => tab.id === candidate.second) &&
       (candidate.direction === "horizontal" || candidate.direction === "vertical")
-      ? candidate : undefined;
+      ? { ...candidate, ratio: typeof candidate.ratio === "number" && Number.isFinite(candidate.ratio) ? Math.max(0.05, Math.min(0.95, candidate.ratio)) : 0.5 } : undefined;
     return { tabs: value.tabs, focused: focused.id, ...(split ? { split } : {}) };
   } catch {
     return newAppTabs(route);
@@ -79,7 +79,7 @@ export function openAppTabBeside(value: AppTabs, sourceId: string, route: Route)
   return {
     tabs: existing ? value.tabs : [...value.tabs, { id: next, route }],
     focused: next,
-    split: { direction: "horizontal", first: sourceId, second: next },
+    split: { direction: "horizontal", first: sourceId, second: next, ratio: value.split?.ratio ?? 0.5 },
   };
 }
 

@@ -26,11 +26,14 @@ import { PersonAvatar } from "./UserAvatar";
 import { useHubProfile } from "@/lib/hub-profile";
 import { useThreadStarts, retryHubThread, forgetThreadStart } from "@/lib/hub-thread-start";
 import { ThreadStartMarker } from "./ThreadStartMarker";
-import { FileCode2, MoreHorizontal } from "lucide-react";
+import { Activity, FileCode2, MoreHorizontal } from "lucide-react";
 import { Attachment, AttachmentContent, AttachmentDescription, AttachmentGroup, AttachmentMedia, AttachmentTitle } from "@/components/ui/attachment";
 import { referenceLabel } from "@/lib/pull-request-review";
 import type { ChatCodeReference } from "@/state/types";
-import { HubThreadWorkbench } from "@/components/HubThreadWorkbench";
+import { githubPullRequestTarget } from "@/hooks/use-thread-tools";
+import { threadActivities } from "@/lib/thread-activity";
+import { Deferred } from "@/components/Deferred";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog-base";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuLabel, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { EmptyState } from "@/components/EmptyState";
 import { PaneLoading } from "@/components/PaneLoading";
@@ -41,7 +44,7 @@ import { HubThreadComposer, type HubThreadWorkspaceOption } from "./HubThreadCom
 import { watchHubComputers } from "@/lib/hub-computers";
 import { HubNotifications } from "./HubNotifications";
 import { deviceIcon, type DeviceIconId } from "@/lib/devices";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { lazy, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import {
   canWriteThread,
   cloudComputerName,
@@ -69,6 +72,8 @@ import {
 import { cacheHubThread, cachedHubThread, forgetHubThread } from "@/lib/hub-thread-cache";
 import { LinearThreadNotice } from "./LinearConnection";
 import type { Route } from "@/lib/route";
+
+const ThreadActivityTool = lazy(() => import("@/components/ThreadActivity").then(module => ({ default: module.ThreadActivityTool })));
 
 type Approval = {
   requestId: string;
@@ -316,6 +321,12 @@ export default function HubThreads({
       setBusy(false);
     }
   };
+  const [activityOpen, setActivityOpen] = useState(false);
+  const openLink = (href: string) => {
+    const pull = githubPullRequestTarget(href);
+    if (pull) navigate({ name: "prs", organizationId, repository: pull.repository, number: pull.number });
+    else window.open(href, "_blank", "noopener,noreferrer");
+  };
   const feed = transcriptItems(entries as unknown as ConvEntry[]);
   const workingTools = workingToolGroupId(
     feed.flatMap((item) => item.kind === "tools" ? item.entries : [item.entry]),
@@ -345,57 +356,17 @@ export default function HubThreads({
       aria-label="Threads"
     >
       {thread ? (
-        <HubThreadWorkbench
-          threadId={thread.id}
-          title={thread.detail.title || "Thread"}
-          state={typeof thread.detail.state === "string" ? thread.detail.state : undefined}
-          organizationId={organizationId}
-          entries={entries as unknown as ConvEntry[]}
-          provider={runtimeProvider}
-          working={!pending && thread.detail.state === "working"}
-          connected={!thread.stale && computer?.availability !== "offline"}
-          revision={thread.revision}
-          sidebar={!showNavigation}
-          transcriptRef={transcript}
-          followsLatest={followsLatest}
-          onBack={() => navigate({ name: "threads", organizationId })}
-          navigate={navigate}
-          notice={<>
-            {error && (
+        <>
+          {error && (
               <p role="alert" className="shrink-0 px-4 py-2 text-sm text-destructive">{error}</p>
             )}
-            {thread.stale && (
+          {thread.stale && (
               <p role="status" className="shrink-0 border-b px-4 py-2 text-xs text-muted-foreground">
                 {computer?.availability === "offline"
                   ? "This computer is offline; you’re reading its last saved update."
                   : "Remy is reconnecting; you’re reading the last saved update."}
               </p>
-            )}
-          </>}
-          actions={
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon-sm" aria-label="Thread details"><MoreHorizontal /></Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="max-w-[calc(100vw-2rem)]">
-                <DropdownMenuLabel>{thread.access.visibility === "private" ? "Private" : isPersonal ? "Only you" : "Shared with your organization"}</DropdownMenuLabel>
-                <DropdownMenuLabel className="font-normal text-muted-foreground">Started by {thread.access.owner.label}</DropdownMenuLabel>
-                {!isPersonal && thread.access.participants.length > 0 && <DropdownMenuLabel className="font-normal text-muted-foreground">{thread.access.participants.map(person => person.label).join(", ")}</DropdownMenuLabel>}
-                <DropdownMenuItem onSelect={() => navigate({ name: "settings", tab: "devices", organizationId })}>
-                  <ComputerIcon />{computerName}
-                </DropdownMenuItem>
-                {!pending && !isPersonal && member?.id === thread.access.owner.id && <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem disabled={busy || thread.stale} onSelect={() => void act("visibility", { visibility: thread.access.visibility === "private" ? "open" : "private" })}>
-                    {thread.access.visibility === "private" ? "Share with organization" : "Make private"}
-                  </DropdownMenuItem>
-                </>}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          }
-        >
-          {({ openLink }) => (
-        <>
+          )}
           {!pending && !!member && !writable && <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2 text-xs text-muted-foreground">
             <Button size="sm" disabled={busy || thread.stale} onClick={() => void act("join")}>Join thread</Button>
           </div>}
@@ -599,6 +570,27 @@ export default function HubThreads({
                   <PermissionPicker value={permission.value} cloud={cursorCloud} disabled={disabled} onChange={permissionMode => void act("options", {permissionMode})} />
                 </>}
                 context={<>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon-sm" aria-label="Thread details"><MoreHorizontal /></Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="max-w-[calc(100vw-2rem)]">
+                      <DropdownMenuItem onSelect={() => setActivityOpen(true)}><Activity />Running work</DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuLabel>{thread.access.visibility === "private" ? "Private" : isPersonal ? "Only you" : "Shared with your organization"}</DropdownMenuLabel>
+                      <DropdownMenuLabel className="font-normal text-muted-foreground">Started by {thread.access.owner.label}</DropdownMenuLabel>
+                      {!isPersonal && thread.access.participants.length > 0 && <DropdownMenuLabel className="font-normal text-muted-foreground">{thread.access.participants.map(person => person.label).join(", ")}</DropdownMenuLabel>}
+                      <DropdownMenuItem onSelect={() => navigate({ name: "settings", tab: "devices", organizationId })}>
+                        <ComputerIcon />{computerName}
+                      </DropdownMenuItem>
+                      {!pending && !isPersonal && member?.id === thread.access.owner.id && <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem disabled={busy || thread.stale} onSelect={() => void act("visibility", { visibility: thread.access.visibility === "private" ? "open" : "private" })}>
+                          {thread.access.visibility === "private" ? "Share with organization" : "Make private"}
+                        </DropdownMenuItem>
+                      </>}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                   <InputGroupText className="hidden @3xl:flex"><ComputerIcon />{computerName}</InputGroupText>
                   {branch && <BranchName branch={branch} />}
                   <ContextMeter context={thread.detail.context as ContextUsage | undefined} />
@@ -616,9 +608,15 @@ export default function HubThreads({
               </ReplyComposer>
             </form>
           </div>
+          <Dialog open={activityOpen} onOpenChange={setActivityOpen}>
+            <DialogContent className="flex max-h-[80vh] flex-col overflow-hidden">
+              <DialogHeader><DialogTitle>Running work</DialogTitle></DialogHeader>
+              <Deferred open={activityOpen}>
+                <ThreadActivityTool activities={threadActivities(entries as ConvEntry[], runtimeProvider, !pending && thread.detail.state === "working", !thread.stale && computer?.availability !== "offline")} connected={!thread.stale && computer?.availability !== "offline"} />
+              </Deferred>
+            </DialogContent>
+          </Dialog>
         </>
-          )}
-        </HubThreadWorkbench>
       ) : (
         <>
           {showNavigation && <PaneHeader sidebar crumbs={[{ label: "Threads" }]}>
