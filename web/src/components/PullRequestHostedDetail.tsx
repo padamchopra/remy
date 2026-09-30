@@ -453,7 +453,7 @@ export function PullRequestHostedDetail({
       <div data-slot="pull-request-with-review" className="flex min-h-0 min-w-0 flex-1">
       <main className={cn("flex min-h-0 min-w-0 flex-1 flex-col", phone && paneShown && "hidden")}>
         <PaneHeader sidebar crumbs={[{ label: "Pull requests", onClick: onBack }, { label }]}>
-          <div className="flex shrink-0 items-center gap-2.5">
+          <div className="flex min-w-0 flex-wrap items-center gap-2.5">
             <Button
               type="button"
               variant="secondary"

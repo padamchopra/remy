@@ -75,6 +75,19 @@ try {
     await page.getByRole('menuitem', { name: action, exact: true }).click();
   };
   await page.goto(`${origin}/app/pull-requests/studio/remy/42`);
+  await page.getByRole('tab', { name: 'Pull request #42', exact: true }).click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Split left and right', exact: true }).click();
+  await page.getByRole('separator', { name: 'Resize panes' }).press('Home');
+  for (let step = 0; step < 16; step++) await page.getByRole('separator', { name: 'Resize panes' }).press('ArrowRight');
+  const prHeader = page.locator('section[aria-label="prs pane"] [data-slot="pane-header"]');
+  const crumb = await prHeader.getByRole('button', { name: 'Pull requests', exact: true }).boundingBox();
+  const workspaceButton = await prHeader.getByRole('button', { name: 'Remy', exact: true }).boundingBox();
+  assert.ok(crumb.y + crumb.height <= workspaceButton.y || crumb.x + crumb.width <= workspaceButton.x - 4,
+    'The narrow PR breadcrumb cannot overlap its workspace action');
+  assert.ok(await prHeader.evaluate(element => element.scrollWidth <= element.clientWidth), 'The narrow header contains its content');
+  await prHeader.screenshot({ path: `${output}/narrow-pr-header.png` });
+  await page.getByRole('button', { name: 'Close New thread', exact: true }).click();
+  await page.getByRole('tab', { name: 'Pull request #42', exact: true }).click();
   await page.getByRole('button', { name: 'Review with agent', exact: true }).click();
   await page.getByRole('button', { name: 'Permission mode: Ask', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Permission mode: Ask', exact: true }).click();
