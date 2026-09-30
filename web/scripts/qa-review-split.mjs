@@ -100,9 +100,14 @@ try {
   assert.deepEqual(startInput.review, { repository: 'studio/remy', number: 42 });
   assert.equal(await page.locator('section[aria-label="prs pane"]:visible').count(), 1);
   assert.equal(await page.locator('section[aria-label="Thread pane"]:visible').count(), 1);
+  const splitHeaders = page.locator('[data-slot="split-tab-group"]');
+  assert.equal(await splitHeaders.count(), 1, 'A split has one joined header group');
+  assert.equal(await splitHeaders.getByRole('tab').count(), 2);
+  assert.equal(await splitHeaders.getByRole('tab', { name: 'Pull request #42', exact: true }).count(), 1);
   assert.equal(await page.getByText('This thread is unavailable').count(), 0);
   await page.reload();
   await page.getByRole('tab', { name: 'Review #42: Keep work in app tabs', exact: true }).first().waitFor();
+  assert.equal(await splitHeaders.getByRole('tab', { name: 'Review #42: Keep work in app tabs', exact: true }).count(), 1);
   await page.getByText('The new tabs keep your pull request and review thread visible together.').waitFor();
   const reviewPane = page.locator('section[aria-label="Thread pane"]:visible');
   assert.equal(await reviewPane.getByRole('tablist').count(), 0, 'A thread pane cannot contain another tab collection');
@@ -163,6 +168,7 @@ try {
   assert.ok(Math.abs(plus.x - end) < 8, 'New tab sits immediately after the last tab');
   assert.equal(await page.getByRole('button', { name: /^(Split left and right|Split top and bottom|Unsplit)$/ }).count(), 0);
   await tabActions('Unsplit');
+  assert.equal(await splitHeaders.count(), 0, 'Unsplit restores independent headers');
   assert.equal(await page.locator('section[aria-label$="pane"]:visible').count(), 1);
   assert.equal(await page.getByRole('separator', { name: 'Resize panes' }).count(), 0);
   assert.equal(await reviewPane.getByRole('tablist').count(), 0);
@@ -177,6 +183,7 @@ try {
   await page.mouse.up();
   assert.equal(await page.locator('section[aria-label$="pane"]:visible').count(), 2, 'Dragging a header creates a split');
   assert.equal(await page.getByRole('separator', { name: 'Resize panes' }).count(), 1);
+  assert.equal(await splitHeaders.getByRole('tab').count(), 2, 'Dragging joins the split headers');
   await lastTab.press('Shift+F10');
   await page.getByRole('menuitem', { name: 'Unsplit', exact: true }).waitFor();
   await page.getByRole('menu').press('Escape');

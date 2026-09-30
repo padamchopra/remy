@@ -504,6 +504,13 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
           )}
           </HubPersonalContext>;
   };
+  const splitTabs = appTabs.split ? [appTabs.split.first, appTabs.split.second]
+    .map(id => appTabs.tabs.find(tab => tab.id === id)!) : [];
+  const splitAnchor = appTabs.tabs.find(tab => splitTabs.some(member => member.id === tab.id))?.id;
+  const tabGroups = appTabs.tabs.flatMap(tab => splitTabs.some(member => member.id === tab.id)
+    ? tab.id === splitAnchor ? [splitTabs] : []
+    : [[tab]]);
+
   return (
     <HubPersonalContext value={isPersonal}>
       <HubModelFavorites key={profile?.id} organizationId={isAll ? undefined : organizationId}>
@@ -568,10 +575,11 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
             {route.name === "threads" && route.threadId && <SidebarTrigger className="md:hidden" />}
             <div className="flex min-w-0 items-center gap-1 overflow-x-auto scrollbar-none">
             <AppTabsList aria-label="Open tabs" activateOnFocus={false} className="flex shrink-0 items-center gap-1">
-              {appTabs.tabs.map((tab) => {
+              {tabGroups.map(group => <div key={group[0].id} data-slot={group.length === 2 ? "split-tab-group" : "tab-group"} className={group.length === 2 ? "flex shrink-0 items-center rounded-lg border border-border bg-foreground/5 p-0.5" : "contents"}>
+              {group.map((tab, index) => {
                 const selected = tab.id === appTabs.focused;
                 const label = appTabLabel(tab.route, threads);
-                return <ContextMenu key={tab.id}><ContextMenuTrigger className="flex min-w-0 shrink-0 items-center rounded-md bg-transparent data-[selected=true]:bg-foreground/8" data-selected={selected}>
+                return <ContextMenu key={tab.id}><ContextMenuTrigger className={`flex min-w-0 shrink-0 items-center rounded-md bg-transparent data-[selected=true]:bg-foreground/8 ${group.length === 2 && index === 1 ? "ml-0.5 border-l border-border pl-0.5" : ""}`} data-selected={selected}>
                   <AppTabsTrigger value={tab.id} draggable onDragStart={(event) => { event.dataTransfer.setData("application/x-remy-tab", tab.id); event.dataTransfer.effectAllowed = "move"; setDraggedTab(tab.id); }} onDragEnd={() => setDraggedTab(undefined)} onKeyDown={(event) => {
                     if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
                     event.preventDefault();
@@ -590,7 +598,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                     <ContextMenuItem disabled={appTabs.tabs.length === 1} onClick={() => closeTab(tab.id)}><X />Close tab</ContextMenuItem>
                   </ContextMenuContent>
                 </ContextMenu>;
-              })}
+              })}</div>)}
             </AppTabsList>
             <Button type="button" variant="ghost" size="icon-sm" aria-label="New tab" title="New tab" onClick={newTab}><Plus /></Button>
             </div>

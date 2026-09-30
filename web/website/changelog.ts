@@ -4,7 +4,7 @@
 export const CHANGELOG: { date: string; entries: string[] }[] = [
   { date: "2026-09-30", entries: [
     "Choose the review agent’s permission mode when you start it, and keep the pull request beside its review thread in a split tab.",
-    "Open threads, pull requests, workspaces, and settings in one tab strip, then use a tab’s menu or drag its header to split your view and resize the panes.",
+    "Open threads, pull requests, workspaces, and settings in one tab strip, then use a tab’s menu or drag its header to split your view, see joined tab headers, and resize the panes.",
     "Keep pull request headers readable in narrow panes, with controls wrapping below the breadcrumb.",
     "See what each pull request is waiting on in Pull requests: its icon is coloured and its row says Draft, Checks failing, Changes requested, Checks running, Your review, Waiting for review, or Ready to merge.",
     "Watch the videos in a pull request’s description, including from a private repository.",
