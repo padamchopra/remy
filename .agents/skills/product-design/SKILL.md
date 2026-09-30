@@ -26,7 +26,7 @@ Each computer signs in with remy login and appears in the same account.
 
 ## Shared components
 
-The centre view holds app tabs for threads, pull requests, workspaces, and settings. A split shows at most two tabs, with a draggable divider that remembers its ratio on this device. The sidebar and address follow the focused pane, while the other open tabs keep their state. The app strip is the only tab collection: a pane has no nested tab strip, Add tab control, or tab-navigation back button. Thread details and running work belong beside the reply controls.
+The centre view holds app tabs for threads, pull requests, workspaces, and settings. A split shows at most two tabs, with a draggable divider that remembers its ratio on this device. The sidebar and address follow the focused pane, while the other open tabs keep their state. The app strip owns work-surface tabs: panes cannot create another app-tab collection, and a thread has no inner tab strip, Add tab control, or tab-navigation back button. Thread details and running work belong beside the reply controls.
 
 The website's product preview draws the same components as the web app with sample state. Reuse shared components and interaction patterns rather than forking a second one for a surface; a missing endpoint, separate implementation, or unfinished integration is work to complete. Missing credentials or an unavailable computer calls for a connection or availability state, not removal of a capability the web app can support.
 
