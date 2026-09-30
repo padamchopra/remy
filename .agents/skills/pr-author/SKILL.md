@@ -146,7 +146,7 @@ gh pr edit "$pr_url" --attach /tmp/remy-pr-artifacts/branch/change.png --attach 
 
 Without a body flag, `gh pr edit --attach` appends attachments to the existing description. To position media in the required table, write the complete description to a body file with Markdown references to the local attachment paths, then pass both `--body-file` and the matching `--attach` flags. GitHub CLI replaces those local references with uploaded URLs and preserves their alt text. Preserve existing attachment URLs when editing; do not upload the same media again just to rearrange the body. Keep GitHub's playable video attachment rather than converting it to GIF.
 
-Uploads require repository push access and GitHub.com or GitHub Enterprise Cloud. Check `gh auth status` for authentication failures and use `gh auth login` when sign-in is needed. If an upgrade, authentication, or upload is blocked, report the concrete failure and keep the PR in draft; do not silently switch to browser uploads.
+Uploads require repository push access and GitHub.com or GitHub Enterprise Cloud. A sandboxed `gh auth status` may fail to read the macOS keychain even when GitHub authentication works. Retry `gh auth status` and `gh api user` with approved unsandboxed terminal access before starting a login flow. Use `gh auth login` only when those checks confirm authentication is absent. If an upgrade, authentication, or upload is blocked, report the concrete failure and keep the PR in draft; do not silently switch to browser uploads.
 
 Reference: [GitHub CLI attachment documentation](https://docs.github.com/en/github-cli/github-cli/attaching-files-with-github-cli).
 

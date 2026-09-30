@@ -299,6 +299,7 @@ export function PullRequests({
   onSelect,
   hubThreads = [],
   onOpenHubThread,
+  onOpenReviewThread,
   onOpenHostedWorkspace,
   onStartThread,
   onConnectGitHub,
@@ -311,6 +312,7 @@ export function PullRequests({
   /// linked thread among.
   hubThreads?: HubThread[];
   onOpenHubThread?: (thread: HubThread) => void;
+  onOpenReviewThread?: (threadId: string, organizationId: string) => void;
   onOpenHostedWorkspace?: (organizationId: string, workspaceId: string) => void;
   /// Hosted only: the empty list's next steps.
   onStartThread?: () => void;
@@ -599,6 +601,7 @@ export function PullRequests({
           stackPullRequest={members}
           onOpen={(number) => open({ repository: selected.repository, number })}
           onOpenThread={(thread) => onOpenHubThread?.(thread)}
+          onOpenReviewThread={(threadId) => onOpenReviewThread?.(threadId, hostedOrganizationOf(selected.serverId))}
           onOpenWorkspace={onOpenHostedWorkspace}
           onChanged={() => void load({ refresh: true })}
           view={selectedAddress?.view}

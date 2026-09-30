@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import {
   addAppTab,
   closeAppTab,
+  dropAppTab,
   focusAppTab,
   navigateAppTab,
   newAppTabs,
+  openAppTabBeside,
   splitAppTab,
 } from '../src/lib/app-tabs.ts';
 
@@ -16,6 +18,18 @@ test('each tab keeps its route while the focused tab changes', () => {
   assert.deepEqual(third.tabs.map((tab) => tab.route.name), ['threads', 'prs', 'settings']);
   assert.equal(focusAppTab(third, first.focused).tabs[2].route.name, 'settings');
   assert.equal(focusAppTab(third, first.focused).focused, first.focused);
+});
+
+test('a review thread opens beside its pull request and keeps the detail on the left', () => {
+  const first = newAppTabs({ name: 'prs', repository: 'owner/repo', number: 42 });
+  const other = addAppTab(first, { name: 'settings', tab: 'general' });
+  const review = { name: 'threads', threadId: 'review-42' };
+  const split = openAppTabBeside(other, first.focused, review);
+  assert.equal(split.split?.first, first.focused);
+  assert.equal(split.tabs.find((tab) => tab.id === split.split?.first)?.route.name, 'prs');
+  assert.deepEqual(split.tabs.find((tab) => tab.id === split.split?.second)?.route, review);
+  assert.equal(split.focused, split.split?.second);
+  assert.equal(openAppTabBeside(split, first.focused, review).tabs.length, 3);
 });
 
 test('a split has two panes and moves focus with the chosen tab', () => {
@@ -38,4 +52,21 @@ test('splitting with another open tab reuses it', () => {
   assert.equal(split.tabs.length, 2);
   assert.equal(split.split?.first, second.focused);
   assert.equal(split.split?.second, first.focused);
+});
+
+test('dropping tabs creates two panes or replaces and swaps within the existing split', () => {
+  const first = newAppTabs({ name: 'threads', threadId: 'one' });
+  const second = addAppTab(first, { name: 'prs' });
+  const split = dropAppTab(second, second.focused, first.focused, 'left');
+  assert.equal(split.split.first, second.focused);
+  assert.equal(split.split.second, first.focused);
+  const third = addAppTab({ ...split, split: undefined }, { name: 'settings', tab: 'general' });
+  const replaced = dropAppTab({ ...third, split: { ...split.split, ratio: .62 } }, third.focused, first.focused, 'right');
+  assert.equal(replaced.split.first, second.focused);
+  assert.equal(replaced.split.second, third.focused);
+  assert.equal(replaced.split.ratio, .62);
+  const swapped = dropAppTab(replaced, second.focused, third.focused, 'right');
+  assert.equal(swapped.split.first, third.focused);
+  assert.equal(swapped.split.second, second.focused);
+  assert.equal(swapped.tabs.length, 3);
 });

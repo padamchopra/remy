@@ -41,10 +41,10 @@ export function PaneHeader({
   children?: ReactNode;
 }) {
   return (
-    <div data-slot="pane-header" className="flex min-h-14 shrink-0 items-center gap-3 border-b border-border py-2 pr-6 pl-5">
+    <div data-slot="pane-header" className="flex min-h-14 shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border py-2 pr-6 pl-5">
       {sidebar && <SidebarTrigger className="shrink-0 md:hidden" />}
       {selection ? selection : <>
-      <Breadcrumb className="min-w-0">
+      <Breadcrumb className="min-w-0 max-w-full flex-1 basis-40 overflow-hidden">
         <BreadcrumbList className="flex-nowrap gap-1.5 sm:gap-1.5">
           {crumbs.map((crumb, index) => {
             const last = index === crumbs.length - 1;
@@ -52,12 +52,11 @@ export function PaneHeader({
               // The separator is a sibling of the item, not a child: both are
               // `li`, and one inside the other is not a list.
               <Fragment key={index}>
-                {/* A way back keeps its whole label; the place you are is what truncates. */}
-                <BreadcrumbItem className={crumb.onClick ? "shrink-0" : "min-w-0"}>
+                <BreadcrumbItem className="min-w-0">
                   {crumb.onClick ? (
                     <BreadcrumbLink asChild>
-                      <Button type="button" data-link variant="ghost" size="sm" className="h-auto px-1" onClick={crumb.onClick}>
-                        {crumb.label}
+                      <Button type="button" data-link variant="ghost" size="sm" className="h-auto min-w-0 max-w-full px-1" onClick={crumb.onClick}>
+                        <span className="truncate">{crumb.label}</span>
                       </Button>
                     </BreadcrumbLink>
                   ) : last ? (
@@ -66,14 +65,14 @@ export function PaneHeader({
                     <span className="flex min-w-0 items-center gap-1.5">{crumb.label}</span>
                   )}
                 </BreadcrumbItem>
-                {!last && <BreadcrumbSeparator />}
+                {!last && <BreadcrumbSeparator className="shrink-0" />}
               </Fragment>
             );
           })}
         </BreadcrumbList>
       </Breadcrumb>
       {tabs}
-      {children && <div className="ml-auto flex shrink-0 items-center gap-3">{children}</div>}
+      {children && <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center gap-3">{children}</div>}
       </>}
     </div>
   );
