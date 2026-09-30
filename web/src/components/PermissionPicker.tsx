@@ -18,8 +18,8 @@ export function PermissionPicker({ value, onChange, disabled, cloud = false, des
   const selected = options.find(option => option.value === value) ?? permissionOf(value);
   const Icon = selected.icon;
   return <Popover open={open} onOpenChange={setOpen}>
-    <PopoverTrigger render={<InputGroupButton className={className} />} disabled={disabled} aria-label={`Permission mode: ${selected.label}`}>
-      <Icon /><span>{selected.label}</span><ChevronDown />
+    <PopoverTrigger render={<InputGroupButton data-permission-picker="" className={className} />} disabled={disabled} aria-label={`Permission mode: ${selected.label}`}>
+      <Icon /><span data-permission-label="">{selected.label}</span><ChevronDown />
     </PopoverTrigger>
     <PopoverContent>
       <PopoverTitle className="sr-only">Permission mode</PopoverTitle>

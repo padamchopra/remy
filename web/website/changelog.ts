@@ -3,10 +3,19 @@
 /// first change of the day. `backticks` mark inline code.
 export const CHANGELOG: { date: string; entries: string[] }[] = [
   { date: "2026-09-30", entries: [
-    "Choose the review agent’s permission mode when you start it, and keep the pull request beside its review thread in a split tab.",
+    "Unreleased: Review agents suggest reusable rules from PR comments, with links to the feedback and your approval before saving.",
+    "Unreleased: Let threads delegate work with inherited settings and exchange messages that link to the sending agent.",
+    "Keep file headers compact and open the file list as an overlay in narrow PR panes.",
+    "Browse PR commits and choose which commits to inspect in Files.",
+    "Review agents write their findings directly in the thread.",
+    "Keep thread composer controls aligned in narrow splits and on phones.",
+    "Skip notification toasts for the thread you are already viewing, including in a split.",
+    "Reconnect Claude Code on a Mac without threads continuing to use an expired login.",
+    "Open the affected computer’s sign-in settings directly from a thread when its provider session expires.",
+    "Choose the review agent’s permission mode when you start it, and keep the pull request beside its new or existing review thread in a split tab.",
     "Open threads, pull requests, workspaces, and settings in one tab strip, then use a tab’s menu or drag its header to split your view, see joined tab headers, and resize the panes.",
-    "Keep pull request headers readable in narrow panes, with controls wrapping below the breadcrumb.",
-    "See what each pull request is waiting on in Pull requests: its icon is coloured and its row says Draft, Checks failing, Changes requested, Checks running, Your review, Waiting for review, or Ready to merge.",
+    "Keep pull request headers compact in narrow splits, with shorter breadcrumbs and icon controls.",
+    "See what each pull request is waiting on from its coloured icon in Pull requests.",
     "Watch the videos in a pull request’s description, including from a private repository.",
     "Read the whole thread on the web, and jump to a message from the marks beside it.",
     "Start a thread on a new computer. Remy creates its environment key, including when the keychain cannot ask you to approve it.",

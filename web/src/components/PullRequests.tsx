@@ -865,7 +865,7 @@ function PullRequestListItem({
             <span data-slot="pull-request-title" className="line-clamp-2 min-w-0 flex-1 text-[13px] leading-[18px] wrap-break-word sm:block sm:truncate">{pullRequest.title}</span>
           </button>
           <span data-slot="pull-request-stack-position" className="min-w-0 flex-1 pl-[23px] text-xs whitespace-nowrap text-muted-foreground sm:order-last sm:w-44 sm:flex-none sm:pl-0 sm:text-right">
-            {pullRequest.stack.position} of {pullRequest.stack.size} · <span data-slot="pull-request-status">{status.label}</span>
+            {pullRequest.stack.position} of {pullRequest.stack.size}
           </span>
           {threadLink}
           {trailing}
@@ -881,7 +881,6 @@ function PullRequestListItem({
           <span data-slot="pull-request-title" className="block min-w-0 w-full truncate text-sm">{pullRequest.title}</span>
           <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
             <span className="shrink-0">#{pullRequest.number}</span>
-            <span data-slot="pull-request-status" className="shrink-0">{status.label}</span>
             {pullRequest.stack ? (
               <span className="shrink-0">{pullRequest.stack.position} of {pullRequest.stack.size}</span>
             ) : null}

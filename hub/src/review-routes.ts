@@ -114,8 +114,8 @@ export async function reviewRequest(request: Request, deps: ReviewCoordinator): 
       // Review new changes: the thread is told exactly which commits are new.
       if (request.method === "POST" && action === "new-changes" && parts.length === 3) {
         const head = await deps.github.pullRequestHead(org, actor.id, row.repository, row.pull_number);
-        const from = row.reviewed_sha ?? row.head_sha;
-        if (head === row.head_sha && (!row.reviewed_sha || head.startsWith(row.reviewed_sha)))
+        const from = row.head_sha;
+        if (head === row.head_sha)
           throw new ConnectionError("There are no new commits since the review.", 409);
         await reviews.moveHead(row, head);
         const sent = await deps.send(computerId, threadId, reviewNewChangesMessage(from, head));

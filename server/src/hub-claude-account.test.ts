@@ -28,6 +28,7 @@ test("delivered Claude credentials are written and the environment copy is dropp
   process.env.CLAUDE_CREDENTIALS_JSON = payload;
   assert.equal(account.applyHubClaudeAccount({ values: { ANTHROPIC_API_KEY: "test-anthropic-value" } }), false);
   assert.equal(account.applyHubClaudeAccount({ values: {}, claudeCredentials: payload }), true);
+  assert.deepEqual(account.hubClaudeEnvironment(), { CLAUDE_CODE_OAUTH_TOKEN: "private-access" });
   assert.equal(JSON.parse(readFileSync(credentials, "utf8")).claudeAiOauth.accessToken, "private-access");
   assert.equal(process.env.CLAUDE_CREDENTIALS_JSON, undefined);
   assert.equal(account.applyHubClaudeAccount({ claudeCredentials: payload }), false);
@@ -37,6 +38,7 @@ test("removing the account forgets the credentials file this computer was given"
   account.applyHubClaudeAccount({ claudeCredentials: payload });
   assert.equal(account.applyHubClaudeAccount({ claudeCredentials: null }), true);
   assert.equal(existsSync(credentials), false);
+  assert.deepEqual(account.hubClaudeEnvironment(), {});
   assert.equal(account.applyHubClaudeAccount({ claudeCredentials: null }), false);
 });
 
@@ -52,4 +54,15 @@ test("only a credentials payload is accepted", () => {
   assert.throws(() => account.applyHubClaudeAccount({ claudeCredentials: 7 }));
   assert.throws(() => account.applyHubClaudeAccount({ claudeCredentials: "a".repeat(32769) }));
   assert.throws(() => account.applyHubClaudeAccount({ claudeCredentials: "not-json" }));
+});
+
+test("restart restores the managed login, while expired credentials cannot start Claude", () => {
+  account.applyHubClaudeAccount({ claudeCredentials: payload });
+  account.restoreHubClaudeAccount();
+  assert.deepEqual(account.hubClaudeEnvironment(), { CLAUDE_CODE_OAUTH_TOKEN: "private-access" });
+  const expired = JSON.stringify({ claudeAiOauth: { accessToken: "expired", expiresAt: Date.now() - 1 } });
+  account.applyHubClaudeAccount({ claudeCredentials: expired });
+  assert.throws(() => account.hubClaudeEnvironment(), /OAuth session expired/);
+  account.forgetHubClaudeAccount();
+  assert.deepEqual(account.hubClaudeEnvironment(), {});
 });

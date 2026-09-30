@@ -105,6 +105,7 @@ export const computerCapabilitiesSchema = z.object({
   providers: z.array(computerProviderCapabilitySchema),
   workspaces: z.array(computerWorkspaceCapabilitySchema),
   worktrees: z.boolean(),
+  threadOrchestration: z.boolean().optional(),
   terminals: z.boolean(),
   emulator: z.boolean(),
 });
@@ -162,7 +163,7 @@ export const computerSummarySchema = computerRegistrationSchema.omit({ publicKey
 export type ComputerSummary = z.infer<typeof computerSummarySchema>;
 
 
-export const threadMemberSchema = z.object({ id: z.string().min(1).max(128), label: z.string().min(1).max(120) });
+export const threadMemberSchema = z.object({ id: z.string().min(1).max(128), label: z.string().min(1).max(120), agent: z.object({ threadId: z.string().uuid(), computerId: z.string().min(1), organizationId: z.string().min(1), title: z.string().max(200), provider: z.enum(["claude", "codex", "cursor"]) }).optional() });
 export type ThreadMember = z.infer<typeof threadMemberSchema>;
 export const threadAccessSchema = z.object({
   organizationId: z.string().min(1),

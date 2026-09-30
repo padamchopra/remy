@@ -9,6 +9,14 @@ description: Layout and keyboard for the Remy web UI. Use when adding or changin
 
 Existing primitives in `web/src/components/ui` are still largely shadcn New York (Radix), configured by `web/components.json`. New components, new screens, and redesigns use Base UI (`@base-ui/react` / shadcn base style). Do not add new Radix-based primitives or redesign existing ones onto Radix. Converting an existing Radix surface is a redesign — follow `.agents/skills/migrate-radix-to-base`. Run CLI commands from `web/`.
 
+## Responsive design
+
+Design every UI change for narrow desktop windows, resized split panes, and phones from the start. Choose how content and controls adapt before implementing the wide layout. Use pane or container width for surfaces that can appear in a split; viewport breakpoints alone do not cover them.
+
+Keep primary actions reachable, text readable, and touch controls usable at smaller widths. Shorten, truncate, wrap, or move secondary actions deliberately; do not let incidental flex wrapping decide the layout. Dialogs, menus, composers, and empty states must fit the available width, and scrolling must reach all content without hiding controls.
+
+Verify the changed journey at wide and narrow desktop widths, unequal split ratios when supported, and phone widths with touch input. A desktop screenshot is not completion evidence for a responsive surface.
+
 ## Primitives
 
 Every control comes from `web/src/components/ui`. A primitive that is missing for new work or a redesign is added as Base UI (shadcn base style / `@base-ui/react`) from `web/`, then used. Do not add a new Radix primitive, including via the default New York `shadcn add` path while `components.json` still names that style.
@@ -95,6 +103,8 @@ GOOD
 
 ## Transient status
 
+Thread notification toasts are suppressed for the thread in the focused app tab, including a focused split pane. Focusing that thread dismisses its existing toasts; other threads and background system notifications still notify normally.
+
 Never show a temporary line of status text. Success, failure, and in-progress copy for an action are a Sonner toast, or they live on the control that is busy (disabled, with a spinner). A paragraph that appears under a form and then vanishes is bad UX.
 
 Import `toast` from `sonner` and keep the existing `<Toaster />` from `web/src/components/ui/sonner`. Do not add a second toast stack.
@@ -162,9 +172,15 @@ GOOD
 
 ## One pane title
 
+Pull request list rows show status through their coloured icon, with an accessible status label. Do not repeat Draft, Ready to merge, or other status text beside the title or stack position.
+
+Provider authentication errors in a thread offer Sign in again, opening the affected computer's provider settings. Keep credentials and the sign-in flow in the existing settings surface.
+
 The app tab strip puts New tab immediately after the last tab, inside the scrollable strip. Split and Unsplit belong in each tab header’s context menu, available by right-click or Shift+F10. Dragging a header creates a split from a pane edge or replaces a pane in an existing split; it never creates another split level. Keep pane resizing on the divider.
 
 The two visible tabs in a split share one joined header group, ordered like their panes. Highlight the focused tab inside that group; unsplitting restores independent headers.
+
+Pane headers adapt to the pane's width, including resized splits. Compact headers shorten breadcrumbs and use named icon actions before wrapping; when two rows are necessary, align both rows to the leading edge.
 
 The shared top bar is `PaneHeader` (`data-slot="pane-header"`). Every main pane uses it — the shell draws it, or a section that owns its chrome draws it itself so the shell does not add a second one. Do not hand-roll a `header` with `h-12`. Trailing actions such as Open on GitHub or Refresh sit in `children`. Do not put an `h1` of the same section name under `PaneHeader`.
 

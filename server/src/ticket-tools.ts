@@ -1,7 +1,9 @@
+import { getKv } from "./db.js";
+import { startThreadInput, sendThreadInput, START_THREAD_DESCRIPTION } from "./thread-orchestration.js";
 import {hubGitHubInput} from "./hub-github-input.js";
 import {hubOrganizationTool} from "./hub-organization-tools.js";
 import { threadReview } from "./review-agent.js";
-import { PROPOSE_REVIEW_RULE, proposeReviewRuleInput, REPORT_REVIEW_FINDINGS, reportReviewFindingsInput, reviewToolText, type ReviewTool } from "./review-tools.js";
+import { PROPOSE_REVIEW_RULE, proposeReviewRuleInput, reviewToolText, type ReviewTool } from "./review-tools.js";
 import { createSdkMcpServer, tool } from "./provider-adapters/claude.js";
 import { basename } from "node:path";
 import { homedir } from "node:os";
@@ -22,40 +24,7 @@ import {
   waitInBrowser,
 } from "./browser.js";
 
-interface ThreadSummary {
-  id: string;
-  title: string;
-  cwd: string;
-  state: string;
-  provider: string;
-  model?: string;
-  preview?: string;
-}
-
-interface ThreadDetail extends ThreadSummary {
-  entries: {
-    kind: string;
-    text?: string;
-    tool?: string;
-    verb?: string;
-    arg?: string;
-    status?: string;
-  }[];
-}
-
 export interface RemyThreadControl {
-  currentCwd: string;
-  list(): ThreadSummary[];
-  read(id: string): ThreadDetail | undefined;
-  start(input: {
-    cwd: string;
-    prompt: string;
-    title?: string;
-    provider?: string;
-    model?: string;
-  }): Promise<ThreadSummary>;
-  send(id: string, message: string): Promise<void>;
-  stop(id: string): void;
   runEnvironment(input: { program: string; args?: string[]; timeoutSeconds?: number }): Promise<{
     command: string;
     output: string;
@@ -78,35 +47,6 @@ function workspaceName(path: string): string {
   return basename(trimmed === "~" ? homedir() : trimmed) || "Workspace";
 }
 
-async function workspacePath(reference: string | undefined, currentCwd: string): Promise<string> {
-  if (!reference?.trim()) return currentCwd;
-  const asked = reference.trim();
-  const workspaces = await listWorkspaces();
-  const matches = workspaces.filter((workspace) =>
-    workspace.id === asked
-    || workspace.path === asked
-    || workspace.origin === asked
-    || workspace.name.toLowerCase() === asked.toLowerCase());
-  if (matches.length === 0) throw new Error(`No workspace called ${asked}. Register it first if this is a new folder.`);
-  if (matches.length > 1) throw new Error(`More than one workspace is called ${asked}. Use its id or path.`);
-  return matches[0].path;
-}
-
-function describeThread(thread: ThreadDetail): string {
-  const recent = thread.entries.slice(-20).map((entry) => {
-    if (entry.text) return `- ${entry.kind}: ${entry.text}`;
-    return `- ${entry.kind}: ${[entry.verb, entry.arg, entry.status].filter(Boolean).join(" ")}`;
-  });
-  return [
-    `${thread.title} (${thread.id})`,
-    `State: ${thread.state}`,
-    `Workspace folder: ${thread.cwd}`,
-    `Provider: ${thread.provider}${thread.model ? ` / ${thread.model}` : ""}`,
-    thread.preview ? `Latest: ${thread.preview}` : "",
-    recent.length ? `\nRecent thread activity:\n${recent.join("\n")}` : "",
-  ].filter(Boolean).join("\n");
-}
-
 export function inProcessRemyMcpServer(
   chatId: string,
   threads: RemyThreadControl,
@@ -123,13 +63,11 @@ export function inProcessRemyMcpServer(
     tools: [
       // A review thread reports to the person and never posts to GitHub.
       ...(review ? [
-        tool("report_review_findings",REPORT_REVIEW_FINDINGS,reportReviewFindingsInput,async input=>reviewResult("report_review_findings",input)),
         tool("propose_review_rule",PROPOSE_REVIEW_RULE,proposeReviewRuleInput,async input=>reviewResult("propose_review_rule",input)),
-      ] : [
+      ] : getKv(`hubReviewDelegation:${chatId}`) ? [] : [
         tool("github_action","Create a pull request, comment or review using the linked member account.",hubGitHubInput,async input=>ok(JSON.stringify(await hubOrganizationTool(chatId,"github_action",input)))),
       ]),
       ...["list_organization_computers","list_organization_workspaces"].map(action=>tool(action,"List organization resources visible to the person.",{},async()=>ok(JSON.stringify(await hubOrganizationTool(chatId,action))))),
-      ...["start_organization_thread","move_organization_thread"].map(action=>tool(action,"Act within the person's visible organization workspaces.",{workspaceId:z.string(),prompt:z.string().optional(),title:z.string().optional(),threadId:z.string().optional(),computerId:z.string().optional()},async input=>{const result=await hubOrganizationTool(chatId,action,input) as {artifact?:ConvArtifact};return ok(JSON.stringify(result),result.artifact);})),
       tool(
         "list_workspaces",
         "List the workspace folders registered on this machine.",
@@ -291,74 +229,23 @@ export function inProcessRemyMcpServer(
         },
         { annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true } },
       ),
-      tool(
-        "list_threads",
-        "List recent Remy threads and their current state.",
-        {},
-        async () => ok(threads.list().slice(0, 50).map((thread) =>
-          `${thread.id} [${thread.state}] ${thread.title}\n${thread.cwd}`,
-        ).join("\n\n") || "There are no threads on this machine."),
-        { annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false } },
-      ),
-      tool(
-        "read_thread",
-        "Read a Remy thread's state and recent activity.",
-        { thread_id: z.string().describe("The thread id from list_threads or start_thread") },
-        async ({ thread_id }) => {
-          const thread = threads.read(thread_id);
-          if (!thread) throw new Error("No such thread.");
-          return ok(describeThread(thread));
-        },
-        { annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false } },
-      ),
-      tool(
-        "start_thread",
-        "Start another Remy thread and send it its first message.",
-        {
-          prompt: z.string().min(1).max(20000).describe("The complete task for the new thread"),
-          workspace: z.string().optional().describe("Registered workspace name, id, path, or origin. Omit it to use this thread's folder."),
-          title: z.string().max(120).optional(),
-          provider: z.enum(["claude", "codex", "cursor"]).optional(),
-          model: z.string().optional(),
-        },
-        async ({ prompt, workspace, title, provider, model }) => {
-          const thread = await threads.start({
-            cwd: await workspacePath(workspace, threads.currentCwd),
-            prompt,
-            ...(title ? { title } : {}),
-            ...(provider ? { provider } : {}),
-            ...(model ? { model } : {}),
-          });
-          return ok(`Started ${thread.title} as thread ${thread.id}.`, {
-            kind: "thread",
-            id: thread.id,
-            title: thread.title,
-            detail: thread.cwd,
-          });
-        },
-        { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
-      ),
-      tool(
-        "send_to_thread",
-        "Send another message to an existing Remy thread.",
-        {
-          thread_id: z.string(),
-          message: z.string().min(1).max(20000),
-        },
-        async ({ thread_id, message }) => {
-          if (thread_id === chatId) throw new Error("Reply normally instead of sending a message to this same thread.");
-          await threads.send(thread_id, message);
-          return ok(`Sent the message to thread ${thread_id}.`);
-        },
-        { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
-      ),
+      tool("list_threads", "List accessible, unarchived threads across your connected computers, including idle threads.", {}, async () => ok(JSON.stringify(await hubOrganizationTool(chatId,"list_threads"))), { annotations: { readOnlyHint: true, destructiveHint: false } }),
+      tool("read_thread", "Read an accessible thread's state and recent messages.", {thread_id:z.string().uuid()}, async input => ok(JSON.stringify(await hubOrganizationTool(chatId,"read_thread",input))), { annotations: { readOnlyHint: true, destructiveHint: false } }),
+      tool("start_thread", START_THREAD_DESCRIPTION, startThreadInput, async input => {
+        const result = await hubOrganizationTool(chatId,"start_thread",input) as {artifact?:ConvArtifact};
+        return ok(JSON.stringify(result),result.artifact);
+      }, { annotations: { readOnlyHint: false, destructiveHint: false } }),
+      tool("send_to_thread", "Send a message as this agent to an accessible thread you can write to; its sender links back to this thread.", sendThreadInput, async input => {
+        await hubOrganizationTool(chatId,"send_to_thread",input);
+        return ok(`Sent the message to thread ${input.thread_id}.`);
+      }, { annotations: { readOnlyHint: false, destructiveHint: false } }),
       tool(
         "stop_thread",
         "Stop an existing Remy thread while keeping its conversation.",
         { thread_id: z.string() },
         async ({ thread_id }) => {
           if (thread_id === chatId) throw new Error("The current thread cannot stop itself through Remy.");
-          threads.stop(thread_id);
+          await hubOrganizationTool(chatId,"stop_thread",{thread_id});
           return ok(`Stopped thread ${thread_id}.`);
         },
         { annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },

@@ -1,0 +1,50 @@
+import assert from "node:assert/strict";
+import { readFileSync, mkdirSync } from "node:fs";
+import { chromium } from "playwright-core";
+import { chromiumPath } from "./chromium.mjs";
+const info=JSON.parse(readFileSync(process.env.QA_SESSION,"utf8"));
+const origin=info.hubUrl, base=`${origin}/api/organizations/${info.organizationId}`;
+const headers={authorization:`Bearer ${info.tokens.ada}`,"content-type":"application/json"};
+const call=async(path,method="GET",input)=>{const response=await fetch(base+path,{method,headers,...(input?{body:JSON.stringify(input)}:{})});const body=await response.json();assert.equal(response.ok,true,JSON.stringify(body));return body;};
+const sourcePath=`/computers/${info.computerId}/threads/${info.threadId}`;
+await call(sourcePath+"/options","POST",{model:"opus",effort:"high",permissionMode:"plan"});
+await call(sourcePath,"PATCH",{title:"Review the repository and delegate its authentication, settings, split views, and narrow-screen navigation checks"});
+const browser=await chromium.launch({executablePath:chromiumPath(),headless:true});
+const out=process.env.QA_ARTIFACTS ?? "/tmp/remy-pr-artifacts/thread-orchestration";mkdirSync(out,{recursive:true});
+const contexts=[];
+try {
+  const context=await browser.newContext({viewport:{width:1341,height:908},hasTouch:true,colorScheme:"dark"});contexts.push(context);
+  await context.addCookies([{name:"remy_session",value:info.tokens.ada,url:origin,httpOnly:true,sameSite:"Lax"}]);
+  const page=await context.newPage();page.setDefaultTimeout(15000);
+  const errors=[];page.on("pageerror",e=>errors.push(e.message));
+  const route=id=>`${origin}/threads/${id}?organization=${info.organizationId}`;
+  await page.goto(route(info.threadId));
+  const completions=page.getByLabel("Thread transcript").getByText(/^Delegation complete: [0-9a-f-]{36}$/);
+  const before=await completions.count();
+  await page.getByRole("textbox",{name:"Message",exact:true}).fill("Orchestrate QA delegation");
+  await page.getByRole("button",{name:"Send",exact:true}).click();
+  await completions.nth(before).waitFor({timeout:45000});
+  const list=await call("/threads");
+  const source=list.threads.find(t=>t.id===info.threadId);
+  const completed=source.detail.entries.filter(e=>e.kind==="assistant" && e.text?.startsWith("Delegation complete:")).at(-1);
+  const child=list.threads.find(t=>t.id===completed?.text.split(": ")[1]);assert.ok(child,"Child thread exists");
+  for(const field of ["cwd","provider","model","effort","permissionMode"])assert.equal(child.detail[field],source.detail[field],field);
+  assert.equal(child.access.visibility,source.access.visibility);assert.equal(child.access.owner.id,"ada");assert.equal(child.access.owner.agent,undefined);
+  const sent=child.detail.entries.filter(e=>e.kind==="user");assert.equal(sent.length,2,"Retries deliver each prompt once");
+  assert.equal(sent[0].member.agent.threadId,source.id);assert.equal(sent[0].member.agent.provider,"claude");assert.equal(sent[1].text,"QA agent follow-up");
+  await page.goto(route(child.id));
+  const sender=page.getByRole("button",{name:/^Claude \[/}).first();await sender.waitFor();
+  await page.screenshot({path:`${out}/agent-message-desktop.png`});
+  await sender.click();await page.waitForURL(url=>url.pathname.endsWith(source.id));
+  for(const width of [390,320]) {
+    const phone=await browser.newContext({viewport:{width,height:844},hasTouch:true,isMobile:true,colorScheme:"dark"});contexts.push(phone);
+    await phone.addCookies([{name:"remy_session",value:info.tokens.ada,url:origin,httpOnly:true,sameSite:"Lax"}]);
+    const p=await phone.newPage();await p.goto(route(child.id));
+    const hide=p.getByRole("button",{name:"Hide sidebar",exact:true});if(await hide.isVisible())await hide.click();
+    const label=p.getByRole("button",{name:/^Claude \[/}).first();await label.waitFor();
+    assert.equal(await label.evaluate(el=>el.scrollWidth<=el.clientWidth+1),true,"Sender fits phone pane");
+    assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,"Page fits phone");
+    await p.screenshot({path:`${out}/agent-message-${width}.png`});await label.tap();await p.waitForURL(url=>url.pathname.endsWith(source.id));
+  }
+  assert.deepEqual(errors,[]);console.log(JSON.stringify({source:source.id,child:child.id,inherited:["computer","cwd","provider","model","effort","permissionMode","visibility"],deduplication:true,senderLinks:[1341,390,320]},null,2));
+} finally {for(const context of contexts)await context.close();await browser.close();}

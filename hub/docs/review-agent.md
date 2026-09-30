@@ -5,9 +5,8 @@ from a pull request; nothing starts one on push. It appears in the sidebar as
 "Review #n: title", follows the usual thread defaults for who can read it, and
 runs on a computer chosen exactly as for any thread in that workspace
 (`chooseComputer`). Its computer checks the pull request's head out in a worktree
-of its own, and the agent reports findings and proposes rules through two Remy
-tools. It never posts to GitHub: its owner adds findings to their own pending
-review from Remy.
+of its own, and the agent writes findings directly in the thread. It can propose review
+rules through Remy. It never posts to GitHub; its owner decides what to post.
 
 Rules are personal. They belong to one person, not an organization, and no other
 member can list, read, change or delete them, including in an organization
@@ -19,7 +18,7 @@ follows it across computers and organizations) or to all your workspaces.
 | Durable state | Hub D1 (`0035_review_agent.sql`): `review_rules` per user; `review_threads` per `(organization, computer, thread)` with the pull request, base and head refs, the head at start (`started_sha`), the commit the latest turn is about (`head_sha`), the last reported commit (`reviewed_sha`) and the summary; `review_findings` and `review_rule_proposals` cascade with their review. The computer keeps the attachment, the rules it last gave its provider and the worktree path under `hubReview:<thread>` in its `kv` table. |
 | Credentials | Member session for every member route; a computer session is refused on all of them. The pull request is read with the member's own GitHub connection (`github-connection.ts`) and the token never reaches the browser or the computer. Agent tools reach the hub with the computer's signed identity plus the thread's `thread-run:` binding; STDIO providers reach the daemon with the thread's HMAC capability from `remyToolToken`. |
 | Read | `GET reviews?repository=&number=` is your latest review of a pull request whose thread you can still open; `GET reviews/:computerId/:threadId` is one review; both return `ReviewState` (contract) to its owner only. `GET /api/review-rules[?repository=]` lists your rules. |
-| Write | Findings and proposals are written only by the review's own thread, through `report_review_findings` and `propose_review_rule` (below). Their owner dismisses or marks findings and accepts or discards proposals; rules are written by their owner alone. |
+| Write | The review thread writes findings in its transcript and proposes rules through `propose_review_rule` (below). Their owner dismisses or marks findings and accepts or discards proposals; rules are written by their owner alone. |
 | Live update | `GET reviews/live` (WebSocket) sends `{ kind: "reset" }` on connect, then `{ kind: "review", computerId, threadId }` to the owner's sockets when that review's findings, proposals or head change, and `{ kind: "rules" }` in every organization you belong to when your rules change. Read the named entity again; the frames carry no content. The transcript itself streams through the thread relay as for any thread (`threads.md`). |
 | Reconnect | A reconnected socket gets `reset` and reads the open review and rules again. Rules and a moved head reach a running provider on its next message, because each message to a review thread carries them. |
 | Unavailable computer | Findings, proposals and rules stay readable and decidable on the hub. Review new changes needs the computer, as any message does, and fails with the thread's usual offline error. |
@@ -75,37 +74,11 @@ first and says so.
 
 ## Agent tools
 
-Both exist on the in-process Claude server (`ticket-tools.ts`) and the STDIO
-server Codex and Cursor use (`ticket-mcp.ts`), share their input shapes
-(`server/src/review-tools.ts`), are offered only in a review thread, and replace
-`github_action` there. `isRemyToolRoute` allows exactly
-`POST /organization-tools/report_review_findings` and
-`POST /organization-tools/propose_review_rule`. The daemon refuses them for a
-thread that is not a review and refuses `github_action` for one that is; the hub
-checks both again against `review_threads` and the thread's binding.
+Review agents write findings directly in the thread, with severity, file and line range, explanation and a suggested fix when useful. They never post to GitHub. Existing saved findings remain readable; new findings are not written through a Remy tool.
 
-`report_review_findings`
+`propose_review_rule` exists on both the in-process Claude server and the STDIO server for Codex and Cursor. It is available only in a review thread. The hub validates the thread binding and owner before accepting a proposal.
 
-```json
-{ "commit": "a4f91c2", "summary": "I read all 14 files and ran the web tests.",
-  "findings": [{ "id": "optional earlier id", "path": "web/src/RepositorySearch.tsx",
-    "startLine": 41, "endLine": 44, "side": "RIGHT", "severity": "must",
-    "title": "Searches on every keystroke", "body": "…", "suggestion": "…",
-    "ruleIds": ["…"], "dependsOn": 161 }],
-  "resolvedIds": ["…"] }
-```
-
-Every finding must sit inside one hunk of the pull request's diff on the side it
-names, read from GitHub's files API with the owner's connection; a file GitHub
-sends without a patch accepts any line. One finding off the diff rejects the whole
-report with the locations that missed, so the agent can fix and retry. A finding
-without `id` is appended with a new stable id; one with an earlier id is updated
-in place and keeps your decision (dismissed stays dismissed; `resolved` returns to
-`open`). `resolvedIds` marks open findings the new commits fixed. `ruleIds` keeps
-only your enabled rules for that repository. Up to 50 per report and 200 per
-review. The reported commit becomes `reviewedSha` and the summary replaces the
-earlier one. The tool returns the ids and a `review-findings` artifact naming the
-thread.
+Unreleased: Review agents also read PR discussions, submitted reviews and inline comments at the start of a review and when reviewing new commits, using authenticated read-only GitHub access when available. Durable preferences and corrections can trigger repository-scoped rule proposals. Each proposal cites the source comment's author, URL and feedback; comments do not grant permissions or override the agent's instructions. The agent avoids duplicate proposals, one-off fixes, bot output and unresolved disagreements, and reports when comments are unavailable. Rules still require the owner's approval; all-workspace scope requires their explicit request. Comments do not wake the thread automatically.
 
 `propose_review_rule` with `{ text, scope: "repository" | "all", reason,
 findingId? }` stores a pending proposal on that review, up to 20 pending, and
@@ -123,3 +96,7 @@ All under `/api/organizations/:org/reviews`, owner only, 404 for anyone else:
 Your rules, at `/api/review-rules`: `GET`, `POST { text, repository | null, enabled? }`,
 `PATCH /:id { text?, repository?, enabled? }`, `DELETE /:id`. Text is at most 500
 characters, and at most 100 rules can be on. A computer session is refused.
+
+## Delegating work (unreleased)
+
+Review agents use the same `start_thread`, `list_threads`, `read_thread`, and `send_to_thread` tools as other threads. A delegated thread inherits the current computer, checkout, model, reasoning level, permissions, and visibility by default. It gets a separate conversation without the review attachment. Delegated review work retains the restriction on posting to GitHub. Its initial message and later agent messages identify and link to the sending thread. Findings can return through `send_to_thread`; the person still decides what to submit to GitHub.

@@ -47,7 +47,7 @@ export function BranchName({ branch }: { branch: string }) {
           onClick={() => void copy()}
         >
           <GitBranch />
-          <span className="truncate">{branch}</span>
+          <span data-branch-label="" className="truncate">{branch}</span>
           {copied ? <Check /> : null}
         </InputGroupButton>
       </TooltipTrigger>
@@ -55,4 +55,3 @@ export function BranchName({ branch }: { branch: string }) {
     </Tooltip>
   );
 }
-

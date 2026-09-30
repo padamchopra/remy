@@ -149,6 +149,8 @@ function rememberEarlier(detail: { entries: ConvEntry[]; history?: { hasEarlier:
   else detail.history = undefined;
 }
 
+export function hubThreadAccess(id: string): ThreadAccess | undefined { return accessRecords()[id]; }
+
 export function hubThreadSnapshot(
   id: string,
   organizationId: string,
@@ -215,6 +217,7 @@ export async function handleHubThreadRequest(
       const taskKey=typeof input.hubTaskId==="string"?`hubTask:${organizationId}:${actor.id}:${input.hubTaskId}`:undefined;
       const prior=taskKey?getKv<string>(taskKey):undefined;
       if(prior){const snapshot=hubThreadSnapshot(prior,organizationId);if(snapshot)return Response.json(snapshot,{status:201});}
+      if (typeof input.threadId === "string" && getChat(input.threadId)) return fail(409, "This thread id is already in use; choose a new request id.");
       const workspace = (await listWorkspaces()).find(
         (item) => item.id === input.workspaceId,
       );
@@ -243,6 +246,12 @@ export async function handleHubThreadRequest(
       if (input.permissionMode !== undefined && !["default", "auto", "acceptEdits", "plan", "bypassPermissions"].includes(String(input.permissionMode))) return fail(400, "Choose a permission level.");
       if (input.effort !== undefined && (typeof input.effort !== "string" || input.effort.length > 64)) return fail(400, "Choose a reasoning level.");
       let cwd = workspace.path;
+      if (actor.agent?.computerId && actor.agent.organizationId === organizationId) {
+        const source = hubThreadSnapshot(actor.agent.threadId, organizationId);
+        if (!source || !canWriteThread(source.access, actor.id)) return fail(403, "This sending thread is no longer available.");
+        const sourceWorkspace = (await listWorkspaces()).filter(w => source.detail.cwd === w.path || w.worktrees.some(tree => tree.path === source.detail.cwd) || String(source.detail.cwd).startsWith(w.path.replace(/\/$/, "") + "/")).sort((a,b) => b.path.length-a.path.length)[0];
+        if (sourceWorkspace?.id === workspace.id) cwd = String(source.detail.cwd);
+      }
       if (review) {
         try { cwd = await checkoutReviewWorktree(workspace.path, review, reviewGitOptions()); }
         catch { return fail(409, `This computer could not check out pull request #${review.number}. Check that ${workspace.name} can fetch from origin, then try again.`); }
@@ -256,6 +265,10 @@ export async function handleHubThreadRequest(
         model: typeof input.model === "string" ? input.model : undefined,
         effort: typeof input.effort === "string" ? input.effort : undefined,
       });
+      if(actor.agent) {
+        setKv(`hubAgentParent:${chat.id}`,actor.agent.threadId);
+        if(threadReview(actor.agent.threadId) || getKv(`hubReviewDelegation:${actor.agent.threadId}`)) setKv(`hubReviewDelegation:${chat.id}`,true);
+      }
       if(review)setThreadReview(chat.id,{...review,worktree:cwd});
       if(taskKey)setKv(taskKey,chat.id);
       if(input.hubEnvironment!==undefined)setTaskEnvironment(chat.id,input.hubEnvironment);
@@ -265,7 +278,7 @@ export async function handleHubThreadRequest(
       shareHubThread(
         chat.id,
         organizationId,
-        actor,
+        { id: actor.id, label: actor.label },
         "manual",
         input.visibility as "private" | "open" | undefined,
       );

@@ -1,3 +1,4 @@
+import { orchestrateThread, orchestrationActions, agentThreadMember } from "./thread-orchestration.js";
 import { validProfileImage } from "./profile-image.js";
 import { HostedStartupError } from "./hosted-startup-error.js";
 import { modelDefaults } from "./model-defaults.js";
@@ -432,7 +433,8 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
 
   const agentToolRoute=/^\/api\/organizations\/([^/]+)\/computers\/organization-tools\/([^/]+)$/.exec(url.pathname);
   if(agentToolRoute && request.method==="POST") {
-    const org=decodeURIComponent(agentToolRoute[1]),computer=await authenticateComputer(request,org,computerStore);
+    const registrationOrg=decodeURIComponent(agentToolRoute[1]),computer=await authenticateComputer(request,registrationOrg,computerStore);
+    const org=url.searchParams.get("organization") ?? registrationOrg;
     if(!computer)return jsonError("This computer cannot use organization tools.",403);
     return env.COORDINATOR.get(env.COORDINATOR.idFromName(`organization:${org}`)).fetch(new Request(`https://internal/organization-tools/${agentToolRoute[2]}`,{method:"POST",headers:{"x-organization-id":org,"x-computer-id":computer.computerId,"content-type":"application/json"},body:request.body}));
   }
@@ -1594,7 +1596,7 @@ export class HubCoordinator {
     }
     const agentTool=/^\/organization-tools\/([^/]+)$/.exec(url.pathname);
     if(agentTool && request.method==="POST" && org) {
-      const binding=await this.ctx.storage.get<{computerId:string;userId:string}>(`thread-run:${decodeURIComponent(agentTool[1])}`);
+      const binding=await this.ctx.storage.get<{computerId:string;userId:string;reviewDelegation?:boolean}>(`thread-run:${decodeURIComponent(agentTool[1])}`);
       if(!binding || binding.computerId!==request.headers.get("x-computer-id"))return jsonError("This thread cannot use organization tools.",403);
       const member=await new D1OrganizationStore(this.env.DB).membership(org,binding.userId);
       if(!member)return jsonError("This thread is unavailable.",403);
@@ -1603,27 +1605,52 @@ export class HubCoordinator {
       const threadId=decodeURIComponent(agentTool[1]);
       const reviews=new ReviewAgent(this.env.DB);
       const review=await reviews.review(org,binding.computerId,threadId);
-      if(action==="report_review_findings" || action==="propose_review_rule") {
+      if (orchestrationActions.includes(action as typeof orchestrationActions[number])) {
+        const threads = await this.visibleThreads(binding.userId);
+        const source = threads.find(t => t.id === threadId && t.computerId === binding.computerId);
+        if (!source || !canWriteThread(source.access, binding.userId)) return jsonError("This thread is no longer available.",403);
+        const actor = agentThreadMember(source, { id: binding.userId, label: source.access.owner.id === binding.userId ? source.access.owner.label : source.access.participants.find(p => p.id === binding.userId)?.label ?? "Member" });
+        const computer = await this.computers.computer(org, binding.computerId);
+        return orchestrateThread(action!, asked, {
+          source, member: actor, threads,
+          workspace: async reference => {
+            const registered = computer?.capabilities.workspaces ?? [];
+            const workspaces = await new OrganizationService(store).workspaces(org, binding.userId);
+            let matches = reference ? registered.filter(w => w.id === reference || w.path === reference || w.origin === reference || w.name.toLowerCase() === reference.toLowerCase() || workspaces.some(h => h.id === reference && repositoryOrigin(h.origin) === repositoryOrigin(w.origin ?? ""))) : registered.filter(w => source.detail.cwd === w.path || String(source.detail.cwd).startsWith(w.path.replace(/\/$/, "") + "/")).sort((a,b) => b.path.length-a.path.length).slice(0,1);
+            if (!reference && !matches.length) {
+              const response = await this.dispatchComputer(binding.computerId, actor, "GET", "/workspaces", undefined);
+              if (response.ok) {
+                const folders = await response.json() as { workspaces?: {id:string;worktrees?:{path:string}[]}[] };
+                const holder = folders.workspaces?.find(w => w.worktrees?.some(tree => tree.path === source.detail.cwd));
+                matches = registered.filter(w => w.id === holder?.id);
+              }
+            }
+            if (matches.length !== 1) throw Error("Choose an available workspace on this computer.");
+            return matches[0].id;
+          },
+          request: async (path, method, input) => {
+            const response = (await this.threadRequest(new Request(`https://internal${path}`, { method, headers: { "x-organization-id": org, "x-thread-member": encodeURIComponent(JSON.stringify(actor)), "content-type": "application/json" }, ...(input ? { body: JSON.stringify(input) } : {}) })))!;
+            if (response.ok && method === "POST" && path.endsWith("/threads")) {
+              const child = threadSnapshotSchema.safeParse(await response.clone().json());
+              if (child.success) await this.ctx.storage.put(`thread-run:${child.data.id}`, { computerId: binding.computerId, userId: binding.userId, ...((review || binding.reviewDelegation) ? {reviewDelegation:true} : {}) });
+            }
+            return response;
+          },
+        });
+      }
+      if(action==="report_review_findings") return jsonError("Write your review findings directly in the thread.",403);
+      if(action==="propose_review_rule") {
         if(!review || review.user_id!==binding.userId)return jsonError("This thread is not reviewing a pull request.",403);
         try {
-          if(action==="propose_review_rule") {
-            const proposal=await reviews.propose(review,asked);
-            this.reviewsChanged(review.user_id,{kind:"review",computerId:review.computer_id,threadId});
-            return Response.json({proposal,artifact:{kind:"review-rule",organizationId:org,computerId:review.computer_id,id:proposal.id,title:proposal.text.slice(0,200),detail:proposal.scope==="repository"?review.repository:"All workspaces"}});
-          }
-          const {files}=await githubFor(this.env).pullRequestFiles(org,review.user_id,review.repository,review.pull_number);
-          const reported=await reviews.report(review,asked,files);
+          const proposal=await reviews.propose(review,asked);
           this.reviewsChanged(review.user_id,{kind:"review",computerId:review.computer_id,threadId});
-          const state=await reviews.state((await reviews.review(org,binding.computerId,threadId))!,review.user_id);
-          const open=state.findings.filter(finding=>finding.status==="open");
-          const count=(severity:string)=>open.filter(finding=>finding.severity===severity).length;
-          return Response.json({findings:reported.ids,resolved:reported.resolved,commit:reported.commit,open:open.length,artifact:{kind:"review-findings",organizationId:org,computerId:review.computer_id,id:threadId,title:`${open.length} open finding${open.length===1?"":"s"}`,detail:[`${count("must")} must fix`,`${count("should")} should fix`,`${count("note")} note${count("note")===1?"":"s"}`].join(" · ")}});
+          return Response.json({proposal,artifact:{kind:"review-rule",organizationId:org,computerId:review.computer_id,id:proposal.id,title:proposal.text.slice(0,200),detail:proposal.scope==="repository"?review.repository:"All workspaces"}});
         } catch(error) {
-          return jsonError(error instanceof ConnectionError?error.message:"Your review could not be saved; try again.",error instanceof ConnectionError?error.status:500);
+          return jsonError(error instanceof ConnectionError?error.message:"Your review rule could not be saved; try again.",error instanceof ConnectionError?error.status:500);
         }
       }
       // The review agent never posts to GitHub; its owner does, from Remy.
-      if(review && action==="github_action")return jsonError("A review agent does not post to GitHub. Report findings with report_review_findings; the person adds them to their GitHub review.",403);
+      if((review || binding.reviewDelegation) && action==="github_action")return jsonError("A review agent does not post to GitHub. Write findings directly in the thread; the person decides what to post.",403);
       if(action==="github_action") {
         const githubInput=asked as Record<string,unknown>;
         // What a thread posts carries a signed marker naming it, so Activity
@@ -1878,6 +1905,7 @@ export class HubCoordinator {
   private async dispatchComputer(computerId:string,actor:ThreadMember,method:string,path:string,input:unknown):Promise<Response> {
     const org = (await this.ctx.storage.get<string>("organizationId"))!;
     const computer = await this.computers.computer(org, computerId);
+    if (actor.agent && !computer?.capabilities.threadOrchestration) return jsonError("Update Remy on this computer to receive agent messages.",409);
     if (method === "POST" && path === "/hub/threads" && input && typeof input === "object" && "branch" in input && input.branch !== undefined) {
       if (typeof input.branch !== "string" || !input.branch || input.branch.length > 255) return jsonError("Choose a branch.", 400);
       if (computer?.ownership !== "hosted") {
@@ -2303,6 +2331,7 @@ export class HubCoordinator {
         this.reviewsChanged(actor.id, { kind: "review", computerId: choice.computerId, threadId });
         record = await this.saveManualThreadStart(key, { reviewRecorded: true });
       }
+      await this.ctx.storage.put(`thread-run:${threadId}`, { computerId: choice.computerId, userId: actor.id });
       if (!record.messageSent) {
         const sent = choice.computerId === CURSOR_CLOUD_COMPUTER_ID
           ? await this.cursorCloudThreads().handle(threadId, actor, "POST", "message", { text: input.message, messageId: `u-${input.requestId}` }, await cursorCloudApiKey(this.env.DB, new HostedSettingsStore(this.env.DB, () => this.env.AUTH_SECRET.get()), org, actor.id, input.cloudTask))
@@ -2580,22 +2609,25 @@ export class HubCoordinator {
     if (!id) {
       let input;
       try { input = JSON.parse(new TextDecoder().decode(payload)); } catch { return jsonError("Choose a workspace.", 400); }
-      if(input.hubInstructions!==undefined || input.hubInbox!==undefined || input.hubEnvironment!==undefined || input.hubTaskId!==undefined || input.hubLinear!==undefined || input.hubReview!==undefined)return jsonError("This thread configuration is unavailable.",403);
+      if((input.hubTaskId!==undefined && !actor.agent) || input.hubInstructions!==undefined || input.hubInbox!==undefined || input.hubEnvironment!==undefined || input.hubLinear!==undefined || input.hubReview!==undefined)return jsonError("This thread configuration is unavailable.",403);
       if (typeof input.workspaceId !== "string" || !await this.computerService().canUseWorkspace(target, actor.id, input.workspaceId, request.headers.get("x-organization-id")!)) return jsonError("This workspace is not available to you.", 404);
       const start=hostedStartChoice(typeof input.provider === "string" ? input.provider : undefined, typeof input.model === "string" ? input.model : undefined);
       if(!await this.computerService().canStartWithProvider(target, actor.id, request.headers.get("x-organization-id")!, start.provider)) return jsonError(START_PROVIDER_DENIED,403);
       if(target.ownership === "hosted") {
         const org=request.headers.get("x-organization-id")!;
         const state=(await this.hostedService().list()).find(s=>s.computerId===computerId);
-        if(state?.settings.provider && !await canStartOnCloud(new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()),org,actor.id,state.settings.provider,start.provider,start.model)) return jsonError(START_PROVIDER_DENIED,403);
-        // A computer booted on someone's own key runs only the thread they started.
         const own=state?.taskId ? await this.ctx.storage.get<OwnModelTask>(`hosted-task-own-model:${state.taskId}`) : undefined;
-        if(own && own.userId !== actor.id) return jsonError(START_PROVIDER_DENIED,403);
+        if(own && own.userId !== actor.id && !own.enrolled) return jsonError(START_PROVIDER_DENIED,403);
+        if (own) {
+          const error = await ownModelError(this.env.DB, new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()), org, own.userId, own.provider, own.keyId, own.enrolled);
+          if (error) return jsonError(error,409);
+        }
+        if(!own && state?.settings.provider && !await canStartOnCloud(new HostedSettingsStore(this.env.DB,()=>this.env.AUTH_SECRET.get()),org,actor.id,state.settings.provider,start.provider,start.model)) return jsonError(START_PROVIDER_DENIED,403);
       }
     }
     let input:Record<string,unknown>={};
     if(payload.byteLength){try{input=JSON.parse(new TextDecoder().decode(payload));}catch{return jsonError("Send a valid thread request.",400);}}
-    if(input.hubEnvironment!==undefined || input.hubTaskId!==undefined || input.hubLinear!==undefined || input.hubReview!==undefined)return jsonError("This thread configuration is unavailable.",403);
+    if(input.hubEnvironment!==undefined || (input.hubTaskId!==undefined && !actor.agent) || input.hubLinear!==undefined || input.hubReview!==undefined)return jsonError("This thread configuration is unavailable.",403);
     const referencesError=action==="message"?codeReferencesError(input.codeReferences):undefined;
     if(referencesError)return jsonError(referencesError,400);
     // A cloud Codex thread switched to plain Codex runs on its starter's ChatGPT, never an API key.
@@ -2623,7 +2655,10 @@ export class HubCoordinator {
     }
     if (answer.ok) {
       const updated = threadSnapshotSchema.safeParse(await answer.clone().json());
-      if (updated.success && updated.data.access.organizationId === request.headers.get("x-organization-id")) await this.threads.snapshot(computerId, updated.data);
+      if (updated.success && updated.data.access.organizationId === request.headers.get("x-organization-id")) {
+        await this.threads.snapshot(computerId, updated.data);
+        if (!id && request.method === "POST") await this.ctx.storage.put(`thread-run:${updated.data.id}`, {computerId,userId:actor.id});
+      }
     }
     return answer;
   }

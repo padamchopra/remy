@@ -202,11 +202,11 @@ try {
   assert.equal(await stack.locator("[data-slot='pull-request-stack-rows'][role='list']").count(), 1);
   assert.equal(await stack.locator("[role='listitem']").count(), 3);
   assert.equal(await stackHeader.getByText("Merge from the bottom up into main", { exact: true }).count(), 1);
-  assert.equal(await fileTile.locator("[data-slot='pull-request-stack-position']").textContent(), "2 of 4 · Checks failing");
-  // Each row's icon is coloured by what it waits on, and the row says it too.
+  assert.equal(await fileTile.locator("[data-slot='pull-request-stack-position']").textContent(), "2 of 4");
+  // Status stays in the coloured icon, with an accessible label.
   const statusOf = async (tile) => {
     const icon = tile.locator("svg[data-status]").first();
-    return { kind: await icon.getAttribute("data-status"), color: await icon.evaluate((node) => getComputedStyle(node).color), label: await tile.locator("[data-slot='pull-request-status']").textContent() };
+    return { kind: await icon.getAttribute("data-status"), color: await icon.evaluate((node) => getComputedStyle(node).color), label: await icon.getAttribute("aria-label") };
   };
   const failing = await statusOf(fileTile);
   const draftTile = stack.locator("[data-slot='pull-request-tile']").filter({ hasText: "Ship the stack tip" });
@@ -217,8 +217,9 @@ try {
   assert.deepEqual([ready.kind, ready.label], ["ready", "Ready to merge"]);
   assert.equal(new Set([failing.color, draft.color, ready.color]).size, 3, "Failing, draft and ready are three colours");
   const folderRow = page.locator("[data-slot='pull-request-tile']").filter({ hasText: "Keep the default folder mark" });
-  assert.equal(await folderRow.locator("[data-slot='pull-request-status']").textContent(), "Ready to merge");
-  assert.equal(await stack.locator("[data-slot='pull-request-stack-position']").first().textContent(), "4 of 4 · Draft");
+  assert.equal(await folderRow.locator("svg[data-status]").getAttribute("aria-label"), "Ready to merge");
+  assert.equal(await page.locator("[data-slot='pull-request-status']").count(), 0, "List rows have no visible status text");
+  assert.equal(await stack.locator("[data-slot='pull-request-stack-position']").first().textContent(), "4 of 4");
   assert.equal(await fileTile.locator("[data-slot='workspace-icon']").count(), 0, "A stack row leaves the workspace to the header");
   const folderTile = page.locator("[data-slot='pull-request-tile']").filter({ hasText: "Keep the default folder mark" });
   await fileTile.waitFor();
@@ -267,7 +268,7 @@ try {
   assert.equal(await page.locator("[data-slot='pull-request-tile']").count(), 1);
   const review = page.locator("[data-slot='pull-request-tile']").first();
   assert.equal(await review.locator("svg[data-status]").getAttribute("data-status"), "your-review");
-  assert.equal(await review.locator("[data-slot='pull-request-status']").textContent(), "Your review");
+  assert.equal(await review.locator("svg[data-status]").getAttribute("aria-label"), "Your review");
   // Arrows move and select together, so the keyboard switches the list.
   await page.keyboard.press("ArrowLeft");
   assert.equal(await filter.getByRole("tab", { selected: true }).getByText(/^Yours/).count(), 1, "ArrowLeft selects Yours");

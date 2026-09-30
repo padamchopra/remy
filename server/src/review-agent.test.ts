@@ -163,7 +163,7 @@ test("review instructions say how to review, the stack below, and each rule with
   });
   assert.match(stacked, /stacked: it merges into padam\/search-base, the branch of #6 "Search API" below it, not the default branch\. Say so in your first message/);
   assert.match(stacked, /git diff origin\/padam\/search-base\.\.\.HEAD/);
-  assert.match(stacked, /report_review_findings/);
+  assert.match(stacked, /findings directly in this thread/);
   assert.match(stacked, /propose_review_rule/);
   assert.doesNotMatch(stacked, /#8/);
   const alone = reviewInstructions({ ...hubReview("b".repeat(40)), rules: [] });
@@ -219,21 +219,25 @@ test("the in-process remy server offers review tools only to a review thread, an
     const plainNames = (await plain.listTools()).tools.map((tool) => tool.name);
     assert.equal(plainNames.includes("github_action"), true);
     assert.equal(plainNames.includes("report_review_findings"), false);
+    setKv("hubReviewDelegation:thread-delegated",true);
+    const delegated=await tools("thread-delegated");
+    const delegatedNames=(await delegated.listTools()).tools.map(t=>t.name);
+    assert.equal(delegatedNames.includes("github_action"),false);
+    assert.equal(delegatedNames.includes("start_thread"),true);
+    await delegated.close();
     setThreadReview("thread-review", { ...hubReview("c".repeat(40)), worktree: state });
     const review = await tools("thread-review");
     const names = (await review.listTools()).tools.map((tool) => tool.name);
     assert.equal(names.includes("github_action"), false);
-    assert.equal(names.includes("report_review_findings"), true);
+    assert.equal(names.includes("report_review_findings"), false);
     assert.equal(names.includes("propose_review_rule"), true);
-    const reported = await review.callTool({ name: "report_review_findings", arguments: finding }) as { content: { text: string }[] };
-    assert.match(reported.content[0]!.text, /^Saved 1 finding for a4f91c2: finding-1\./);
-    assert.match(reported.content[0]!.text, /<remy-artifact>\{"kind":"review-findings"/);
+    for (const tool of ["list_threads","read_thread","start_thread","send_to_thread"]) assert.equal(names.includes(tool),true);
     const proposed = await review.callTool({ name: "propose_review_rule", arguments: { text: "Don't flag inline styles in fixtures.", scope: "all", reason: "The person said fixtures are fine." } }) as { content: { text: string }[] };
     assert.match(proposed.content[0]!.text, /Proposed rule proposal-1\. It is not a rule yet/);
     // The computer reaches the hub with its own signed identity, naming the thread.
-    assert.deepEqual(hub.calls.map((call) => call.path), ["/api/organizations/org/computers/organization-tools/thread-review", "/api/organizations/org/computers/organization-tools/thread-review"]);
+    assert.deepEqual(hub.calls.map((call) => call.path), ["/api/organizations/org/computers/organization-tools/thread-review"]);
     assert.match(hub.calls[0]!.authorization ?? "", /^RemyComputer /);
-    assert.deepEqual((hub.calls[0]!.body as { action: string }).action, "report_review_findings");
+    assert.deepEqual((hub.calls[0]!.body as { action: string }).action, "propose_review_rule");
   } finally {
     forgetThreadReview("thread-review");
     await hub.close();
@@ -245,12 +249,12 @@ test("the STDIO remy server offers review tools with REMY_REVIEW and sends them 
   const { StdioClientTransport } = await import("@modelcontextprotocol/sdk/client/stdio.js");
   const daemon = await recorder();
   const script = fileURLToPath(new URL("./ticket-mcp.js", import.meta.url));
-  const connect = async (review: boolean) => {
+  const connect = async (review: boolean, reviewDelegation = false) => {
     const mcp = new Client({ name: "test", version: "1" });
     await mcp.connect(new StdioClientTransport({
       command: process.execPath,
       args: [script],
-      env: { PATH: process.env.PATH ?? "", MC_CONFIG_DIR: state, REMY_API_URL: daemon.url, REMY_API_TOKEN: "remy.capability.signature", REMY_CHAT_ID: "thread-review", ...(review ? { REMY_REVIEW: "1" } : {}) },
+      env: { PATH: process.env.PATH ?? "", MC_CONFIG_DIR: state, REMY_API_URL: daemon.url, REMY_API_TOKEN: "remy.capability.signature", REMY_CHAT_ID: "thread-review", ...(review ? { REMY_REVIEW: "1" } : {}), ...(reviewDelegation ? {REMY_REVIEW_DELEGATION:"1"} : {}) },
     }));
     return mcp;
   };
@@ -262,15 +266,13 @@ test("the STDIO remy server offers review tools with REMY_REVIEW and sends them 
     assert.equal(plainNames.includes("propose_review_rule"), false);
     const names = (await review.listTools()).tools.map((tool) => tool.name);
     assert.equal(names.includes("github_action"), false);
-    assert.equal(names.includes("report_review_findings"), true);
-    const reported = await review.callTool({ name: "report_review_findings", arguments: finding }) as { content: { text: string }[] };
-    assert.match(reported.content[0]!.text, /^Saved 1 finding for a4f91c2/);
-    assert.match(reported.content[0]!.text, /<remy-artifact>\{"kind":"review-findings"/);
+    assert.equal(names.includes("report_review_findings"), false);
+    for (const tool of ["list_threads","read_thread","start_thread","send_to_thread"]) assert.equal(names.includes(tool),true);
     const proposed = await review.callTool({ name: "propose_review_rule", arguments: { text: "Rule", scope: "repository", reason: "Asked." } }) as { content: { text: string }[] };
     assert.match(proposed.content[0]!.text, /<remy-artifact>\{"kind":"review-rule"/);
-    assert.deepEqual(daemon.calls.map((call) => call.path), ["/organization-tools/report_review_findings", "/organization-tools/propose_review_rule"]);
+    assert.deepEqual(daemon.calls.map((call) => call.path), ["/organization-tools/propose_review_rule"]);
     assert.equal(daemon.calls[0]!.authorization, "Bearer remy.capability.signature");
-    assert.equal((daemon.calls[0]!.body as { commit: string }).commit, "a4f91c2");
+
   } finally {
     await plain.close();
     await review.close();

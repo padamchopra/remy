@@ -1,3 +1,4 @@
+import { ThreadSender } from "./ThreadSender";
 import { threadCheckpoints, type ThreadCheckpoint } from "@/lib/hub-transcript";
 import { ThreadCheckpointRail } from "@/components/ThreadCheckpointRail";
 import { modelSwitch, speaker } from "@/lib/thread-message";
@@ -1260,7 +1261,7 @@ function Entry({
         <MessageContent>
           {(lead || entry.member) && (
             <MessageHeader className="max-h-5 overflow-hidden">
-              {entry.member?.label ?? "You"}
+              <ThreadSender member={entry.member} />
             </MessageHeader>
           )}
           <Bubble align="end" variant="muted">

@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { ChevronRight, Code, FileDiff, RefreshCw } from "lucide-react";
+import { ChevronRight, Code, FileDiff, List, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import type { HubThread, ReviewFinding, ReviewState } from "@remy/contract";
 import { Button } from "@/components/ui/button";
@@ -8,8 +8,10 @@ import { Checkbox } from "@/components/ui/checkbox-base";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible-base";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@/components/ui/popover-base";
 import { Skeleton } from "@/components/ui/skeleton";
 import { pullRequestAction } from "@/components/PullRequestHostedActions";
+import { PullRequestCommits } from "@/components/PullRequestCommits";
 import { FinishReview } from "@/components/PullRequestFinishReview";
 import { ReviewFindingCard } from "@/components/PullRequestReviewFinding";
 import {
@@ -52,6 +54,8 @@ import type { PullRequestDiffHunk, PullRequestDiffLine } from "@/state/types";
 interface HostedFile {
   path: string;
   previousPath?: string;
+  commitSha?: string;
+  commitTitle?: string;
   status: string;
   additions: number;
   deletions: number;
@@ -73,7 +77,7 @@ function fileId(index: number) {
   return `pull-request-file-${index}`;
 }
 
-function useHostedFiles(organizationId: string, pullRequest: AuthoredPullRequest) {
+function useHostedFiles(organizationId: string, pullRequest: AuthoredPullRequest, commits: string[]) {
   const [state, setState] = useState<{ files?: HostedFiles; error?: string }>({});
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
@@ -84,12 +88,13 @@ function useHostedFiles(organizationId: string, pullRequest: AuthoredPullRequest
       number: String(pullRequest.number),
       ...(pullRequest.changedFiles ? { changedFiles: String(pullRequest.changedFiles) } : {}),
     });
+    for (const sha of commits) params.append("commit", sha);
     hubRequest<HostedFiles>(`${hubThreadBase(organizationId)}/github/pull-request-files?${params}`)
-      .then((files) => { if (current) setState({ files: { ...files, files: Array.isArray(files.files) ? files.files : [] } }); })
+      .then((files) => { if (commits.length && files.files.some(file => !file.commitSha)) throw new Error("Commit filtering is not available on this hub yet."); if (current) setState({ files: { ...files, files: Array.isArray(files.files) ? files.files : [] } }); })
       .catch((error) => { if (current) setState({ error: apiError(error) }); });
     return () => { current = false; };
     // The file list is read again only when asked; `updatedAt` names the revision.
-  }, [organizationId, pullRequest.repository, pullRequest.number, pullRequest.changedFiles, pullRequest.updatedAt, attempt]);
+  }, [organizationId, pullRequest.repository, pullRequest.number, pullRequest.changedFiles, pullRequest.updatedAt, commits.join(","), attempt]);
   return { ...state, retry: () => setAttempt((value) => value + 1) };
 }
 
@@ -159,19 +164,20 @@ const ROW_TONE = {
 /// One diff row: two line numbers, the +/− marker, and the code, with the
 /// words that changed in it marked. Clicking a number (or the row, when no
 /// text is being selected) chooses the line; shift-click extends to it.
-const DiffRow = memo(function DiffRow({ line, index, marks, selected, first, last, onSelect }: {
+const DiffRow = memo(function DiffRow({ line, index, marks, selected, first, last, readOnly, onSelect }: {
   line: PullRequestDiffLine;
   index: number;
   marks?: readonly WordRange[];
   selected: boolean;
   first: boolean;
   last: boolean;
+  readOnly?: boolean;
   onSelect: (index: number, extend: boolean) => void;
 }) {
   const tone = ROW_TONE[line.kind];
   const number = selected ? "text-diff-selected-number" : tone.number;
   const side = lineSide(line);
-  const label = `Comment on line ${lineNumberOn(line, side) ?? ""}`;
+  const label = `${readOnly ? "Line" : "Comment on line"} ${lineNumberOn(line, side) ?? ""}`;
   return (
     <div
       data-slot="diff-row"
@@ -179,7 +185,7 @@ const DiffRow = memo(function DiffRow({ line, index, marks, selected, first, las
       data-selected={selected || undefined}
       onClick={(event) => {
         if (window.getSelection()?.toString()) return;
-        onSelect(index, event.shiftKey);
+        if (!readOnly) onSelect(index, event.shiftKey);
       }}
       className={cn(
         "grid min-h-5 cursor-default grid-cols-[2.75rem_1rem_minmax(0,1fr)] sm:grid-cols-[2.75rem_2.75rem_1rem_minmax(0,1fr)]",
@@ -192,6 +198,7 @@ const DiffRow = memo(function DiffRow({ line, index, marks, selected, first, las
       <button
         type="button"
         tabIndex={-1}
+        disabled={readOnly}
         aria-label={label}
         onClick={(event) => { event.stopPropagation(); onSelect(index, event.shiftKey); }}
         className={cn("hidden pr-2.5 text-right tabular-nums select-none sm:block", number)}
@@ -201,6 +208,7 @@ const DiffRow = memo(function DiffRow({ line, index, marks, selected, first, las
       <button
         type="button"
         tabIndex={-1}
+        disabled={readOnly}
         aria-label={label}
         onClick={(event) => { event.stopPropagation(); onSelect(index, event.shiftKey); }}
         className={cn("pr-2.5 text-right tabular-nums select-none", number)}
@@ -239,11 +247,12 @@ interface HunkProps {
   findingsAt: Map<string, ReviewFinding[]>;
   /// Draw the rows now, for a finding the pane asked to show.
   eager?: boolean;
+  readOnly?: boolean;
   onSelect: (path: string, hunk: number, index: number, extend: boolean) => void;
   composer?: ReactNode;
 }
 
-const Hunk = memo(function Hunk({ hunk, hunkIndex, path, selection, threadsAt, findingsAt, eager, onSelect, composer }: HunkProps) {
+const Hunk = memo(function Hunk({ hunk, hunkIndex, path, selection, threadsAt, findingsAt, eager, readOnly, onSelect, composer }: HunkProps) {
   const [ref, seen] = useNearScreen<HTMLDivElement>();
   const near = seen || Boolean(eager);
   const marks = useMemo(() => (near ? hunkWordDiff(hunk.lines) : new Map<number, WordRange[]>()), [near, hunk.lines]);
@@ -265,6 +274,7 @@ const Hunk = memo(function Hunk({ hunk, hunkIndex, path, selection, threadsAt, f
             <div key={index} className="contents">
               <DiffRow
                 line={line}
+                readOnly={readOnly}
                 index={index}
                 marks={marks.get(index)}
                 selected={selected(index)}
@@ -314,7 +324,7 @@ function MarkRead({ path, viewed, disabled, onChange, compact }: {
   return (
     <label
       className={cn(
-        "flex h-6 shrink-0 items-center gap-1.5 rounded-[7px] border border-input px-[9px] text-[11px] leading-[14px] text-foreground/70",
+        "flex h-6 shrink-0 items-center gap-1.5 rounded-[7px] border border-input px-[9px] @max-[600px]/file:px-2 text-[11px] leading-[14px] text-foreground/70",
         disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:text-foreground",
       )}
     >
@@ -325,7 +335,7 @@ function MarkRead({ path, viewed, disabled, onChange, compact }: {
         onCheckedChange={(checked) => onChange(checked === true)}
         className="size-[11px] rounded-[3px] border-foreground/20"
       />
-      Mark read
+      <span className="@max-[600px]/file:sr-only">Mark read</span>
     </label>
   );
 }
@@ -389,10 +399,10 @@ const FileDiffView = memo(function FileDiffView({
       open={open}
       onOpenChange={(next) => onOpenChange(index, next)}
       data-slot="pull-request-file"
-      className="scroll-mt-0 border-b border-border last:border-b-0"
+      className="@container/file scroll-mt-0 border-b border-border last:border-b-0"
     >
       {/* One pixel above the edge: at a fractional scroll position a header pinned at 0 can sit half a pixel low and let the diff show through above it. */}
-      <div className="sticky -top-px z-10 flex h-10 min-w-0 items-center gap-2.5 border-b border-border bg-background px-4">
+      <div data-slot="file-toolbar" className="sticky -top-px z-10 flex h-10 min-w-0 items-center gap-2 border-b border-border bg-background px-3">
         <CollapsibleTrigger
           data-file-index={index}
           aria-label={`${open ? "Collapse" : "Expand"} ${file.path}`}
@@ -404,11 +414,11 @@ const FileDiffView = memo(function FileDiffView({
             {file.previousPath && file.previousPath !== file.path && (
               <span className="mr-1.5 max-w-[40%] min-w-0 shrink truncate text-muted-foreground">{file.previousPath} →</span>
             )}
-            <span className="min-w-0 shrink truncate text-muted-foreground [direction:rtl]"><bdi>{folder}</bdi></span>
-            <span className="shrink-0 font-[550] text-foreground">{name}</span>
+            <span className="min-w-0 shrink truncate text-muted-foreground [direction:rtl] @max-[600px]/file:hidden"><bdi>{folder}</bdi></span>
+            <span className="min-w-0 truncate font-[550] text-foreground">{name}</span>
           </span>
         </CollapsibleTrigger>
-        <Totals additions={file.additions} deletions={file.deletions} className="text-[11px] leading-4 max-sm:hidden" />
+        <Totals additions={file.additions} deletions={file.deletions} className="text-[11px] leading-4" />
         <MarkRead path={file.path} viewed={viewed} disabled={!canMarkRead} onChange={(next) => onViewedChange(file.path, next)} />
       </div>
       <CollapsibleContent>
@@ -437,6 +447,7 @@ const FileDiffView = memo(function FileDiffView({
               threadsAt={placed.atRow}
               findingsAt={agent.atRow}
               eager={focusedHunk === String(hunkIndex)}
+              readOnly={!!file.commitSha}
               onSelect={onSelect}
               composer={selection?.hunk === hunkIndex ? composer : undefined}
             />
@@ -464,7 +475,7 @@ function initiallyOpen(files: HostedFile[], review: HostedReview | undefined) {
 /// per file. Choosing lines opens a comment box right under them; which button
 /// you press is where it goes. `j` and `k` move between files the way they do
 /// on GitHub.
-export function PullRequestHostedFiles({ organizationId, pullRequest, active, thread, review: agentReview, reviewThread, onReviewChanged, focusFinding, onOpenThread, onOpenLink, toolbar }: {
+export function PullRequestHostedFiles({ organizationId, pullRequest, active, thread, review: agentReview, reviewThread, onReviewChanged, focusFinding, onOpenThread, onOpenLink, toolbar, selectedCommits, onSelectedCommitsChange }: {
   organizationId: string;
   pullRequest: AuthoredPullRequest;
   active: boolean;
@@ -481,10 +492,15 @@ export function PullRequestHostedFiles({ organizationId, pullRequest, active, th
   onOpenLink: (href: string) => void;
   /// Where Finish review sits: the tab row of the pull request.
   toolbar?: HTMLElement | null;
+  selectedCommits: string[];
+  onSelectedCommitsChange: (commits: string[]) => void;
 }) {
-  const { files: read, error, retry } = useHostedFiles(organizationId, pullRequest);
+  const { files: read, error, retry } = useHostedFiles(organizationId, pullRequest, selectedCommits);
   const { review, error: reviewError, refresh, setReview } = useHostedReview(organizationId, pullRequest);
   const files = read?.files;
+  useEffect(() => { setSelection(undefined); setOpenReply(undefined); setCurrent(0); }, [selectedCommits.join(",")]);
+  const [filesOpen, setFilesOpen] = useState(false);
+  const selectedFileElement = useRef<HTMLElement | null>(null);
   const [open, setOpen] = useState<Set<number>>(new Set());
   const [current, setCurrent] = useState(0);
   const [selection, setSelection] = useState<LineSelection>();
@@ -496,10 +512,10 @@ export function PullRequestHostedFiles({ organizationId, pullRequest, active, th
   // A file you already read folds once GitHub says so, the first time only;
   // after that what you open stays open.
   useEffect(() => {
-    if (!files || !review || reviewSeen.current) return;
+    if (!files || !review || reviewSeen.current || selectedCommits.length) return;
     reviewSeen.current = true;
     setOpen((value) => new Set([...value].filter((index) => !isViewed(review, files[index]!.path))));
-  }, [files, review]);
+  }, [files, review, selectedCommits.length]);
 
   const onOpenChange = useCallback((index: number, next: boolean) => {
     setOpen((value) => {
@@ -532,6 +548,7 @@ export function PullRequestHostedFiles({ organizationId, pullRequest, active, th
   }, [organizationId, pullRequest.workspaceId, pullRequest.number, setReview, onOpenChange]);
 
   const onSelect = useCallback((path: string, hunk: number, index: number, extend: boolean) => {
+    if (selectedCommits.length) return;
     setOpenReply(undefined);
     setSelection((previous) => {
       if (extend && previous && previous.path === path && previous.hunk === hunk) {
@@ -541,7 +558,7 @@ export function PullRequestHostedFiles({ organizationId, pullRequest, active, th
       }
       return { path, hunk, anchor: index, focus: index };
     });
-  }, []);
+  }, [selectedCommits.length]);
 
   const scrollArea = () => viewport.current?.querySelector<HTMLElement>("[data-slot='scroll-area-viewport']");
   const goTo = useCallback((index: number, { reveal = false } = {}) => {
@@ -549,7 +566,7 @@ export function PullRequestHostedFiles({ organizationId, pullRequest, active, th
     const next = Math.max(0, Math.min(files.length - 1, index));
     setCurrent(next);
     if (reveal) onOpenChange(next, true);
-    const element = document.getElementById(fileId(next));
+    const element = viewport.current?.querySelector<HTMLElement>(`[id="${fileId(next)}"]`);
     element?.scrollIntoView({ block: "start" });
     element?.querySelector<HTMLElement>("[data-file-index]")?.focus({ preventScroll: true });
   }, [files, onOpenChange]);
@@ -803,6 +820,7 @@ export function PullRequestHostedFiles({ organizationId, pullRequest, active, th
     return (
       <>
         {finish}
+        <div className="p-3"><PullRequestCommits picker organizationId={organizationId} repository={pullRequest.repository} number={pullRequest.number} revision={pullRequest.updatedAt} selected={selectedCommits} onChange={onSelectedCommitsChange} /></div>
         <Empty className="min-h-0 flex-1">
           <EmptyHeader>
             <EmptyMedia variant="icon"><FileDiff /></EmptyMedia>
@@ -820,30 +838,25 @@ export function PullRequestHostedFiles({ organizationId, pullRequest, active, th
 
   const count = files?.length ?? pullRequest.changedFiles ?? 0;
   const readCount = files?.filter((file) => isViewed(review, file.path)).length ?? 0;
-  const canMarkRead = Boolean(review);
+  const canMarkRead = Boolean(review) && !selectedCommits.length;
 
-  return (
-    <ReviewSurfaceContext.Provider value={surface}>
-      {finish}
-      <div data-slot="pull-request-files" className="flex min-h-0 min-w-0 flex-1">
-        <aside aria-label="Changed files" className="hidden w-[272px] shrink-0 border-r border-border lg:block">
-          <ScrollArea className="h-full">
+  const fileList = (
             <div className="flex flex-col gap-0.5 px-2.5 py-3.5">
               <div className="flex items-center gap-2 px-2 pb-2">
                 <h2 className="min-w-0 flex-1 text-xs leading-4 font-semibold text-foreground tabular-nums">
                   {count.toLocaleString()} {count === 1 ? "file" : "files"}
                 </h2>
-                {review && <span className="shrink-0 text-[11px] leading-4 text-muted-foreground tabular-nums">{readCount.toLocaleString()} read</span>}
+                {review && !selectedCommits.length && <span className="shrink-0 text-[11px] leading-4 text-muted-foreground tabular-nums">{readCount.toLocaleString()} read</span>}
               </div>
               {files ? files.map((file, index) => {
                 const name = file.path.split("/").at(-1) ?? file.path;
-                const viewed = isViewed(review, file.path);
+                const viewed = !selectedCommits.length && isViewed(review, file.path);
                 return (
                   <div
                     key={`${file.path}:${index}`}
                     data-slot="pull-request-file-row"
                     data-current={index === current || undefined}
-                    className={cn("flex h-[30px] min-w-0 shrink-0 items-center gap-2 rounded-[7px] px-2", index === current ? "bg-accent" : "hover:bg-accent/50")}
+                    className={cn("flex h-9 min-w-0 shrink-0 items-center gap-2 rounded-[7px] px-2", index === current ? "bg-accent" : "hover:bg-accent/50")}
                   >
                     <MarkRead compact path={file.path} viewed={viewed} disabled={!canMarkRead} onChange={(next) => onViewedChange(file.path, next)} />
                     <button
@@ -854,8 +867,9 @@ export function PullRequestHostedFiles({ organizationId, pullRequest, active, th
                         viewed ? "text-muted-foreground/60" : index === current ? "text-foreground" : "text-foreground/70",
                       )}
                       title={file.path}
+                      aria-label={`Open file ${file.path}${file.commitSha ? ` at ${file.commitSha.slice(0, 7)}` : ""}`}
                       aria-current={index === current ? "true" : undefined}
-                      onClick={() => goTo(index, { reveal: true })}
+                      onClick={() => { goTo(index, { reveal: true }); selectedFileElement.current = viewport.current?.querySelector<HTMLElement>(`[id="${fileId(index)}"]`)?.querySelector<HTMLElement>("[data-file-index]") ?? null; setFilesOpen(false); }}
                     >
                       {name}
                     </button>
@@ -864,6 +878,27 @@ export function PullRequestHostedFiles({ organizationId, pullRequest, active, th
                 );
               }) : Array.from({ length: Math.min(12, pullRequest.changedFiles || 6) }, (_, index) => <Skeleton key={index} className="mx-2 my-2 h-5" />)}
             </div>
+  );
+
+  return (
+    <ReviewSurfaceContext.Provider value={surface}>
+      <div className="@container/files flex min-h-0 min-w-0 flex-1 flex-col">
+      {finish}
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2">
+        <Popover open={filesOpen} onOpenChange={next => { if (next) selectedFileElement.current = null; setFilesOpen(next); }}>
+          <PopoverTrigger render={<Button variant="outline" size="sm" className="@min-[900px]/files:hidden" />} aria-label="Show changed files"><List /><span>{count} files</span></PopoverTrigger>
+          <PopoverContent aria-label="Changed files" className="w-[min(22rem,calc(100vw-2rem))] overflow-y-auto" finalFocus={() => selectedFileElement.current ?? true}>
+            <PopoverTitle className="sr-only">Changed files</PopoverTitle>
+            {fileList}
+          </PopoverContent>
+        </Popover>
+        <PullRequestCommits picker organizationId={organizationId} repository={pullRequest.repository} number={pullRequest.number} revision={pullRequest.updatedAt} selected={selectedCommits} onChange={onSelectedCommitsChange} />
+        {selectedCommits.length > 0 && <span className="text-xs text-muted-foreground">Each commit shows its own changes. Select all commits to comment on the PR diff.</span>}
+      </div>
+      <div data-slot="pull-request-files" className="flex min-h-0 min-w-0 flex-1">
+        <aside aria-label="Changed files" className="hidden w-[272px] shrink-0 border-r border-border @min-[900px]/files:block">
+          <ScrollArea className="h-full">
+            {fileList}
           </ScrollArea>
         </aside>
         <div ref={viewport} className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -887,27 +922,31 @@ export function PullRequestHostedFiles({ organizationId, pullRequest, active, th
                   <EmptyHeader><EmptyTitle>No changed files</EmptyTitle><EmptyDescription>This pull request has no file changes.</EmptyDescription></EmptyHeader>
                 </Empty>
               ) : files.map((file, index) => (
+                <div key={`${file.commitSha ?? "all"}:${file.path}:${index}`}>
+                {file.commitSha && <p className="border-b border-border px-4 py-2 text-xs text-muted-foreground break-words"><span className="font-mono">{file.commitSha.slice(0, 7)}</span> · {file.commitTitle}</p>}
                 <FileDiffView
                   key={`${file.path}:${index}`}
                   file={file}
                   index={index}
                   open={open.has(index)}
-                  viewed={isViewed(review, file.path)}
-                  canMarkRead={canMarkRead}
+                  viewed={!selectedCommits.length && isViewed(review, file.path)}
+                  canMarkRead={canMarkRead && !selectedCommits.length}
                   onOpenChange={onOpenChange}
                   onViewedChange={onViewedChange}
                   url={pullRequest.url}
-                  threads={threadsByPath.get(file.path) ?? NO_THREADS}
-                  findings={findingsByPath.get(file.path) ?? NO_FINDINGS}
+                  threads={selectedCommits.length ? NO_THREADS : threadsByPath.get(file.path) ?? NO_THREADS}
+                  findings={selectedCommits.length ? NO_FINDINGS : findingsByPath.get(file.path) ?? NO_FINDINGS}
                   focusedFinding={focusFinding?.id}
                   selection={selection?.path === file.path ? selection : undefined}
                   onSelect={onSelect}
                   composer={selection?.path === file.path ? composer : undefined}
                 />
+                </div>
               ))}
             </div>
           </ScrollArea>
         </div>
+      </div>
       </div>
     </ReviewSurfaceContext.Provider>
   );
