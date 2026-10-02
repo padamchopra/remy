@@ -7,6 +7,12 @@ import { takeArtifacts, type ConvArtifact } from "./remy-artifacts.js";
 
 export type { ConvArtifact };
 
+export function isActivityHeartbeat(entry: ConvEntry): boolean {
+  return entry.kind === "tool" && Boolean(entry.activity)
+    && !entry.verb && !entry.tool && !entry.arg && !entry.output && !entry.text
+    && !entry.diff?.length && !entry.file;
+}
+
 export interface ChatImageAttachment {
   remoteId?: string;
   /// Opaque id minted by the device that owns the thread. A client never sends

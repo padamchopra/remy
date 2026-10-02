@@ -78,7 +78,7 @@ function StatusChip({ state }: { state: unknown }) {
 
 /// The findings as a list in the pane. A row opens its place in the diff;
 /// a dismissed one stays, struck through.
-function FindingsList({ findings, onFinding }: { findings: ReviewFinding[]; onFinding: (finding: ReviewFinding) => void }) {
+export function FindingsList({ findings, onFinding }: { findings: ReviewFinding[]; onFinding: (finding: ReviewFinding) => void }) {
   if (!findings.length) return <p className="text-xs leading-[18px] text-muted-foreground">No findings. Nothing in this change needs a look.</p>;
   return (
     <ul data-slot="review-findings" aria-label="Findings" className="flex flex-col overflow-hidden rounded-[10px] border border-border">
@@ -111,7 +111,7 @@ function FindingsList({ findings, onFinding }: { findings: ReviewFinding[]; onFi
 
 /// Save this as a rule? The agent's wording, which you can change, and where
 /// it applies. Nothing is a rule until Save rule.
-function ProposalCard({ organizationId, proposal, workspace, onDecided }: {
+export function ProposalCard({ organizationId, proposal, workspace, onDecided }: {
   organizationId: string;
   proposal: ReviewRuleProposal;
   workspace: { name: string; mark?: ReactNode };

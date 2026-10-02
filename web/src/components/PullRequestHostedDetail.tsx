@@ -31,7 +31,7 @@ import { PULL_REQUEST_HEADER_BUTTON, ReviewAgentHeaderButton } from "@/component
 import type { ReviewTarget } from "@/components/ReviewAgentStart";
 import type { ReviewPaneView } from "@/components/ReviewAgentPane";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { forgetThreadStart, useThreadStarts } from "@/lib/hub-thread-start";
+import { useThreadStarts } from "@/lib/hub-thread-start";
 import { rememberReviewPane, reviewPaneOpen, type ReviewFinding } from "@/lib/review-agent";
 import { usePullRequestReview, useReviewRules } from "@/lib/review-agent-data";
 import { apiError } from "@/lib/api-error";
@@ -383,12 +383,6 @@ export function PullRequestHostedDetail({
     && entry.review.repository.toLowerCase() === pullRequest.repository.toLowerCase()
     && entry.review.number === pullRequest.number).at(-1), [starts, organizationId, pullRequest.repository, pullRequest.number]);
   const starting = review ? undefined : start;
-  const [launchedRequestId, setLaunchedRequestId] = useState<string>();
-  const openedRequestId = useRef<string | undefined>(undefined);
-  useEffect(() => {
-    if (start && review && reviewThread && start.created?.id === review.threadId
-      && (start.requestId !== launchedRequestId || openedRequestId.current === launchedRequestId)) forgetThreadStart(start.requestId);
-  }, [start, review, reviewThread, launchedRequestId]);
   // A start that is through reads the review it made, in case its frame came first.
   useEffect(() => { if (start?.phase === "ready") void reloadReview(); }, [start?.phase, reloadReview]);
   const phone = useIsMobile();
@@ -404,16 +398,18 @@ export function PullRequestHostedDetail({
     setDesktopPane(open);
     rememberReviewPane(pullRequest.repository, pullRequest.number, open);
   };
+  const openReviewThread = (threadId = review?.threadId ?? start?.created?.id ?? start?.requestId) => {
+    if (!threadId) return;
+    showPane(false);
+    onOpenReviewThread(threadId);
+  };
   useEffect(() => {
-    const createdId = start?.requestId === launchedRequestId ? start?.created?.id : undefined;
-    const threadId = createdId ?? review?.threadId;
-    const launching = launchedRequestId && openedRequestId.current !== launchedRequestId;
-    if (!threadId || (!launching && !restoreReviewSplit.current)) return;
-    if (launching) openedRequestId.current = launchedRequestId;
+    const threadId = review?.threadId;
+    if (!threadId || !restoreReviewSplit.current) return;
     restoreReviewSplit.current = false;
     showPane(false);
     onOpenReviewThread(threadId);
-  }, [launchedRequestId, start, review?.threadId, onOpenReviewThread]);
+  }, [review?.threadId, onOpenReviewThread]);
   const rules = useReviewRules(organizationId, pullRequest.repository, reviewing || paneShown);
   const [focusFinding, setFocusFinding] = useState<{ id: string; at: number }>();
   const showFinding = useCallback((finding: ReviewFinding) => {
@@ -497,11 +493,11 @@ export function PullRequestHostedDetail({
                 paneOpen={paneShown}
                 rules={rules.rules}
                 onTogglePane={() => {
-                  if (review?.threadId) { showPane(false); onOpenReviewThread(review.threadId); }
+                  if (reviewing) openReviewThread();
                   else showPane(!paneShown);
                 }}
-                onViewRules={() => showPane(true, "rules")}
-                onStarted={(requestId) => { setLaunchedRequestId(requestId); showPane(true); }}
+                onViewRules={() => reviewing ? openReviewThread() : showPane(true, "rules")}
+                onStarted={openReviewThread}
               />
             )}
             <Tooltip>
@@ -528,8 +524,8 @@ export function PullRequestHostedDetail({
               <MenuContent align="end" className="w-52">
                 {onOpenWorkspace && <MenuItem onClick={() => onOpenWorkspace(workspaceOrganization, pullRequest.workspaceId)}>Open workspace</MenuItem>}
                 {reviewing && <>
-                  <MenuItem onClick={() => showPane(true)}>Review findings</MenuItem>
-                  <MenuItem onClick={() => showPane(true, "rules")}>Review rules</MenuItem>
+                  <MenuItem onClick={() => openReviewThread()}>Review findings</MenuItem>
+                  <MenuItem onClick={() => openReviewThread()}>Review rules</MenuItem>
                   <MenuSeparator />
                 </>}
                 <MenuItem onClick={() => void copy(window.location.href, "Link copied.")}>Copy link</MenuItem>
@@ -734,7 +730,8 @@ export function PullRequestHostedDetail({
             onOpenThread={onOpenThread}
             onFinding={showFinding}
             onReviewChanged={setReview}
-            onStarted={(target) => {
+            onStarted={(target, requestId) => {
+              openReviewThread(requestId);
               toast.success(`The review agent is reviewing #${target.number}.`, { action: canOpen(target.number) ? { label: "Open", onClick: () => onOpen(target.number) } : undefined });
             }}
             onRulesChanged={() => void rules.reload()}

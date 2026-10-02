@@ -55,6 +55,13 @@ try {
   });
   const [code, signal] = await once(journey, "exit");
   if (code !== 0) throw new Error(`The thread journey failed (${code ?? signal}).`);
+  const history = spawn(process.execPath, [join(root, "hub/scripts/qa-thread-history.mjs")], {
+    cwd: root,
+    env: { ...process.env, QA_SESSION: session },
+    stdio: "inherit",
+  });
+  const [historyCode, historySignal] = await once(history, "exit");
+  if (historyCode !== 0) throw new Error(`The thread history check failed (${historyCode ?? historySignal}).`);
 } finally {
   clearTimeout(timeout);
   lines.close();

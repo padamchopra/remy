@@ -75,6 +75,18 @@ import { LinearThreadNotice } from "./LinearConnection";
 import type { Route } from "@/lib/route";
 
 const ThreadActivityTool = lazy(() => import("@/components/ThreadActivity").then(module => ({ default: module.ThreadActivityTool })));
+const ReviewThreadSurface = lazy(() => import("./ReviewThreadSurface"));
+
+function ReviewThreadFrame({ reference, ...props }: {
+  reference?: { repository: string; number: number };
+  organizationId: string;
+  computerId?: string;
+  threadId?: string;
+  navigate: (route: Route) => void;
+  children: ReactNode;
+}) {
+  return reference ? <Deferred open fallback={props.children}><ReviewThreadSurface reference={reference} {...props} /></Deferred> : props.children;
+}
 
 type Approval = {
   requestId: string;
@@ -358,7 +370,7 @@ export default function HubThreads({
       aria-label="Threads"
     >
       {thread ? (
-        <>
+        <ReviewThreadFrame organizationId={organizationId} computerId={savedThread?.computerId} threadId={savedThread?.id} navigate={navigate} reference={(thread.detail.review as { repository: string; number: number } | undefined) ?? pending?.review}>
           {error && (
               <p role="alert" className="shrink-0 px-4 py-2 text-sm text-destructive">{error}</p>
             )}
@@ -627,7 +639,7 @@ export default function HubThreads({
               </Deferred>
             </DialogContent>
           </Dialog>
-        </>
+        </ReviewThreadFrame>
       ) : (
         <>
           {showNavigation && <PaneHeader sidebar crumbs={[{ label: "Threads" }]}>

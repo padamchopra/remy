@@ -2,6 +2,10 @@
 /// entry to its day's group, creating that group at the top when it is the
 /// first change of the day. `backticks` mark inline code.
 export const CHANGELOG: { date: string; entries: string[] }[] = [
+  { date: "2026-10-02", entries: [
+    "Unreleased: Open review agents in their own tabs beside pull requests, with findings and rules in the review tab and ordinary threads in the sidebar.",
+    "Unreleased: Scroll back to your first message in long threads, even after hundreds of tool calls or a computer restart.",
+  ] },
   { date: "2026-09-30", entries: [
     "Unreleased: Review agents suggest reusable rules from PR comments, with links to the feedback and your approval before saving.",
     "Unreleased: Let threads delegate work with inherited settings and exchange messages that link to the sending agent.",

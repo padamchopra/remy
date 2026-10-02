@@ -551,7 +551,7 @@ export default function HubApp({ runtime }: { runtime: HubRuntime }) {
                 id: link.label, label: link.label, icon: link.icon, selected: link.selected, onSelect: () => navigate(link.route),
               }))}
           groups={inSettings ? [] : threadGroups}
-          emptyThreads={!inSettings && threadsLoaded && !(isAll ? threads : threads.filter((thread) => thread.access.organizationId === organizationId)).length ? "No threads yet." : undefined}
+          emptyThreads={!inSettings && threadsLoaded && !(isAll ? threads : threads.filter((thread) => thread.access.organizationId === organizationId)).some(thread => !thread.detail.review) ? "No threads yet." : undefined}
           footer={organization && !inSettings ? [{
             label: "Settings",
             icon: Settings2,

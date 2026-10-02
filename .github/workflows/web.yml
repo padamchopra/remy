@@ -107,3 +107,4 @@ jobs:
           path: |
             web/dist-website
             /tmp/remy-pr-artifacts/website
+            /tmp/remy-pr-artifacts/review-agent-split

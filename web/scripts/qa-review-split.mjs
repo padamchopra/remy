@@ -26,6 +26,7 @@ const thread = {
   id, computerId: 'computer', revision: 1, stale: false, observedAt: Date.now(),
   access: { organizationId: 'personal', owner: { id: 'reader', label: 'Reader' }, participants: [], visibility: 'private' },
   detail: { id, title: 'Review #42: Keep work in app tabs', workspaceId: 'studio', branch: 'feature/app-tabs', state: 'idle',
+    review: { repository: 'studio/remy', number: 42, headSha: 'a'.repeat(40) },
     provider: 'codex', model: 'gpt-5.6-sol', permissionMode: 'default', entries: [
       { id: 'message', kind: 'user', text: 'Review pull request #42 Keep work in app tabs (feature/app-tabs → main)' },
       { id: 'answer', kind: 'assistant', text: 'The new tabs keep your pull request and review thread visible together.' },
@@ -35,14 +36,17 @@ const filePath = 'android/browser-repository/src/main/java/ag/jup/jupiter/androi
 const commits = [{ sha: 'a'.repeat(40), title: 'First change', author: 'Alex', date: '2026-09-30T00:00:00Z' }, { sha: 'b'.repeat(40), title: 'Second change', author: 'Alex', date: '2026-09-30T01:00:00Z' }];
 let reviewReady = false;
 let startInput;
+let releaseStart;
+const startGate = new Promise(resolve => { releaseStart = resolve; });
 const notifications = [];
 const notificationSockets = [];
 await page.routeWebSocket(/\/api\//, socket => { if (socket.url().includes('/notifications/live')) notificationSockets.push(socket); });
-await page.route('**/api/**', (route) => {
+await page.route('**/api/**', async (route) => {
   const path = new URL(route.request().url()).pathname;
   const base = '/api/organizations/personal';
   if (path === `${base}/threads` && route.request().method() === 'POST') {
     startInput = route.request().postDataJSON();
+    await startGate;
     reviewReady = true;
     return route.fulfill({ status: 201, json: { id, computerId: 'computer', phase: 'ready' } });
   }
@@ -70,6 +74,7 @@ await page.route('**/api/**', (route) => {
     [`${base}/github/pull-request-activity`]: { userId: 'reader', viewer: 'reader', seenAt: null, items: [] },
     [`${base}/github/pull-request-images`]: { images: {} },
     [`${base}/reviews`]: { review: reviewReady ? { threadId: id, computerId: 'computer', repository: 'studio/remy', number: 42, headSha: 'a'.repeat(40), reviewedSha: null, findings: [], proposals: [], rulesApplied: 0 } : null },
+    [`${base}/reviews/computer/${id}`]: { review: { threadId: id, computerId: 'computer', repository: 'studio/remy', number: 42, headSha: 'a'.repeat(40), findings: [], proposals: [], rulesApplied: 0 } },
     [`${base}/reviews/last`]: { last: null },
     [`${base}/computers/computer/threads/${id}`]: thread,
     [`${base}/notifications`]: { notifications, devices: [] },
@@ -177,6 +182,12 @@ try {
   await page.getByRole('button', { name: 'Permission mode: Auto', exact: true }).waitFor();
   await page.screenshot({ path: `${output}/review-permission.png` });
   await page.getByRole('button', { name: 'Start review', exact: true }).click();
+  await page.waitForURL(url => url.pathname.startsWith('/threads/') && url.pathname !== `/threads/${id}`);
+  assert.equal(await page.locator('section[aria-label="prs pane"]:visible').count(), 1, 'The pull request remains on the left while startup waits');
+  assert.equal(await page.locator('section[aria-label="Thread pane"]:visible').count(), 1, 'The pending review is already an app tab');
+  assert.equal(await page.locator('[data-slot="review-agent-header"]:visible').count(), 0, 'Startup cannot open the embedded review pane');
+  await page.screenshot({ path: `${output}/pending-review-tabs.png` });
+  releaseStart();
   await page.waitForURL(/\/threads\/11111111/);
   assert.equal(startInput.permissionMode, 'auto');
   assert.deepEqual(startInput.review, { repository: 'studio/remy', number: 42 });
@@ -191,6 +202,12 @@ try {
   await page.getByRole('tab', { name: 'Review #42: Keep work in app tabs', exact: true }).first().waitFor();
   assert.equal(await splitHeaders.getByRole('tab', { name: 'Review #42: Keep work in app tabs', exact: true }).count(), 1);
   await page.getByText('The new tabs keep your pull request and review thread visible together.').waitFor();
+  assert.equal(await page.getByRole('button', { name: thread.detail.title, exact: true }).count(), 0, 'Review threads are absent from sidebar rows');
+  const reviewSurface = page.locator('[data-slot="review-thread"]:visible');
+  await reviewSurface.getByRole('button', { name: 'Rules', exact: true }).click();
+  await reviewSurface.getByRole('button', { name: 'Add rule', exact: true }).waitFor();
+  await page.screenshot({ path: `${output}/review-thread-rules.png` });
+  await reviewSurface.getByRole('button', { name: 'Back to the review agent', exact: true }).click();
   const reviewPane = page.locator('section[aria-label="Thread pane"]:visible');
   assert.equal(await reviewPane.getByRole('tablist').count(), 0, 'A thread pane cannot contain another tab collection');
   assert.equal(await reviewPane.getByRole('button', { name: 'Back', exact: true }).count(), 0);

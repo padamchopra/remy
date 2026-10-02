@@ -33,6 +33,7 @@ export function useHubThreadGroups({
   const now = useTicker(threads.some((thread) => thread.detail.state === "working"));
 
   const rows = [...threads]
+    .filter(thread => !thread.detail.review)
     .sort((left, right) => startedAt(right) - startedAt(left))
     .map((thread): SidebarThread => {
       const account = resources[thread.access.organizationId || organizationId] ?? {};

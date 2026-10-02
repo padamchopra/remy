@@ -15,14 +15,51 @@ for (const command of ["claude", "codex", "agent"]) {
   chmodSync(path, 0o755);
 }
 process.env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
-const { createChat, deleteChat, getChat } = await import("./chat.js");
+const { createChat, deleteChat, getChat, archiveConversation } = await import("./chat.js");
 const { shareHubThread, hubThreadSnapshot, handleHubThreadRequest, fitHubMirror, transcriptPage } =
   await import("./hub-threads.js");
 const owner = { id: "ada", label: "Ada" };
+const { saveEntry } = await import("./chat-storage.js");
 const teammate = { id: "grace", label: "Grace" };
 const noAttachment = async () => {
   throw new Error("Unexpected image transfer");
 };
+
+test("a restarted thread pages back beyond its memory tail to the opening message", async () => {
+  const chat = createChat({ cwd: state });
+  shareHubThread(chat.id, "org", owner, "manual");
+  saveEntry(chat.id, { id: "opening", kind: "user", text: "Review this change." });
+  for (let index = 0; index < 520; index += 1) {
+    const entry = { id: `retained-${index}`, kind: "tool" as const, verb: "Ran", tool: "Bash", output: "ok" };
+    saveEntry(chat.id, entry);
+    if (index >= 20) getChat(chat.id)!.entries.push(entry);
+  }
+  const snapshot = hubThreadSnapshot(chat.id, "org")!;
+  const history = snapshot.detail.history as { hasEarlier: boolean; before?: string };
+  assert.equal(history?.hasEarlier, true);
+  const response = await handleHubThreadRequest("org", owner, "GET", `/hub/threads/${chat.id}/transcript`, { before: history.before }, noAttachment);
+  assert.equal(response.status, 200);
+  const page = await response.json() as { entries: { id: string }[] };
+  assert.equal(page.entries[0].id, "opening");
+  assert.equal(archiveConversation(chat.id).entries[0].id, "opening");
+  deleteChat(chat.id);
+});
+
+test("a memory tail filled with activity still mirrors the saved opening message", () => {
+  const chat = createChat({ cwd: state });
+  shareHubThread(chat.id, "org", owner, "manual");
+  saveEntry(chat.id, { id: "opening", kind: "user", text: "Review this change." });
+  for (let index = 0; index < 500; index += 1) {
+    const entry = { id: `heartbeat-${index}`, kind: "tool" as const, activity: {
+      id: `heartbeat-${index}`, kind: "shell" as const, provider: "codex", title: "Running", status: "running" as const, startedAt: 1, updatedAt: 1,
+    } };
+    saveEntry(chat.id, entry);
+    getChat(chat.id)!.entries.push(entry);
+  }
+  const snapshot = hubThreadSnapshot(chat.id, "org")!;
+  assert.equal((snapshot.detail.entries[0] as { id: string }).id, "opening");
+  deleteChat(chat.id);
+});
 test.after(() => {
   rmSync(state, { recursive: true, force: true });
   rmSync(binDir, { recursive: true, force: true });

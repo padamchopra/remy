@@ -301,7 +301,16 @@ if (!real.realProviders) setProviderAdapterForTest({
               }).join(", ");
             // "in full" answers at length, at once, so a few turns carry a
             // thread past the hub mirror and its earlier pages can be read.
-            const long = !toolReply && input.prompt.includes("in full");
+            const historyCheck = input.prompt.includes("Keep opening message through tool activity");
+            if (historyCheck) {
+              for (let index = 0; index < 520; index += 1) {
+                handlers.event({ type: "entry.updated", entry: {
+                  id: `history-tool-${id}-${index}`, kind: "tool", tool: "Bash", verb: "Ran",
+                  arg: `Inspect file ${index}`, output: "Checked the release notes. ".repeat(12),
+                } });
+              }
+            }
+            const long = !toolReply && (input.prompt.includes("in full") || historyCheck);
             const reply = toolReply ?? (long
               ? Array.from({ length: 24 }, (_, index) => `Section ${index + 1}. The release notes cover the change, who it reaches, and what to check after it ships. ${"Each item names the surface it touches and the person who should confirm it. ".repeat(6)}`).join("\n\n")
               : input.prompt.includes("approval")
