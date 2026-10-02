@@ -257,9 +257,19 @@ try {
   thread.detail.state = 'idle';
   thread.detail.permissionMode = 'default';
   delete thread.detail.context;
+  let releaseReviewControls;
+  const reviewControlsGate = new Promise(resolve => { releaseReviewControls = resolve; });
+  await page.route(/\/assets\/ReviewThreadSurface-[^/]+\.js$/, async route => {
+    await reviewControlsGate;
+    await route.continue();
+  });
   await page.reload();
+  await page.getByRole('status', { name: 'Loading review agent', exact: true }).waitFor();
   await reviewPane.getByRole('textbox', { name: 'Message', exact: true }).waitFor();
   await reviewPane.getByRole('textbox', { name: 'Message', exact: true }).fill('Keep this draft while resizing.');
+  releaseReviewControls();
+  await reviewPane.getByRole('button', { name: 'Rules', exact: true }).waitFor();
+  assert.equal(await reviewPane.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'Keep this draft while resizing.');
   const resize = async (ratio, horizontal) => {
     const handle = page.getByRole('separator', { name: 'Resize panes' });
     const box = await handle.boundingBox();

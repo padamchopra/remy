@@ -3,6 +3,7 @@
 /// first change of the day. `backticks` mark inline code.
 export const CHANGELOG: { date: string; entries: string[] }[] = [
   { date: "2026-10-02", entries: [
+    "Unreleased: Check out pull requests on cloud computers when Git compresses the history request.",
     "Unreleased: Start pull request reviews on cloud computers with your personal model access, including in organizations.",
     "Unreleased: Open review agents in their own tabs beside pull requests, with findings and rules in the review tab and ordinary threads in the sidebar.",
     "Unreleased: Scroll back to your first message in long threads, even after hundreds of tool calls or a computer restart.",

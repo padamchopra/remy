@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState } from "react";
 import { Book, GitPullRequest, ListChecks } from "lucide-react";
 import { PaneHeader } from "./PaneHeader";
 import { Button } from "./ui/button";
@@ -14,17 +14,16 @@ import { toast } from "sonner";
 
 export interface ReviewThreadReference { repository: string; number: number }
 
-export default function ReviewThreadSurface({ organizationId, computerId, threadId, reference, navigate, children }: {
+export default function ReviewThreadSurface({ organizationId, computerId, threadId, reference, navigate, showRules, onShowRules }: {
   organizationId: string;
   computerId?: string;
   threadId?: string;
   reference: ReviewThreadReference;
   navigate: (route: Route) => void;
-  children: ReactNode;
+  showRules: boolean;
+  onShowRules: (show: boolean) => void;
 }) {
-  const [showRules, setShowRules] = useState(false);
   const [reviewing, setReviewing] = useState(false);
-  useEffect(() => { setShowRules(false); }, [organizationId, computerId, threadId]);
   const { review, setReview, error, reload: reloadReview } = useThreadReview(organizationId, computerId, threadId);
   const { rules, reload } = useReviewRules(organizationId, reference.repository);
   const workspace = { name: reference.repository.split("/").at(-1) ?? reference.repository };
@@ -45,7 +44,7 @@ export default function ReviewThreadSurface({ organizationId, computerId, thread
     if (rule) void reload();
   }} />);
   return (
-    <div data-slot="review-thread" className="flex min-h-0 min-w-0 flex-1 flex-col">
+    <>
       <PaneHeader crumbs={[{ label: "Review agent" }]}>
         <Button size="sm" variant="ghost" data-link aria-label={`Open pull request #${reference.number}`} onClick={() => openPullRequest()}><GitPullRequest />#{reference.number}</Button>
         <Popover>
@@ -55,13 +54,12 @@ export default function ReviewThreadSurface({ organizationId, computerId, thread
             {review && <Button disabled={reviewing} onClick={() => void reviewNew()}>Review new changes</Button>}
           </PopoverContent>
         </Popover>
-        <Button size="sm" variant="ghost" aria-pressed={showRules} onClick={() => setShowRules(value => !value)}><Book />Rules{review?.proposals.length ? ` · ${review.proposals.length}` : ""}</Button>
+        <Button size="sm" variant="ghost" aria-pressed={showRules} onClick={() => onShowRules(!showRules)}><Book />Rules{review?.proposals.length ? ` · ${review.proposals.length}` : ""}</Button>
       </PaneHeader>
       {showRules && <div className="flex min-h-0 flex-1 flex-col">
         {proposals?.length ? <div className="flex max-h-[40dvh] shrink-0 flex-col gap-3 overflow-auto p-4">{proposals}</div> : null}
-        <ReviewAgentRules repository={reference.repository} workspace={workspace} rules={rules} onBack={() => setShowRules(false)} onChanged={() => void reload()} />
+        <ReviewAgentRules repository={reference.repository} workspace={workspace} rules={rules} onBack={() => onShowRules(false)} onChanged={() => void reload()} />
       </div>}
-      <div className={showRules ? "hidden" : "flex min-h-0 min-w-0 flex-1 flex-col"}>{children}</div>
-    </div>
+    </>
   );
 }

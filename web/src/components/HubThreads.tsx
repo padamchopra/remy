@@ -77,7 +77,7 @@ import type { Route } from "@/lib/route";
 const ThreadActivityTool = lazy(() => import("@/components/ThreadActivity").then(module => ({ default: module.ThreadActivityTool })));
 const ReviewThreadSurface = lazy(() => import("./ReviewThreadSurface"));
 
-function ReviewThreadFrame({ reference, ...props }: {
+function ReviewThreadFrame({ reference, children, ...props }: {
   reference?: { repository: string; number: number };
   organizationId: string;
   computerId?: string;
@@ -85,7 +85,14 @@ function ReviewThreadFrame({ reference, ...props }: {
   navigate: (route: Route) => void;
   children: ReactNode;
 }) {
-  return reference ? <Deferred open fallback={props.children}><ReviewThreadSurface reference={reference} {...props} /></Deferred> : props.children;
+  const [showRules, setShowRules] = useState(false);
+  useEffect(() => { setShowRules(false); }, [props.organizationId, props.computerId, props.threadId]);
+  return <div data-slot={reference ? "review-thread" : undefined} className="flex min-h-0 min-w-0 flex-1 flex-col">
+    {reference && <Deferred open fallback={<div className="h-12 shrink-0" role="status" aria-label="Loading review agent" />}>
+      <ReviewThreadSurface reference={reference} {...props} showRules={showRules} onShowRules={setShowRules} />
+    </Deferred>}
+    <div className={reference && showRules ? "hidden" : "flex min-h-0 min-w-0 flex-1 flex-col"}>{children}</div>
+  </div>;
 }
 
 type Approval = {

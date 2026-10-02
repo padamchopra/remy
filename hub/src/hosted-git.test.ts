@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { gzipSync } from "node:zlib";
 import {
   GitCapabilities,
   githubRepository,
@@ -152,4 +153,35 @@ test("repository normalization cannot introduce a second URL or credentials", ()
     "github.com/studio/release?x=1",
   ])
     assert.equal(githubRepository(origin), undefined);
+});
+
+test("compressed Git fetches are decoded and compressed pushes still check every ref", async () => {
+  const grant = {
+    organizationId: "o", computerId: "c", workspaceId: "w",
+    repository: "studio/release", branches: ["remy/release"],
+    write: true, expiresAt: Date.now() + 300000,
+  };
+  const body = packet("command=fetch\n") + "0001" + packet("deepen 500\n") + "0000";
+  let calls = 0;
+  const send: typeof fetch = async (_input, init) => {
+    calls++;
+    assert.equal(Buffer.from(init?.body as ArrayBuffer).toString(), body);
+    assert.equal(new Headers(init?.headers).has("content-encoding"), false);
+    return new Response("packfile");
+  };
+  const request = (suffix: string, bytes: Uint8Array, encoding = "gzip") =>
+    new Request(`https://hub/git/w/${suffix}`, {
+      method: "POST", headers: { "content-encoding": encoding }, body: Uint8Array.from(bytes).buffer,
+    });
+  assert.equal((await proxyGit(request("git-upload-pack", gzipSync(body)), grant,
+    "git-upload-pack", async () => "upstream-secret", send)).status, 200);
+  assert.equal((await proxyGit(request("git-receive-pack", gzipSync(packet(command("main")) + "0000")), grant,
+    "git-receive-pack", async () => "upstream-secret", send)).status, 403);
+  assert.equal((await proxyGit(request("git-upload-pack", Buffer.from("invalid gzip")), grant,
+    "git-upload-pack", async () => "upstream-secret", send)).status, 400);
+  assert.equal((await proxyGit(request("git-upload-pack", gzipSync(body), "br"), grant,
+    "git-upload-pack", async () => "upstream-secret", send)).status, 415);
+  assert.equal((await proxyGit(request("git-upload-pack", gzipSync(Buffer.alloc(50_000_001))), grant,
+    "git-upload-pack", async () => "upstream-secret", send)).status, 413);
+  assert.equal(calls, 1);
 });
