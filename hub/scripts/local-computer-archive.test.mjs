@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFile } from "node:child_process";
@@ -23,6 +23,7 @@ test("cloud development archive uses current compiled code and excludes local cr
     const archive = await localComputerArchive(root,join(temp,"state"));
     await mkdir(output);
     await exec("tar",["-xzf",archive,"-C",output]);
+    assert.equal((await stat(join(output,"opt/remy"))).mode & 0o777,0o755);
     assert.equal(await readFile(join(output,"opt/remy/server/dist/current.js"),"utf8"),"current code");
     assert.equal(JSON.parse(await readFile(join(output,"opt/remy/contract/package.json"),"utf8")).exports["."].default,"./dist/index.js");
     const {stdout} = await exec("tar",["-tzf",archive]);

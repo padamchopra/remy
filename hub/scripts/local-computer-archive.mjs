@@ -13,7 +13,7 @@ export async function localComputerArchive(root, state) {
   const unpacked = join(cache, "computer");
   await rm(unpacked, { recursive: true, force: true });
   const computer = join(unpacked, "opt/remy");
-  await mkdir(computer, { recursive: true, mode: 0o700 });
+  await mkdir(computer, { recursive: true, mode: 0o755 });
   for (const folder of ["server/dist", "contract/dist"]) {
     await cp(join(root, folder), join(computer, folder), { recursive: true });
   }
