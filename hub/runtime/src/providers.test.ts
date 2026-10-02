@@ -62,6 +62,8 @@ test("development cloud starts reload current code and install changed dependenc
   assert.equal(calls.filter(file=>file === "curl").length,2);
   assert.equal(calls.filter(file=>file === "tar").length,2);
   assert.equal(calls.filter(file=>file === "npm").length,2);
+  assert.equal(calls.filter(file=>file === "node").length,2);
+  assert(calls.indexOf("node") < calls.indexOf("curl"));
 });
 
 test("development repairs a missing native module with the bundled Node headers",async()=>{

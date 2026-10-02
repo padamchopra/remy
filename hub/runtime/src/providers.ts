@@ -223,6 +223,7 @@ export class FlySpritesRuntime implements ComputerRuntimeProvider {
         ],
       });
       if (input.image === "local") {
+        await this.stop(runtime);
         console.info("Local cloud computer: loading this checkout's code.");
         for (const [file, args] of [
           ["curl", ["--fail", "--location", "--proto", "=https", "--output", "/tmp/remy-local-computer.tar.gz", input.archive]],

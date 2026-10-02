@@ -45,7 +45,7 @@ import { HubThreadComposer, type HubThreadWorkspaceOption } from "./HubThreadCom
 import { watchHubComputers } from "@/lib/hub-computers";
 import { HubNotifications } from "./HubNotifications";
 import { deviceIcon, type DeviceIconId } from "@/lib/devices";
-import { lazy, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { lazy, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   canWriteThread,
   cloudComputerName,
@@ -207,11 +207,11 @@ export default function HubThreads({
   const savedThread = threads.find(
     (item) => item.computerId !== "pending" && item.id === threadId,
   );
-  const thread: HubThread | undefined = savedThread ?? (pending ? {
+  const thread: HubThread | undefined = useMemo(() => savedThread ?? (pending ? {
     id: pending.requestId, computerId: pending.created?.computerId ?? "pending", stale: false, revision: 0, observedAt: pending.at,
     access: {organizationId, owner: member ?? {id: "pending", label: "You"}, participants: [], visibility: pending.visibility},
     detail: {id: pending.requestId, workspaceId: pending.workspaceId, title: pending.message.slice(0, 200), state: "working", entries: [{id: `u-${pending.requestId}`, kind: "user", text: pending.message}]},
-  } : undefined);
+  } : undefined), [savedThread, pending, organizationId, member]);
   const [liveNotice, setLiveNotice] = useState<string | null>();
   useEffect(() => {
     if (!savedThread || savedThread.access.owner.id !== member?.id) {
