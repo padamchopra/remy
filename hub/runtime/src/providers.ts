@@ -143,6 +143,7 @@ export class FlySpritesRuntime implements ComputerRuntimeProvider {
   constructor(private readonly client: SpritesClient) {}
   close() {}
   async provision(input: ProvisionComputerInput): Promise<ComputerRuntime> {
+    if (input.image === "local") console.info("Local cloud computer: finding your Sprite.");
     let step = "finding your Sprite";
     try {
     let sprite;
@@ -211,6 +212,7 @@ export class FlySpritesRuntime implements ComputerRuntimeProvider {
   async start(runtime: ComputerRuntime, input: ProvisionComputerInput) {
     const sprite = this.client.sprite(runtime.providerReference);
     try {
+      if (input.image === "local") console.info("Local cloud computer: configuring network access.");
       await sprite.updateNetworkPolicy({
         rules: [
           ...input.allowedDomains.map((domain) => ({
@@ -221,6 +223,7 @@ export class FlySpritesRuntime implements ComputerRuntimeProvider {
         ],
       });
       if (input.image === "local") {
+        console.info("Local cloud computer: loading this checkout's code.");
         for (const [file, args] of [
           ["curl", ["--fail", "--location", "--proto", "=https", "--output", "/tmp/remy-local-computer.tar.gz", input.archive]],
           ["tar", ["-xzf", "/tmp/remy-local-computer.tar.gz", "-C", "/"]],
@@ -229,18 +232,24 @@ export class FlySpritesRuntime implements ComputerRuntimeProvider {
           if (error instanceof ExecError && (error.exitCode === 1 || error.exitCode === 2)) return { exitCode: error.exitCode };
           throw error;
         });
-        if (installed.exitCode !== 0) {
-          for (const folder of ["contract", "server"]) await sprite.execFile("npm", ["ci", "--prefix", `/opt/remy/${folder}`, "--no-audit", "--no-fund"]);
+        const native = await sprite.execFile("/usr/local/bin/node", ["-e", "require('/opt/remy/server/node_modules/node-pty')"]).catch(error => {
+          if (error instanceof ExecError) return {exitCode:error.exitCode};
+          throw error;
+        });
+        if (installed.exitCode !== 0 || native.exitCode !== 0) {
+          console.info("Local cloud computer: installing changed dependencies.");
+          for (const folder of ["contract", "server"]) await sprite.execFile("npm", ["ci", "--prefix", `/opt/remy/${folder}`, "--no-audit", "--no-fund", "--ignore-scripts=false"], {env:{PATH:"/usr/local/bin:/usr/bin:/bin",npm_config_nodedir:"/usr/local"}});
           await sprite.execFile("cp", ["/opt/remy/.development-lock", "/opt/remy/.installed-development-lock"]);
         }
       }
+      if (input.image === "local") console.info("Local cloud computer: connecting to your local hub.");
       // setpriv below drops the ambient capabilities Sprites grants. Root-owned
       // /data is then not writable, and Remy exits before it can connect.
       await sprite.execFile("mkdir", ["-p", "/data/remy", "/data/codex", "/data/claude", "/workspace", "/tmp/remy-uploads"]);
       await sprite.execFile("chmod", ["0777", "/data", "/data/remy", "/data/codex", "/data/claude", "/workspace", "/tmp/remy-uploads"]);
       // Sprites can give a non-root process ambient capabilities. Bubblewrap
       // rejects those before it can establish Codex's requested sandbox.
-      const result = await sprite.execFile("setpriv", ["--inh-caps=-all", "--ambient-caps=-all", "--", "node", "-e", startProgram], {
+      const result = await sprite.execFile("setpriv", ["--inh-caps=-all", "--ambient-caps=-all", "--", input.image === "local" ? "/usr/local/bin/node" : "node", "-e", startProgram], {
         env: input.environment,
       });
       if (result.exitCode !== 0) throw new HostedStartupError(bootFailure(result));

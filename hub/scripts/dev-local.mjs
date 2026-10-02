@@ -56,6 +56,7 @@ try {
     let publicHub = "http://127.0.0.1:5184";
     let archive;
     let baseArchive;
+    let localRuntime;
     const runtimeToken = randomBytes(32).toString("base64url");
     if (bridge) {
       console.log("Starting the local hub tunnel.");
@@ -66,6 +67,13 @@ try {
       const config = JSON.parse(readFileSync(join(root,"hub/wrangler.jsonc"),"utf8"));
       baseArchive = config.env.production.vars.HOSTED_ARCHIVE;
       archive = await localComputerArchive(root,state);
+      localRuntime = run(process.execPath,["hub/runtime/node_modules/tsx/dist/cli.mjs","hub/runtime/src/server.ts"],{env:{...env,REMY_RUNTIME_TOKEN:runtimeToken,PORT:"5186"}});
+      localRuntime.catch(error=>{console.error(error.message);void stop(1);});
+      const deadline = Date.now() + 15_000;
+      while (!await fetch("http://127.0.0.1:5186/health",{headers:{authorization:`Bearer ${runtimeToken}`},signal:AbortSignal.timeout(1_000)}).then(response=>response.ok).catch(()=>false)) {
+        if (Date.now() >= deadline) throw new Error("The local cloud service could not start.");
+        await new Promise(resolve=>setTimeout(resolve,100));
+      }
     }
     const secretFile = join(state,"auth-secret");
     if (!existsSync(secretFile)) writeFileSync(secretFile,randomBytes(48).toString("base64url"),{mode:0o600,flag:"wx"});
@@ -117,7 +125,7 @@ try {
       ? "Local Remy: http://127.0.0.1:5175\nYour account is connected. Threads stay local; execution reads your approved production connections."
       : "Local Remy: http://127.0.0.1:5175\nLocal email: http://127.0.0.1:5175/__dev/mail\nYour data persists across restarts. This is a separate account from production.\nConnect this computer with npm run dev:local -- --connect in another terminal.");
     await Promise.all([
-      ...(bridge ? [run(process.execPath,["hub/runtime/node_modules/tsx/dist/cli.mjs","hub/runtime/src/server.ts"],{env:{...env,REMY_RUNTIME_TOKEN:runtimeToken,PORT:"5186"}})] : []),
+      ...(localRuntime ? [localRuntime] : []),
       run(process.execPath,["hub/scripts/dev-local-computer.mjs"],{env:{...env,...(account?{REMY_LOCAL_ACCOUNT_SESSION:account.session.accessToken,REMY_LOCAL_PERSONAL_ID:account.personalId,REMY_LOCAL_PUBLIC_HUB:publicHub}:{})}}),
       run("npm",["--prefix","web","run","dev","--","--port","5175"],{env:{...env,REMY_LOCAL_HUB_URL:"http://127.0.0.1:5184",...(account?{REMY_LOCAL_PREVIEW_SESSION:JSON.stringify(account.session)}:{})}}),
     ]);
