@@ -35,6 +35,8 @@ const thread = {
 const filePath = 'android/browser-repository/src/main/java/ag/jup/jupiter/android/browser/repository/BrowserSiteClearanceWithAnExtraLongName.kt';
 const commits = [{ sha: 'a'.repeat(40), title: 'First change', author: 'Alex', date: '2026-09-30T00:00:00Z' }, { sha: 'b'.repeat(40), title: 'Second change', author: 'Alex', date: '2026-09-30T01:00:00Z' }];
 let reviewReady = false;
+let cloudOnly = false;
+let personalOpenRouter = false;
 let startInput;
 let releaseStart;
 const startGate = new Promise(resolve => { releaseStart = resolve; });
@@ -62,10 +64,12 @@ await page.route('**/api/**', async (route) => {
     '/api/review-rules': { rules: [] },
     [base]: { organization: account },
     [`${base}/threads`]: { threads: reviewReady ? [thread] : [], cursor: 1, member: { id: 'reader', role: 'owner' } },
-    [`${base}/computers`]: { computers: [{ computerId: 'computer', name: 'Studio Mac', ownership: 'personal', ownerUserId: 'reader', availability: 'available', canUse: true, capabilities: { workspaces: [{ id: 'studio', origin: workspace.origin }], providers: [{ id: 'codex', models: ['gpt-5.6-sol'] }] } }] },
-    [`${base}/computers/preference`]: { computerId: 'computer' },
+    [`${base}/computers`]: { computers: cloudOnly ? [] : [{ computerId: 'computer', name: 'Studio Mac', ownership: 'personal', ownerUserId: 'reader', availability: 'available', canUse: true, capabilities: { workspaces: [{ id: 'studio', origin: workspace.origin }], providers: [{ id: 'codex', models: ['gpt-5.6-sol'] }] } }] },
+    [`${base}/computers/preference`]: { computerId: cloudOnly ? 'cloud:fly-sprites' : 'computer' },
     [`${base}/model-defaults`]: { computer: { provider: 'codex', model: 'gpt-5.6-sol' } },
-    [`${base}/model-access`]: { providers: [] },
+    [`${base}/model-access`]: { providers: cloudOnly ? [{ id: 'openrouter', configured: false, enabled: false }] : [] },
+    [`${base}/own-model-access`]: { personal: false, providers: personalOpenRouter ? [{ id: 'openrouter', configured: true, allowed: true, keyName: 'Personal', models: ['openai/gpt-5.4'] }] : [] },
+    [`${base}/chatgpt`]: { available: cloudOnly && !personalOpenRouter },
     [`${base}/workspaces`]: { workspaces: [workspace], canManage: true },
     [`${base}/workspaces/studio`]: workspace,
     [`${base}/github/pull-requests`]: { pullRequests: [pr] },
@@ -79,7 +83,7 @@ await page.route('**/api/**', async (route) => {
     [`${base}/computers/computer/threads/${id}`]: thread,
     [`${base}/notifications`]: { notifications, devices: [] },
     [`${base}/connections`]: { canManage: true, providers: [], connections: [] },
-    [`${base}/hosted`]: { available: false, enabledProviders: [], cloudPlacements: [] },
+    [`${base}/hosted`]: { available: cloudOnly, enabledProviders: cloudOnly ? ['fly-sprites'] : [], cloudPlacements: [] },
   };
   return route.fulfill({ status: path in responses ? 200 : 404, json: responses[path] ?? { error: 'Not in this review scenario' } });
 });
@@ -376,6 +380,20 @@ try {
   await prHeader.getByRole('button', { name: 'More actions', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Open workspace', exact: true }).click();
   await page.waitForURL(/\/workspaces\/studio/);
+  cloudOnly = true;
+  reviewReady = false;
+  await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
+  await page.goto(`${origin}/app/pull-requests/studio/remy/42`);
+  await page.getByRole('button', { name: 'Review with agent', exact: true }).click();
+  await page.getByRole('button', { name: 'Start review', exact: true }).waitFor();
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent === 'Start review' && !button.disabled));
+  assert.equal(await page.getByText('No computer can review this yet', { exact: true }).count(), 0, 'Your ChatGPT access can review on Fly.io without organization model keys');
+  await page.screenshot({ path: `${output}/personal-cloud-review.png` });
+  personalOpenRouter = true;
+  await page.reload();
+  await page.getByRole('button', { name: 'Review with agent', exact: true }).click();
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent === 'Start review' && !button.disabled));
+  assert.equal(await page.getByText('No computer can review this yet', { exact: true }).count(), 0, 'Your OpenRouter key can review on Fly.io without organization model keys');
   assert.deepEqual(errors, []);
   console.log('Review split QA passed: commit list, selected commit patches, all commits, phone picker, one tab strip, adjacent plus, context menu, header drag, PR left, review right, resizing, preserved draft, keyboard, saved ratio, thread details, sidebar focus and reload.');
 } catch (error) {
