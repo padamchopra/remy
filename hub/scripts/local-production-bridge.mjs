@@ -48,7 +48,15 @@ export function productionBridge({registration, privateKey}, request = fetch) {
       ...(body ? {body: body instanceof ArrayBuffer ? body : JSON.stringify(body)} : {}),
     });
     if (!response.ok) throw Object.assign(new Error(`Your production connection is unavailable (HTTP ${response.status}).`), {status:response.status});
-    return response;
+    // Node fetch decodes compressed bodies but retains their upstream headers.
+    // Workers must not receive encoding or byte counts for those original bytes.
+    return new Response(response.body, {
+      status: response.status,
+      headers: {
+        "content-type": response.headers.get("content-type") ?? "application/octet-stream",
+        "cache-control": "no-store",
+      },
+    });
   }
   const call = async (operation, body) => (await callResponse(operation, body)).json();
   return {

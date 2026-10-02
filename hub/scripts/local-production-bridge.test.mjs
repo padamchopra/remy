@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, verify } from "node:crypto";
+import { createServer } from "node:http";
+import { gzipSync } from "node:zlib";
+import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 import { productionBridge, savedDevelopmentIdentity } from "./local-production-bridge.mjs";
 const { computerConnectionMessage } = await import("../../contract/src/index.ts");
 
@@ -26,6 +29,40 @@ test("connection access keeps actors and vendor routes bound to the approved com
   assert.equal(response.status,200);
   assert.equal((await response.json()).accessToken,"short-lived");
   assert.equal(calls,1);
+});
+
+test("decoded connection responses drop upstream compression and byte counts",async()=>{
+  const bridge=productionBridge(identity,async()=>new Response(JSON.stringify({configured:true}),{headers:{"content-type":"application/json","content-encoding":"gzip","content-length":"99"}}));
+  for(const path of ["/secrets","/chatgpt","/github"]){
+    const response=await bridge.connections(incoming({userId:"owner",organizationId:"personal",operation:"tokens",path:"/user"},path));
+    assert.equal(response.status,200);
+    assert.equal(response.headers.get("content-encoding"),null);
+    assert.equal(response.headers.get("content-length"),null);
+    assert.deepEqual(await response.json(),{configured:true});
+  }
+});
+
+test("compressed JSON and Git bytes cross the native Workers connection intact",async()=>{
+  const json=Buffer.from(JSON.stringify({configured:true}));
+  const git=Buffer.from([0,255,1,128,10,13,37]);
+  const server=createServer((request,response)=>{
+    const binary=request.url === "/git/info/refs";
+    const encoded=gzipSync(binary ? git : json);
+    response.writeHead(200,{"content-type":binary?"application/octet-stream":"application/json","content-encoding":"gzip","content-length":encoded.length});
+    response.end(encoded);
+  });
+  await new Promise(resolve=>server.listen(0,"127.0.0.1",resolve));
+  const bridge=productionBridge(identity,(url,options)=>fetch(`http://127.0.0.1:${server.address().port}${new URL(url).pathname.replace("/api/development/personal","")}`,options));
+  const mf=new Miniflare(convertV4MiniflareOptions({host:"127.0.0.1",port:0,workers:[{name:"bridge-response-test",modules:true,compatibilityDate:"2026-09-04",script:`export default {async fetch(request,env){const path=new URL(request.url).pathname;return env.CONNECTIONS.fetch(new Request("https://internal"+path,{method:"POST",body:path.startsWith("/git/")?new Uint8Array([1,2]):JSON.stringify({organizationId:"personal"})}));}}`,serviceBindings:{CONNECTIONS:request=>bridge.connections(request)}}]}));
+  try{
+    await mf.ready;
+    for(const [path,expected] of [["/secrets",json],["/git/info/refs",git]]){
+      const response=await mf.dispatchFetch(`http://127.0.0.1${path}`);
+      assert.equal(response.status,200);
+      assert.equal(response.headers.get("content-encoding"),null);
+      assert.deepEqual(Buffer.from(await response.arrayBuffer()),expected);
+    }
+  }finally{await mf.dispose();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 });
 
 test("signs fresh scoped requests and never forwards the supplied actor", async () => {
