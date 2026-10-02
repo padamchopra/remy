@@ -66,7 +66,7 @@ export class GitHubConnection {
       /// Signs the marker on what a thread posts.
       secret?: () => Promise<string>;
       now?: () => number;
-      development?: (org: string, user: string, path: string) => Promise<unknown>;
+      development?: (org: string, user: string, path: string, method: string, input?: unknown) => Promise<unknown>;
     } = {},
   ) {
     this.store = new D1OrganizationStore(db);
@@ -90,8 +90,8 @@ export class GitHubConnection {
   ): Promise<T> {
     await this.access(org, user);
     if (this.options.development) {
-      if (method !== "GET") throw new ConnectionError("Your local preview reads GitHub. Open Remy to make this change.", 409);
-      return this.options.development(org, user, path) as Promise<T>;
+      if (method !== "GET" && !(method === "POST" && path === "/graphql")) throw new ConnectionError("Your local preview reads GitHub. Open Remy to make this change.", 409);
+      return this.options.development(org, user, path, method, input) as Promise<T>;
     }
     const token = await this.connections.token(org, "github", user);
     const response = await this.send(`https://api.github.com${path}`, {

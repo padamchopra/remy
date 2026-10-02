@@ -181,7 +181,7 @@ export class FlySpritesRuntime implements ComputerRuntimeProvider {
             "=https",
             "--output",
             "/tmp/remy-computer.tar.gz",
-            input.archive,
+            input.image === "local" ? input.baseArchive! : input.archive,
           ],
         ],
         ["tar", ["-xzf", "/tmp/remy-computer.tar.gz", "-C", "/"]],

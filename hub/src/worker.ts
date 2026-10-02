@@ -82,6 +82,7 @@ export interface Env extends ApplePushConfig {
   /// Only the local development launcher supplies this in-process connection.
   DEVELOPMENT_EXECUTION?: Fetcher;
   DEVELOPMENT_CONNECTIONS?: Fetcher;
+  DEVELOPMENT_BASE_ARCHIVE?: string;
   PROVIDER_RUNTIME?: DurableObjectNamespace;
   HOSTED_CONTROL_URL?: string;
   HOSTED_CONTROL_TOKEN?: SecretsStoreSecret;
@@ -864,7 +865,7 @@ export function createRouteHandler(dependencies: AccountRouteDependencies = {}) 
         const authorization = await service.startDeviceAuthorization("computer", name);
         if (await service.approveDevice(identity.userId, authorization.userCode) !== "approved") return jsonError("Your connection key could not be created; try again.", 502);
         return Response.json({
-          key: encodeComputerConnectionKey({ v: 1, url: url.origin, organizationId, ownership, key: authorization.deviceCode }),
+          key: encodeComputerConnectionKey({ v: 1, url: env.DEVELOPMENT_CONNECTIONS ? new URL(env.BETTER_AUTH_URL).origin : url.origin, organizationId, ownership, key: authorization.deviceCode }),
           expiresIn: authorization.expiresIn,
         }, { headers: { "cache-control": "no-store" } });
       }
@@ -2166,7 +2167,7 @@ export class HubCoordinator {
       const models = state.taskId?.startsWith("spare:") ? {} : ownModel ? await ownModelEnvironment(this.env.DB,settings,org,modelSecrets(secrets),ownModel) : modelSecrets(secrets);
       const environment={...models,MC_CONFIG_DIR:"/data/remy",REMY_HOSTED_BOOTSTRAP:JSON.stringify({registration:{...actual,hubUrl:this.env.BETTER_AUTH_URL},privateKey:keys.privateKey,...(state.taskId?{taskId:state.taskId}:{}),workspace:{id:workspace.id,name:workspace.name,origin:workspace.origin}})};
       const domains=[new URL(this.env.BETTER_AUTH_URL).hostname,"api.anthropic.com","console.anthropic.com","claude.ai","api.openai.com","api.router.com","openrouter.ai","api.openrouter.ai","auth.openai.com","chatgpt.com","ab.chatgpt.com","github.com","api.github.com","codeload.github.com","objects.githubusercontent.com","release-assets.githubusercontent.com","github-releases.githubusercontent.com","ghcr.io","pkg-containers.githubusercontent.com","registry.npmjs.org"];
-      return {organizationId:org,computerId:state.computerId,settings:state.settings,image:this.env.HOSTED_IMAGE,archive:this.env.HOSTED_ARCHIVE??"",environment,allowedDomains:domains};
+      return {organizationId:org,computerId:state.computerId,settings:state.settings,image:this.env.HOSTED_IMAGE,archive:this.env.HOSTED_ARCHIVE??"",...(this.env.DEVELOPMENT_BASE_ARCHIVE ? {baseArchive:this.env.DEVELOPMENT_BASE_ARCHIVE} : {}),environment,allowedDomains:domains};
     }, async id=>{
       for(let attempt=0;attempt<900;attempt++){if(this.computerSocket(id))return;await new Promise(resolve=>setTimeout(resolve,100));}
       throw new HostedStartupError("Your cloud computer started but did not connect to Remy. Retry to reconnect.");

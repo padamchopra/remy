@@ -12,7 +12,7 @@ Keep the hosted preview signed in, then run `npm run dev:local -- --connect-acco
 
 Deploy the connection bridge once, including migration `0041_development_computers.sql`, then run `npm run dev:local -- --enable-account` with the Cloudflare CLI signed in. This adds only that explicitly approved personal computer to `development_computers`; it preserves the existing `DEVELOPMENT_COMPUTER_IDS` allowlist. `npm run dev:local -- --bridge-status` verifies account access. Delete the development computer in production or remove its approval row to revoke access. Every bridge call checks the current signed registration, owner, approval, and relevant account/workspace access.
 
-Install `cloudflared` for cloud testing. The launcher starts a temporary HTTPS tunnel to the authenticated local hub so cloud computers can connect out. It exposes neither the connected computer nor the cloud management service. The archive endpoint serves only packaged code and Linux dependencies; it contains no local database, settings, or credentials. All other hub routes retain their normal authentication and origin checks.
+Install `cloudflared` for cloud testing. The launcher starts a temporary HTTPS tunnel to the authenticated local hub so cloud computers can connect out. It exposes neither the connected computer nor the cloud management service. The archive endpoint serves only compiled code and dependency manifests; it contains no local database, settings, or credentials. All other hub routes retain their normal authentication and origin checks.
 
 ## Run the preview
 
@@ -20,7 +20,7 @@ Run `npm run dev:local`, then open `http://127.0.0.1:5175`. The approved account
 
 If the shared browser is on another Mac, run `npm run dev:local -- --browser-computer macbook`, using its configured SSH host in place of `macbook`. The preview is forwarded between the computers’ loopback addresses on 5175. Its browser address and allowed origin stay `http://127.0.0.1:5175`. Keep the launcher running for the user.
 
-The hub database, objects, and connected computer state persist across restarts. A new tunnel URL updates the local connected computer’s hub address. Cloud threads resume through the local hub and receive its current connection details when they start. The hosted preview on 5174 remains separate.
+The hub database, objects, and connected computer state persist across restarts. The local connected computer uses the hub’s loopback address, so it does not depend on tunnel DNS. Cloud threads resume through the local hub and receive its current connection details when they start. The hosted preview on 5174 remains separate.
 
 `npm run dev:local -- --isolated` creates a separate local account without production connections. It is for isolated implementation checks and is not evidence of account reuse. The local email adapter captures mail and sends nothing externally. Vite denies access to `.wrangler`; the captured-mail page accepts loopback requests only.
 

@@ -10,7 +10,13 @@ import type { Env } from "./worker.js";
 const scope = z.string().min(1).max(200);
 const secretsInput = z.object({ organizationId: scope }).strict();
 const chatgptInput = z.object({ operation: z.enum(["status", "tokens"]), rejected: z.string().regex(/^[0-9a-f]{64}$/).optional() }).strict();
-const githubInput = z.object({ organizationId: scope, path: z.string().max(2048).regex(/^\/(?:user(?:\/repos)?|search\/issues|repos\/[\w.-]+\/[\w.-]+(?:\/[^?#]*)?)(?:\?[^#]*)?$/) }).strict();
+const githubInput = z.union([
+  z.object({ organizationId: scope, method: z.literal("GET").default("GET"), path: z.string().max(2048).regex(/^\/(?:user(?:\/repos)?|search\/issues|repos\/[\w.-]+\/[\w.-]+(?:\/[^?#]*)?)(?:\?[^#]*)?$/) }).strict(),
+  z.object({ organizationId: scope, method: z.literal("POST"), path: z.literal("/graphql"), input: z.object({
+    query: z.string().max(24000).refine(query => /^\s*query\b/.test(query) && !/\bmutation\b/.test(query)),
+    variables: z.record(z.string(), z.unknown()).optional(),
+  }).strict() }).strict(),
+]);
 const permittedSecret = (name: string) => /^(?:cloud:|named-cloud:|access:|named-access:|model:)/.test(name) || ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "RAMP_ROUTER_API_KEY", "OPENROUTER_API_KEY"].includes(name);
 
 /// Only approved development computers use this connection. Refresh tokens
@@ -43,7 +49,7 @@ export async function developmentConnection(request: Request, userId: string, op
         const part = await reader.read();
         if (part.done) break;
         bytes += part.value.byteLength;
-        if (bytes > 8192) { await reader.cancel(); return reply(413, { error: "Send a shorter request." }); }
+        if (bytes > 32768) { await reader.cancel(); return reply(413, { error: "Send a shorter request." }); }
         raw += decoder.decode(part.value, { stream: true });
       }
       raw += decoder.decode();
@@ -67,8 +73,8 @@ export async function developmentConnection(request: Request, userId: string, op
       }));
     }
     if (operation === "github") {
-      const { organizationId, path } = githubInput.parse(input);
-      return reply(200, await githubFor(env).api(organizationId, userId, path));
+      const github = githubInput.parse(input);
+      return reply(200, await githubFor(env).api(github.organizationId, userId, github.path, github.method, "input" in github ? github.input : undefined));
     }
     return reply(404, { error: "This development connection is unavailable." });
   } catch (error) {

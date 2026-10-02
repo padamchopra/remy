@@ -42,6 +42,16 @@ test("signs fresh scoped requests and never forwards the supplied actor", async 
   for (let i=0;i<2;i++) assert.equal((await bridge.execution(incoming({userId:"owner",organizationId:"org",workspaceId:"workspace",ignored:"value"}))).status,200);
 });
 
+test("GitHub read queries preserve their method and variables without forwarding the actor", async () => {
+  const query = {query:"query Viewer { viewer { login } }",variables:{}};
+  const bridge = productionBridge(identity,async (url,options) => {
+    assert.equal(url,"https://app.tryremy.dev/api/development/personal/github");
+    assert.deepEqual(JSON.parse(options.body),{organizationId:"org",path:"/graphql",method:"POST",input:query});
+    return Response.json({data:{viewer:{login:"owner"}}});
+  });
+  assert.equal((await bridge.connections(incoming({userId:"owner",organizationId:"org",path:"/graphql",method:"POST",input:query},"/github"))).status,200);
+});
+
 test("rejects another actor and neighboring routes without requesting credentials", async () => {
   const bridge = productionBridge(identity,()=>assert.fail("No production request is allowed"));
   assert.equal((await bridge.execution(incoming({userId:"someone-else"}))).status,403);

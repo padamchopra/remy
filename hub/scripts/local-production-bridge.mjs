@@ -84,7 +84,7 @@ export function productionBridge({registration, privateKey}, request = fetch) {
         if (input.userId !== registration.ownerUserId) return reply(403,"Use your own development connection.");
         return await callResponse(url.pathname.slice(1),url.pathname === "/chatgpt"
           ? {operation:input.operation,...(input.rejected ? {rejected:input.rejected} : {})}
-          : {organizationId:input.organizationId,path:input.path});
+          : {organizationId:input.organizationId,path:input.path,...(input.method ? {method:input.method} : {}),...(input.input === undefined ? {} : {input:input.input})});
       } catch (error) { return reply(error.status === 403 ? 403 : error.status === 409 ? 409 : 503,"Your production connection is unavailable. Check your development access and try again."); }
     },
   };

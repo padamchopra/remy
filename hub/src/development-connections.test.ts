@@ -39,6 +39,10 @@ test("development vendor access refuses arbitrary routes and malformed requests 
     const response = await developmentConnection(new Request("https://hub/development/github",{method:"POST",body:JSON.stringify({organizationId:"org",path})}),"owner","github",env);
     assert.equal(response.status,400);
   }
-  const oversized = await developmentConnection(new Request("https://hub/development/secrets",{method:"POST",body:"x".repeat(8193)}),"owner","secrets",env);
+  for (const query of ["mutation { deleteIssue(input:{id:\"1\"}) { clientMutationId } }", "query { viewer { login } } mutation { deleteIssue(input:{id:\"1\"}) { clientMutationId } }"]) {
+    const response = await developmentConnection(new Request("https://hub/development/github",{method:"POST",body:JSON.stringify({organizationId:"org",path:"/graphql",method:"POST",input:{query}})}),"owner","github",env);
+    assert.equal(response.status,400);
+  }
+  const oversized = await developmentConnection(new Request("https://hub/development/secrets",{method:"POST",body:"x".repeat(32769)}),"owner","secrets",env);
   assert.equal(oversized.status,413);
 });

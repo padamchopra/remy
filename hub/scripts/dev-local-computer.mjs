@@ -5,6 +5,7 @@ const state = process.env.REMY_LOCAL_STATE;
 const accountSession = process.env.REMY_LOCAL_ACCOUNT_SESSION;
 const personalId = process.env.REMY_LOCAL_PERSONAL_ID;
 const computerHub = process.env.REMY_LOCAL_COMPUTER_HUB ?? "http://127.0.0.1:5184";
+const publicHub = process.env.REMY_LOCAL_PUBLIC_HUB ?? computerHub;
 if (!state) throw new Error("Start this computer with npm run dev:local.");
 const environment = localComputerEnvironment(process.env, state);
 for (const key of Object.keys(process.env)) if (!(key in environment)) delete process.env[key];
@@ -15,9 +16,17 @@ setKv("config", localComputerConfig(getKv("config")));
 const { patchSettings } = await import("../../server/dist/config.js");
 patchSettings({hubMode: true, deviceName: "Local development"});
 if (accountSession && personalId) {
-  const registration = getKv("hubComputerRegistration");
+  let registration = getKv("hubComputerRegistration");
   if (registration && registration.organizationId !== personalId)
     throw new Error("Your local computer belongs to another account. Use a separate development state directory.");
+  if (registration) {
+    const response = await fetch(`${computerHub}/api/organizations/${encodeURIComponent(personalId)}/computers`, {
+      headers:{authorization:`Bearer ${accountSession}`},signal:AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error(`Your local computer could not check its registration (HTTP ${response.status}).`);
+    const {computers} = await response.json();
+    if (!computers.some(computer=>computer.computerId === registration.computerId)) registration = undefined;
+  }
   if (registration && registration.hubUrl !== computerHub) {
     const previous = new URL(registration.hubUrl);
     if (!(previous.origin === "http://127.0.0.1:5184" || (previous.protocol === "https:" && previous.hostname.endsWith(".trycloudflare.com"))))
@@ -32,7 +41,7 @@ if (accountSession && personalId) {
     if (!response.ok) throw new Error(`Your local computer could not connect (HTTP ${response.status}).`);
     const { decodeComputerConnectionKey } = await import("../../contract/src/index.ts");
     const connection = decodeComputerConnectionKey((await response.json()).key);
-    if (connection.url !== computerHub || connection.organizationId !== personalId || connection.ownership !== "personal")
+    if (connection.url !== publicHub || connection.organizationId !== personalId || connection.ownership !== "personal")
       throw new Error("Your local computer received an invalid connection key.");
     const {registerHubComputerWithDeviceCode,stopHubComputerConnection} = await import("../../server/dist/hub-computer.js");
     await registerHubComputerWithDeviceCode(computerHub,personalId,connection.key,"personal");

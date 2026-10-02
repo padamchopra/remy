@@ -1,4 +1,21 @@
 import { spawn } from "node:child_process";
+import { get } from "node:https";
+import { Resolver } from "node:dns";
+
+/// Query DNS directly because macOS can retain an initial negative cache entry
+/// for a newly allocated tunnel after its authoritative DNS has propagated.
+export function localHubReachable(url) {
+  const dns = new Resolver({timeout:2_000,tries:1});
+  dns.setServers(["1.1.1.1","1.0.0.1"]);
+  return new Promise(resolve => {
+    const request = get(new URL("/health",url), {lookup:(hostname,options,callback)=>dns.resolve4(hostname,(error,addresses)=>options.all ? callback(error,addresses?.map(address=>({address,family:4}))) : callback(error,addresses?.[0],4))}, response=>{
+      response.resume();
+      resolve(response.statusCode === 200);
+    });
+    request.setTimeout(5_000,()=>request.destroy());
+    request.once("error",()=>resolve(false));
+  });
+}
 
 /// Publish the authenticated local hub so a cloud computer can connect out.
 /// The daemon and runtime management port remain on loopback.
