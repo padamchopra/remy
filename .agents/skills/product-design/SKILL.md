@@ -233,7 +233,7 @@ The person decides what reaches the thread.
 
 ## Review agent
 
-A review is a thread with a pull request attached, started by a person from that pull request. Nothing starts one on push, on a schedule, or because a webhook arrived. It runs where any thread in that workspace could, chosen the same way.
+A review is a thread with a pull request attached, started by a person from that pull request. Nothing starts one on push, on a schedule, or because a webhook arrived. It runs where any thread in that workspace could, chosen the same way. Its cloud picker uses the same personal model access as a regular thread, including inside an organization; shared organization keys are not a prerequisite.
 The person chooses its permission mode at launch. Open its pending thread immediately as an app tab on the right, with the pull request tab on the left. Review threads stay out of the sidebar and remain reachable through their pull request or an open tab. The review tab owns findings, proposed rules and personal review rules, and supports full-screen and split layouts.
 
 The review agent never posts to GitHub. It reports findings to Remy; the person turns a finding into a draft in their own pending review and submits that review themselves.
