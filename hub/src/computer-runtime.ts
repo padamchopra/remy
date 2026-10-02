@@ -19,6 +19,7 @@ export type ProvisionComputerInput = {
   settings: HostedSettings;
   image: string;
   archive: string;
+  baseArchive?: string;
   environment: Record<string, string>;
   allowedDomains: string[];
 };

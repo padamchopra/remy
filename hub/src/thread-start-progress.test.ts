@@ -23,3 +23,9 @@ test("hosted lifecycle phases map onto the start status the client shows", () =>
   );
   assert.equal(threadStartProgress({ record: { error: "Fly.io could not start." } }), "failed");
 });
+
+test("retrying a start does not report the previous cloud failure", () => {
+  assert.equal(threadStartProgress({hostedPhase:"failed",record:{phase:"creating"}}),"creating");
+  assert.equal(threadStartProgress({hostedPhase:"starting_runtime",record:{phase:"creating"}}),"starting_runtime");
+  assert.equal(threadStartProgress({hostedPhase:"failed",record:{phase:"failed",error:"New failure"}}),"failed");
+});

@@ -72,6 +72,13 @@ retains its complete stored history. The hub retains 128 live
 frames per organization. Images are private R2 objects; this change does not add
 object retention policies or a full historical attachment cleanup service.
 
+The computer keeps only the latest 500 entries in memory; that limit does not
+delete SQLite rows. History reads page backward through stored entries, including
+after a restart, and snapshots advertise earlier rows outside the memory tail.
+An offline hub snapshot remains bounded: reading history outside it requires the
+computer to reconnect. Entries already deleted by older computer versions are
+not reconstructed by this retention change.
+
 ## Reproduce remote-live QA
 
 Install the repository dependencies and build the computer:

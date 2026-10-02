@@ -1,10 +1,11 @@
 import worker, { HubCoordinator as Coordinator } from "../src/worker.js";
 import type { Env } from "../src/worker.js";
 
-type LocalEnv = Env & { LOCAL_AUTH_SECRET: string };
+type LocalEnv = Env & { LOCAL_AUTH_SECRET: string; LOCAL_RUNTIME_TOKEN?: string; LOCAL_COMPUTER_ARCHIVE?: Fetcher };
 const bind = (env: LocalEnv): Env => ({
   ...env,
   AUTH_SECRET: { get: async () => env.LOCAL_AUTH_SECRET } as SecretsStoreSecret,
+  ...(env.LOCAL_RUNTIME_TOKEN ? { HOSTED_CONTROL_TOKEN: { get: async () => env.LOCAL_RUNTIME_TOKEN! } as SecretsStoreSecret } : {}),
   EMAIL_FROM: "local@remy.test",
   EMAIL: { send: async (mail: EmailMessageBuilder) => {
     await env.DB.prepare("INSERT INTO local_emails (recipient,subject,body) VALUES (?,?,?)")
@@ -21,6 +22,10 @@ export default {
   ...worker,
   async fetch(request: Request, env: LocalEnv) {
     const url = new URL(request.url);
+    if (url.pathname === "/__dev/computer.tar.gz" && env.LOCAL_COMPUTER_ARCHIVE) {
+      if (request.method !== "GET") return new Response(null, { status: 405 });
+      return env.LOCAL_COMPUTER_ARCHIVE.fetch(request);
+    }
     if (url.pathname === "/__dev/mail") {
       if (request.method !== "GET" || url.hostname !== "127.0.0.1" ||
           request.headers.get("sec-fetch-site") === "cross-site" ||

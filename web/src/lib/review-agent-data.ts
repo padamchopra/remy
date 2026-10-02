@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReviewRule, ReviewState } from "@remy/contract";
 import { HubRequestError } from "./hub-threads";
 import { shareSubscription } from "./shared-subscription";
-import { listReviewRules, readPullRequestReview, reviewLivePath } from "./review-agent";
+import { listReviewRules, readPullRequestReview, readThreadReview, reviewLivePath } from "./review-agent";
 import { apiError } from "./api-error";
 
 /// What the review socket says. Frames carry no content: each names what to
@@ -71,6 +71,32 @@ export function useReviewLive(organizationId: string, onFrame: (frame: ReviewLiv
     if (!organizationId) return;
     return watchReviewLive(organizationId, (frame) => latest.current(frame), () => undefined);
   }, [organizationId]);
+}
+
+export function useThreadReview(organizationId: string, computerId?: string, threadId?: string) {
+  const [review, setReview] = useState<ReviewState>();
+  const [error, setError] = useState<string>();
+  const request = useRef(0);
+  const read = useCallback(async () => {
+    const id = ++request.current;
+    if (!computerId || !threadId) return;
+    try {
+      const value = await readThreadReview(organizationId, computerId, threadId);
+      if (id === request.current) { setReview(value); setError(undefined); }
+    } catch (caught) {
+      if (id === request.current) setError(apiError(caught));
+    }
+  }, [organizationId, computerId, threadId]);
+  useEffect(() => {
+    setReview(undefined);
+    setError(undefined);
+    void read();
+    return () => { request.current += 1; };
+  }, [read]);
+  useReviewLive(organizationId, frame => {
+    if (frame.kind === "reset" || (frame.kind === "review" && frame.computerId === computerId && frame.threadId === threadId)) void read();
+  });
+  return { review, setReview, error, reload: read };
 }
 
 /// Your latest review of a pull request, kept current by the socket: read

@@ -26,6 +26,7 @@ const thread = {
   id, computerId: 'computer', revision: 1, stale: false, observedAt: Date.now(),
   access: { organizationId: 'personal', owner: { id: 'reader', label: 'Reader' }, participants: [], visibility: 'private' },
   detail: { id, title: 'Review #42: Keep work in app tabs', workspaceId: 'studio', branch: 'feature/app-tabs', state: 'idle',
+    review: { repository: 'studio/remy', number: 42, headSha: 'a'.repeat(40) },
     provider: 'codex', model: 'gpt-5.6-sol', permissionMode: 'default', entries: [
       { id: 'message', kind: 'user', text: 'Review pull request #42 Keep work in app tabs (feature/app-tabs → main)' },
       { id: 'answer', kind: 'assistant', text: 'The new tabs keep your pull request and review thread visible together.' },
@@ -34,15 +35,20 @@ const thread = {
 const filePath = 'android/browser-repository/src/main/java/ag/jup/jupiter/android/browser/repository/BrowserSiteClearanceWithAnExtraLongName.kt';
 const commits = [{ sha: 'a'.repeat(40), title: 'First change', author: 'Alex', date: '2026-09-30T00:00:00Z' }, { sha: 'b'.repeat(40), title: 'Second change', author: 'Alex', date: '2026-09-30T01:00:00Z' }];
 let reviewReady = false;
+let cloudOnly = false;
+let personalOpenRouter = false;
 let startInput;
+let releaseStart;
+const startGate = new Promise(resolve => { releaseStart = resolve; });
 const notifications = [];
 const notificationSockets = [];
 await page.routeWebSocket(/\/api\//, socket => { if (socket.url().includes('/notifications/live')) notificationSockets.push(socket); });
-await page.route('**/api/**', (route) => {
+await page.route('**/api/**', async (route) => {
   const path = new URL(route.request().url()).pathname;
   const base = '/api/organizations/personal';
   if (path === `${base}/threads` && route.request().method() === 'POST') {
     startInput = route.request().postDataJSON();
+    await startGate;
     reviewReady = true;
     return route.fulfill({ status: 201, json: { id, computerId: 'computer', phase: 'ready' } });
   }
@@ -58,10 +64,12 @@ await page.route('**/api/**', (route) => {
     '/api/review-rules': { rules: [] },
     [base]: { organization: account },
     [`${base}/threads`]: { threads: reviewReady ? [thread] : [], cursor: 1, member: { id: 'reader', role: 'owner' } },
-    [`${base}/computers`]: { computers: [{ computerId: 'computer', name: 'Studio Mac', ownership: 'personal', ownerUserId: 'reader', availability: 'available', canUse: true, capabilities: { workspaces: [{ id: 'studio', origin: workspace.origin }], providers: [{ id: 'codex', models: ['gpt-5.6-sol'] }] } }] },
-    [`${base}/computers/preference`]: { computerId: 'computer' },
+    [`${base}/computers`]: { computers: cloudOnly ? [] : [{ computerId: 'computer', name: 'Studio Mac', ownership: 'personal', ownerUserId: 'reader', availability: 'available', canUse: true, capabilities: { workspaces: [{ id: 'studio', origin: workspace.origin }], providers: [{ id: 'codex', models: ['gpt-5.6-sol'] }] } }] },
+    [`${base}/computers/preference`]: { computerId: cloudOnly ? 'cloud:fly-sprites' : 'computer' },
     [`${base}/model-defaults`]: { computer: { provider: 'codex', model: 'gpt-5.6-sol' } },
-    [`${base}/model-access`]: { providers: [] },
+    [`${base}/model-access`]: { providers: cloudOnly ? [{ id: 'openrouter', configured: false, enabled: false }] : [] },
+    [`${base}/own-model-access`]: { personal: false, providers: personalOpenRouter ? [{ id: 'openrouter', configured: true, allowed: true, keyName: 'Personal', models: ['openai/gpt-5.4'] }] : [] },
+    [`${base}/chatgpt`]: { available: cloudOnly && !personalOpenRouter },
     [`${base}/workspaces`]: { workspaces: [workspace], canManage: true },
     [`${base}/workspaces/studio`]: workspace,
     [`${base}/github/pull-requests`]: { pullRequests: [pr] },
@@ -70,11 +78,12 @@ await page.route('**/api/**', (route) => {
     [`${base}/github/pull-request-activity`]: { userId: 'reader', viewer: 'reader', seenAt: null, items: [] },
     [`${base}/github/pull-request-images`]: { images: {} },
     [`${base}/reviews`]: { review: reviewReady ? { threadId: id, computerId: 'computer', repository: 'studio/remy', number: 42, headSha: 'a'.repeat(40), reviewedSha: null, findings: [], proposals: [], rulesApplied: 0 } : null },
+    [`${base}/reviews/computer/${id}`]: { review: { threadId: id, computerId: 'computer', repository: 'studio/remy', number: 42, headSha: 'a'.repeat(40), findings: [], proposals: [], rulesApplied: 0 } },
     [`${base}/reviews/last`]: { last: null },
     [`${base}/computers/computer/threads/${id}`]: thread,
     [`${base}/notifications`]: { notifications, devices: [] },
     [`${base}/connections`]: { canManage: true, providers: [], connections: [] },
-    [`${base}/hosted`]: { available: false, enabledProviders: [], cloudPlacements: [] },
+    [`${base}/hosted`]: { available: cloudOnly, enabledProviders: cloudOnly ? ['fly-sprites'] : [], cloudPlacements: [] },
   };
   return route.fulfill({ status: path in responses ? 200 : 404, json: responses[path] ?? { error: 'Not in this review scenario' } });
 });
@@ -177,6 +186,12 @@ try {
   await page.getByRole('button', { name: 'Permission mode: Auto', exact: true }).waitFor();
   await page.screenshot({ path: `${output}/review-permission.png` });
   await page.getByRole('button', { name: 'Start review', exact: true }).click();
+  await page.waitForURL(url => /\/threads\/[^/]+$/.test(url.pathname) && !url.pathname.endsWith(`/threads/${id}`));
+  assert.equal(await page.locator('section[aria-label="prs pane"]:visible').count(), 1, 'The pull request remains on the left while startup waits');
+  assert.equal(await page.locator('section[aria-label="Thread pane"]:visible').count(), 1, 'The pending review is already an app tab');
+  assert.equal(await page.locator('[data-slot="review-agent-header"]:visible').count(), 0, 'Startup cannot open the embedded review pane');
+  await page.screenshot({ path: `${output}/pending-review-tabs.png` });
+  releaseStart();
   await page.waitForURL(/\/threads\/11111111/);
   assert.equal(startInput.permissionMode, 'auto');
   assert.deepEqual(startInput.review, { repository: 'studio/remy', number: 42 });
@@ -191,6 +206,12 @@ try {
   await page.getByRole('tab', { name: 'Review #42: Keep work in app tabs', exact: true }).first().waitFor();
   assert.equal(await splitHeaders.getByRole('tab', { name: 'Review #42: Keep work in app tabs', exact: true }).count(), 1);
   await page.getByText('The new tabs keep your pull request and review thread visible together.').waitFor();
+  assert.equal(await page.getByRole('button', { name: thread.detail.title, exact: true }).count(), 0, 'Review threads are absent from sidebar rows');
+  const reviewSurface = page.locator('[data-slot="review-thread"]:visible');
+  await reviewSurface.getByRole('button', { name: 'Rules', exact: true }).click();
+  await reviewSurface.getByRole('button', { name: 'Add rule', exact: true }).waitFor();
+  await page.screenshot({ path: `${output}/review-thread-rules.png` });
+  await reviewSurface.getByRole('button', { name: 'Back to the review agent', exact: true }).click();
   const reviewPane = page.locator('section[aria-label="Thread pane"]:visible');
   assert.equal(await reviewPane.getByRole('tablist').count(), 0, 'A thread pane cannot contain another tab collection');
   assert.equal(await reviewPane.getByRole('button', { name: 'Back', exact: true }).count(), 0);
@@ -236,9 +257,19 @@ try {
   thread.detail.state = 'idle';
   thread.detail.permissionMode = 'default';
   delete thread.detail.context;
+  let releaseReviewControls;
+  const reviewControlsGate = new Promise(resolve => { releaseReviewControls = resolve; });
+  await page.route(/\/assets\/ReviewThreadSurface-[^/]+\.js$/, async route => {
+    await reviewControlsGate;
+    await route.continue();
+  });
   await page.reload();
+  await page.getByRole('status', { name: 'Loading review agent', exact: true }).waitFor();
   await reviewPane.getByRole('textbox', { name: 'Message', exact: true }).waitFor();
   await reviewPane.getByRole('textbox', { name: 'Message', exact: true }).fill('Keep this draft while resizing.');
+  releaseReviewControls();
+  await reviewPane.getByRole('button', { name: 'Rules', exact: true }).waitFor();
+  assert.equal(await reviewPane.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'Keep this draft while resizing.');
   const resize = async (ratio, horizontal) => {
     const handle = page.getByRole('separator', { name: 'Resize panes' });
     const box = await handle.boundingBox();
@@ -359,6 +390,20 @@ try {
   await prHeader.getByRole('button', { name: 'More actions', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Open workspace', exact: true }).click();
   await page.waitForURL(/\/workspaces\/studio/);
+  cloudOnly = true;
+  reviewReady = false;
+  await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
+  await page.goto(`${origin}/app/pull-requests/studio/remy/42`);
+  await page.getByRole('button', { name: 'Review with agent', exact: true }).click();
+  await page.getByRole('button', { name: 'Start review', exact: true }).waitFor();
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent === 'Start review' && !button.disabled));
+  assert.equal(await page.getByText('No computer can review this yet', { exact: true }).count(), 0, 'Your ChatGPT access can review on Fly.io without organization model keys');
+  await page.screenshot({ path: `${output}/personal-cloud-review.png` });
+  personalOpenRouter = true;
+  await page.reload();
+  await page.getByRole('button', { name: 'Review with agent', exact: true }).click();
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent === 'Start review' && !button.disabled));
+  assert.equal(await page.getByText('No computer can review this yet', { exact: true }).count(), 0, 'Your OpenRouter key can review on Fly.io without organization model keys');
   assert.deepEqual(errors, []);
   console.log('Review split QA passed: commit list, selected commit patches, all commits, phone picker, one tab strip, adjacent plus, context menu, header drag, PR left, review right, resizing, preserved draft, keyboard, saved ratio, thread details, sidebar focus and reload.');
 } catch (error) {

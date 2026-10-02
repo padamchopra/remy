@@ -66,3 +66,16 @@ test("only a member in front of Remy creates a key, and only an admin shares a c
   assert.equal(decodeComputerConnectionKey(((await shared.json()) as { key: string }).key).ownership, "organization");
   sqlite.close();
 });
+
+test("development keys use the public hub address behind a local tunnel", async () => {
+  const { accounts, route, env, sqlite } = hub();
+  const web = await accounts.createSession("ada", "web", "Browser");
+  env.BETTER_AUTH_URL = "https://preview.trycloudflare.com";
+  env.DEVELOPMENT_CONNECTIONS = { fetch: async () => Response.json({}) } as unknown as Fetcher;
+  const response = await route(new Request("http://127.0.0.1:5184/api/organizations/studio/computers/connection-keys", {
+    method: "POST", headers: { authorization: `Bearer ${web.accessToken}`, "content-type": "application/json" }, body: "{}",
+  }), env);
+  assert.equal(response.status, 200);
+  assert.equal(decodeComputerConnectionKey((await response.json() as { key: string }).key).url, env.BETTER_AUTH_URL);
+  sqlite.close();
+});

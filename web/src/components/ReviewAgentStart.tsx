@@ -7,7 +7,6 @@ import { PopoverDescription, PopoverTitle } from "@/components/ui/popover-base";
 import { ModelPickerButton } from "@/components/ModelPicker";
 import { PermissionPicker } from "@/components/PermissionPicker";
 import type { PermissionValue } from "@/lib/chat-options";
-import type { ModelAccessResponse } from "@/components/HubModelAccess";
 import { startHubThread } from "@/lib/hub-thread-start";
 import { useHubStartChoice, type StartPreference } from "@/lib/hub-start-choice";
 import { useHubResource } from "@/lib/hub-organization";
@@ -95,10 +94,8 @@ export function ReviewAgentStart({
   });
   const [focus, setFocus] = useState("");
   const [permissionMode, setPermissionMode] = useState<PermissionValue>("default");
-  const access = useHubResource<ModelAccessResponse>(organizationId, "/model-access");
   const name = workspace?.name ?? repositoryName(repository);
-  const cloudAccess = (access.value?.providers ?? []).some((entry) => entry.enabled && entry.configured);
-  const nothing = choice.optionsKnown && !!access.value && choice.eligible.length === 0 && (choice.cloudOptions.length === 0 || !cloudAccess);
+  const nothing = choice.optionsKnown && choice.eligible.length === 0 && choice.cloudOptions.length === 0;
   const [requestId] = useState(() => crypto.randomUUID());
 
   const start = () => {

@@ -69,6 +69,36 @@ const tool = { type: "assistant", parent_tool_use_id: null, message: { id: "mess
   { type: "tool_use", id: "tool-1", name: "Bash", input: { command: "true" } },
 ] } };
 
+test("a tool-heavy turn keeps its first message in storage after the memory tail rolls over", async (t) => {
+  const { chat, sessions } = fixture(t);
+  await chat.send("Keep my first message.");
+  const session = threadSessions(sessions)[0];
+  for (let index = 0; index < 520; index += 1) {
+    session.emit({ type: "assistant", parent_tool_use_id: null, message: { id: `message-${index}`, content: [
+      { type: "tool_use", id: `tool-${index}`, name: "Bash", input: { command: "true" } },
+    ] } });
+  }
+  session.emit(result);
+  for (let index = 0; index < 10; index += 1) await tick();
+  const { loadChat } = await import("./chat-storage.js");
+  const stored = loadChat(chat.record.id, -1)!;
+  assert.equal(stored.entries[0].text, "Keep my first message.");
+  assert.ok(stored.entries.length > 500);
+  assert.ok(chat.detail().entries.length <= 500);
+  const recent = chat.detailWindow(8);
+  assert.equal(recent.history?.hasEarlier, true);
+  let page = recent;
+  const ids: string[] = [];
+  for (let index = 0; index < 30; index += 1) {
+    ids.unshift(...page.entries.map(entry => entry.id));
+    if (!page.history?.hasEarlier) break;
+    page = chat.detailWindow(8, page.history.before);
+  }
+  assert.equal(page.entries[0].text, "Keep my first message.");
+  assert.equal(page.history?.hasEarlier, false);
+  assert.equal(new Set(ids).size, ids.length);
+});
+
 test("Claude uses the managed login and replaces its session when the token changes", async (t) => {
   const { chat, sessions } = fixture(t);
   const credentials = (accessToken: string) => JSON.stringify({ claudeAiOauth: { accessToken, expiresAt: Date.now() + 60_000 } });

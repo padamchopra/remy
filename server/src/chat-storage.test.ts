@@ -116,13 +116,15 @@ test("the entry limit keeps the newest entries", () => {
   assert.deepEqual(loaded?.entries.map((e) => e.id), ["n8", "n9", "n10"]);
 });
 
-test("trimming drops the oldest entries and leaves the rest ordered", () => {
+test("bounded reads retain earlier entries and page in order", () => {
   storage.saveChat(chat("d"));
   for (let i = 1; i <= 6; i += 1) storage.saveEntry("d", entry(`t${i}`, `line ${i}`));
-  storage.trimEntries("d", 2);
-
-  const loaded = storage.loadChats(100).find((c) => c.id === "d");
-  assert.deepEqual(loaded?.entries.map((e) => e.id), ["t5", "t6"]);
+  assert.deepEqual(storage.loadChat("d", 2)?.entries.map(e => e.id), ["t5", "t6"]);
+  assert.equal(storage.hasEntriesBefore("d", "t5"), true);
+  assert.deepEqual(storage.loadEntriesBefore("d", "t5", 2).map(e => e.id), ["t3", "t4"]);
+  assert.deepEqual(storage.loadEntriesBefore("d", "t3", 2).map(e => e.id), ["t1", "t2"]);
+  assert.equal(storage.hasEntriesBefore("d", "t1"), false);
+  assert.equal(storage.loadChat("d", 100)?.entries.length, 6);
 });
 
 test("deleting entries and chats removes them", () => {

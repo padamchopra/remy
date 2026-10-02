@@ -8,6 +8,8 @@ Apply migration 0010. An administrator configures exact writable branch names th
 
 The hosted bootstrap creates a repo-local executable credential helper, enables useHttpPath and sets origin to the credential-free hub URL. Initial fetch requests a read-only capability and checks out FETCH_HEAD. Future Git commands ask the hub for a fresh capability. The helper ignores store/erase and never writes tokens. Snapshot state contains the computer's existing identity and helper configuration, not GitHub credentials.
 
+Git may gzip a history request, including the deeper fetch used by a review agent. The hub decodes gzip before forwarding or validating pushed refs, and applies the 50 MB limit to the decoded request. Invalid gzip returns 400 and unsupported encodings return 415; compressed writes retain the same branch restrictions.
+
 Every token request and proxy operation rechecks the immutable hub-managed computer/workspace binding. Guest-advertised capabilities cannot grant access to a second repository. Revoking a computer, removing its workspace or changing the branch policy takes effect on the next request. A copied capability cannot renew itself. At five minutes it is refused, even if a slow request began before expiry. An already forwarded operation can finish.
 
 Tests cover expiry boundaries, tampering, repository normalization, multi-ref pushes, protected branches, deletes, tags, malformed packets, read-only writes and upstream redirects/header isolation. Live private-repository clone/push awaits a configured GitHub App installation. Keep the PR draft until that and hosted in-app evidence are available.

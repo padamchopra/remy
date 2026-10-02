@@ -157,11 +157,15 @@ export async function proxyGit(
       !url.search);
   if (!valid || (write && !grant.write))
     return new Response(null, { status: 403 });
-  if (request.headers.has("content-encoding"))
+  const encoding = request.headers.get("content-encoding")?.toLowerCase();
+  if (encoding && (encoding !== "gzip" || request.method !== "POST"))
     return new Response(null, { status: 415 });
   let body: ArrayBuffer | undefined;
   if (request.method === "POST") {
-    const reader = request.body?.getReader();
+    const stream = encoding === "gzip"
+      ? request.body?.pipeThrough(new DecompressionStream("gzip"))
+      : request.body;
+    const reader = stream?.getReader();
     const chunks: Uint8Array[] = [];
     let size = 0;
     if (reader)
@@ -176,6 +180,8 @@ export async function proxyGit(
           }
           chunks.push(part.value);
         }
+      } catch {
+        return new Response(null, { status: 400 });
       } finally {
         reader.releaseLock();
       }

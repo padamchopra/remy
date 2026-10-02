@@ -1,28 +1,34 @@
 type DevelopmentComputer = {computerId: string; organizationId: string; ownership: string; ownerUserId: string | null};
 type DevelopmentBridge = {
   allowedComputerIds?: string | undefined;
+  approved?: (computer: DevelopmentComputer) => Promise<boolean>;
   authenticate: (request: Request, organizationId: string) => Promise<DevelopmentComputer | undefined>;
   bootstrap: (userId: string) => Promise<unknown>;
   threadAccess?: (userId: string, organizationId: string, workspaceId: string) => Promise<unknown>;
+  connection?: (request: Request, userId: string, operation: string) => Promise<Response>;
 };
 
 /// Development access belongs to an explicitly enabled personal computer,
 /// never to a browser session or a computer shared by an organization.
 export async function developmentBridge(request: Request, bridge: DevelopmentBridge): Promise<Response | undefined> {
-  const match = /^\/api\/development\/([^/]+)\/(bootstrap|thread-access)$/.exec(new URL(request.url).pathname);
+  const match = /^\/api\/development\/([^/]+)\/(bootstrap|thread-access|secrets|chatgpt|github|git\/(?:info\/refs|git-upload-pack))$/.exec(new URL(request.url).pathname);
   if (!match) return;
   const reply = (status: number, value: unknown) => Response.json(value, {status, headers:{"cache-control":"no-store"}});
   const allowed = new Set((bridge.allowedComputerIds ?? "").split(",").map(id => id.trim()).filter(Boolean));
-  if (!allowed.size) return reply(404, {error:"Local development access is not enabled."});
+  if (!allowed.size && !bridge.approved) return reply(404, {error:"Local development access is not enabled."});
   if (request.method !== "POST") return reply(405, {error:"Use a development computer to connect."});
   if (request.headers.has("origin") || request.headers.has("sec-fetch-site")) return reply(403, {error:"Use a development computer to connect."});
   let organizationId: string;
   try { organizationId = decodeURIComponent(match[1]!); }
   catch { return reply(400, {error:"Choose a valid account."}); }
   const computer = await bridge.authenticate(request, organizationId);
-  if (!computer || !allowed.has(computer.computerId) || computer.organizationId !== organizationId || computer.ownership !== "personal" || !computer.ownerUserId)
+  if (!computer || computer.organizationId !== organizationId || computer.ownership !== "personal" || !computer.ownerUserId ||
+      (!allowed.has(computer.computerId) && !await bridge.approved?.(computer)))
     return reply(403, {error:"This computer cannot use local development access."});
   if (match[2] === "bootstrap") return reply(200, await bridge.bootstrap(computer.ownerUserId));
+  if (match[2] !== "thread-access") return bridge.connection
+    ? bridge.connection(request, computer.ownerUserId, match[2]!)
+    : reply(404, {error:"This development connection is unavailable."});
   if (!bridge.threadAccess) return reply(404, {error:"Local thread access is unavailable."});
   const reader = request.body?.getReader();
   if (!reader) return reply(400, {error:"Choose a workspace."});

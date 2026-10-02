@@ -40,6 +40,7 @@ export function threadStartProgress(input: {
   if (record?.phase === "ready" && record.id && record.computerId && record.messageSent) return "ready";
   if (record?.phase === "sending") return "sending";
   if (record?.phase === "preparing_branch") return "preparing_branch";
+  if (record?.phase === "creating" && input.hostedPhase === "failed") return "creating";
   const hosted = input.hostedPhase ? HOSTED_PROGRESS[input.hostedPhase] : undefined;
   if (hosted) return hosted;
   return "creating";

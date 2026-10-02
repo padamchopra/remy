@@ -45,7 +45,7 @@ import { HubThreadComposer, type HubThreadWorkspaceOption } from "./HubThreadCom
 import { watchHubComputers } from "@/lib/hub-computers";
 import { HubNotifications } from "./HubNotifications";
 import { deviceIcon, type DeviceIconId } from "@/lib/devices";
-import { lazy, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { lazy, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   canWriteThread,
   cloudComputerName,
@@ -75,6 +75,25 @@ import { LinearThreadNotice } from "./LinearConnection";
 import type { Route } from "@/lib/route";
 
 const ThreadActivityTool = lazy(() => import("@/components/ThreadActivity").then(module => ({ default: module.ThreadActivityTool })));
+const ReviewThreadSurface = lazy(() => import("./ReviewThreadSurface"));
+
+function ReviewThreadFrame({ reference, children, ...props }: {
+  reference?: { repository: string; number: number };
+  organizationId: string;
+  computerId?: string;
+  threadId?: string;
+  navigate: (route: Route) => void;
+  children: ReactNode;
+}) {
+  const [showRules, setShowRules] = useState(false);
+  useEffect(() => { setShowRules(false); }, [props.organizationId, props.computerId, props.threadId]);
+  return <div data-slot={reference ? "review-thread" : undefined} className="flex min-h-0 min-w-0 flex-1 flex-col">
+    {reference && <Deferred open fallback={<div className="h-12 shrink-0" role="status" aria-label="Loading review agent" />}>
+      <ReviewThreadSurface reference={reference} {...props} showRules={showRules} onShowRules={setShowRules} />
+    </Deferred>}
+    <div className={reference && showRules ? "hidden" : "flex min-h-0 min-w-0 flex-1 flex-col"}>{children}</div>
+  </div>;
+}
 
 type Approval = {
   requestId: string;
@@ -188,11 +207,11 @@ export default function HubThreads({
   const savedThread = threads.find(
     (item) => item.computerId !== "pending" && item.id === threadId,
   );
-  const thread: HubThread | undefined = savedThread ?? (pending ? {
+  const thread: HubThread | undefined = useMemo(() => savedThread ?? (pending ? {
     id: pending.requestId, computerId: pending.created?.computerId ?? "pending", stale: false, revision: 0, observedAt: pending.at,
     access: {organizationId, owner: member ?? {id: "pending", label: "You"}, participants: [], visibility: pending.visibility},
     detail: {id: pending.requestId, workspaceId: pending.workspaceId, title: pending.message.slice(0, 200), state: "working", entries: [{id: `u-${pending.requestId}`, kind: "user", text: pending.message}]},
-  } : undefined);
+  } : undefined), [savedThread, pending, organizationId, member]);
   const [liveNotice, setLiveNotice] = useState<string | null>();
   useEffect(() => {
     if (!savedThread || savedThread.access.owner.id !== member?.id) {
@@ -358,7 +377,7 @@ export default function HubThreads({
       aria-label="Threads"
     >
       {thread ? (
-        <>
+        <ReviewThreadFrame organizationId={organizationId} computerId={savedThread?.computerId} threadId={savedThread?.id} navigate={navigate} reference={(thread.detail.review as { repository: string; number: number } | undefined) ?? pending?.review}>
           {error && (
               <p role="alert" className="shrink-0 px-4 py-2 text-sm text-destructive">{error}</p>
             )}
@@ -627,7 +646,7 @@ export default function HubThreads({
               </Deferred>
             </DialogContent>
           </Dialog>
-        </>
+        </ReviewThreadFrame>
       ) : (
         <>
           {showNavigation && <PaneHeader sidebar crumbs={[{ label: "Threads" }]}>

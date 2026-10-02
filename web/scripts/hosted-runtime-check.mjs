@@ -91,6 +91,9 @@ try {
       const enabledProviders = new Set();
       const computerName = returning ? "Studio-Mac-with-a-long-unbroken-name-for-release-and-preview-builds" : "Studio Mac";
       page.on("pageerror", error => errors.push(error.message));
+      page.on("console", message => {
+        if (message.type() === "error" && message.text().includes("Maximum update depth exceeded")) errors.push(message.text());
+      });
       let disconnectLive = false;
       const liveSockets = [];
       await page.routeWebSocket(/\/api\//, socket => { liveSockets.push(socket); if (disconnectLive) socket.close(); });

@@ -20,6 +20,7 @@ import {
   deleteChatGroup,
   getChat,
   getChatWindow,
+  getChatHistoryEntries,
   interruptChat,
   respondToApproval,
   respondToQuestion,
@@ -35,8 +36,10 @@ import { closeBrowser } from "./browser.js";
 import { closeTerminal } from "./terminal.js";
 import { getKv, setKv } from "./db.js";
 import { broadcast } from "./notify.js";
+import { hasEntriesBefore } from "./chat-storage.js";
 import { checkoutReviewWorktree, checkoutWorkspaceBranch, listWorkspaces } from "./workspaces.js";
 import type { ChatCodeReference, ChatImageAttachment, ConvEntry } from "./transcript.js";
+import { isActivityHeartbeat } from "./transcript.js";
 import { validateChatCodeReferences } from "./chat-references.js";
 import { removeWorktree } from "./git.js";
 import { forgetThreadReview, movedHeadContext, parseHubReview, setThreadReview, threadReview, updatedRulesContext } from "./review-agent.js";
@@ -82,15 +85,9 @@ export function shareHubThread(
 
 const HUB_MIRROR_BYTES = 96_000;
 
-function heartbeat(entry: ConvEntry): boolean {
-  return entry.kind === "tool" && Boolean(entry.activity)
-    && !entry.verb && !entry.tool && !entry.arg && !entry.output && !entry.text
-    && !entry.diff?.length && !entry.file;
-}
-
 function readableEntries(entries: readonly ConvEntry[]): ConvEntry[] {
   return entries.flatMap((entry) => {
-    if (heartbeat(entry)) return [];
+    if (isActivityHeartbeat(entry)) return [];
     if (!entry.activity) return [entry];
     const { activity: _activity, ...rest } = entry;
     return [rest];
@@ -139,13 +136,13 @@ export function transcriptPage(entries: readonly ConvEntry[], before?: string, b
   };
 }
 
-function rememberEarlier(detail: { entries: ConvEntry[]; history?: { hasEarlier: boolean; before?: string } }, stored: readonly ConvEntry[]): void {
+function rememberEarlier(detail: { id: string; entries: ConvEntry[]; history?: { hasEarlier: boolean; before?: string } }, stored: readonly ConvEntry[]): void {
   const readable = readableEntries(stored);
   const first = detail.entries[0]?.id;
   const index = first ? readable.findIndex((entry) => entry.id === first) : -1;
   // Heartbeats before the first kept row are not readable, so they are not
   // another page. Anything else in front of that row still is.
-  if (index > 0 && first) detail.history = { hasEarlier: true, before: first };
+  if (first && (index > 0 || hasEntriesBefore(detail.id, first))) detail.history = { hasEarlier: true, before: first };
   else detail.history = undefined;
 }
 
@@ -174,6 +171,10 @@ export function hubThreadSnapshot(
   setKv(revisionKey, revision);
   fitHubMirror(detail);
   const full = getChat(id);
+  if (!detail.entries.length && full?.entries[0]) {
+    detail.entries = getChatHistoryEntries(id, full.entries[0].id) ?? [];
+    fitHubMirror(detail);
+  }
   if (full) rememberEarlier(detail, full.entries);
   const branchState = `${detail.cwd}:${detail.state}`;
   const refreshBranch = branchStates.get(id) !== branchState;
@@ -297,7 +298,10 @@ export async function handleHubThreadRequest(
       if (!chat) return fail(404, "This thread is no longer available.");
       const before = typeof input.before === "string" ? input.before : undefined;
       try {
-        return Response.json(transcriptPage(chat.entries, before));
+        const page = transcriptPage(getChatHistoryEntries(id, before)!);
+        const first = page.entries[0]?.id;
+        if (first && hasEntriesBefore(id, first)) page.history = { hasEarlier: true, before: first };
+        return Response.json(page);
       } catch (error) {
         return fail(409, error instanceof Error ? error.message : "That part of the thread is no longer available.");
       }

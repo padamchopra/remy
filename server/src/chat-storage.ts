@@ -2,6 +2,7 @@ import type { StatementSync } from "node:sqlite";
 import { db } from "./db.js";
 import { providerId, type ProviderId } from "./providers.js";
 import type { ConvEntry, ConvTodo, ContextUsage } from "./transcript.js";
+import { isActivityHeartbeat } from "./transcript.js";
 import type { ChatPermissionMode } from "./chat.js";
 
 /// The columns of one chat. Its feed and plan live in their own rows.
@@ -116,15 +117,24 @@ export function deleteEntries(chatId: string, entryIds: string[]): void {
   for (const id of entryIds) statement.run(chatId, id);
 }
 
-/// Keeps the newest `max` entries. Older turns stay in Claude's transcript.
-export function trimEntries(chatId: string, max: number): void {
-  db.prepare(
-    `delete from chat_entries
-      where chat_id = ?
-        and entry_id not in (
-          select entry_id from chat_entries where chat_id = ? order by seq desc limit ?
-        )`,
-  ).run(chatId, chatId, max);
+/// Reads a bounded page without removing the rest of the saved transcript.
+export function loadEntriesBefore(chatId: string, before: string, limit: number): ConvEntry[] {
+  const cursor = db.prepare("select seq from chat_entries where chat_id = ? and entry_id = ?").get(chatId, before) as { seq: number } | undefined;
+  if (!cursor) throw new Error("that history cursor is no longer available");
+  const statement = db.prepare("select json from chat_entries where chat_id = ? and seq < ? order by seq desc");
+  const entries: ConvEntry[] = [];
+  for (const row of statement.iterate(chatId, cursor.seq)) {
+    const entry = parse<ConvEntry>(String(row.json));
+    if (!entry || isActivityHeartbeat(entry)) continue;
+    entries.push(entry);
+    if (entries.length >= limit) break;
+  }
+  return entries.reverse();
+}
+
+export function hasEntriesBefore(chatId: string, before: string): boolean {
+  if (!db.prepare("select 1 from chat_entries where chat_id = ? and entry_id = ?").get(chatId, before)) return false;
+  return loadEntriesBefore(chatId, before, 1).length > 0;
 }
 
 export function removeChat(id: string): void {
@@ -155,6 +165,10 @@ export function loadChat(id: string, entryLimit: number): StoredChat | undefined
 
 function readEntries(statement: StatementSync, chatId: string, limit: number): ConvEntry[] {
   const rows = statement.all(chatId, limit) as { json: string }[];
+  return parseEntries(rows);
+}
+
+function parseEntries(rows: { json: string }[]): ConvEntry[] {
   const parsed: ConvEntry[] = [];
   // Selected newest-first so the limit takes the tail; the feed reads oldest-first.
   for (const row of rows.reverse()) {

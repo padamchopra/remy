@@ -53,6 +53,8 @@ Start with an empty account, follow the computer setup handoff, add a workspace 
 
 Choose the preview by what changed:
 
+Backend fixes are tested through the current local hub and computer, with the affected real connections available. `dev:hosted` uses the deployed backend and cannot prove an unshipped backend fix. Production bridge approval is one-time setup; do not deploy app changes just to iterate on a local preview. Keep test threads and cloud computer registrations on the local hub, and use the current checkout's computer archive for cloud tests. Verify the journey in the shared browser before calling the local loop ready.
+
 - **UI only:** `npm run dev:hosted` serves the edited UI at `http://127.0.0.1:5174` against your live hosted account. Open `127.0.0.1`, not `localhost`.
 - **Daemon or hub behavior:** build the server and the web app in its deployed layout, then run `QA_HUB_WEB=1 QA_COMPUTER_POLICY=1 node hub/scripts/qa-threads.mjs` (the commands are in `AGENTS.md` under **Running it locally**). It attaches the current `server/dist` as a computer to a disposable hub that serves the current web app at the printed `QA_HUB` address, with a sample workspace and thread. Sign in through the printed session's tokens, as `web/scripts/qa-hub-threads.mjs` does, and drive that address.
 - **Hosted web:** for live start, organizations, computers, or providers, use `dev:hosted` or `app.tryremy.dev` with the live account as in **Hosted live account**. The disposable hub is for captured-mail implementation checks; it does not prove your live account's permissions or cloud availability.

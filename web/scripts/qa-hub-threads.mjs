@@ -294,20 +294,22 @@ try {
   await page.screenshot({ path: join(out, "desktop.png") });
   await page.setViewportSize({ width: 390, height: 844 });
   const toggle = page.getByRole("button", { name: "Toggle Sidebar", exact: true });
-  if (await toggle.isVisible()) { await toggle.click(); await page.keyboard.press("Escape"); }
-  await page.waitForTimeout(250);
+  await recentThreads.waitFor({ state: "hidden" });
   await page.screenshot({ path: join(out, "mobile.png") });
-  if (!(await recentThreads.isVisible())) {
-    await toggle.click();
-    await recentThreads.waitFor({ state: "visible" });
-  }
+  await toggle.click();
+  const mobileSidebar = page.getByRole("dialog", { name: "Sidebar", exact: true });
+  await mobileSidebar.waitFor({ state: "visible" });
+  const mobileRecentThreads = mobileSidebar
+    .locator('[data-sidebar="group"]')
+    .filter({ hasText: "Recent threads" });
   assert.equal(
-    await recentThreads.evaluate(
+    await mobileRecentThreads.evaluate(
       (element) => element.scrollWidth > element.clientWidth,
     ),
     false,
   );
   await page.keyboard.press("Escape");
+  await mobileSidebar.waitFor({ state: "hidden" });
   for (const [label, expected] of [
     ["Decline", "Declined permission."],
     ["Always allow", "Always allowed permission."],

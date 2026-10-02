@@ -32,12 +32,15 @@ import {
   chatStorageError,
   deleteEntries,
   loadChats,
+  loadChat,
+  loadEntriesBefore,
+  hasEntriesBefore,
   removeChat,
   saveChat,
   saveEntry,
-  trimEntries,
 } from "./chat-storage.js";
 import { chatWindow, type ChatHistory } from "./chat-window.js";
+import { isActivityHeartbeat } from "./transcript.js";
 import { config } from "./config.js";
 import { suggestName } from "./namer.js";
 import { remyMcpProcess } from "./mcp-process.js";
@@ -191,8 +194,7 @@ export interface ChatDetail extends ChatSummary {
   linearNotice?: string;
 }
 
-// The feed a client renders. Older turns stay in Claude's own transcript; this
-// is the window Remy keeps.
+// Keep memory bounded; older entries remain in SQLite for history reads.
 const MAX_ENTRIES = 500;
 const INITIAL_CHAT_WINDOW_BYTES = 96 * 1024;
 // A chat with no live turn drops its Claude process after this, and resumes by
@@ -354,8 +356,20 @@ export class Chat {
   }
 
   detailWindow(turns: number, before?: string): ChatDetail {
-    const page = chatWindow(this.record.entries, turns, before, INITIAL_CHAT_WINDOW_BYTES);
+    const page = chatWindow(this.historyEntries(before), turns, undefined, INITIAL_CHAT_WINDOW_BYTES);
+    const first = page.entries[0]?.id;
+    if (first && hasEntriesBefore(this.record.id, first)) page.history = { hasEarlier: true, before: first };
     return { ...this.detail(), ...page };
+  }
+
+  historyEntries(before?: string): ConvEntry[] {
+    if (before === undefined) return this.record.entries;
+    const index = this.record.entries.findIndex((entry) => entry.id === before);
+    if (index > 0) {
+      const entries = this.record.entries.slice(0, index).filter(entry => !isActivityHeartbeat(entry));
+      if (entries.length) return entries;
+    }
+    return loadEntriesBefore(this.record.id, before, MAX_ENTRIES);
   }
 
   // ── sending ──────────────────────────────────────────────────────────────
@@ -926,7 +940,6 @@ export class Chat {
     if (this.record.entries.length > MAX_ENTRIES) {
       const dropped = this.record.entries.splice(0, this.record.entries.length - MAX_ENTRIES);
       for (const old of dropped) this.byId.delete(old.id);
-      if (!this.deleted) trimEntries(this.record.id, MAX_ENTRIES);
     }
     this.record.updatedAt = nowMs();
     this.markDirty(entry.id);
@@ -1117,6 +1130,8 @@ export interface ArchivedConversation extends Conversation {
 
 export function archiveConversation(id: string): ArchivedConversation {
   const record = mustGet(id).record;
+  const entries = new Map((loadChat(id, -1)?.entries ?? []).map(entry => [entry.id, entry]));
+  for (const entry of record.entries) entries.set(entry.id, entry);
   return {
     available: true,
     agent: record.provider,
@@ -1133,7 +1148,7 @@ export function archiveConversation(id: string): ArchivedConversation {
     parentChatId: record.parentChatId,
     context: record.context,
     todos: record.todos,
-    entries: record.entries,
+    entries: [...entries.values()],
   };
 }
 
@@ -1189,6 +1204,10 @@ export function getChat(id: string): ChatDetail | undefined {
 
 export function getChatWindow(id: string, turns: number, before?: string): ChatDetail | undefined {
   return chats.get(id)?.detailWindow(turns, before);
+}
+
+export function getChatHistoryEntries(id: string, before?: string): ConvEntry[] | undefined {
+  return chats.get(id)?.historyEntries(before);
 }
 
 /// Clears a thread's unread mark. Opening it is what calls this, from

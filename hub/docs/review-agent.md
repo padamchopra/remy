@@ -1,8 +1,11 @@
 # Review agent
 
 A review is an ordinary thread with a pull request attached. A person starts it
-from a pull request; nothing starts one on push. It appears in the sidebar as
-"Review #n: title", follows the usual thread defaults for who can read it, and
+from a pull request; nothing starts one on push. It opens immediately as an app
+tab beside its pull request, including while its computer starts. Review threads
+stay out of the sidebar and remain reachable from their pull request and open
+tabs. Their tabs include findings, proposed rules and personal review rules, and
+can be shown full screen or split. A review follows the usual thread defaults for who can read it, and
 runs on a computer chosen exactly as for any thread in that workspace
 (`chooseComputer`). Its computer checks the pull request's head out in a worktree
 of its own, and the agent writes findings directly in the thread. It can propose review

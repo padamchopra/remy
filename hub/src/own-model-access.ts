@@ -74,7 +74,7 @@ export async function ownModelAccess(db: D1Database, store: HostedSettingsStore,
   const ownRows = (await db.prepare("SELECT provider,key_ids FROM organization_own_model_access WHERE organization_id=? AND user_id=?")
     .bind(org, userId).all<{ provider: ModelAccessId; key_ids: string | null }>()).results;
   const ownByProvider = new Map(ownRows.map((row) => [row.provider, row.key_ids]));
-  const providers: OwnModelAccess["providers"] = [{ id: "chatgpt", configured: await chatgptConnected(db, userId), allowed: await chatgptEnabled(db, org, userId), keyName: null, keys: [], models: [] }];
+  const providers: OwnModelAccess["providers"] = [{ id: "chatgpt", configured: await chatgptConnected(db, userId, store.development), allowed: await chatgptEnabled(db, org, userId), keyName: null, keys: [], models: [] }];
   for (const entry of modelAccess(secrets)) {
     const keys = publicModelKeys(entry.id, secrets);
     const selected = new Set(selectedKeys(keys, ownByProvider.get(entry.id)).map((key) => key.id));
