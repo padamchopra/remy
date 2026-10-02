@@ -182,7 +182,7 @@ try {
   await page.getByRole('button', { name: 'Permission mode: Auto', exact: true }).waitFor();
   await page.screenshot({ path: `${output}/review-permission.png` });
   await page.getByRole('button', { name: 'Start review', exact: true }).click();
-  await page.waitForURL(url => url.pathname.startsWith('/threads/') && url.pathname !== `/threads/${id}`);
+  await page.waitForURL(url => /\/threads\/[^/]+$/.test(url.pathname) && !url.pathname.endsWith(`/threads/${id}`));
   assert.equal(await page.locator('section[aria-label="prs pane"]:visible').count(), 1, 'The pull request remains on the left while startup waits');
   assert.equal(await page.locator('section[aria-label="Thread pane"]:visible').count(), 1, 'The pending review is already an app tab');
   assert.equal(await page.locator('[data-slot="review-agent-header"]:visible').count(), 0, 'Startup cannot open the embedded review pane');

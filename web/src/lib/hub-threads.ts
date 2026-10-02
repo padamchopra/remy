@@ -78,7 +78,7 @@ function startHubThreads(
     const pending: HubThread[] = member ? threadStarts().filter(s => s.ownerId === member!.id && s.organizationId === organizationId && ![...threads.values()].some(t => t.id === s.created?.id && t.computerId === s.created?.computerId)).map(s => ({
       id: s.requestId, computerId: "pending", revision: 0, stale: false, observedAt: s.at,
       access: {organizationId, owner: member!, participants: [], visibility: "private"},
-      detail: {id: s.requestId, workspaceId: s.workspaceId, title: s.message.slice(0, 200), state: s.phase === "failed" ? "idle" : "working", entries: [{id: `u-${s.requestId}`,kind: "user",text: s.message}]},
+      detail: {id: s.requestId, workspaceId: s.workspaceId, title: s.message.slice(0, 200), state: s.phase === "failed" ? "idle" : "working", ...(s.review ? { review: s.review } : {}), entries: [{id: `u-${s.requestId}`,kind: "user",text: s.message}]},
     })) : [];
     changed([...threads.values(), ...pending], member);
   };
