@@ -66,6 +66,7 @@ export class GitHubConnection {
       /// Signs the marker on what a thread posts.
       secret?: () => Promise<string>;
       now?: () => number;
+      development?: (org: string, user: string, path: string) => Promise<unknown>;
     } = {},
   ) {
     this.store = new D1OrganizationStore(db);
@@ -88,6 +89,10 @@ export class GitHubConnection {
     refusals: Record<number, [message: string, status: number]> = {},
   ): Promise<T> {
     await this.access(org, user);
+    if (this.options.development) {
+      if (method !== "GET") throw new ConnectionError("Your local preview reads GitHub. Open Remy to make this change.", 409);
+      return this.options.development(org, user, path) as Promise<T>;
+    }
     const token = await this.connections.token(org, "github", user);
     const response = await this.send(`https://api.github.com${path}`, {
       method,
@@ -656,7 +661,8 @@ export class GitHubConnection {
     // The member subject is the PAT or GitHub sign-in for this account — never
     // an organization-wide installation token, which cannot see repositories
     // the GitHub App is not installed on.
-    await this.connections.token(org, "github", user);
+    if (this.options.development) await this.api(org, user, "/user");
+    else await this.connections.token(org, "github", user);
     const workspaces = await this.organizations.workspaces(org, user);
     const workspaceByRepo = new Map(
       workspaces.flatMap((workspace) => {

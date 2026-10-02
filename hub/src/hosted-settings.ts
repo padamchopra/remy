@@ -7,6 +7,7 @@ export class HostedSettingsStore {
   constructor(
     private readonly db: D1Database,
     private readonly rootSecret: () => Promise<string>,
+    readonly development?: Fetcher,
   ) {}
   async settings(org: string, workspace = ""): Promise<HostedSettings> {
     const defaults = await this.db
@@ -124,6 +125,7 @@ export class HostedSettingsStore {
     return new TextDecoder().decode(await crypto.subtle.decrypt({name:"AES-GCM",iv:decode(iv),additionalData:new TextEncoder().encode(scope)},await this.key(),decode(data)));
   }
   async setSecret(org: string, name: string, value: string | null) {
+    if (this.development) throw new Error("Edit this connection in Remy, then refresh your local preview.");
     if (value === null) {
       await this.db
         .prepare(
@@ -151,6 +153,7 @@ export class HostedSettingsStore {
       .run();
   }
   async secretNames(org: string): Promise<string[]> {
+    if (this.development) return Object.keys(await this.secrets(org));
     return (
       await this.db
         .prepare(
@@ -161,6 +164,13 @@ export class HostedSettingsStore {
     ).results.map((r) => r.name);
   }
   async secrets(org: string): Promise<Record<string, string>> {
+    if (this.development) {
+      const response = await this.development.fetch(new Request("https://internal/secrets", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ organizationId: org }),
+      }));
+      if (!response.ok) throw new Error("Your production connection is unavailable. Try again.");
+      return response.json();
+    }
     const result: Record<string, string> = {};
     for (const row of (
       await this.db
@@ -185,6 +195,10 @@ export class HostedSettingsStore {
     }
     return result;
   }
+}
+
+export function hostedSettingsFor(env: { DB: D1Database; AUTH_SECRET: { get(): Promise<string> }; DEVELOPMENT_CONNECTIONS?: Fetcher }) {
+  return new HostedSettingsStore(env.DB, () => env.AUTH_SECRET.get(), env.DEVELOPMENT_CONNECTIONS);
 }
 
 function parseIds(value: string | null): string[] | null {

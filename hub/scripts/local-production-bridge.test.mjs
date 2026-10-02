@@ -9,7 +9,23 @@ const identity = {registration:{hubUrl:"https://app.tryremy.dev",ownership:"pers
 const incoming = (body,path="/thread-access") => new Request(`https://internal${path}`,{method:"POST",body:JSON.stringify(body)});
 
 test("missing development identity explains the one-time connection step",()=>{
-  assert.throws(()=>savedDevelopmentIdentity("/nonexistent-remy-local-test"),/--connect-account/);
+  assert.throws(()=>savedDevelopmentIdentity("/nonexistent-remy-local-test", "/nonexistent-remy-local-home"),/--connect-account/);
+});
+
+test("connection access keeps actors and vendor routes bound to the approved computer", async () => {
+  let calls = 0;
+  const bridge = productionBridge(identity,async (url,options) => {
+    calls++;
+    assert.equal(url,"https://app.tryremy.dev/api/development/personal/chatgpt");
+    assert.deepEqual(JSON.parse(options.body),{operation:"tokens"});
+    return Response.json({accessToken:"short-lived",chatgptAccountId:"owner-account"});
+  });
+  assert.equal((await bridge.connections(incoming({userId:"someone-else",operation:"tokens"},"/chatgpt"))).status,403);
+  assert.equal((await bridge.connections(incoming({userId:"owner"},"/export"))).status,404);
+  const response = await bridge.connections(incoming({userId:"owner",operation:"tokens"},"/chatgpt"));
+  assert.equal(response.status,200);
+  assert.equal((await response.json()).accessToken,"short-lived");
+  assert.equal(calls,1);
 });
 
 test("signs fresh scoped requests and never forwards the supplied actor", async () => {

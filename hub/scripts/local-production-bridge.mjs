@@ -2,13 +2,30 @@ import "tsx/esm";
 import { DatabaseSync } from "node:sqlite";
 import { createPrivateKey, randomBytes, sign } from "node:crypto";
 import { join } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, chmodSync } from "node:fs";
+import { homedir } from "node:os";
 const { computerConnectionMessage } = await import("../../contract/src/index.ts");
 
 const production = "https://app.tryremy.dev";
 
-export function savedDevelopmentIdentity(state) {
-  const path = join(state, "bridge/computer/remy.db");
+export function developmentIdentityState(state, home = homedir()) {
+  const shared = join(home, ".remy/development");
+  return existsSync(join(shared, "bridge/computer/remy.db")) ? shared : existsSync(join(state, "bridge/computer/remy.db")) ? state : shared;
+}
+
+export function shareDevelopmentIdentity(state, home = homedir()) {
+  const shared = join(home, ".remy/development");
+  const target = join(shared,"bridge/computer/remy.db");
+  const source = join(state,"bridge/computer/remy.db");
+  if (existsSync(target) || !existsSync(source)) return;
+  mkdirSync(join(shared,"bridge/computer"),{recursive:true,mode:0o700});
+  const db = new DatabaseSync(source,{readOnly:true});
+  try { db.prepare("VACUUM INTO ?").run(target); chmodSync(target,0o600); }
+  finally {db.close();}
+}
+
+export function savedDevelopmentIdentity(state, home = homedir()) {
+  const path = join(developmentIdentityState(state, home), "bridge/computer/remy.db");
   if (!existsSync(path)) throw new Error("Run npm run dev:local -- --connect-account once to approve your development computer.");
   const db = new DatabaseSync(path, {readOnly:true});
   try {
@@ -22,17 +39,18 @@ export function productionBridge({registration, privateKey}, request = fetch) {
       !registration.ownerUserId || !registration.organizationId || !registration.computerId || typeof privateKey !== "string")
     throw new Error("Connect your personal development computer first.");
   const key = createPrivateKey({key:Buffer.from(privateKey,"base64url"), format:"der", type:"pkcs8"});
-  async function call(operation, body) {
+  async function callResponse(operation, body, query = "", extraHeaders = {}) {
     const unsigned = {computerId:registration.computerId, timestamp:Date.now(), nonce:randomBytes(18).toString("base64url")};
     const signature = sign(null, Buffer.from(computerConnectionMessage(registration.organizationId,unsigned)), key).toString("base64url");
-    const response = await request(`${production}/api/development/${encodeURIComponent(registration.organizationId)}/${operation}`, {
+    const response = await request(`${production}/api/development/${encodeURIComponent(registration.organizationId)}/${operation}${query}`, {
       method:"POST", redirect:"error", signal:AbortSignal.timeout(30_000),
-      headers:{authorization:`RemyComputer ${Buffer.from(JSON.stringify({...unsigned,signature})).toString("base64url")}`, "content-type":"application/json"},
-      ...(body ? {body:JSON.stringify(body)} : {}),
+      headers:{authorization:`RemyComputer ${Buffer.from(JSON.stringify({...unsigned,signature})).toString("base64url")}`, "content-type":"application/json", ...extraHeaders},
+      ...(body ? {body: body instanceof ArrayBuffer ? body : JSON.stringify(body)} : {}),
     });
     if (!response.ok) throw Object.assign(new Error(`Your production connection is unavailable (HTTP ${response.status}).`), {status:response.status});
-    return response.json();
+    return response;
   }
+  const call = async (operation, body) => (await callResponse(operation, body)).json();
   return {
     async bootstrap() {
       const value = await call("bootstrap");
@@ -49,6 +67,25 @@ export function productionBridge({registration, privateKey}, request = fetch) {
         return reply(400,{error:"Choose a workspace."});
       try { return reply(200,await call("thread-access",{organizationId:input.organizationId,workspaceId:input.workspaceId})); }
       catch (error) { return reply(error.status === 403 ? 403 : 503,{error:"Your production connection is unavailable. Check your development access and try again."}); }
+    },
+    async connections(incoming) {
+      const reply = (status, error) => Response.json({error},{status,headers:{"cache-control":"no-store"}});
+      const url = new URL(incoming.url);
+      if (incoming.method !== "POST" || !["/secrets", "/chatgpt", "/github", "/git/info/refs", "/git/git-upload-pack"].includes(url.pathname)) return reply(404,"This development connection is unavailable.");
+      try {
+        if (url.pathname.startsWith("/git/")) {
+          const bytes = await incoming.arrayBuffer();
+          if (bytes.byteLength > 50_000_000) return reply(413,"Send a shorter request.");
+          const headers = incoming.headers.has("git-protocol") ? {"git-protocol":incoming.headers.get("git-protocol")} : {};
+          return await callResponse(url.pathname.slice(1),bytes,url.search,headers);
+        }
+        const input = await incoming.json();
+        if (url.pathname === "/secrets") return await callResponse("secrets",{organizationId:input.organizationId});
+        if (input.userId !== registration.ownerUserId) return reply(403,"Use your own development connection.");
+        return await callResponse(url.pathname.slice(1),url.pathname === "/chatgpt"
+          ? {operation:input.operation,...(input.rejected ? {rejected:input.rejected} : {})}
+          : {organizationId:input.organizationId,path:input.path});
+      } catch (error) { return reply(error.status === 403 ? 403 : error.status === 409 ? 409 : 503,"Your production connection is unavailable. Check your development access and try again."); }
     },
   };
 }

@@ -220,6 +220,20 @@ export class FlySpritesRuntime implements ComputerRuntimeProvider {
           { domain: "*", action: "deny" },
         ],
       });
+      if (input.image === "local") {
+        for (const [file, args] of [
+          ["curl", ["--fail", "--location", "--proto", "=https", "--output", "/tmp/remy-local-computer.tar.gz", input.archive]],
+          ["tar", ["-xzf", "/tmp/remy-local-computer.tar.gz", "-C", "/"]],
+        ] as const) await sprite.execFile(file, [...args]);
+        const installed = await sprite.execFile("cmp", ["-s", "/opt/remy/.development-lock", "/opt/remy/.installed-development-lock"]).catch(error => {
+          if (error instanceof ExecError && (error.exitCode === 1 || error.exitCode === 2)) return { exitCode: error.exitCode };
+          throw error;
+        });
+        if (installed.exitCode !== 0) {
+          for (const folder of ["contract", "server"]) await sprite.execFile("npm", ["ci", "--prefix", `/opt/remy/${folder}`, "--no-audit", "--no-fund"]);
+          await sprite.execFile("cp", ["/opt/remy/.development-lock", "/opt/remy/.installed-development-lock"]);
+        }
+      }
       // setpriv below drops the ambient capabilities Sprites grants. Root-owned
       // /data is then not writable, and Remy exits before it can connect.
       await sprite.execFile("mkdir", ["-p", "/data/remy", "/data/codex", "/data/claude", "/workspace", "/tmp/remy-uploads"]);

@@ -2,10 +2,11 @@ import "tsx/esm";
 import { mkdirSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { localComputerEnvironment } from "./local-development.mjs";
+import { developmentIdentityState, shareDevelopmentIdentity } from "./local-production-bridge.mjs";
 
 const state = process.env.REMY_LOCAL_STATE;
 if (!state) throw new Error("Start the development bridge with npm run dev:local.");
-const directory = join(state, "bridge");
+const directory = join(developmentIdentityState(state), "bridge");
 mkdirSync(directory, {recursive:true, mode:0o700});
 chmodSync(directory, 0o700);
 const environment = localComputerEnvironment(process.env, directory);
@@ -68,6 +69,7 @@ try {
   if (!registration) throw new Error("Run npm run dev:local -- --connect-account once while your hosted preview is signed in.");
   if (registration.hubUrl !== production || registration.ownership !== "personal") throw new Error("Use a personal development computer connected to the production account.");
   console.log(`Development computer: ${registration.computerId}`);
+  shareDevelopmentIdentity(state);
   if (process.argv.includes("--connect")) {
     console.log("The development identity is saved. Enable this computer ID in DEVELOPMENT_COMPUTER_IDS during the one-time bridge deployment.");
   } else {

@@ -267,6 +267,11 @@ export async function setChatGPTEnabled(db: D1Database, organizationId: string, 
 }
 
 /// Whether a person has a stored sign-in, without opening it.
-export async function chatgptConnected(db: D1Database, userId: string) {
+export async function chatgptConnected(db: D1Database, userId: string, development?: Fetcher) {
+  if (development) {
+    const response = await development.fetch(new Request("https://internal/chatgpt", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, operation: "status" }) }));
+    if (!response.ok) throw new Error("Your production connection is unavailable. Try again.");
+    return (await response.json() as ChatGPTAccount).phase === "connected";
+  }
   return !!await db.prepare("SELECT 1 AS present FROM personal_chatgpt_accounts WHERE user_id=?").bind(userId).first();
 }

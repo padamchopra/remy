@@ -21,7 +21,11 @@ export function githubFor(env: Env) {
     env.GITHUB_APP_ID ?? "",
     (org) => githubChanged(env, org),
     undefined,
-    { secret: () => env.AUTH_SECRET.get() },
+    { secret: () => env.AUTH_SECRET.get(), ...(env.DEVELOPMENT_CONNECTIONS ? { development: async (organizationId: string, userId: string, path: string) => {
+      const response = await env.DEVELOPMENT_CONNECTIONS!.fetch(new Request("https://internal/github", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ organizationId, userId, path }) }));
+      if (!response.ok) throw new ConnectionError("Your GitHub connection is unavailable. Try again.", response.status);
+      return response.json();
+    } } : {}) },
   );
 }
 export async function githubRoute(

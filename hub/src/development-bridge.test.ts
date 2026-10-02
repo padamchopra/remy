@@ -34,7 +34,26 @@ test("missing, unlisted, shared, and mismatched registrations cannot read accoun
 });
 
 test("a neighbouring route does not become an unrestricted proxy", async () => {
-  assert.equal(await developmentBridge(new Request("https://remy.example/api/development/personal-owner/secrets", {method:"POST"}), {allowedComputerIds:computer.computerId,authenticate:async () => {throw Error("must not authenticate");},bootstrap:async () => {throw Error("must not read");}}), undefined);
+  assert.equal(await developmentBridge(new Request("https://remy.example/api/development/personal-owner/export", {method:"POST"}), {allowedComputerIds:computer.computerId,authenticate:async () => {throw Error("must not authenticate");},bootstrap:async () => {throw Error("must not read");}}), undefined);
+});
+
+test("an approved computer reuses connections without replacing the existing allowlist, and revocation is immediate", async () => {
+  let enabled = true;
+  const users: string[] = [];
+  const bridge = {
+    allowedComputerIds: "previously-approved-computer", authenticate: async () => computer,
+    approved: async () => enabled, bootstrap: async () => ({}),
+    connection: async (_request: Request, userId: string) => { users.push(userId); return Response.json({phase:"connected"}); },
+  };
+  const incoming = () => new Request("https://remy.example/api/development/personal-owner/chatgpt", {method:"POST",body:JSON.stringify({userId:"injected"})});
+  assert.equal((await developmentBridge(incoming(),bridge))?.status,200);
+  assert.deepEqual(users,["owner"]);
+  enabled = false;
+  assert.equal((await developmentBridge(incoming(),bridge))?.status,403);
+  assert.deepEqual(users,["owner"]);
+  enabled = true;
+  assert.equal((await developmentBridge(incoming(),{...bridge,authenticate:async()=>({...computer,ownership:"organization"})}))?.status,403);
+  assert.equal((await developmentBridge(new Request(incoming(),{headers:{origin:"https://remy.example"}}),bridge))?.status,403);
 });
 
 test("thread access derives the actor from the signed computer and rejects actor injection", async () => {

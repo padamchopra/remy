@@ -45,6 +45,25 @@ test("Fly drops inherited capabilities without disabling the provider sandbox", 
   assert.deepEqual(command, {file: "setpriv", args: ["--inh-caps=-all", "--ambient-caps=-all", "--", "node", "-e"], options: {env: {SAFE: "value"}}});
 });
 
+test("development cloud starts reload current code and install changed dependencies only once",async()=>{
+  const calls: string[] = [];
+  let installed = false;
+  const sprite = {updateNetworkPolicy:async()=>{},execFile:async(file:string)=>{
+    calls.push(file);
+    if (file === "cmp") return {exitCode:installed ? 0 : 1};
+    if (file === "cp") installed = true;
+    return {exitCode:0};
+  }};
+  const adapter = new FlySpritesRuntime({sprite:()=>sprite} as unknown as SpritesClient);
+  const input = {image:"local",archive:"https://local.example/computer.tar.gz",environment:{},allowedDomains:[]} as unknown as ProvisionComputerInput;
+  const runtime = {id:"local",provider:"fly-sprites",providerReference:"local"};
+  await adapter.start(runtime,input);
+  await adapter.start(runtime,input);
+  assert.equal(calls.filter(file=>file === "curl").length,2);
+  assert.equal(calls.filter(file=>file === "tar").length,2);
+  assert.equal(calls.filter(file=>file === "npm").length,2);
+});
+
 test("Fly reports the guest boot log without credentials", async () => {
   const sprite = { updateNetworkPolicy: async () => {}, execFile: async () => { throw new ExecError("Command failed with exit code 1", { exitCode: 1, stdout: "token=secret", stderr: "fatal: could not read the repository\n" }); } };
   await assert.rejects(new FlySpritesRuntime({ sprite: () => sprite } as unknown as SpritesClient).start({ id: "one", provider: "fly-sprites", providerReference: "one" }, { environment: {}, allowedDomains: [] } as unknown as ProvisionComputerInput), error => {
